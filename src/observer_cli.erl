@@ -3,16 +3,13 @@
 
 -export([start/0]).
 -export([start/1]).
+-export([system/0]).
+-export([allocator/0]).
+-export([table/0]).
 
--define(DEFAULT_RANK_NUM, 20). %%fill full in 13.3 inch screen(24 core)
--define(CPU_ALARM_THRESHOLD, 0.8).
--define(COUNT_ALARM_THRESHOLD, 0.85).
--define(DEFAULT_COLLECT_INTENAL, 1000).
--define(FAST_COLLECT_INTENAL, 0). %% collect should be fast when we push the keyboard to switch mode
-
--define(STABLE_SYSTEM_ITEM, [system_version, process_limit, smp_support,
-  port_limit, ets_limit, logical_processors, multi_scheduling]).
--define(CHANGE_SYSTEM_ITEM, [used, allocated, unused]).
+-export([uptime/1]).
+-export([move_cursor_to_top_line/0]).
+-export([clear_screen/0]).
 
 %% @doc a top tool in erlang shell the reflushtime is Milliseconds
 -define(TOP_MIN_REFLUSH_INTERAL, 2000).
@@ -23,9 +20,34 @@ start(ReflushMillSecond)when ReflushMillSecond >= ?TOP_MIN_REFLUSH_INTERAL ->
   Pid = spawn_link(fun() -> loop(ReflushMillSecond) end),
   top(Pid).
 
+%% @doc List System and Architecture, CPU's and Threads metrics  in observer's system
+-spec system() -> ok.
+system() ->
+  observer_cli_system:start().
+
+%% @doc List Memory Allocators: std, ll, eheap, ets, fix, binary, driver.
+-spec allocator() -> ok.
+allocator() ->
+  observer_cli_allocator:start().
+
+%% @doc List include all metrics in observer's Table Viewer.
+-spec table()-> ok.
+table() ->
+  observer_cli_table:start().
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+-define(DEFAULT_RANK_NUM, 20). %%fill full in 13.3 inch screen(24 core)
+-define(CPU_ALARM_THRESHOLD, 0.8).
+-define(COUNT_ALARM_THRESHOLD, 0.85).
+-define(DEFAULT_COLLECT_INTENAL, 1000).
+-define(FAST_COLLECT_INTENAL, 0). %% collect should be fast when we push the keyboard to switch mode
+
+-define(STABLE_SYSTEM_ITEM, [system_version, process_limit, smp_support,
+  port_limit, ets_limit, logical_processors, multi_scheduling]).
+-define(CHANGE_SYSTEM_ITEM, [used, allocated, unused]).
+
 top(Pid) ->
   Input = io:get_line(""),
   case  Input of
@@ -61,7 +83,7 @@ refresh(Interal, Type, _UpTime, StableInfo, LastTimeRef, _, pause) ->
 refresh(Interal, Type, UpTime, StableInfo, LastTimeRef, CollectTime, running) ->
   [Version, ProcLimit, SmpSupport, PortLimit, EtsLimit, LogicalProc, MultiScheduling] = StableInfo,
   erlang:cancel_timer(LastTimeRef),
-  [{ProcSum, MemSum}] = recon:node_stats_list(1, CollectTime),%% collection must cost time
+  [{ProcSum, MemSum}] = recon:node_stats_list(1, CollectTime), %% collection must cost time
   [UseMemInt, AlloctedMemInt, UnusedMemInt] = get_change_system_info(),
   move_cursor_to_top_line(),
   draw_first_line(Version, UpTime),
@@ -71,7 +93,7 @@ refresh(Interal, Type, UpTime, StableInfo, LastTimeRef, CollectTime, running) ->
   draw_scheduler_usage(MemSum),
   draw_process_rank(Type, ?DEFAULT_RANK_NUM),
   draw_last_line(),
-  TimeRef = erlang:send_after(Interal div 2, self(), Type),%% collection will cost time
+  TimeRef = erlang:send_after(Interal div 2, self(), Type), %% collection will cost time
   receive
     quit -> quit;
     pause_or_resume -> refresh(Interal, Type, UpTime, StableInfo, TimeRef, ?FAST_COLLECT_INTENAL, pause);
@@ -203,7 +225,7 @@ draw_memory_process_line(ProcSum, MemSum) ->
   GcWordsReclaimed = to_list(proplists:get_value(gc_words_reclaimed, MemSum)),
   Reductions = integer_to_list(proplists:get_value(reductions, MemSum)),
   io:format("\e[46m~-10.10s | ~-18.18s | ~-18.18s | ~-22.22s | ~-20.20s | ~-25.25s\e[49m|~n", %%cyan background
-    ["Memory", "State", "Memory ", "Stae", "Memory", "Accumulate RefreshTime/2"]),
+    ["Memory", "State", "Memory ", "State", "Memory", "Accumulate RefreshTime/2"]),
   io:format("~-10.10s | ~-13.13s~6.6s| ~-18.18s | ~-17.17s~6.6s| ~-20.20s | ~-25.25s|~n",
     ["Total", TotalMem, "100%", "Binary", BinMem, BinMemPerc, "IO Output", BytesOut]),
   io:format("~-10.10s | ~-13.13s~6.6s| ~-18.18s | ~-17.17s~6.6s| ~-20.20s | ~-25.25s|~n",
