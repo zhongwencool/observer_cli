@@ -1,0 +1,15 @@
+{application, observer_cli,
+ [
+  {description, "a sharp observer cli top in Erlang"},
+  {vsn, "1.0"},
+  {modules, [
+             observer_cli
+            ]},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib,
+                  recon
+                 ]},
+  {env, []}
+ ]}.
