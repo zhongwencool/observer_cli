@@ -7,10 +7,6 @@
 -export([allocator/0]).
 -export([table/0]).
 
--export([uptime/1]).
--export([move_cursor_to_top_line/0]).
--export([clear_screen/0]).
-
 %% @doc a top tool in erlang shell the reflushtime is Milliseconds
 -define(TOP_MIN_REFLUSH_INTERAL, 2000).
 -spec start() -> quit.
@@ -61,7 +57,7 @@ top(Pid) ->
   end.
 
 loop(Interal) ->
-  clear_screen(),
+  observer_cli_lib:clear_screen(),
   {UpTime, _} = erlang:statistics(wall_clock),
   StableInfo = get_stable_system_info(), %%don't need reflush the stable info everytime
   refresh(Interal, memory, UpTime, StableInfo, erlang:make_ref(), 0, running).
@@ -73,7 +69,7 @@ refresh(Interal, Type, _UpTime, StableInfo, LastTimeRef, _, pause) ->
   receive
     quit -> quit;
     pause_or_resume ->
-      clear_screen(),
+      observer_cli_lib:clear_screen(),
       {NewUpTime, _} = erlang:statistics(wall_clock),
       refresh(Interal, Type, NewUpTime, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, running);
     NewType ->
@@ -85,7 +81,7 @@ refresh(Interal, Type, UpTime, StableInfo, LastTimeRef, CollectTime, running) ->
   erlang:cancel_timer(LastTimeRef),
   [{ProcSum, MemSum}] = recon:node_stats_list(1, CollectTime), %% collection must cost time
   [UseMemInt, AlloctedMemInt, UnusedMemInt] = get_change_system_info(),
-  move_cursor_to_top_line(),
+  observer_cli_lib:move_cursor_to_top_line(),
   draw_first_line(Version, UpTime),
   draw_system_line(ProcLimit, SmpSupport, PortLimit, EtsLimit, LogicalProc,
     MultiScheduling, UseMemInt, AlloctedMemInt, UnusedMemInt, ProcSum),
@@ -112,8 +108,8 @@ draw_system_line(ProcLimit, SmpSupport, PortLimit, EtsLimit, LogicalProc, MultiS
   UseMem = to_megabyte_list(UseMemInt),
   AlloctedMem = to_megabyte_list(AlloctedMemInt),
   UnunsedMem = to_megabyte_list(UnusedMemInt),
-  UsePrce = float_to_list_with_two_digit(UseMemInt/AlloctedMemInt),
-  UnusePrce = float_to_list_with_two_digit(UnusedMemInt/AlloctedMemInt),
+  UsePrce = observer_cli_lib:float_to_list_with_two_digit(UseMemInt/AlloctedMemInt),
+  UnusePrce = observer_cli_lib:float_to_list_with_two_digit(UnusedMemInt/AlloctedMemInt),
   {ProcFormat, ProcCount, PortFormat, PortCount} =
     get_port_proc_count_info(PortLimit, ProcLimit, ProcSum),
   io:format("\e[46m~-10.10s | ~-19.19s| ~-18.18s | ~-22.22s | ~-20.20s | ~-25.25s\e[49m|~n", %%cyan background
@@ -205,19 +201,19 @@ draw_memory_process_line(ProcSum, MemSum) ->
   TotalMem = to_megabyte_list(TotalMemInteger),
   ProcMemInteger = proplists:get_value(memory_procs, ProcSum),
   ProcMem = to_megabyte_list(ProcMemInteger),
-  ProcMemPerc = float_to_list_with_two_digit(ProcMemInteger/TotalMemInteger),
+  ProcMemPerc = observer_cli_lib:float_to_list_with_two_digit(ProcMemInteger/TotalMemInteger),
   AtomMemInteger = proplists:get_value(memory_atoms, ProcSum),
   AtomMem = to_megabyte_list(AtomMemInteger),
-  AtomMemPerc = float_to_list_with_two_digit(AtomMemInteger/TotalMemInteger),
+  AtomMemPerc = observer_cli_lib:float_to_list_with_two_digit(AtomMemInteger/TotalMemInteger),
   BinMemInteger = proplists:get_value(memory_bin, ProcSum),
   BinMem = to_megabyte_list(BinMemInteger),
-  BinMemPerc = float_to_list_with_two_digit(BinMemInteger/TotalMemInteger),
+  BinMemPerc = observer_cli_lib:float_to_list_with_two_digit(BinMemInteger/TotalMemInteger),
   EtsMemInteger = proplists:get_value(memory_ets, ProcSum),
   CodeMemInteger = erlang:memory(code),
   CodeMem = to_megabyte_list(CodeMemInteger),
-  CodeMemPerc = float_to_list_with_two_digit(CodeMemInteger/TotalMemInteger),
+  CodeMemPerc = observer_cli_lib:float_to_list_with_two_digit(CodeMemInteger/TotalMemInteger),
   EtsMem = to_megabyte_list(EtsMemInteger),
-  EtsMemPerc = float_to_list_with_two_digit(EtsMemInteger/TotalMemInteger),
+  EtsMemPerc = observer_cli_lib:float_to_list_with_two_digit(EtsMemInteger/TotalMemInteger),
   Runqueue = integer_to_list(proplists:get_value(run_queue, ProcSum)),
   BytesIn = to_megabyte_list(proplists:get_value(bytes_in, MemSum)),
   BytesOut = to_megabyte_list(proplists:get_value(bytes_out, MemSum)),
@@ -244,8 +240,8 @@ draw_scheduler_usage(MemSum) ->
   [begin
      Percent1 = proplists:get_value(Seq, SchedulerUsage),
      Percent2 = proplists:get_value(Seq + HalfSchedulerNum, SchedulerUsage),
-     CPU1 = float_to_list_with_two_digit(Percent1),
-     CPU2 = float_to_list_with_two_digit(Percent2),
+     CPU1 = observer_cli_lib:float_to_list_with_two_digit(Percent1),
+     CPU2 = observer_cli_lib:float_to_list_with_two_digit(Percent2),
      CPUSeq1 = lists:flatten(io_lib:format("~2..0w", [Seq])),
      CPUSeq2 = lists:flatten(io_lib:format("~2..0w", [Seq + HalfSchedulerNum])),
      Process1 = lists:duplicate(trunc(Percent1 * 52), "|"),
@@ -321,14 +317,8 @@ to_megabyte_list(M) ->
   Decmial = Val - Integer * 1000,
   lists:flatten(io_lib:format("~w.~4..0wM", [Integer, Decmial])).
 
-clear_screen() ->
-  io:format("\e[H\e[J").
-
-move_cursor_to_top_line() ->
-  io:format("\e[H").
-
 draw_first_line(Version, UpTime) ->
-  FirstLine = (Version --"\n") ++ green(" Uptime:" ++ uptime(UpTime)),
+  FirstLine = (Version --"\n") ++ green(" Uptime:" ++ observer_cli_lib:uptime(UpTime)),
   io:format("~s~n", [FirstLine]).
 
 notify_pause_status() ->
@@ -346,20 +336,8 @@ to_list(Integer) when is_integer(Integer) -> integer_to_list(Integer);
 to_list(Pid) when is_pid(Pid) -> erlang:pid_to_list(Pid);
 to_list(Val) -> Val.
 
-float_to_list_with_two_digit(Float) ->
-  Val = trunc(Float*10000),
-  Integer = Val div 100,
-  Decmial = Val - Integer * 100,
-  case Integer of
-    100 -> "100.0%";
-    _ -> lists:flatten(io_lib:format("~2..0w.~2..0w%", [Integer, Decmial]))
-  end.
 
 mfa_to_list({Module, Fun, Arg}) ->
   atom_to_list(Module) ++ ":" ++
     atom_to_list(Fun) ++ "/" ++
     integer_to_list(Arg).
-
-uptime(UpTime) ->
-  {D, {H, M, S}} = calendar:seconds_to_daystime(UpTime div 1000),
-  lists:flatten(io_lib:format("~pDays ~p:~p:~p", [D, H, M, S])).
