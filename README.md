@@ -44,10 +44,13 @@ $ make && make shell
 - [x] observer_cli:start(). Processes Memory, Binary, Total Heap Size, Reductions Top.     
 - [x] observer_cli:system(). include System and Architecture, CPU's and Threads metrics  in observer's system 
 - [ ] observer_cli:allocator(). Memory Allocators: std, ll, eheap, ets,fix, binary, driver.
-- [ ] observer_cli:table(). include all metrics in observer's Table Viewer.
+- [x] observer_cli:table(). include all metrics ets in observer's Table Viewer.
+- [ ] mneisa table info
 - [ ] ~~Draw all appication’s relations.~~
 - [ ] ~~Trace Overview.~~ You should use recon_trace.
+- [ ] remote node support
+- [ ] improve doc and attention
 
 --------------------
 ###License
-See the LICENSE file for license rights and limitations (MIT).
+See the [LICENSE](https://github.com/zhongwencool/observer_cli/blob/master/LICENSE) file for license rights and limitations (MIT).
