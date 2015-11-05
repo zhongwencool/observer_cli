@@ -12,7 +12,7 @@ start() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
--define(MAX_SHOW_LEN, 22).
+-define(MAX_SHOW_LEN, 25).
 
 draw_ets_info() ->
   AllEtsInfo = [begin get_ets_info(Tab)  end||Tab <- ets:all()],
