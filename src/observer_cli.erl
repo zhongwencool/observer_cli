@@ -78,18 +78,22 @@ refresh(Interal, Type, _UpTime, StableInfo, LastTimeRef, _, pause) ->
   end;
 refresh(Interal, Type, UpTime, StableInfo, LastTimeRef, CollectTime, running) ->
   [Version, ProcLimit, SmpSupport, PortLimit, EtsLimit, LogicalProc, MultiScheduling] = StableInfo,
+  %%it will take time when type is reducitons(proc_windows), so collect reductions before draw
+  {RankData, RankCostTime} = get_rank_data(Type, Interal, CollectTime),
   erlang:cancel_timer(LastTimeRef),
   [{ProcSum, MemSum}] = recon:node_stats_list(1, CollectTime), %% collection must cost time
   [UseMemInt, AlloctedMemInt, UnusedMemInt] = get_change_system_info(),
+
   observer_cli_lib:move_cursor_to_top_line(),
   draw_first_line(Version, UpTime),
   draw_system_line(ProcLimit, SmpSupport, PortLimit, EtsLimit, LogicalProc,
     MultiScheduling, UseMemInt, AlloctedMemInt, UnusedMemInt, ProcSum),
   draw_memory_process_line(ProcSum, MemSum),
   draw_scheduler_usage(MemSum),
-  draw_process_rank(Type, ?DEFAULT_RANK_NUM),
+  draw_process_rank(Type, RankData, ?DEFAULT_RANK_NUM),
   draw_last_line(),
-  TimeRef = erlang:send_after(Interal div 2, self(), Type), %% collection will cost time
+
+  TimeRef = erlang:send_after(Interal - RankCostTime - CollectTime, self(), Type), %% collection will cost time
   receive
     quit -> quit;
     pause_or_resume -> refresh(Interal, Type, UpTime, StableInfo, TimeRef, ?FAST_COLLECT_INTENAL, pause);
@@ -142,8 +146,7 @@ draw_system_line(ProcLimit, SmpSupport, PortLimit, EtsLimit, LogicalProc, MultiS
 %| <0.15.0>       |         45| global_name_server          |        45|0         |gen_server:loop/6                             |
 %| <0.9.0>        |         44| proc_lib:init_p/5           |        44|0         |application_master:main_loop/2                |
 %| <0.25.0>       |         36| user                        |        36|0         |group:server_loop/3                           |
-draw_process_rank(memory, Num) ->
-  MemoryList = recon:proc_count(memory, Num),
+draw_process_rank(memory, MemoryList, Num) ->
   io:format("\e[46m| ~-15.15s|~11.11s| ~-28.28s|~10.10s|~-10.10s|~-46.46s\e[49m|~n", %%cyan background
     ["Pid", "Memory", "Name or Initial Call", "Reductions", "Msg Queue", "Current Function"]),
   [begin
@@ -154,8 +157,7 @@ draw_process_rank(memory, Num) ->
      io:format("| ~-15.15s|~11.11s| ~-28.28s|~10.10s|~-10.10s|~-46.46s|~n",
        [pid_to_list(Pid), to_list(MemVal), NameOrCall, to_list(Reductions), to_list(MsgQueueLen), CurFun])
    end|| Pos <- lists:seq(1, Num)];
-draw_process_rank(binary_memory, Num) ->
-  MemoryList = recon:proc_count(binary_memory, Num),
+draw_process_rank(binary_memory, MemoryList, Num) ->
   io:format("\e[46m| ~-15.15s|~11.11s| ~-28.28s|~10.10s|~-10.10s|~-46.46s\e[49m|~n", %%cyan background
     ["Pid", "Bin Memory", "Name or Initial Call", "Reductions", "Msg Queue", "Current Function"]),
   [begin
@@ -166,20 +168,18 @@ draw_process_rank(binary_memory, Num) ->
      io:format("| ~-15.15s|~11.11s| ~-28.28s|~10.10s|~-10.10s|~-46.46s|~n",
        [pid_to_list(Pid), to_list(MemVal), NameOrCall, to_list(Reductions), to_list(MsgQueueLen), CurFun])
    end|| Pos <- lists:seq(1, Num)];
-draw_process_rank(reductions, Num) ->
-  ReductionList = recon:proc_count(reductions, Num),
+draw_process_rank(reductions, ReductionList, Num) ->
   io:format("\e[46m| ~-15.15s|~11.11s| ~-28.28s|~10.10s|~-10.10s|~-46.46s\e[49m|~n", %%cyan background
     ["Pid", "Reductions", "Name or Initial Call", "Memory", "Msg Queue", "Current Function"]),
   [begin
      {Pid, Reductions, Call = [IsName|_]} = lists:nth(Pos, ReductionList),
-     [{_, Memory}, {_, MsgQueueLen}] = get_reductions_and_msg_queue_len(Pid),
+     [{_, Memory}, {_, MsgQueueLen}] = get_memory_and_msg_queue_len(Pid),
      {CurFun, InitialCall} = get_current_initial_call(Call),
      NameOrCall = get_display_name_or_call(IsName, InitialCall),
      io:format("| ~-15.15s|~11.11s| ~-28.28s|~10.10s|~-10.10s|~-46.46s|~n",
        [pid_to_list(Pid), to_list(Reductions), NameOrCall, to_list(Memory), to_list(MsgQueueLen), CurFun])
    end|| Pos <- lists:seq(1, Num)];
-draw_process_rank(total_heap_size, Num) ->
-  HeapList = recon:proc_count(total_heap_size, Num),
+draw_process_rank(total_heap_size, HeapList, Num) ->
   io:format("\e[46m| ~-15.15s|~11.11s| ~-28.28s|~10.10s|~-10.10s|~-46.46s\e[49m|~n", %%cyan background
     ["Pid", "Total Heap Size", "Name or Initial Call", "Reductions", "Msg Queue", "Current Function"]),
   [begin
@@ -256,6 +256,11 @@ get_reductions_and_msg_queue_len(Pid) ->
     undefined -> [{reductions, "die"}, {message_queue_len, "die"}];
     Ok -> Ok
   end.
+get_memory_and_msg_queue_len(Pid) ->
+  case recon:info(Pid, [memory, message_queue_len]) of
+    undefined -> [{memory, "die"}, {message_queue_len, "die"}];
+    Ok -> Ok
+  end.
 
 get_current_initial_call(Call) ->
   {_, CurFun} = lists:keyfind(current_function, 1, Call),
@@ -279,6 +284,12 @@ get_port_proc_count_info(PortLimit, ProcLimit, ProcSum) ->
     count_format_alarm_color(PortLimitInt * ?COUNT_ALARM_THRESHOLD, PortCountInt,
       ProcLimitInt * ?COUNT_ALARM_THRESHOLD, ProcCountInt),
   {ProcFormat, ProcCount, PortFormat, PortCount}.
+
+get_rank_data(reductions, Internal, Time) when Time =/= ?FAST_COLLECT_INTENAL ->
+  ReductionTime = Internal - Time,
+  {recon:proc_window(reductions, ?DEFAULT_RANK_NUM, ReductionTime), ReductionTime};
+get_rank_data(Type, _Internal, _CollectTime) ->
+  {recon:proc_count(Type, ?DEFAULT_RANK_NUM), 0}.
 
 cpu_format_alarm_color(Percent1, Percent2)when Percent1 >= ?CPU_ALARM_THRESHOLD
   andalso Percent2 >= ?CPU_ALARM_THRESHOLD ->
