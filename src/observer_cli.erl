@@ -147,47 +147,47 @@ draw_system_line(ProcLimit, SmpSupport, PortLimit, EtsLimit, LogicalProc, MultiS
 %| <0.9.0>        |         44| proc_lib:init_p/5           |        44|0         |application_master:main_loop/2                |
 %| <0.25.0>       |         36| user                        |        36|0         |group:server_loop/3                           |
 draw_process_rank(memory, MemoryList, Num) ->
-  io:format("\e[46m| ~-15.15s|~11.11s| ~-28.28s|~10.10s|~-10.10s|~-46.46s\e[49m|~n", %%cyan background
+  io:format("\e[46m| ~-15.15s|~11.11s| ~-28.28s|~11.11s|~-10.10s|~-45.45s\e[49m|~n", %%cyan background
     ["Pid", "Memory", "Name or Initial Call", "Reductions", "Msg Queue", "Current Function"]),
   [begin
      {Pid, MemVal, Call = [IsName|_]} = lists:nth(Pos, MemoryList),
      [{_, Reductions}, {_, MsgQueueLen}] = get_reductions_and_msg_queue_len(Pid),
      {CurFun, InitialCall} = get_current_initial_call(Call),
      NameOrCall = get_display_name_or_call(IsName, InitialCall),
-     io:format("| ~-15.15s|~11.11s| ~-28.28s|~10.10s|~-10.10s|~-46.46s|~n",
+     io:format("| ~-15.15s|~11.11s| ~-28.28s|~11.11s|~-10.10s|~-45.45s|~n",
        [pid_to_list(Pid), to_list(MemVal), NameOrCall, to_list(Reductions), to_list(MsgQueueLen), CurFun])
    end|| Pos <- lists:seq(1, Num)];
 draw_process_rank(binary_memory, MemoryList, Num) ->
-  io:format("\e[46m| ~-15.15s|~11.11s| ~-28.28s|~10.10s|~-10.10s|~-46.46s\e[49m|~n", %%cyan background
+  io:format("\e[46m| ~-15.15s|~11.11s| ~-28.28s|~11.11s|~-10.10s|~-45.45s\e[49m|~n", %%cyan background
     ["Pid", "Bin Memory", "Name or Initial Call", "Reductions", "Msg Queue", "Current Function"]),
   [begin
      {Pid, MemVal, Call = [IsName|_]} = lists:nth(Pos, MemoryList),
      [{_, Reductions}, {_, MsgQueueLen}] = get_reductions_and_msg_queue_len(Pid),
      {CurFun, InitialCall} = get_current_initial_call(Call),
      NameOrCall = get_display_name_or_call(IsName, InitialCall),
-     io:format("| ~-15.15s|~11.11s| ~-28.28s|~10.10s|~-10.10s|~-46.46s|~n",
+     io:format("| ~-15.15s|~11.11s| ~-28.28s|~11.11s|~-10.10s|~-45.45s|~n",
        [pid_to_list(Pid), to_list(MemVal), NameOrCall, to_list(Reductions), to_list(MsgQueueLen), CurFun])
    end|| Pos <- lists:seq(1, Num)];
 draw_process_rank(reductions, ReductionList, Num) ->
-  io:format("\e[46m| ~-15.15s|~11.11s| ~-28.28s|~10.10s|~-10.10s|~-46.46s\e[49m|~n", %%cyan background
+  io:format("\e[46m| ~-15.15s|~11.11s| ~-28.28s|~11.11s|~-10.10s|~-45.45s\e[49m|~n", %%cyan background
     ["Pid", "Reductions", "Name or Initial Call", "Memory", "Msg Queue", "Current Function"]),
   [begin
      {Pid, Reductions, Call = [IsName|_]} = lists:nth(Pos, ReductionList),
      [{_, Memory}, {_, MsgQueueLen}] = get_memory_and_msg_queue_len(Pid),
      {CurFun, InitialCall} = get_current_initial_call(Call),
      NameOrCall = get_display_name_or_call(IsName, InitialCall),
-     io:format("| ~-15.15s|~11.11s| ~-28.28s|~10.10s|~-10.10s|~-46.46s|~n",
+     io:format("| ~-15.15s|~11.11s| ~-28.28s|~10.10s|~-11.11s|~-45.45s|~n",
        [pid_to_list(Pid), to_list(Reductions), NameOrCall, to_list(Memory), to_list(MsgQueueLen), CurFun])
    end|| Pos <- lists:seq(1, Num)];
 draw_process_rank(total_heap_size, HeapList, Num) ->
-  io:format("\e[46m| ~-15.15s|~11.11s| ~-28.28s|~10.10s|~-10.10s|~-46.46s\e[49m|~n", %%cyan background
+  io:format("\e[46m| ~-15.15s|~11.11s| ~-28.28s|~11.11s|~-10.10s|~-45.45s\e[49m|~n", %%cyan background
     ["Pid", "Total Heap Size", "Name or Initial Call", "Reductions", "Msg Queue", "Current Function"]),
   [begin
      {Pid, HeapSize, Call = [IsName|_]} = lists:nth(Pos, HeapList),
      [{_, Reductions}, {_, MsgQueueLen}] = get_reductions_and_msg_queue_len(Pid),
      {CurFun, InitialCall} = get_current_initial_call(Call),
      NameOrCall = get_display_name_or_call(IsName, InitialCall),
-     io:format("| ~-15.15s|~11.11s| ~-28.28s|~10.10s|~-10.10s|~-46.46s|~n",
+     io:format("| ~-15.15s|~11.11s| ~-28.28s|~11.11s|~-10.10s|~-45.45s|~n",
        [pid_to_list(Pid), to_list(HeapSize), NameOrCall, to_list(Reductions), to_list(MsgQueueLen), CurFun])
    end|| Pos <- lists:seq(1, Num)].
 
@@ -236,6 +236,10 @@ draw_memory_process_line(ProcSum, MemSum) ->
 draw_scheduler_usage(MemSum) ->
   SchedulerUsage = proplists:get_value(scheduler_usage, MemSum),
   SchedulerNum = erlang:length(SchedulerUsage),
+  draw_scheduler_user(SchedulerUsage, SchedulerNum).
+
+%% < 24 core will split 2 part
+draw_scheduler_user(SchedulerUsage, SchedulerNum) when SchedulerNum < 24 ->
   HalfSchedulerNum = SchedulerNum div 2,
   [begin
      Percent1 = proplists:get_value(Seq, SchedulerUsage),
@@ -247,9 +251,29 @@ draw_scheduler_usage(MemSum) ->
      Process1 = lists:duplicate(trunc(Percent1 * 52), "|"),
      Process2 = lists:duplicate(trunc(Percent2 * 52), "|"),
      Format = cpu_format_alarm_color(Percent1, Percent2),
-     io:format(Format,
-       [CPUSeq1, Process1, CPU1, CPUSeq2, Process2, CPU2])
-   end|| Seq <- lists:seq(1, HalfSchedulerNum)].
+     io:format(Format, [CPUSeq1, Process1, CPU1, CPUSeq2, Process2, CPU2])
+   end|| Seq <- lists:seq(1, HalfSchedulerNum)];
+
+%% >= 24 will split 3 part
+draw_scheduler_user(SchedulerUsage, SchedulerNum) ->
+  PotSchedulerNum = SchedulerNum div 3,
+  [begin
+     Percent1 = proplists:get_value(Seq, SchedulerUsage),
+     Percent2 = proplists:get_value(Seq + PotSchedulerNum, SchedulerUsage),
+     Percent3 = proplists:get_value(Seq + 2 * PotSchedulerNum, SchedulerUsage),
+     CPU1 = observer_cli_lib:float_to_list_with_two_digit(Percent1),
+     CPU2 = observer_cli_lib:float_to_list_with_two_digit(Percent2),
+     CPU3 = observer_cli_lib:float_to_list_with_two_digit(Percent3),
+     CPUSeq1 = lists:flatten(io_lib:format("~2..0w", [Seq])),
+     CPUSeq2 = lists:flatten(io_lib:format("~2..0w", [Seq + PotSchedulerNum])),
+     CPUSeq3 = lists:flatten(io_lib:format("~2..0w", [Seq + 2 * PotSchedulerNum])),
+     Process1 = lists:duplicate(trunc(Percent1 * 31), "|"),
+     Process2 = lists:duplicate(trunc(Percent2 * 31), "|"),
+     Process3 = lists:duplicate(trunc(Percent2 * 31), "|"),
+     Format = cpu_format_alarm_color(Percent1, Percent2, Percent3),
+     io:format(Format, [CPUSeq1, Process1, CPU1, CPUSeq2, Process2, CPU2, CPUSeq3, Process3, CPU3])
+   end|| Seq <- lists:seq(1, PotSchedulerNum)].
+
 
 get_reductions_and_msg_queue_len(Pid) ->
   case recon:info(Pid, [reductions, message_queue_len]) of
@@ -300,6 +324,31 @@ cpu_format_alarm_color(_Percent1, Percent2)when Percent2 >= ?CPU_ALARM_THRESHOLD
   "\e[32m|~-2.2s[~-52.52s\e[0m\e[42m~s\e[49m] \e[31m |~-2.2s[~-52.52s\e[0m\e[41m~s\e[49m]|~n";
 cpu_format_alarm_color(_Percent1, _Percent2) ->
   "\e[32m|~-2.2s[~-52.52s\e[0m\e[42m~s\e[49m] \e[32m |~-2.2s[~-52.52s\e[0m\e[42m~s\e[49m]|~n".
+
+cpu_format_alarm_color(Percent1, Percent2, Percent3)when Percent1 >= ?CPU_ALARM_THRESHOLD
+  andalso Percent2 >= ?CPU_ALARM_THRESHOLD andalso Percent3 >= ?CPU_ALARM_THRESHOLD ->
+  "\e[31m|~-2.2s[~-31.31s\e[0m\e[41m~s\e[49m]\e[31m |~2.2s[~-31.31s\e[0m\e[41m~s\e[49m]\e[31m |~2.2s[~-31.31s\e[0m\e[41m~s\e[49m]|~n";
+cpu_format_alarm_color(Percent1, Percent2, Percent3)when Percent1 >= ?CPU_ALARM_THRESHOLD
+  andalso Percent2 >= ?CPU_ALARM_THRESHOLD andalso Percent3 < ?CPU_ALARM_THRESHOLD ->
+  "\e[31m|~2.2s[~-31.31s\e[0m\e[41m~s\e[49m]\e[31m |~2.2s[~-31.31s\e[0m\e[41m~s\e[49m]\e[32m |~2.2s[~-31.31s\e[0m\e[42m~s\e[49m]|~n";
+cpu_format_alarm_color(Percent1, Percent2, Percent3)when Percent1 < ?CPU_ALARM_THRESHOLD
+  andalso Percent2 >= ?CPU_ALARM_THRESHOLD andalso Percent3 >= ?CPU_ALARM_THRESHOLD ->
+  "\e[32m|~-2.2s[~-31.31s\e[0m\e[42m~s\e[49m]\e[31m |~2.2s[~-31.31s\e[0m\e[41m~s\e[49m]\e[31m |~2.2s[~-31.31s\e[0m\e[41m~s\e[49m]|~n";
+cpu_format_alarm_color(Percent1, Percent2, Percent3) when Percent1 >= ?CPU_ALARM_THRESHOLD
+  andalso Percent2 < ?CPU_ALARM_THRESHOLD andalso Percent3 >= ?CPU_ALARM_THRESHOLD ->
+  "\e[31m|~-2.2s[~-31.31s\e[0m\e[41m~s\e[49m]\e[32m |~2.2s[~-31.31s\e[0m\e[42m~s\e[49m]\e[31m |~2.2s[~-31.31s\e[0m\e[41m~s\e[49m]|~n";
+cpu_format_alarm_color(Percent1, Percent2, Percent3)when Percent1 < ?CPU_ALARM_THRESHOLD
+  andalso Percent2 < ?CPU_ALARM_THRESHOLD andalso Percent3 >= ?CPU_ALARM_THRESHOLD ->
+  "\e[32m|~-2.2s[~-31.31s\e[0m\e[42m~s\e[49m]\e[32m |~2.2s[~-31.31s\e[0m\e[42m~s\e[49m]\e[31m |~2.2s[~-31.31s\e[0m\e[41m~s\e[49m]|~n";
+cpu_format_alarm_color(Percent1, Percent2, Percent3)when Percent1 < ?CPU_ALARM_THRESHOLD
+  andalso Percent2 >= ?CPU_ALARM_THRESHOLD andalso Percent3 < ?CPU_ALARM_THRESHOLD ->
+  "\e[32m|~-2.2s[~-31.31s\e[0m\e[42m~s\e[49m]\e[31m |~2.2s[~-31.31s\e[0m\e[41m~s\e[49m]\e[32m |~2.2s[~-31.31s\e[0m\e[42m~s\e[49m]|~n";
+cpu_format_alarm_color(Percent1, Percent2, Percent3)when Percent1 >= ?CPU_ALARM_THRESHOLD
+  andalso Percent2 < ?CPU_ALARM_THRESHOLD andalso Percent3 < ?CPU_ALARM_THRESHOLD ->
+  "\e[31m|~-2.2s[~-31.31s\e[0m\e[41m~s\e[49m]\e[32m |~2.2s[~-31.31s\e[0m\e[42m~s\e[49m]\e[32m |~2.2s[~-31.31s\e[0m\e[42m~s\e[49m]|~n";
+cpu_format_alarm_color(Percent1, Percent2, Percent3) when Percent1 < ?CPU_ALARM_THRESHOLD
+  andalso Percent2 < ?CPU_ALARM_THRESHOLD andalso Percent3 < ?CPU_ALARM_THRESHOLD ->
+  "\e[32m|~-2.2s[~-31.31s\e[0m\e[42m~s\e[49m]\e[32m |~2.2s[~-31.31s\e[0m\e[42m~s\e[49m]\e[32m |~2.2s[~-31.31s\e[0m\e[42m~s\e[49m]|~n".
 
 count_format_alarm_color(PortThreshold, PortCount, ProcThreshold, ProcCount)when PortCount > PortThreshold
   andalso ProcCount > ProcThreshold ->
