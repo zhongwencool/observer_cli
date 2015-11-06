@@ -48,59 +48,58 @@ top(Pid) ->
   Input = io:get_line(""),
   case  Input of
     "q\n" -> erlang:send(Pid, quit);
-    "r\n" -> erlang:send(Pid, reductions), top(Pid);
-    "b\n" -> erlang:send(Pid, binary_memory), top(Pid);
-    "h\n" -> erlang:send(Pid, total_heap_size), top(Pid);
-    "m\n" -> erlang:send(Pid, memory), top(Pid);
+    "r\n" -> erlang:send(Pid, {proc_count, reductions}), top(Pid);
+    "b\n" -> erlang:send(Pid, {proc_count, binary_memory}), top(Pid);
+    "h\n" -> erlang:send(Pid, {proc_count, total_heap_size}), top(Pid);
+    "m\n" -> erlang:send(Pid, {proc_count, memory}), top(Pid);
+    "rr\n" -> erlang:send(Pid, {proc_window, reductions}), top(Pid);
+    "bb\n" -> erlang:send(Pid, {proc_window, binary_memory}), top(Pid);
+    "hh\n" -> erlang:send(Pid, {proc_window, total_heap_size}), top(Pid);
+    "mm\n" -> erlang:send(Pid, {proc_window, memory}), top(Pid);
     "p\n" -> erlang:send(Pid, pause_or_resume), top(Pid);
     _ -> top(Pid)
   end.
 
 loop(Interal) ->
   observer_cli_lib:clear_screen(),
-  {UpTime, _} = erlang:statistics(wall_clock),
   StableInfo = get_stable_system_info(), %%don't need reflush the stable info everytime
-  refresh(Interal, memory, UpTime, StableInfo, erlang:make_ref(), 0, running).
+  refresh(Interal, {proc_count, memory}, StableInfo, erlang:make_ref(), 0, running).
 
 %% refresh the shell UI
-refresh(Interal, Type, _UpTime, StableInfo, LastTimeRef, _, pause) ->
+refresh(Interal, Type, StableInfo, LastTimeRef, _, pause) ->
   notify_pause_status(),
   erlang:cancel_timer(LastTimeRef),
   receive
     quit -> quit;
     pause_or_resume ->
       observer_cli_lib:clear_screen(),
-      {NewUpTime, _} = erlang:statistics(wall_clock),
-      refresh(Interal, Type, NewUpTime, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, running);
+      refresh(Interal, Type, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, running);
     NewType ->
-      {NewUpTime, _} = erlang:statistics(wall_clock),
-      refresh(Interal, NewType, NewUpTime, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, running)
+      refresh(Interal, NewType, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, running)
   end;
-refresh(Interal, Type, UpTime, StableInfo, LastTimeRef, CollectTime, running) ->
+refresh(Interal, Type, StableInfo, LastTimeRef, NodeStatsCostTime, running) ->
   [Version, ProcLimit, SmpSupport, PortLimit, EtsLimit, LogicalProc, MultiScheduling] = StableInfo,
-  %%it will take time when type is reducitons(proc_windows), so collect reductions before draw
-  {RankData, RankCostTime} = get_rank_data(Type, Interal, CollectTime),
   erlang:cancel_timer(LastTimeRef),
-  [{ProcSum, MemSum}] = recon:node_stats_list(1, CollectTime), %% collection must cost time
-  [UseMemInt, AlloctedMemInt, UnusedMemInt] = get_change_system_info(),
+  [{ProcSum, MemSum}] = recon:node_stats_list(1, NodeStatsCostTime), %%alway get node stats before ranklist
+  {RankList, RankCostTime} = get_ranklist_and_cost_time(Type, Interal, NodeStatsCostTime),
 
+  [UseMemInt, AlloctedMemInt, UnusedMemInt] = get_change_system_info(),
+  %% draw
   observer_cli_lib:move_cursor_to_top_line(),
-  draw_first_line(Version, UpTime),
+  draw_first_line(Version),
   draw_system_line(ProcLimit, SmpSupport, PortLimit, EtsLimit, LogicalProc,
     MultiScheduling, UseMemInt, AlloctedMemInt, UnusedMemInt, ProcSum),
   draw_memory_process_line(ProcSum, MemSum),
   draw_scheduler_usage(MemSum),
-  draw_process_rank(Type, RankData, ?DEFAULT_RANK_NUM),
+  draw_process_rank(Type, RankList, ?DEFAULT_RANK_NUM),
   draw_last_line(),
 
-  TimeRef = erlang:send_after(Interal - RankCostTime - CollectTime, self(), Type), %% collection will cost time
+  TimeRef = refresh_next_time(Type, Interal, RankCostTime, NodeStatsCostTime),
   receive
     quit -> quit;
-    pause_or_resume -> refresh(Interal, Type, UpTime, StableInfo, TimeRef, ?FAST_COLLECT_INTENAL, pause);
-    Type -> refresh(Interal, Type, UpTime + Interal, StableInfo, TimeRef, Interal - (Interal div 2), running);
-    NewType ->
-      {NewUpTime, _} = erlang:statistics(wall_clock),
-      refresh(Interal, NewType, NewUpTime, StableInfo, TimeRef, ?FAST_COLLECT_INTENAL, running)
+    pause_or_resume -> refresh(Interal, Type, StableInfo, TimeRef, ?FAST_COLLECT_INTENAL, pause);
+    Type -> refresh(Interal, Type, StableInfo, TimeRef, Interal div 2, running);
+    NewType -> refresh(Interal, NewType, StableInfo, TimeRef, ?FAST_COLLECT_INTENAL, running)
   end.
 
 %System     | Count/Limit        | System Switch      | State                  | Memory Info          | Megabyte                 |
@@ -146,7 +145,7 @@ draw_system_line(ProcLimit, SmpSupport, PortLimit, EtsLimit, LogicalProc, MultiS
 %| <0.15.0>       |         45| global_name_server          |        45|0         |gen_server:loop/6                             |
 %| <0.9.0>        |         44| proc_lib:init_p/5           |        44|0         |application_master:main_loop/2                |
 %| <0.25.0>       |         36| user                        |        36|0         |group:server_loop/3                           |
-draw_process_rank(memory, MemoryList, Num) ->
+draw_process_rank({_, memory}, MemoryList, Num) ->
   io:format("\e[46m| ~-15.15s|~11.11s| ~-28.28s|~11.11s|~-10.10s|~-45.45s\e[49m|~n", %%cyan background
     ["Pid", "Memory", "Name or Initial Call", "Reductions", "Msg Queue", "Current Function"]),
   [begin
@@ -157,7 +156,7 @@ draw_process_rank(memory, MemoryList, Num) ->
      io:format("| ~-15.15s|~11.11s| ~-28.28s|~11.11s|~-10.10s|~-45.45s|~n",
        [pid_to_list(Pid), to_list(MemVal), NameOrCall, to_list(Reductions), to_list(MsgQueueLen), CurFun])
    end|| Pos <- lists:seq(1, Num)];
-draw_process_rank(binary_memory, MemoryList, Num) ->
+draw_process_rank({_, binary_memory}, MemoryList, Num) ->
   io:format("\e[46m| ~-15.15s|~11.11s| ~-28.28s|~11.11s|~-10.10s|~-45.45s\e[49m|~n", %%cyan background
     ["Pid", "Bin Memory", "Name or Initial Call", "Reductions", "Msg Queue", "Current Function"]),
   [begin
@@ -168,8 +167,8 @@ draw_process_rank(binary_memory, MemoryList, Num) ->
      io:format("| ~-15.15s|~11.11s| ~-28.28s|~11.11s|~-10.10s|~-45.45s|~n",
        [pid_to_list(Pid), to_list(MemVal), NameOrCall, to_list(Reductions), to_list(MsgQueueLen), CurFun])
    end|| Pos <- lists:seq(1, Num)];
-draw_process_rank(reductions, ReductionList, Num) ->
-  io:format("\e[46m| ~-15.15s|~11.11s| ~-28.28s|~11.11s|~-10.10s|~-45.45s\e[49m|~n", %%cyan background
+draw_process_rank({_, reductions}, ReductionList, Num) ->
+  io:format("\e[46m| ~-15.15s|~11.11s| ~-28.28s|~10.10s|~-11.11s|~-45.45s\e[49m|~n", %%cyan background
     ["Pid", "Reductions", "Name or Initial Call", "Memory", "Msg Queue", "Current Function"]),
   [begin
      {Pid, Reductions, Call = [IsName|_]} = lists:nth(Pos, ReductionList),
@@ -179,7 +178,7 @@ draw_process_rank(reductions, ReductionList, Num) ->
      io:format("| ~-15.15s|~11.11s| ~-28.28s|~10.10s|~-11.11s|~-45.45s|~n",
        [pid_to_list(Pid), to_list(Reductions), NameOrCall, to_list(Memory), to_list(MsgQueueLen), CurFun])
    end|| Pos <- lists:seq(1, Num)];
-draw_process_rank(total_heap_size, HeapList, Num) ->
+draw_process_rank({_, total_heap_size}, HeapList, Num) ->
   io:format("\e[46m| ~-15.15s|~11.11s| ~-28.28s|~11.11s|~-10.10s|~-45.45s\e[49m|~n", %%cyan background
     ["Pid", "Total Heap Size", "Name or Initial Call", "Reductions", "Msg Queue", "Current Function"]),
   [begin
@@ -274,6 +273,10 @@ draw_scheduler_user(SchedulerUsage, SchedulerNum) ->
      io:format(Format, [CPUSeq1, Process1, CPU1, CPUSeq2, Process2, CPU2, CPUSeq3, Process3, CPU3])
    end|| Seq <- lists:seq(1, PotSchedulerNum)].
 
+refresh_next_time({proc_count, _} = Type, Interal, RankCostTime, NodeStatsCostTime) ->
+  erlang:send_after(Interal - RankCostTime - NodeStatsCostTime, self(), Type);
+refresh_next_time({proc_window, _} = Type, _Interal, _RankCostTime, _CollectTime) ->
+  erlang:send_after(100, self(), Type).
 
 get_reductions_and_msg_queue_len(Pid) ->
   case recon:info(Pid, [reductions, message_queue_len]) of
@@ -309,10 +312,10 @@ get_port_proc_count_info(PortLimit, ProcLimit, ProcSum) ->
       ProcLimitInt * ?COUNT_ALARM_THRESHOLD, ProcCountInt),
   {ProcFormat, ProcCount, PortFormat, PortCount}.
 
-get_rank_data(reductions, Internal, Time) when Time =/= ?FAST_COLLECT_INTENAL ->
-  ReductionTime = Internal - Time,
-  {recon:proc_window(reductions, ?DEFAULT_RANK_NUM, ReductionTime), ReductionTime};
-get_rank_data(Type, _Internal, _CollectTime) ->
+get_ranklist_and_cost_time({proc_window, Type}, Internal, Time) when Time =/= ?FAST_COLLECT_INTENAL ->
+  RemainTime = 2 * Internal - Time,
+  {recon:proc_window(Type, ?DEFAULT_RANK_NUM, RemainTime), RemainTime};
+get_ranklist_and_cost_time({_, Type}, _Internal, _CollectTime) ->
   {recon:proc_count(Type, ?DEFAULT_RANK_NUM), 0}.
 
 cpu_format_alarm_color(Percent1, Percent2)when Percent1 >= ?CPU_ALARM_THRESHOLD
@@ -377,16 +380,15 @@ to_megabyte_list(M) ->
   Decmial = Val - Integer * 1000,
   lists:flatten(io_lib:format("~w.~4..0wM", [Integer, Decmial])).
 
-draw_first_line(Version, UpTime) ->
-  FirstLine = (Version --"\n") ++ green(" Uptime:" ++ observer_cli_lib:uptime(UpTime)),
+draw_first_line(Version) ->
+  FirstLine = (Version --"\n") ++ green(" Uptime:" ++ observer_cli_lib:uptime()),
   io:format("~s~n", [FirstLine]).
 
 notify_pause_status() ->
   io:format("\e[31;1m PAUSE  INPUT (p, r, b, h, m ) to resume or q to quit \e[0m~n").
 
 draw_last_line() ->
-  io:format("\e[31;1mINPUT:\e[0m\e[44m  ~s |  ~s |   ~s       |~s|   ~s    |      ~s         \e[49m|~n",
-    ["r(reduction)", "q(quit)", "b(binary memory)", "h(total heap  size)", "m(memory)", "p(pause/unpause)"]).
+  io:format("\e[31;1mINPUT: \e[0m\e[44mq(quit)      p(pause/unpause)      r/rr(reduction)      m/mm(memory)      b/bb(binary memory)      h/hh(total heap  size)\e[49m|~n").
 
 green(String) ->
   "\e[32;1m" ++ String ++ "\e[0m".
@@ -395,7 +397,6 @@ to_list(Atom) when is_atom(Atom) -> atom_to_list(Atom);
 to_list(Integer) when is_integer(Integer) -> integer_to_list(Integer);
 to_list(Pid) when is_pid(Pid) -> erlang:pid_to_list(Pid);
 to_list(Val) -> Val.
-
 
 mfa_to_list({Module, Fun, Arg}) ->
   atom_to_list(Module) ++ ":" ++

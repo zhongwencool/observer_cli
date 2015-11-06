@@ -74,8 +74,8 @@ to_list(Val) when is_integer(Val) ->
   integer_to_list(Val);
 to_list(Val) when is_atom(Val) ->
   atom_to_list(Val);
-to_list({time_ms, Time}) ->
-   observer_cli_lib:uptime(Time);
+to_list({time_ms, _Time}) ->
+   observer_cli_lib:uptime();
 to_list({bytes, Val}) ->
   M = trunc(Val/(1024*1024)*1000),
   Integer = M div 1000,

@@ -3,7 +3,7 @@
 
 %% API
 
--export([uptime/1]).
+-export([uptime/0]).
 -export([move_cursor_to_top_line/0]).
 -export([clear_screen/0]).
 -export([float_to_list_with_two_digit/1]).
@@ -17,8 +17,9 @@ clear_screen() ->
   io:format("\e[H\e[J").
 
 %% @doc  return format "124Days 12:12:12"
--spec uptime(pos_integer()) -> string().
-uptime(UpTime) ->
+-spec uptime() -> string().
+uptime() ->
+  {UpTime, _} = erlang:statistics(wall_clock),
   {D, {H, M, S}} = calendar:seconds_to_daystime(UpTime div 1000),
   lists:flatten(io_lib:format("~pDays ~p:~p:~p", [D, H, M, S])).
 
