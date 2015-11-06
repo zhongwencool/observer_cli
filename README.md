@@ -50,6 +50,7 @@ $ make && make shell
 - [ ] ~~Trace Overview.~~ You should use recon_trace.
 - [ ] remote node support
 - [ ] improve doc and attention
+- [ ] observer_cli:help()
 
 --------------------
 ###License
