@@ -3,11 +3,11 @@
 
 %% API
 -export([start/0]).
+-export([draw_ets_info/0]).
 
 %% @doc List include all metrics in observer's Table Viewer.
 -spec start() -> ok.
-start() ->
-  draw_ets_info().
+start() -> draw_ets_info().
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
@@ -28,18 +28,18 @@ draw_ets_info() ->
      Protect = get_value(protection, Ets), KeyPos = get_value(keypos, Ets),
      Write = get_value(write_concurrency, Ets), Read = get_value(read_concurrency, Ets),
      Owner = get_value(owner, Ets), NamedTable = get_value(named_table, Ets),
-     IdOrName = case is_atom(Id) of true -> to_list(Id); false -> to_list(Id) ++ "/" ++ Name end,
+     IdOrName =
+       case is_atom(Id) of
+         true -> atom_to_list(Id);
+         false -> observer_cli_lib:to_list(Id) ++ "/" ++ Name
+       end,
      io:format("|~-24.24s|~-12.12s|~-12.12s|~-12.12s|~-10.10s|~6.6s|~-24.24s|~-12.12s|~10.10s |~n",
      [IdOrName, Memory, Size, Type, Protect, KeyPos, Write ++ "/" ++ Read, Owner, NamedTable])
-   end||{Id, Ets} <- lists:sublist(SorEtsInfo, ?MAX_SHOW_LEN)].
+   end||{Id, Ets} <- lists:sublist(SorEtsInfo, ?MAX_SHOW_LEN)],
+  ok.
 
 get_value(Key, List) ->
-   to_list(proplists:get_value(Key, List)).
-
-to_list(Pid)when is_pid(Pid) -> pid_to_list(Pid);
-to_list(Int)when is_integer(Int) -> integer_to_list(Int);
-to_list(Atom)when is_atom(Atom) -> atom_to_list(Atom);
-to_list(Val) -> Val.
+   observer_cli_lib:to_list(proplists:get_value(Key, List)).
 
 get_ets_info(Tab) ->
   case catch ets:info(Tab) of
