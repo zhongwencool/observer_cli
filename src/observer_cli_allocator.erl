@@ -4,7 +4,7 @@
 %% API
 -export([start/0]).
 
-%% @doc List System and Architecture, CPU's and Threads metrics  in observer's system
+%% @doc List Memory Allocators: std, ll, eheap, ets,fix, binary, driver.
 -spec start() -> ok.
 start() ->
   todo.
