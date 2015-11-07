@@ -156,12 +156,12 @@ refresh(ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, NodeStatsCostTi
 draw_menu(Func, Type, Interal) ->
   [Home, Ets, Alloc]  = observer_cli_lib:get_menu_title(home),
   RefreshStr = get_refresh_cost_info(Func, Type, Interal),
-  UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime())++ "|",
-  Title = lists:flatten(["|", Home,"|", Ets, "|", Alloc, "| ", RefreshStr]),
+  UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime()) ++ "|",
+  Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "| ", RefreshStr]),
   Space = lists:duplicate(?BROAD - erlang:length(Title) - erlang:length(UpTime) + 70, " "),
   io:format("~s~n", [Title ++ Space ++ UpTime]).
 
-draw_first_line(Version) -> io:format("~-128.128s|~n", [Version -- "\n"]).
+draw_first_line(Version) -> io:format("|~-127.127s|~n", [Version -- "\n"]).
 
 %System     | Count/Limit        | System Switch      | State                  | Memory Info          | Megabyte                 |
 %Proc Count | 42/262144          | Smp Support        | true                   | Allocted Mem         | 32.0698M           100.0%|
@@ -175,13 +175,13 @@ draw_system_line(ProcLimit, SmpSupport, PortLimit, EtsLimit, LogicalProc, MultiS
   UsePrce = observer_cli_lib:float_to_list_with_two_digit(UseMemInt/AlloctedMemInt),
   UnusePrce = observer_cli_lib:float_to_list_with_two_digit(UnusedMemInt/AlloctedMemInt),
   {ProcFormat, ProcCount, PortFormat, PortCount} = get_port_proc_count_info(PortLimit, ProcLimit, ProcSum),
-  io:format("\e[46m~-10.10s | ~-19.19s| ~-18.18s | ~-22.22s | ~-20.20s | ~-25.25s\e[49m|~n", %%cyan background
+  io:format("|\e[46m~-9.9s | ~-19.19s| ~-18.18s | ~-22.22s | ~-20.20s | ~-25.25s\e[49m|~n", %%cyan background
     ["System ", "Count/Limit", "System Switch", "State", "Memory Info", "Megabyte"]),
   io:format(ProcFormat,
     ["Proc Count", ProcCount, "Smp Support", SmpSupport, "Allocted Mem", AlloctedMem]),
   io:format(PortFormat,
     ["Port Count", PortCount, "Multi Scheduling", MultiScheduling, "Use Mem", UseMem, UsePrce]),
-  io:format("~-10.10s | ~-19.19s| ~-18.18s | ~-22.22s | ~-20.20s | ~-19.19s~6.6s|~n",
+  io:format("|~-9.9s | ~-19.19s| ~-18.18s | ~-22.22s | ~-20.20s | ~-19.19s~6.6s|~n",
     ["Ets Limit", EtsLimit, "Logical Processors", LogicalProc, "Unuse Mem", UnunsedMem, UnusePrce]).
 
 %Memory     | Megabyte           | Process State      | Count                  | Memory               | State                    |
@@ -213,15 +213,15 @@ draw_memory_process_line(ProcSum, MemSum, Interal) ->
   GcCount = observer_cli_lib:to_list(proplists:get_value(gc_count, MemSum)),
   GcWordsReclaimed = observer_cli_lib:to_list(proplists:get_value(gc_words_reclaimed, MemSum)),
   Reductions = integer_to_list(proplists:get_value(reductions, MemSum)),
-  io:format("\e[46m~-10.10s | ~-18.18s | ~-18.18s | ~-22.22s | ~-20.20s | ~-25.25s\e[49m|~n", %%cyan background
+  io:format("|\e[46m~-9.9s | ~-18.18s | ~-18.18s | ~-22.22s | ~-20.20s | ~-25.25s\e[49m|~n", %%cyan background
     ["Memory", "State", "Memory ", "State", "Memory", "Accumulate " ++ integer_to_list(Interal) ++ "ms"]),
-  io:format("~-10.10s | ~-13.13s~6.6s| ~-18.18s | ~-17.17s~6.6s| ~-20.20s | ~-25.25s|~n",
+  io:format("|~-9.9s | ~-13.13s~6.6s| ~-18.18s | ~-17.17s~6.6s| ~-20.20s | ~-25.25s|~n",
     ["Total", TotalMem, "100%", "Binary", BinMem, BinMemPerc, "IO Output", BytesOut]),
-  io:format("~-10.10s | ~-13.13s~6.6s| ~-18.18s | ~-17.17s~6.6s| ~-20.20s | ~-25.25s|~n",
+  io:format("|~-9.9s | ~-13.13s~6.6s| ~-18.18s | ~-17.17s~6.6s| ~-20.20s | ~-25.25s|~n",
     ["Process", ProcMem, ProcMemPerc, "Code", CodeMem, CodeMemPerc, "IO Input", BytesIn]),
-  io:format("~-10.10s | ~-13.13s~6.6s| ~-18.18s | ~-22.22s | ~-20.20s | ~-25.25s|~n",
+  io:format("|~-9.9s | ~-13.13s~6.6s| ~-18.18s | ~-22.22s | ~-20.20s | ~-25.25s|~n",
     ["Atom", AtomMem, AtomMemPerc, "Reductions", Reductions, "Gc Count", GcCount]),
-  io:format("~-10.10s | ~-13.13s~6.6s| ~-18.18s | ~-22.22s | ~-20.20s | ~-25.25s|~n",
+  io:format("|~-9.9s | ~-13.13s~6.6s| ~-18.18s | ~-22.22s | ~-20.20s | ~-25.25s|~n",
     ["Ets", EtsMem, EtsMemPerc, "Run Queue", Runqueue, "Gc Words Reclaimed", GcWordsReclaimed]).
 
 %|01[|||||||||||||||||||||||||||||||                     59.66%]  |03[||||||||||                                          19.59%]|
@@ -338,7 +338,9 @@ draw_process_rank(total_heap_size, HeapList, Num) ->
    end|| Pos <- lists:seq(1, Num)].
 
 draw_last_line() ->
-  io:format("\e[31;1mINPUT: \e[0m\e[44mq(quit)      p(pause/unpause)      r/rr(reduction)      m/mm(memory)      b/bb(binary memory)      t/tt(total heap  size)\e[49m|~n").
+  io:format("|\e[31;1mINPUT: \e[0m\e[44m~s~s~s~s~s~s\e[49m|~n",
+    ["q(quit)      ", "p(pause/unpause)      ", "r/rr(reduction)      ",
+      "m/mm(memory)      ", "b/bb(binary memory)     ", "t/tt(total heap  size)"]).
 
 notify_pause_status() ->
   io:format("\e[31;1m PAUSE  INPUT (p, r/rr, b/bb, h/hh, m/mm) to resume or q to quit \e[0m~n").
@@ -390,13 +392,13 @@ get_ranklist_and_cost_time(_, Type, _Internal, _CollectTime) ->
 
 cpu_format_alarm_color(Percent1, Percent2)when Percent1 >= ?CPU_ALARM_THRESHOLD
   andalso Percent2 >= ?CPU_ALARM_THRESHOLD ->
-  "\e[31m|~-2.2s[~-52.52s\e[0m\e[41m~s\e[49m] \e[31m |~-2.2s[~-52.52s\e[0m\e[41m~s\e[49m]|~n";
+  "|\e[31m|~-2.2s[~-52.52s\e[0m\e[41m~s\e[49m]\e[31m |~-2.2s[~-52.52s\e[0m\e[41m~s\e[49m]|~n";
 cpu_format_alarm_color(Percent1, _Percent2)when Percent1 >= ?CPU_ALARM_THRESHOLD ->
-  "\e[31m|~-2.2s[~-52.52s\e[0m\e[41m~s\e[49m] \e[32m |~-2.2s[~-52.52s\e[0m\e[42m~s\e[49m]|~n";
+  "|\e[31m|~-2.2s[~-52.52s\e[0m\e[41m~s\e[49m]\e[32m |~-2.2s[~-52.52s\e[0m\e[42m~s\e[49m]|~n";
 cpu_format_alarm_color(_Percent1, Percent2)when Percent2 >= ?CPU_ALARM_THRESHOLD ->
-  "\e[32m|~-2.2s[~-52.52s\e[0m\e[42m~s\e[49m] \e[31m |~-2.2s[~-52.52s\e[0m\e[41m~s\e[49m]|~n";
+  "|\e[32m|~-2.2s[~-52.52s\e[0m\e[42m~s\e[49m]\e[31m |~-2.2s[~-52.52s\e[0m\e[41m~s\e[49m]|~n";
 cpu_format_alarm_color(_Percent1, _Percent2) ->
-  "\e[32m|~-2.2s[~-52.52s\e[0m\e[42m~s\e[49m] \e[32m |~-2.2s[~-52.52s\e[0m\e[42m~s\e[49m]|~n".
+  "|\e[32m|~-2.2s[~-52.52s\e[0m\e[42m~s\e[49m]\e[32m |~-2.2s[~-52.52s\e[0m\e[42m~s\e[49m]|~n".
 
 cpu_format_alarm_color(Percent1, Percent2, Percent3)when Percent1 >= ?CPU_ALARM_THRESHOLD
   andalso Percent2 >= ?CPU_ALARM_THRESHOLD andalso Percent3 >= ?CPU_ALARM_THRESHOLD ->
@@ -425,20 +427,20 @@ cpu_format_alarm_color(Percent1, Percent2, Percent3) when Percent1 < ?CPU_ALARM_
 
 count_format_alarm_color(PortThreshold, PortCount, ProcThreshold, ProcCount)when PortCount > PortThreshold
   andalso ProcCount > ProcThreshold ->
-  {"~-10.10s | \e[31m~-19.19s\e[0m| ~-18.18s | ~-22.22s | ~-20.20s | ~-19.19s100.0%|~n",
-    "~-10.10s | ~-17.17s| ~-18.18s | ~-20.20s | ~-22.22s | ~-19.19s~6.6s|~n"
+  {"|~-9.9s | \e[31m~-19.19s\e[0m| ~-18.18s | ~-22.22s | ~-20.20s | ~-19.19s100.0%|~n",
+    "|~-9.9s | ~-17.17s| ~-18.18s | ~-20.20s | ~-22.22s | ~-19.19s~6.6s|~n"
   };
 count_format_alarm_color(PortThreshold, PortCount, _ProcThreshold, _ProcCount)when PortCount > PortThreshold ->
-  {"~-10.10s | ~-19.19s| ~-18.18s | ~-22.22s | ~-20.20s | ~-19.19s100.0%|~n",
-    "~-10.10s | \e[31m~-17.17s\e[0m| ~-18.18s | ~-22.22s | ~-20.20s | ~-19.19s~6.6s|~n"
+  {"|~-9.9s | ~-19.19s| ~-18.18s | ~-22.22s | ~-20.20s | ~-19.19s100.0%|~n",
+    "|~-9.9s | \e[31m~-17.17s\e[0m| ~-18.18s | ~-22.22s | ~-20.20s | ~-19.19s~6.6s|~n"
   };
 count_format_alarm_color(_PortThreshold, _PortCount, ProcThreshold, ProcCount)when ProcCount > ProcThreshold ->
-  {"~-10.10s | \e[31m~-19.19s\e[0m| ~-18.18s | ~-22.22s | ~-20.20s | ~-19.19s100.0%|~n",
-    "~-10.10s | ~-19.19s| ~-18.18s | ~-22.22s | ~-20.20s | ~-19.19s~6.6s|~n"
+  {"|~-9.9s | \e[31m~-19.19s\e[0m| ~-18.18s | ~-22.22s | ~-20.20s | ~-19.19s100.0%|~n",
+    "|~-9.9s | ~-19.19s| ~-18.18s | ~-22.22s | ~-20.20s | ~-19.19s~6.6s|~n"
   };
 count_format_alarm_color(_PortThreshold, _PortCount, _ProcThreshold, _ProcCount) ->
-  {"~-10.10s | ~-19.19s| ~-18.18s | ~-22.22s | ~-20.20s | ~-19.19s100.0%|~n",
-    "~-10.10s | ~-19.19s| ~-18.18s | ~-22.22s | ~-20.20s | ~-19.19s~6.6s|~n"
+  {"|~-9.9s | ~-19.19s| ~-18.18s | ~-22.22s | ~-20.20s | ~-19.19s100.0%|~n",
+    "|~-9.9s | ~-19.19s| ~-18.18s | ~-22.22s | ~-20.20s | ~-19.19s~6.6s|~n"
   }.
 
 display_name_or_inital_call(IsName, _Call)when is_atom(IsName) -> atom_to_list(IsName);
@@ -453,8 +455,12 @@ to_megabyte_list(M) ->
 get_refresh_cost_info(proc_count, Type, Internal) ->
   atom_to_list(Type) ++ " sort by recon:proc_count/2 Refresh:" ++ integer_to_list(Internal) ++ "ms";
 get_refresh_cost_info(proc_window, Type, Internal) ->
-  atom_to_list(Type) ++ " sort by recon:proc_window/3("++ integer_to_list(Internal*2 - Internal div 2) ++ "ms) Refresh:"
-    ++ integer_to_list(Internal * 2) ++ "ms".
+  atom_to_list(Type)
+    ++ " sort by recon:proc_window/3("
+    ++ integer_to_list(Internal*2 - Internal div 2)
+    ++ "ms) Refresh:"
+    ++ integer_to_list(Internal * 2)
+    ++ "ms".
 
 mfa_to_list({Module, Fun, Arg}) ->
   atom_to_list(Module) ++ ":" ++
