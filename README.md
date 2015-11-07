@@ -20,12 +20,12 @@ $ make && make shell
 1> observer_cli:start().
 
 ```
-![Top](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_start.jpg)
+![Top](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_11_7.jpg)
 
 ```erlang
 2> observer_cli:system().
 ```
-![System](http://7q5a9k.com1.z0.glb.clouddn.com/ets_info.jpg)
+![System](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_11_7_ets.jpg)
 
 ----------------
 ###Command

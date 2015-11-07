@@ -91,8 +91,8 @@ draw(System, CPU, Memory, Statistics) ->
 
 draw_menu() ->
   [Home, Ets, Alloc]  = observer_cli_lib:get_menu_title(ets),
-  Title = lists:flatten(["|", Home,"|", Ets, "|", Alloc, "| "]),
-  UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime())++ "|",
+  Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "| "]),
+  UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime()) ++ "|",
   RefreshStr = "Refresh: " ++ integer_to_list(?TOP_MIN_REFLUSH_INTERAL) ++ "ms",
   Space = lists:duplicate(?BROAD - erlang:length(Title)  - erlang:length(RefreshStr)  - erlang:length(UpTime)+ 70, " "),
   io:format("~s~n", [Title ++ RefreshStr ++ Space ++ UpTime]).

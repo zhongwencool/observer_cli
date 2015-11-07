@@ -42,11 +42,11 @@ to_list(Pid) when is_pid(Pid) -> erlang:pid_to_list(Pid);
 to_list(Val) -> Val.
 
 get_menu_title(home) ->
-  [choose(" h(HOME) "), unchoose(" e(ETS/SYSTEM) "), unchoose(" a(ALLOCACTOR) ")];
+  [choose(" h(HOME) "), unchoose(" e(ETS/SYSTEM) "), unchoose(" a(ALLOCATOR) ")];
 get_menu_title(ets) ->
-  [unchoose(" h(HOME) "), choose(" e(ETS/SYSTEM) "), unchoose(" a(ALLOCACTOR) ")];
+  [unchoose(" h(HOME) "), choose(" e(ETS/SYSTEM) "), unchoose(" a(ALLOCATOR) ")];
 get_menu_title(allocator) ->
-  [unchoose(" h(HOME) "), unchoose(" e(ETS/SYSTEM) "), choose(" a(ALLOCACTOR) ")].
+  [unchoose(" h(HOME) "), unchoose(" e(ETS/SYSTEM) "), choose(" a(ALLOCATOR) ")].
 
 choose(Title) -> "\e[48;2;184;0;0m" ++ Title ++ "\e[0m".
 unchoose(Title) -> "\e[48;2;80;80;80m" ++ Title ++ "\e[0m".
