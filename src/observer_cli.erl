@@ -8,12 +8,12 @@
 -export([table/0]).
 
 %% @doc a top tool in erlang shell the reflushtime is Milliseconds
--define(TOP_MIN_REFRESH_INTERAL, 2000).
+-define(TOP_MIN_REFRESH_INTERVAL, 2000).
 
 -spec start() -> quit.
-start() -> start(?TOP_MIN_REFRESH_INTERAL).
+start() -> start(?TOP_MIN_REFRESH_INTERVAL).
 -spec start(pos_integer()) -> quit.
-start(RefreshMillSecond)when RefreshMillSecond >= ?TOP_MIN_REFRESH_INTERAL ->
+start(RefreshMillSecond)when RefreshMillSecond >= ?TOP_MIN_REFRESH_INTERVAL ->
   ParentPid = self(),
   ChildPid = spawn_link(fun() -> loop(RefreshMillSecond, ParentPid) end),
   top(ChildPid).
@@ -54,6 +54,9 @@ top(Pid) ->
     go_to_allocator_view ->
       erlang:send(Pid, go_to_allocator_view),
       waiting_last_draw_done_to_other_view();
+    go_to_help_view ->
+      erlang:send(Pid, go_to_help_view),
+      waiting_last_draw_done_to_other_view();
     pause_or_resume ->
       erlang:send(Pid, pause_or_resume),
       top(Pid);
@@ -61,10 +64,10 @@ top(Pid) ->
     {Func, Type, no_change} ->
       erlang:send(Pid, {Func, Type}),
       top(Pid);
-    {Func, Type, RefreshInternal} ->
-      case string:to_integer(RefreshInternal) of
+    {Func, Type, RefreshInterval} ->
+      case string:to_integer(RefreshInterval) of
         {error, no_integer} -> loop;
-        {Int, _} when Int >= ?TOP_MIN_REFRESH_INTERAL -> erlang:send(Pid, {Func, Type, Int});
+        {Int, _} when Int >= ?TOP_MIN_REFRESH_INTERVAL -> erlang:send(Pid, {Func, Type, Int});
         {_, _} -> loop
       end,
       top(Pid)
@@ -75,7 +78,9 @@ waiting_last_draw_done_to_other_view() ->
     draw_work_done_to_ets_view ->
       observer_cli_system:start();
     draw_work_done_to_allocator_view ->
-      observer_cli_allocator:start()
+      observer_cli_allocator:start();
+    draw_work_done_to_help_view ->
+      observer_cli_help:start()
   after 100000 -> time_out
   end.
 
@@ -83,6 +88,7 @@ input_to_operation("q\n") ->  quit;
 input_to_operation("p\n") -> pause_or_resume;
 input_to_operation("e\n") -> go_to_ets_view;
 input_to_operation("a\n") -> go_to_allocator_view;
+input_to_operation("h\n") -> go_to_help_view;
 input_to_operation([$r, $:| RefreshInteral]) -> {proc_count, reductions, RefreshInteral};
 input_to_operation([$b, $:| RefreshInteral]) -> {proc_count, binary_memory, RefreshInteral};
 input_to_operation([$t, $:| RefreshInteral]) -> {proc_count, total_heap_size, RefreshInteral};
@@ -114,6 +120,7 @@ refresh(ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, _, pause) ->
     quit -> quit;
     go_to_ets_view ->  erlang:send(ParentPid, draw_work_done_to_ets_view), quit;
     go_to_allocator_view -> erlang:send(ParentPid, draw_work_done_to_allocator_view), quit;
+    go_to_help_view ->  erlang:send(ParentPid, draw_work_done_to_help_view), quit;
     pause_or_resume ->
       observer_cli_lib:clear_screen(),
       refresh(ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, running);
@@ -147,6 +154,7 @@ refresh(ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, NodeStatsCostTi
     quit -> quit;
     go_to_ets_view ->  erlang:send(ParentPid, draw_work_done_to_ets_view), quit;
     go_to_allocator_view ->  erlang:send(ParentPid, draw_work_done_to_allocator_view), quit;
+    go_to_help_view ->  erlang:send(ParentPid, draw_work_done_to_help_view), quit;
     pause_or_resume -> refresh(ParentPid, Interal, Func, Type, StableInfo, TimeRef, ?FAST_COLLECT_INTENAL, pause);
     {Func, Type} -> refresh(ParentPid, Interal, Func, Type, StableInfo, TimeRef, NewNodeStatsCostTime, running);
     {NewFunc, NewType} -> refresh(ParentPid, Interal, NewFunc, NewType, StableInfo, TimeRef, ?FAST_COLLECT_INTENAL, running);
@@ -154,11 +162,11 @@ refresh(ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, NodeStatsCostTi
   end.
 
 draw_menu(Func, Type, Interal) ->
-  [Home, Ets, Alloc]  = observer_cli_lib:get_menu_title(home),
+  [Home, Ets, Alloc, Help]  = observer_cli_lib:get_menu_title(home),
   RefreshStr = get_refresh_cost_info(Func, Type, Interal),
-  UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime()) ++ "|",
-  Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "| ", RefreshStr]),
-  Space = lists:duplicate(?BROAD - erlang:length(Title) - erlang:length(UpTime) + 70, " "),
+  UpTime = observer_cli_lib:green(" " ++ observer_cli_lib:uptime()) ++ "|",
+  Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "| ", Help, "|", RefreshStr]),
+  Space = lists:duplicate(?BROAD - erlang:length(Title) - erlang:length(UpTime) + 90, " "),
   io:format("~s~n", [Title ++ Space ++ UpTime]).
 
 draw_first_line(Version) -> io:format("|~-127.127s|~n", [Version -- "\n"]).
@@ -214,7 +222,7 @@ draw_memory_process_line(ProcSum, MemSum, Interal) ->
   GcWordsReclaimed = observer_cli_lib:to_list(proplists:get_value(gc_words_reclaimed, MemSum)),
   Reductions = integer_to_list(proplists:get_value(reductions, MemSum)),
   io:format("|\e[46m~-9.9s | ~-18.18s | ~-18.18s | ~-22.22s | ~-20.20s | ~-25.25s\e[49m|~n", %%cyan background
-    ["Memory", "State", "Memory ", "State", "Memory", "Accumulate " ++ integer_to_list(Interal) ++ "ms"]),
+    ["Memory", "State", "Memory ", "State", "Memory", "Interval: " ++ integer_to_list(Interal) ++ "ms"]),
   io:format("|~-9.9s | ~-13.13s~6.6s| ~-18.18s | ~-17.17s~6.6s| ~-20.20s | ~-25.25s|~n",
     ["Total", TotalMem, "100%", "Binary", BinMem, BinMemPerc, "IO Output", BytesOut]),
   io:format("|~-9.9s | ~-13.13s~6.6s| ~-18.18s | ~-17.17s~6.6s| ~-20.20s | ~-25.25s|~n",
@@ -384,10 +392,10 @@ get_port_proc_count_info(PortLimit, ProcLimit, ProcSum) ->
       ProcLimitInt * ?COUNT_ALARM_THRESHOLD, ProcCountInt),
   {ProcFormat, ProcCount, PortFormat, PortCount}.
 
-get_ranklist_and_cost_time(proc_window, Type, Internal, Time) when Time =/= ?FAST_COLLECT_INTENAL ->
-  RemainTime = 2 * Internal - Time,
+get_ranklist_and_cost_time(proc_window, Type, Interval, Time) when Time =/= ?FAST_COLLECT_INTENAL ->
+  RemainTime = 2 * Interval - Time,
   {recon:proc_window(Type, ?DEFAULT_RANK_NUM, RemainTime), RemainTime};
-get_ranklist_and_cost_time(_, Type, _Internal, _CollectTime) ->
+get_ranklist_and_cost_time(_, Type, _Interval, _CollectTime) ->
   {recon:proc_count(Type, ?DEFAULT_RANK_NUM), 0}.
 
 cpu_format_alarm_color(Percent1, Percent2)when Percent1 >= ?CPU_ALARM_THRESHOLD
@@ -452,15 +460,11 @@ to_megabyte_list(M) ->
   Decmial = Val - Integer * 1000,
   lists:flatten(io_lib:format("~w.~4..0wM", [Integer, Decmial])).
 
-get_refresh_cost_info(proc_count, Type, Internal) ->
-  atom_to_list(Type) ++ " sort by recon:proc_count/2 Refresh:" ++ integer_to_list(Internal) ++ "ms";
-get_refresh_cost_info(proc_window, Type, Internal) ->
-  atom_to_list(Type)
-    ++ " sort by recon:proc_window/3("
-    ++ integer_to_list(Internal*2 - Internal div 2)
-    ++ "ms) Refresh:"
-    ++ integer_to_list(Internal * 2)
-    ++ "ms".
+get_refresh_cost_info(proc_count, Type, Interval) ->
+  io_lib:format(" recon:proc_count(~s, ~w) Refresh:~wms", [atom_to_list(Type), Interval div 2, Interval]);
+get_refresh_cost_info(proc_window, Type, Interval) ->
+  io_lib:format(" recon:proc_window(~s, ~w) Refresh:~wms",
+    [atom_to_list(Type), Interval*2 - Interval div 2, Interval]).
 
 mfa_to_list({Module, Fun, Arg}) ->
   atom_to_list(Module) ++ ":" ++

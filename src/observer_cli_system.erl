@@ -5,14 +5,14 @@
 -export([start/0]).
 -export([start/1]).
 
--define(TOP_MIN_REFLUSH_INTERAL, 5000).
+-define(TOP_MIN_REFLUSH_INTERVAL, 5000).
 -define(BROAD, 133).
 
 %% @doc List System and Architecture, CPU's and Threads metrics  in observer's system
 -spec start() -> quit.
-start() -> start(?TOP_MIN_REFLUSH_INTERAL).
+start() -> start(?TOP_MIN_REFLUSH_INTERVAL).
 -spec start(pos_integer()) -> quit.
-start(ReflushMillSecond)when ReflushMillSecond >= ?TOP_MIN_REFLUSH_INTERAL ->
+start(ReflushMillSecond)when ReflushMillSecond >= ?TOP_MIN_REFLUSH_INTERVAL ->
   ParentPid = self(),
   Pid = spawn_link(fun() ->
     observer_cli_lib:clear_screen(),
@@ -23,11 +23,14 @@ top(Pid) ->
   Input = io:get_line(""),
   case  Input of
     "q\n" -> erlang:send(Pid, quit);
-    "h\n" ->
+    "o\n" ->
       erlang:send(Pid, go_to_home_view),
       waiting_last_draw_done_to_other_view();
     "a\n" ->
       erlang:send(Pid, go_to_allocator_view),
+      waiting_last_draw_done_to_other_view();
+    "h\n" ->
+      erlang:send(Pid, go_to_help_view),
       waiting_last_draw_done_to_other_view();
     _ -> top(Pid)
   end.
@@ -37,7 +40,9 @@ waiting_last_draw_done_to_other_view() ->
     draw_work_done_to_home_view ->
       observer_cli:start();
     draw_work_done_to_allocator_view ->
-      observer_cli_allocator:start()
+      observer_cli_allocator:start();
+    draw_work_done_to_help_view ->
+      observer_cli_help:start()
   after 100000 -> time_out
   end.
 
@@ -50,6 +55,7 @@ loop(Interal, LastTimeRef, ParentPid) ->
     quit -> quit;
     go_to_home_view -> erlang:send(ParentPid, draw_work_done_to_home_view), quit;
     go_to_allocator_view -> erlang:send(ParentPid, draw_work_done_to_allocator_view), quit;
+    go_to_help_view -> erlang:send(ParentPid, draw_work_done_to_help_view), quit;
     _ -> loop(Interal, TimeRef, ParentPid)
   end.
 
@@ -90,11 +96,11 @@ draw(System, CPU, Memory, Statistics) ->
   observer_cli_table:draw_ets_info().
 
 draw_menu() ->
-  [Home, Ets, Alloc]  = observer_cli_lib:get_menu_title(ets),
-  Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "| "]),
+  [Home, Ets, Alloc, Help]  = observer_cli_lib:get_menu_title(ets),
+  Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "| ", Help, "|"]),
   UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime()) ++ "|",
-  RefreshStr = "Refresh: " ++ integer_to_list(?TOP_MIN_REFLUSH_INTERAL) ++ "ms",
-  Space = lists:duplicate(?BROAD - erlang:length(Title)  - erlang:length(RefreshStr)  - erlang:length(UpTime)+ 70, " "),
+  RefreshStr = "Refresh: " ++ integer_to_list(?TOP_MIN_REFLUSH_INTERVAL) ++ "ms",
+  Space = lists:duplicate(?BROAD - erlang:length(Title)  - erlang:length(RefreshStr)  - erlang:length(UpTime)+ 90, " "),
   io:format("~s~n", [Title ++ RefreshStr ++ Space ++ UpTime]).
 
 to_list(Val) when is_integer(Val) -> integer_to_list(Val);
