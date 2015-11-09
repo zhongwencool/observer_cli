@@ -49,7 +49,6 @@ $ make && make shell
 - [ ] ~~Draw all appication’s relations.~~
 - [ ] ~~Trace Overview.~~ You should use recon_trace.
 - [ ] remote node support
-- [ ] improve doc and attention
 - [x] observer_cli:help()
 
 --------------------
