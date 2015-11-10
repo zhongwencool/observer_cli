@@ -17,25 +17,25 @@ start(ReflushMillSecond)when ReflushMillSecond >= ?TOP_MIN_REFLUSH_INTERVAL ->
   Pid = spawn_link(fun() ->
     observer_cli_lib:clear_screen(),
     loop(ReflushMillSecond, erlang:make_ref(), ParentPid) end),
-  top(Pid).
+  waiting(Pid, ReflushMillSecond).
 
-top(Pid) ->
+waiting(Pid, Interval) ->
   Input = io:get_line(""),
   case  Input of
     "q\n" -> erlang:send(Pid, quit);
     "o\n" ->
       erlang:send(Pid, go_to_home_view),
-      waiting_last_draw_done_to_other_view();
+      waiting_last_draw_done_to_other_view(Interval);
     "a\n" ->
       erlang:send(Pid, go_to_allocator_view),
-      waiting_last_draw_done_to_other_view();
+      waiting_last_draw_done_to_other_view(Interval);
     "h\n" ->
       erlang:send(Pid, go_to_help_view),
-      waiting_last_draw_done_to_other_view();
-    _ -> top(Pid)
+      waiting_last_draw_done_to_other_view(Interval);
+    _ -> waiting(Pid, Interval)
   end.
 
-waiting_last_draw_done_to_other_view() ->
+waiting_last_draw_done_to_other_view(Interval) ->
   receive
     draw_work_done_to_home_view ->
       observer_cli:start();
@@ -43,7 +43,7 @@ waiting_last_draw_done_to_other_view() ->
       observer_cli_allocator:start();
     draw_work_done_to_help_view ->
       observer_cli_help:start()
-  after 100000 -> time_out
+  after Interval -> time_out
   end.
 
 loop(Interal, LastTimeRef, ParentPid) ->
@@ -116,7 +116,7 @@ byte_to_megabyte({bytes, Val}, {bytes, Total}) when is_integer(Val) ->
   M = trunc(Val/(1024*1024)*1000),
   Integer = M div 1000,
   Decmial = M - Integer * 1000,
-  Perc = observer_cli_lib:float_to_list_with_two_digit(Val/Total),
+  Perc = observer_cli_lib:float_to_percent_with_two_digit(Val/Total),
   lists:flatten(io_lib:format("~w.~4..0wM ~s", [Integer, Decmial, Perc])).
 
 info_fields() ->

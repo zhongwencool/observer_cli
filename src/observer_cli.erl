@@ -178,11 +178,11 @@ draw_first_line(Version) -> io:format("|~-127.127s|~n", [Version -- "\n"]).
 %Ets Limit  | 2053               | Logical Processors | 4                      | Unuse Mem            | 12.0537M           38.34%|
 draw_system_line(ProcLimit, SmpSupport, PortLimit, EtsLimit, LogicalProc, MultiScheduling,
     UseMemInt, AlloctedMemInt, UnusedMemInt, ProcSum) ->
-  UseMem = to_megabyte_list(UseMemInt),
-  AlloctedMem = to_megabyte_list(AlloctedMemInt),
-  UnunsedMem = to_megabyte_list(UnusedMemInt),
-  UsePrce = observer_cli_lib:float_to_list_with_two_digit(UseMemInt/AlloctedMemInt),
-  UnusePrce = observer_cli_lib:float_to_list_with_two_digit(UnusedMemInt/AlloctedMemInt),
+  UseMem = observer_cli_lib:to_megabyte_list(UseMemInt),
+  AlloctedMem = observer_cli_lib:to_megabyte_list(AlloctedMemInt),
+  UnunsedMem = observer_cli_lib:to_megabyte_list(UnusedMemInt),
+  UsePrce = observer_cli_lib:float_to_percent_with_two_digit(UseMemInt/AlloctedMemInt),
+  UnusePrce = observer_cli_lib:float_to_percent_with_two_digit(UnusedMemInt/AlloctedMemInt),
   {ProcFormat, ProcCount, PortFormat, PortCount} = get_port_proc_count_info(PortLimit, ProcLimit, ProcSum),
   io:format("|\e[46m~-9.9s | ~-19.19s| ~-18.18s | ~-22.22s | ~-20.20s | ~-25.25s\e[49m|~n", %%cyan background
     ["System ", "Count/Limit", "System Switch", "State", "Memory Info", "Megabyte"]),
@@ -200,25 +200,25 @@ draw_system_line(ProcLimit, SmpSupport, PortLimit, EtsLimit, LogicalProc, MultiS
 %Ets        | 0.0697M      03.49%| Gc Count           | 2                      | Gc Words Reclaimed   | 10173                    |
 draw_memory_process_line(ProcSum, MemSum, Interal) ->
   TotalMemInt = proplists:get_value(memory_total, ProcSum),
-  TotalMem = to_megabyte_list(TotalMemInt),
+  TotalMem = observer_cli_lib:to_megabyte_list(TotalMemInt),
   ProcMemInt = proplists:get_value(memory_procs, ProcSum),
-  ProcMem = to_megabyte_list(ProcMemInt),
-  ProcMemPerc = observer_cli_lib:float_to_list_with_two_digit(ProcMemInt/TotalMemInt),
+  ProcMem = observer_cli_lib:to_megabyte_list(ProcMemInt),
+  ProcMemPerc = observer_cli_lib:float_to_percent_with_two_digit(ProcMemInt/TotalMemInt),
   AtomMemInt = proplists:get_value(memory_atoms, ProcSum),
-  AtomMem = to_megabyte_list(AtomMemInt),
-  AtomMemPerc = observer_cli_lib:float_to_list_with_two_digit(AtomMemInt/TotalMemInt),
+  AtomMem = observer_cli_lib:to_megabyte_list(AtomMemInt),
+  AtomMemPerc = observer_cli_lib:float_to_percent_with_two_digit(AtomMemInt/TotalMemInt),
   BinMemInt = proplists:get_value(memory_bin, ProcSum),
-  BinMem = to_megabyte_list(BinMemInt),
-  BinMemPerc = observer_cli_lib:float_to_list_with_two_digit(BinMemInt/TotalMemInt),
+  BinMem = observer_cli_lib:to_megabyte_list(BinMemInt),
+  BinMemPerc = observer_cli_lib:float_to_percent_with_two_digit(BinMemInt/TotalMemInt),
   CodeMemInt = erlang:memory(code),
-  CodeMem = to_megabyte_list(CodeMemInt),
-  CodeMemPerc = observer_cli_lib:float_to_list_with_two_digit(CodeMemInt/TotalMemInt),
+  CodeMem = observer_cli_lib:to_megabyte_list(CodeMemInt),
+  CodeMemPerc = observer_cli_lib:float_to_percent_with_two_digit(CodeMemInt/TotalMemInt),
   EtsMemInt = proplists:get_value(memory_ets, ProcSum),
-  EtsMem = to_megabyte_list(EtsMemInt),
-  EtsMemPerc = observer_cli_lib:float_to_list_with_two_digit(EtsMemInt/TotalMemInt),
+  EtsMem = observer_cli_lib:to_megabyte_list(EtsMemInt),
+  EtsMemPerc = observer_cli_lib:float_to_percent_with_two_digit(EtsMemInt/TotalMemInt),
   Runqueue = integer_to_list(proplists:get_value(run_queue, ProcSum)),
-  BytesIn = to_megabyte_list(proplists:get_value(bytes_in, MemSum)),
-  BytesOut = to_megabyte_list(proplists:get_value(bytes_out, MemSum)),
+  BytesIn = observer_cli_lib:to_megabyte_list(proplists:get_value(bytes_in, MemSum)),
+  BytesOut = observer_cli_lib:to_megabyte_list(proplists:get_value(bytes_out, MemSum)),
   GcCount = observer_cli_lib:to_list(proplists:get_value(gc_count, MemSum)),
   GcWordsReclaimed = observer_cli_lib:to_list(proplists:get_value(gc_words_reclaimed, MemSum)),
   Reductions = integer_to_list(proplists:get_value(reductions, MemSum)),
@@ -246,8 +246,8 @@ draw_scheduler_user(SchedulerUsage, SchedulerNum) when SchedulerNum < 24 ->
   [begin
      Percent1 = proplists:get_value(Seq, SchedulerUsage),
      Percent2 = proplists:get_value(Seq + HalfSchedulerNum, SchedulerUsage),
-     CPU1 = observer_cli_lib:float_to_list_with_two_digit(Percent1),
-     CPU2 = observer_cli_lib:float_to_list_with_two_digit(Percent2),
+     CPU1 = observer_cli_lib:float_to_percent_with_two_digit(Percent1),
+     CPU2 = observer_cli_lib:float_to_percent_with_two_digit(Percent2),
      CPUSeq1 = lists:flatten(io_lib:format("~2..0w", [Seq])),
      CPUSeq2 = lists:flatten(io_lib:format("~2..0w", [Seq + HalfSchedulerNum])),
      Process1 = lists:duplicate(trunc(Percent1 * 52), "|"),
@@ -263,9 +263,9 @@ draw_scheduler_user(SchedulerUsage, SchedulerNum) ->
      Percent1 = proplists:get_value(Seq, SchedulerUsage),
      Percent2 = proplists:get_value(Seq + PotSchedulerNum, SchedulerUsage),
      Percent3 = proplists:get_value(Seq + 2 * PotSchedulerNum, SchedulerUsage),
-     CPU1 = observer_cli_lib:float_to_list_with_two_digit(Percent1),
-     CPU2 = observer_cli_lib:float_to_list_with_two_digit(Percent2),
-     CPU3 = observer_cli_lib:float_to_list_with_two_digit(Percent3),
+     CPU1 = observer_cli_lib:float_to_percent_with_two_digit(Percent1),
+     CPU2 = observer_cli_lib:float_to_percent_with_two_digit(Percent2),
+     CPU3 = observer_cli_lib:float_to_percent_with_two_digit(Percent3),
      CPUSeq1 = lists:flatten(io_lib:format("~2..0w", [Seq])),
      CPUSeq2 = lists:flatten(io_lib:format("~2..0w", [Seq + PotSchedulerNum])),
      CPUSeq3 = lists:flatten(io_lib:format("~2..0w", [Seq + 2 * PotSchedulerNum])),
@@ -455,11 +455,6 @@ count_format_alarm_color(_PortThreshold, _PortCount, _ProcThreshold, _ProcCount)
 display_name_or_inital_call(IsName, _Call)when is_atom(IsName) -> atom_to_list(IsName);
 display_name_or_inital_call(_IsName, Call) -> Call.
 
-to_megabyte_list(M) ->
-  Val = trunc(M/(1024*1024)*1000),
-  Integer = Val div 1000,
-  Decmial = Val - Integer * 1000,
-  lists:flatten(io_lib:format("~w.~4..0wM", [Integer, Decmial])).
 
 get_refresh_cost_info(proc_count, Type, Interval) ->
   io_lib:format(" recon:proc_count(~s, ~w) Refresh:~wms", [atom_to_list(Type), Interval div 2, Interval]);
