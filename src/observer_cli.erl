@@ -6,6 +6,7 @@
 -export([system/0]).
 -export([allocator/0]).
 -export([table/0]).
+-export([help/0]).
 
 %% @doc a top tool in erlang shell the reflushtime is Milliseconds
 -define(TOP_MIN_REFRESH_INTERVAL, 2000).
@@ -29,6 +30,10 @@ allocator() -> observer_cli_allocator:start().
 %% @doc List include all metrics in observer's Table Viewer.
 -spec table()-> ok.
 table() -> observer_cli_table:start().
+
+%% @doc Parameter description
+-spec help() -> quit.
+help() -> observer_cli_help:start().
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
