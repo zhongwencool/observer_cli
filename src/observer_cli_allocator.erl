@@ -82,11 +82,11 @@ draw_menu() ->
   io:format("~s~n", [Title ++ RefreshStr ++ Space ++ UpTime]).
 
 draw_cache_hit_rates(CacheHitInfo) ->
-  io:format("|\e[46m~8.8s|  ~6.6s  |  ~7.7s  |~68.68s\e[49m|~n",["Instance", "Hits", "Calls", "Hit Rate"]),
+  io:format("|\e[46m~8.8s|  ~6.6s  |  ~7.7s  |~68.68s\e[49m|~n", ["Instance", "Hits", "Calls", "Hit Rate"]),
   Format = "| ~4.4s   |~10.10s|~-11.11s|~-61.61s ~6.6s|~n",
   Len = erlang:length(CacheHitInfo),
   [begin
-     [{hit_rate, HitRate},{hits, Hit},{calls, Call}] = proplists:get_value({instance, Seq}, CacheHitInfo),
+     [{hit_rate, HitRate}, {hits, Hit}, {calls, Call}] = proplists:get_value({instance, Seq}, CacheHitInfo),
      HitRateStr = observer_cli_lib:float_to_percent_with_two_digit(HitRate),
      SeqStr = lists:flatten(io_lib:format("~2..0w", [Seq])),
      Process = lists:duplicate(trunc(HitRate * 61), "|"),
