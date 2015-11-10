@@ -5,10 +5,11 @@
 -export([uptime/0]).
 -export([move_cursor_to_top_line/0]).
 -export([clear_screen/0]).
--export([float_to_list_with_two_digit/1]).
+-export([float_to_percent_with_two_digit/1]).
 -export([to_list/1]).
 -export([get_menu_title/1]).
 -export([green/1]).
+-export([to_megabyte_list/1]).
 
 -spec move_cursor_to_top_line() -> ok.
 move_cursor_to_top_line() ->
@@ -26,8 +27,8 @@ uptime() ->
   lists:flatten(io_lib:format("~pDays ~p:~p:~p", [D, H, M, S])).
 
 %% @doc 0.98.2342 -> 98.23%, 1 -> 100.0%
--spec float_to_list_with_two_digit(float()) -> string().
-float_to_list_with_two_digit(Float) ->
+-spec float_to_percent_with_two_digit(float()) -> string().
+float_to_percent_with_two_digit(Float) ->
   Val = trunc(Float*10000),
   Integer = Val div 100,
   Decmial = Val - Integer * 100,
@@ -54,4 +55,10 @@ choose(Title) -> "\e[48;2;184;0;0m" ++ Title ++ "\e[0m".
 unchoose(Title) -> "\e[48;2;80;80;80m" ++ Title ++ "\e[0m".
 
 green(String) -> "\e[32;1m" ++ String ++ "\e[0m".
+
+to_megabyte_list(M) ->
+  Val = trunc(M/(1024*1024)*1000),
+  Integer = Val div 1000,
+  Decmial = Val - Integer * 1000,
+  lists:flatten(io_lib:format("~w.~4..0wM", [Integer, Decmial])).
 

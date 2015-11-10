@@ -21,13 +21,13 @@ waiting(Pid) ->
   case  Input of
     "q\n" -> erlang:send(Pid, quit);
     "o\n" ->
-      erlang:send(Pid, quit),
+      erlang:send(Pid, go_to_other_view),
       observer_cli:start();
     "e\n" ->
-      erlang:send(Pid, quit),
+      erlang:send(Pid, go_to_other_view),
       observer_cli_system:start();
     "a\n" ->
-      erlang:send(Pid, quit),
+      erlang:send(Pid, go_to_other_view),
       observer_cli_allocator:start();
     _ -> waiting(Pid)
   end.
@@ -38,7 +38,8 @@ loop(Interval) ->
   erlang:send_after(Interval, self(), refresh),
   receive
     refresh -> loop(Interval);
-    quit -> quit
+    quit -> draw_help(), quit;
+    go_to_other_view -> quit
   end.
 
 draw_help() ->
