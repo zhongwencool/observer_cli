@@ -16,7 +16,7 @@ start() -> start(?TOP_MIN_REFRESH_INTERVAL).
 start(RefreshMillSecond)when RefreshMillSecond >= ?TOP_MIN_REFRESH_INTERVAL ->
   ParentPid = self(),
   ChildPid = spawn_link(fun() -> loop(RefreshMillSecond, ParentPid) end),
-  top(ChildPid).
+  waiting(ChildPid, RefreshMillSecond).
 
 %% @doc List System and Architecture, CPU's and Threads metrics  in observer's system
 -spec system() -> quit.
@@ -43,37 +43,38 @@ table() -> observer_cli_table:start().
   port_limit, ets_limit, logical_processors, multi_scheduling]).
 -define(CHANGE_SYSTEM_ITEM, [used, allocated, unused]).
 
-top(Pid) ->
+waiting(Pid, Interval) ->
   Input = io:get_line(""),
   Operate = input_to_operation(Input),
   case  Operate of
     quit -> erlang:send(Pid, quit);
     go_to_ets_view ->
       erlang:send(Pid, go_to_ets_view),
-      waiting_last_draw_done_to_other_view();
+      waiting_last_draw_done_to_other_view(Interval);
     go_to_allocator_view ->
       erlang:send(Pid, go_to_allocator_view),
-      waiting_last_draw_done_to_other_view();
+      waiting_last_draw_done_to_other_view(Interval);
     go_to_help_view ->
       erlang:send(Pid, go_to_help_view),
-      waiting_last_draw_done_to_other_view();
+      waiting_last_draw_done_to_other_view(Interval);
     pause_or_resume ->
       erlang:send(Pid, pause_or_resume),
-      top(Pid);
-    error_input -> top(Pid);
+      waiting(Pid, Interval);
+    error_input -> waiting(Pid, Interval);
     {Func, Type, no_change} ->
       erlang:send(Pid, {Func, Type}),
-      top(Pid);
+      waiting(Pid, Interval);
     {Func, Type, RefreshInterval} ->
       case string:to_integer(RefreshInterval) of
-        {error, no_integer} -> loop;
-        {Int, _} when Int >= ?TOP_MIN_REFRESH_INTERVAL -> erlang:send(Pid, {Func, Type, Int});
-        {_, _} -> loop
-      end,
-      top(Pid)
+        {error, no_integer} -> waiting(Pid, Interval);
+        {NewInterval, _} when NewInterval >= ?TOP_MIN_REFRESH_INTERVAL ->
+          erlang:send(Pid, {Func, Type, NewInterval}),
+          waiting(Pid, NewInterval);
+        {_, _} -> waiting(Pid, Interval)
+      end
   end.
 
-waiting_last_draw_done_to_other_view() ->
+waiting_last_draw_done_to_other_view(Interval) ->
   receive
     draw_work_done_to_ets_view ->
       observer_cli_system:start();
@@ -81,7 +82,7 @@ waiting_last_draw_done_to_other_view() ->
       observer_cli_allocator:start();
     draw_work_done_to_help_view ->
       observer_cli_help:start()
-  after 100000 -> time_out
+  after Interval -> time_out
   end.
 
 input_to_operation("q\n") ->  quit;
@@ -186,9 +187,9 @@ draw_system_line(ProcLimit, SmpSupport, PortLimit, EtsLimit, LogicalProc, MultiS
   io:format("|\e[46m~-9.9s | ~-19.19s| ~-18.18s | ~-22.22s | ~-20.20s | ~-25.25s\e[49m|~n", %%cyan background
     ["System ", "Count/Limit", "System Switch", "State", "Memory Info", "Megabyte"]),
   io:format(ProcFormat,
-    ["Proc Count", ProcCount, "Smp Support", SmpSupport, "Allocted Mem", AlloctedMem]),
+    ["ProcCount", ProcCount, "Smp Support", SmpSupport, "Allocted Mem", AlloctedMem]),
   io:format(PortFormat,
-    ["Port Count", PortCount, "Multi Scheduling", MultiScheduling, "Use Mem", UseMem, UsePrce]),
+    ["PortCount", PortCount, "Multi Scheduling", MultiScheduling, "Use Mem", UseMem, UsePrce]),
   io:format("|~-9.9s | ~-19.19s| ~-18.18s | ~-22.22s | ~-20.20s | ~-19.19s~6.6s|~n",
     ["Ets Limit", EtsLimit, "Logical Processors", LogicalProc, "Unuse Mem", UnunsedMem, UnusePrce]).
 
