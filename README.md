@@ -57,11 +57,12 @@ $ make && make shell
 - [x] observer_cli:system(). include System and Architecture, CPU's and Threads metrics  in observer's system 
 - [x] observer_cli:allocator(). Memory Allocators: std, ll, eheap, ets,fix, binary, driver.
 - [x] observer_cli:table(). include all metrics ets in observer's Table Viewer.
-- [ ] mneisa table info
+- [x] observer_cli:help()
+- [ ] remote node support
+- [ ] ~~mneisa table info~~ You should use mnesia:info or mnesia:system_info() or mnesia:system_info(all).
 - [ ] ~~Draw all appication’s relations.~~
 - [ ] ~~Trace Overview.~~ You should use recon_trace.
-- [ ] remote node support
-- [x] observer_cli:help()
+
 
 --------------------
 ###License
