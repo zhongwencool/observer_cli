@@ -82,20 +82,21 @@ draw_menu() ->
   io:format("~s~n", [Title ++ RefreshStr ++ Space ++ UpTime]).
 
 draw_cache_hit_rates(CacheHitInfo) ->
-  io:format("|\e[46m~8.8s|  ~6.6s  |  ~7.7s  |~68.68s\e[49m|~n", ["Instance", "Hits", "Calls", "Hit Rate"]),
-  Format = "| ~4.4s   |~10.10s|~-11.11s|~-61.61s ~6.6s|~n",
+  io:format("|\e[46m~8.8s|    ~-6.6s | ~7.7s    |~66.66s\e[49m|~n", ["Instance", "Hits", "Calls", "Hit Rate"]),
+  Format = "| ~4.4s   |~10.10s | ~-11.11s|~-59.59s ~6.6s|~n",
   Len = erlang:length(CacheHitInfo),
   [begin
      [{hit_rate, HitRate}, {hits, Hit}, {calls, Call}] = proplists:get_value({instance, Seq}, CacheHitInfo),
      HitRateStr = observer_cli_lib:float_to_percent_with_two_digit(HitRate),
      SeqStr = lists:flatten(io_lib:format("~2..0w", [Seq])),
-     Process = lists:duplicate(trunc(HitRate * 61), "|"),
+     RealyHitRate = case Hit == 0 andalso Call == 0 of true -> 0; false -> HitRate end,
+     Process = lists:duplicate(trunc(RealyHitRate * 59), "|"),
      io:format(Format, [SeqStr, observer_cli_lib:to_list(Hit), observer_cli_lib:to_list(Call), Process, HitRateStr])
    end|| Seq <- lists:seq(0, Len - 1)].
 
 draw_average_block_size_info(AverageBlockCurs, AverageBlockMaxs) ->
-  io:format("|\e[46m~-16.16s|~20.20s|~20.20s|~20.20s|~20.20s\e[49m|~n",
-    ["Allocator Type", "current    mbcs", "max    mbcs", "current      sbcs", "max      sbcs"]),
+  io:format("|\e[46m~-16.16s|~-20.20s|~-20.20s|~-20.20s|~-20.20s\e[49m|~n",
+    ["Allocator Type", "Current Multiblock", "Max Multiblock", "Current Single Block", "Max Single Block"]),
   Format = "|~-16.16s|~20.20s|~20.20s|~20.20s|~20.20s|~n",
   [begin
      Content = get_alloc(AllocKey, AverageBlockCurs, AverageBlockMaxs),
