@@ -1,11 +1,14 @@
 %%% @author zhongwen <zhongwencool@gmail.com>
 -module(observer_cli_allocator).
 
+-include("observer_cli.hrl").
 %% API
 -export([start/0]).
+-export([start/2]).
 
--define(TOP_MIN_REFLUSH_INTERVAL, 5000).
--define(BROAD, 102).
+%%for rpc
+-export([get_average_block_sizes/1]).
+-export([get_cache_hit_rates/1]).
 
 -define(UTIL_ALLOCATORS,
               [binary_alloc,
@@ -25,40 +28,47 @@ start() ->
   Pid = spawn_link(fun() ->
     observer_cli_lib:move_cursor_to_top_line(),
     observer_cli_lib:clear_screen(),
-    loop(?TOP_MIN_REFLUSH_INTERVAL, ParentPid) end),
-  waiting(Pid, ?TOP_MIN_REFLUSH_INTERVAL).
+    loop(local_node, ?ALLOCATOR_MIN_INTERVAL, ParentPid) end),
+  waiting(local_node, Pid, ?ALLOCATOR_MIN_INTERVAL).
 
-waiting(Pid, Interval) ->
+start(Node, Interval) ->
+  ParentPid = self(),
+  Pid = spawn_link(fun() ->
+    observer_cli_lib:move_cursor_to_top_line(),
+    observer_cli_lib:clear_screen(),
+    loop(Node, Interval, ParentPid) end),
+  waiting(Node, Pid, Interval).
+
+waiting(Node, Pid, Interval) ->
   Input = io:get_line(""),
   case  Input of
     "q\n" -> erlang:send(Pid, quit);
     "o\n" ->
       erlang:send(Pid, go_to_home_view),
-      waiting_last_draw_done_to_other_view(Interval);
+      waiting_last_draw_done_to_other_view(Node, Interval);
     "e\n" ->
       erlang:send(Pid, go_to_ets_view),
-      waiting_last_draw_done_to_other_view(Interval);
+      waiting_last_draw_done_to_other_view(Node, Interval);
     "h\n" ->
       erlang:send(Pid, go_to_help_view),
-      waiting_last_draw_done_to_other_view(Interval);
-    _ -> waiting(Pid, Interval)
+      waiting_last_draw_done_to_other_view(Node, Interval);
+    _ -> waiting(Node, Pid, Interval)
   end.
 
-waiting_last_draw_done_to_other_view(Interval) ->
+waiting_last_draw_done_to_other_view(Node, Interval) ->
   receive
     draw_work_done_to_home_view ->
-      observer_cli:start();
+      observer_cli:start(Node, ?HOME_MIN_INTERVAL);
     draw_work_done_to_ets_view ->
-      observer_cli_allocator:start();
+      observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL);
     draw_work_done_to_help_view ->
-      observer_cli_help:start()
+      observer_cli_help:start(Node, ?HELP_MIN_INTERVAL)
   after Interval -> time_out
   end.
 
-loop(Interval, ParentPid) ->
-  CacheHitInfo = recon_alloc:cache_hit_rates(),
-  AverageBlockCurs = recon_alloc:average_block_sizes(current),
-  AverageBlockMaxs = recon_alloc:average_block_sizes(max),
+loop(Node, Interval, ParentPid) ->
+  CacheHitInfo = get_cache_hit_rates(Node),
+  {AverageBlockCurs, AverageBlockMaxs}  = get_average_block_sizes(Node),
 
   observer_cli_lib:move_cursor_to_top_line(),
   draw_menu(),
@@ -67,18 +77,26 @@ loop(Interval, ParentPid) ->
   erlang:send_after(Interval, self(), refresh),
   receive
     quit -> quit;
-    refresh -> loop(Interval, ParentPid);
+    refresh -> loop(Node, Interval, ParentPid);
     go_to_ets_view ->  erlang:send(ParentPid, draw_work_done_to_ets_view), quit;
     go_to_home_view -> erlang:send(ParentPid, draw_work_done_to_home_view), quit;
     go_to_help_view ->  erlang:send(ParentPid, draw_work_done_to_help_view), quit
   end.
 
+get_cache_hit_rates(local_node) -> recon_alloc:cache_hit_rates();
+get_cache_hit_rates(Node) -> rpc:call(Node, ?MODULE, get_cache_hit_rates, [local_node]).
+
+get_average_block_sizes(local_node) ->
+  {recon_alloc:average_block_sizes(current), recon_alloc:average_block_sizes(max)};
+get_average_block_sizes(Node) ->
+  rpc:call(Node, ?MODULE, get_average_block_sizes, [local_node]).
+
 draw_menu() ->
   [Home, Ets, Alloc, Help]  = observer_cli_lib:get_menu_title(allocator),
   Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "| ", Help, "|"]),
   UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime()) ++ "|",
-  RefreshStr = "Refresh: " ++ integer_to_list(?TOP_MIN_REFLUSH_INTERVAL) ++ "ms",
-  Space = lists:duplicate(?BROAD - erlang:length(Title)  - erlang:length(RefreshStr)  - erlang:length(UpTime)+ 90, " "),
+  RefreshStr = "Refresh: " ++ integer_to_list(?ALLOCATOR_MIN_INTERVAL) ++ "ms",
+  Space = lists:duplicate(?ALLOCATOR_BROAD - erlang:length(Title)  - erlang:length(RefreshStr)  - erlang:length(UpTime)+ 90, " "),
   io:format("~s~n", [Title ++ RefreshStr ++ Space ++ UpTime]).
 
 draw_cache_hit_rates(CacheHitInfo) ->
