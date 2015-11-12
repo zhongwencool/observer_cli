@@ -3,7 +3,7 @@
 ##observer_cli
 [![Build Status](https://travis-ci.org/zhongwencool/observer_cli.svg?branch=master)](https://travis-ci.org/zhongwencool/observer_cli)
 
-A sharp tool using [recon](https://github.com/ferd/recon) to see erlang node.
+Visualize Erlang Nodes On The Command Line By Using [recon](https://github.com/ferd/recon).
 
 ##Target
 Minimal consumption.
@@ -43,12 +43,10 @@ $ make && make shell
 ###Command
 
 ```erlang
-> observer_cli:start().
-> observer_cli:start(4000).
-> observer_cli:system().
-> observer_cli:allocator().
-> observer_cli:allocator(4000).
-> observer_cli:table().
+> observer_cli:start().%% default refresh interval is 2000
+> observer_cli:start(Interval).
+> observer_cli:start(Node, Cookie, Interval).
+> observer_cli:start(Node, Interval).
 ```
 
 -------------------
@@ -58,7 +56,7 @@ $ make && make shell
 - [x] observer_cli:allocator(). Memory Allocators: std, ll, eheap, ets,fix, binary, driver.
 - [x] observer_cli:table(). include all metrics ets in observer's Table Viewer.
 - [x] observer_cli:help()
-- [ ] remote node support
+- [x] remote node support
 - [ ] ~~mneisa table info~~ You should use mnesia:info or mnesia:system_info() or mnesia:system_info(all).
 - [ ] ~~Draw all appication’s relations.~~
 - [ ] ~~Trace Overview.~~ You should use recon_trace.

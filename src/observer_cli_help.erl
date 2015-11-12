@@ -1,35 +1,38 @@
 %%% @author zhongwen <zhongwencool@gmail.com>
 -module(observer_cli_help).
 
-
+-include("observer_cli.hrl").
 %% API
 -export([start/0]).
+-export([start/2]).
 
--define(TOP_MIN_REFLUSH_INTERVAL, 5000).
 -define(BROAD, 133).
 
 start() ->
+  start(local_node, ?HELP_MIN_INTERVAL).
+
+start(Node, Interval) ->
   Pid = spawn_link(fun() ->
     observer_cli_lib:clear_screen(),
     draw_menu(),
     draw_help(),
-    loop(?TOP_MIN_REFLUSH_INTERVAL) end),
-  waiting(Pid).
+    loop(Interval) end),
+  waiting(Node, Pid).
 
-waiting(Pid) ->
+waiting(Node, Pid) ->
   Input = io:get_line(""),
   case  Input of
     "q\n" -> erlang:send(Pid, quit);
     "o\n" ->
       erlang:send(Pid, go_to_other_view),
-      observer_cli:start();
+      observer_cli:start(Node, ?HOME_MIN_INTERVAL);
     "e\n" ->
       erlang:send(Pid, go_to_other_view),
-      observer_cli_system:start();
+      observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL);
     "a\n" ->
       erlang:send(Pid, go_to_other_view),
-      observer_cli_allocator:start();
-    _ -> waiting(Pid)
+      observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL);
+    _ -> waiting(Node, Pid)
   end.
 
 loop(Interval) ->
@@ -57,6 +60,7 @@ draw_help() ->
   io:format("|\e[42mAbout o(OBSERVER)'s Command\e[49m                                                                                                        |~n"),
   io:format("|\e[48;2;80;80;80mr:5000\e[0m will switch mode to reduction(proc_count) and set the refresh  time to 5000ms                                               |~n"),
   io:format("|\e[48;2;80;80;80mrr:5000\e[0m will switch mode to reduction(proc_window) and set the refresh time to 5000ms                                              |~n"),
+  io:format("|\e[48;2;80;80;80mobserver_cli:start(Node, Cookie, Interval) or observer_start:start(Node, Interval)\e[0m Remote node  support:                 |~n"),
   io:format("|\e[42mReference\e[49m                                                                                                                          |~n"),
   io:format("|More infomation about recon:proc_count/2 and recon:proc_window/3 refer to https://github.com/ferd/recon/blob/master/src/recon.erl  |~n"),
   io:format("|Any issue please visit: https://github.com/zhongwencool/observer_cli/issues                                                        |~n").

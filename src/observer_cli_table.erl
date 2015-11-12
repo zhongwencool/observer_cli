@@ -3,18 +3,18 @@
 
 %% API
 -export([start/0]).
--export([draw_ets_info/0]).
+-export([draw_ets_info/1]).
 
 %% @doc List include all metrics in observer's Table Viewer.
 -spec start() -> ok.
-start() -> draw_ets_info().
+start() -> draw_ets_info(local_node).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 -define(MAX_SHOW_LEN, 25).
 
-draw_ets_info() ->
+draw_ets_info(local_node) ->
   AllEtsInfo = [begin get_ets_info(Tab)  end||Tab <- ets:all()],
   SorEtsInfo = lists:sort(fun({_, Ets1}, {_, Ets2}) ->
     proplists:get_value(memory, Ets1) > proplists:get_value(memory, Ets2)
@@ -36,7 +36,9 @@ draw_ets_info() ->
      io:format("|~-24.24s|~-12.12s|~-12.12s|~-12.12s|~-10.10s|~6.6s|~-24.24s|~-12.12s|~10.10s |~n",
      [IdOrName, Memory, Size, Type, Protect, KeyPos, Write ++ "/" ++ Read, Owner, NamedTable])
    end||{Id, Ets} <- lists:sublist(SorEtsInfo, ?MAX_SHOW_LEN)],
-  ok.
+  ok;
+draw_ets_info(Node) ->
+  rpc:call(Node, ?MODULE, draw_ets_info, [local_node]).
 
 get_value(Key, List) ->
    observer_cli_lib:to_list(proplists:get_value(Key, List)).
