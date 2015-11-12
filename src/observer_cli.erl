@@ -48,7 +48,9 @@ start(Node, Cookie, RefreshMillSecond)when is_atom(Node)
       end
   end.
 
-start(Node, RefreshMillSecond)when is_integer(RefreshMillSecond)
+start(local_node, RefreshMillSecond) ->
+  start(RefreshMillSecond);
+start(Node, RefreshMillSecond)when is_integer(RefreshMillSecond) andalso is_atom(Node)
   andalso RefreshMillSecond >= ?HOME_MIN_INTERVAL
   andalso is_atom(Node) ->
   case Node == node() of
@@ -57,7 +59,7 @@ start(Node, RefreshMillSecond)when is_integer(RefreshMillSecond)
       case net_kernel:connect_node(Node) of
         true -> start_remote_node(RefreshMillSecond, Node);
         false -> io:format("remote node ~p(cookie:~p) refuse to be connected ~n", [Node, erlang:get_cookie()]);
-        ignore -> io:format("the local node is not alive ignore remote node~p(cookie:~p)~n", [Node, erlang:get_cookie()])
+        ignored -> io:format("the local node is not alive ignore remote node~p(cookie:~p)~n", [Node, erlang:get_cookie()])
       end
   end.
 
@@ -134,7 +136,7 @@ waiting_last_draw_done_to_other_view(Interval, Node) ->
       observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL);
     draw_work_done_to_help_view ->
       observer_cli_help:start(Node, ?HELP_MIN_INTERVAL)
-  after Interval -> time_out
+  after Interval * 3 -> timeout
   end.
 
 input_to_operation("q\n") ->  quit;
