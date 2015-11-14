@@ -2,14 +2,14 @@
 -module(observer_cli_lib).
 
 %% API
--export([uptime/0]).
+-export([uptime/1]).
 -export([move_cursor_to_top_line/0]).
 -export([clear_screen/0]).
 -export([float_to_percent_with_two_digit/1]).
 -export([to_list/1]).
 -export([get_menu_title/1]).
 -export([green/1]).
--export([to_megabyte_list/1]).
+-export([to_megabyte_str/1]).
 
 -spec move_cursor_to_top_line() -> ok.
 move_cursor_to_top_line() ->
@@ -20,11 +20,12 @@ clear_screen() ->
   io:format("\e[H\e[J").
 
 %% @doc  return format "124Days 12:12:12"
--spec uptime() -> string().
-uptime() ->
+-spec uptime(atom()) -> string().
+uptime(local_node) ->
   {UpTime, _} = erlang:statistics(wall_clock),
   {D, {H, M, S}} = calendar:seconds_to_daystime(UpTime div 1000),
-  lists:flatten(io_lib:format("~pDays ~p:~p:~p", [D, H, M, S])).
+  lists:flatten(io_lib:format("~pDays ~p:~p:~p", [D, H, M, S]));
+uptime(Node) -> rpc:call(Node, ?MODULE, uptime, [local_node]).
 
 %% @doc 0.98.2342 -> 98.23%, 1 -> 100.0%
 -spec float_to_percent_with_two_digit(float()) -> string().
@@ -56,7 +57,7 @@ unchoose(Title) -> "\e[48;2;80;80;80m" ++ Title ++ "\e[0m".
 
 green(String) -> "\e[32;1m" ++ String ++ "\e[0m".
 
-to_megabyte_list(M) ->
+to_megabyte_str(M) ->
   Val = trunc(M/(1024*1024)*1000),
   Integer = Val div 1000,
   Decmial = Val - Integer * 1000,

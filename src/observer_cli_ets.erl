@@ -1,18 +1,19 @@
 %%% @author zhongwen <zhongwencool@gmail.com>
--module(observer_cli_table).
+-module(observer_cli_ets).
 
 %% API
 -export([start/0]).
+-export([start/1]).
 -export([draw_ets_info/1]).
+
+-define(MAX_SHOW_LEN, 25).
 
 %% @doc List include all metrics in observer's Table Viewer.
 -spec start() -> ok.
 start() -> draw_ets_info(local_node).
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%% Private
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
--define(MAX_SHOW_LEN, 25).
+-spec start(atom()) -> ok.
+start(Node) -> draw_ets_info(Node).
 
 draw_ets_info(local_node) ->
   AllEtsInfo = [begin get_ets_info(Tab)  end||Tab <- ets:all()],
@@ -40,6 +41,9 @@ draw_ets_info(local_node) ->
 draw_ets_info(Node) ->
   rpc:call(Node, ?MODULE, draw_ets_info, [local_node]).
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Private
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 get_value(Key, List) ->
    observer_cli_lib:to_list(proplists:get_value(Key, List)).
 

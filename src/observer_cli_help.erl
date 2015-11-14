@@ -12,36 +12,42 @@ start() ->
   start(local_node, ?HELP_MIN_INTERVAL).
 
 start(Node, Interval) ->
-  Pid = spawn_link(fun() ->
+  ChildPid = spawn_link(fun() ->
     observer_cli_lib:clear_screen(),
-    draw_menu(),
+    draw_menu(Node),
     draw_help(),
-    loop(Interval) end),
-  waiting(Node, Pid).
+    loop(Interval, Node) end),
+  waiting(Node, ChildPid).
 
-waiting(Node, Pid) ->
+waiting(Node, ChildPid) ->
   Input = io:get_line(""),
   case  Input of
-    "q\n" -> erlang:send(Pid, quit);
+    "q\n" ->
+      erlang:send(ChildPid, quit),
+      "";
     "o\n" ->
-      erlang:send(Pid, go_to_other_view),
+      erlang:send(ChildPid, go_to_other_view),
       observer_cli:start(Node, ?HOME_MIN_INTERVAL);
     "e\n" ->
-      erlang:send(Pid, go_to_other_view),
+      erlang:send(ChildPid, go_to_other_view),
       observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL);
     "a\n" ->
-      erlang:send(Pid, go_to_other_view),
+      erlang:send(ChildPid, go_to_other_view),
       observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL);
-    _ -> waiting(Node, Pid)
+    _ -> waiting(Node, ChildPid)
   end.
 
-loop(Interval) ->
+loop(Interval, Node) ->
   observer_cli_lib:move_cursor_to_top_line(),
-  draw_menu(),
+  draw_menu(Node),
   erlang:send_after(Interval, self(), refresh),
   receive
-    refresh -> loop(Interval);
-    quit -> draw_help(), quit;
+    refresh -> loop(Interval, Node);
+    quit ->
+      observer_cli_lib:move_cursor_to_top_line(),
+      draw_menu(Node),
+      draw_help(),
+      quit;
     go_to_other_view -> quit
   end.
 
@@ -60,14 +66,14 @@ draw_help() ->
   io:format("|\e[42mAbout o(OBSERVER)'s Command\e[49m                                                                                                        |~n"),
   io:format("|\e[48;2;80;80;80mr:5000\e[0m will switch mode to reduction(proc_count) and set the refresh  time to 5000ms                                               |~n"),
   io:format("|\e[48;2;80;80;80mrr:5000\e[0m will switch mode to reduction(proc_window) and set the refresh time to 5000ms                                              |~n"),
-  io:format("|\e[48;2;80;80;80mobserver_cli:start(Node, Cookie, Interval) or observer_start:start(Node, Interval)\e[0m Remote node  support:                 |~n"),
+  io:format("|\e[48;2;80;80;80mobserver_cli:start(Node, Cookie, Interval) or observer_start:start(Node, Interval)\e[0m Remote node  support:                           |~n"),
   io:format("|\e[42mReference\e[49m                                                                                                                          |~n"),
   io:format("|More infomation about recon:proc_count/2 and recon:proc_window/3 refer to https://github.com/ferd/recon/blob/master/src/recon.erl  |~n"),
   io:format("|Any issue please visit: https://github.com/zhongwencool/observer_cli/issues                                                        |~n").
 
-draw_menu() ->
+draw_menu(Node) ->
   [Home, Ets, Alloc, Help]  = observer_cli_lib:get_menu_title(help),
   Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "| ", Help, "|"]),
-  UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime()) ++ "|",
+  UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime(Node)) ++ "|",
   Space = lists:duplicate(?BROAD - erlang:length(Title)    - erlang:length(UpTime)+ 90, " "),
   io:format("~s~n", [Title ++ Space ++ UpTime]).

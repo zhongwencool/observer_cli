@@ -15,50 +15,51 @@
 -spec start() -> quit.
 start() -> start(local_node, ?SYSTEM_MIN_INTERVAL).
 -spec start(pos_integer()) -> quit.
-start(ReflushMillSecond)when ReflushMillSecond >= ?SYSTEM_MIN_INTERVAL ->
+start(RefreshMillSecond)when RefreshMillSecond >= ?SYSTEM_MIN_INTERVAL ->
+  start(local_node, RefreshMillSecond).
+
+start(Node, RefreshMillSecond)when RefreshMillSecond >= ?SYSTEM_MIN_INTERVAL ->
   ParentPid = self(),
   Pid = spawn_link(fun() ->
     observer_cli_lib:clear_screen(),
-    loop(local_node, ReflushMillSecond, erlang:make_ref(), ParentPid) end),
-  waiting(local_node, Pid, ReflushMillSecond).
+    loop(Node, RefreshMillSecond, erlang:make_ref(), ParentPid) end),
+  waiting(Node, Pid, RefreshMillSecond).
 
-start(Node, ReflushMillSecond)when ReflushMillSecond >= ?SYSTEM_MIN_INTERVAL ->
-  ParentPid = self(),
-  Pid = spawn_link(fun() ->
-    observer_cli_lib:clear_screen(),
-    loop(Node, ReflushMillSecond, erlang:make_ref(), ParentPid) end),
-  waiting(Node, Pid, ReflushMillSecond).
+%%for fetching data from remote data by rpc:call/4
+get_system_info(local_node) -> observer_backend:sys_info();
+get_system_info(Node) -> rpc:call(Node, ?MODULE, get_system_info, [local_node]).
 
-waiting(Node, Pid, Interval) ->
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Private
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+waiting(Node, ChildPid, Interval) ->
   Input = io:get_line(""),
   case  Input of
-    "q\n" -> erlang:send(Pid, quit);
+    "q\n" -> erlang:send(ChildPid, quit);
     "o\n" ->
-      erlang:send(Pid, go_to_home_view),
+      erlang:send(ChildPid, go_to_home_view),
       waiting_last_draw_done_to_other_view(Node, Interval);
     "a\n" ->
-      erlang:send(Pid, go_to_allocator_view),
+      erlang:send(ChildPid, go_to_allocator_view),
       waiting_last_draw_done_to_other_view(Node, Interval);
     "h\n" ->
-      erlang:send(Pid, go_to_help_view),
+      erlang:send(ChildPid, go_to_help_view),
       waiting_last_draw_done_to_other_view(Node, Interval);
-    _ -> waiting(Node, Pid, Interval)
+    _ -> waiting(Node, ChildPid, Interval)
   end.
 
 waiting_last_draw_done_to_other_view(Node, Interval) ->
   receive
-    draw_work_done_to_home_view  ->
-      observer_cli:start(Node, ?HOME_MIN_INTERVAL);
-    draw_work_done_to_allocator_view  ->
-      observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL);
-    draw_work_done_to_help_view  ->
-      observer_cli_help:start(Node, ?HELP_MIN_INTERVAL)
+    draw_work_done_to_home_view  -> observer_cli:start(Node, ?HOME_MIN_INTERVAL);
+    draw_work_done_to_allocator_view  -> observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL);
+    draw_work_done_to_help_view  -> observer_cli_help:start(Node, ?HELP_MIN_INTERVAL)
   after Interval -> time_out
   end.
 
 loop(Node, Interal, LastTimeRef, ParentPid) ->
   observer_cli_lib:move_cursor_to_top_line(),
   refresh(Node),
+  observer_cli_ets:start(Node),
   erlang:cancel_timer(LastTimeRef),
   TimeRef = erlang:send_after(Interal, self(), refresh),
   receive
@@ -78,16 +79,9 @@ refresh(Node) ->
   CPU = proplists:get_value("CPU's and Threads", SystemAndCPU),
   {_, _, Memory} = lists:keyfind("Memory Usage", 1, MemAndStatistics),
   {_, _, Statistics} = lists:keyfind("Statistics", 1, MemAndStatistics),
-  draw_menu(),
-  draw(System, CPU, Memory, Statistics),
-  observer_cli_table:draw_ets_info(Node).
+  draw_menu(Node),
+  draw(System, CPU, Memory, Statistics).
 
-get_system_info(local_node) -> observer_backend:sys_info();
-get_system_info(Node) -> rpc:call(Node, ?MODULE, get_system_info, [local_node]).
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%% Private
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 draw(System, CPU, Memory, Statistics) ->
   io:format("|\e[46m~-22.22s| ~-8.8s|~-23.23s| ~-7.7s|~-15.15s|~18.18s|~-13.13s|~15.15s \e[49m|~n", %%cyan background
     ["System and Architecture", "State", "CPU's and Threads", "State", "Memory Usage", "State", "Statistics", "State"]),
@@ -108,10 +102,10 @@ draw(System, CPU, Memory, Statistics) ->
    end|| Pos<- lists:seq(1, 6)],
   io:format("|~-22.22s| ~-106.106s |~n", ["Compiled for", to_list(proplists:get_value("Compiled for", System))]).
 
-draw_menu() ->
+draw_menu(Node) ->
   [Home, Ets, Alloc, Help]  = observer_cli_lib:get_menu_title(ets),
   Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "| ", Help, "|"]),
-  UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime()) ++ "|",
+  UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime(Node)) ++ "|",
   RefreshStr = "Refresh: " ++ integer_to_list(?SYSTEM_MIN_INTERVAL) ++ "ms",
   Space = lists:duplicate(?SYSTEM_BROAD - erlang:length(Title)  - erlang:length(RefreshStr)  - erlang:length(UpTime)+ 90, " "),
   io:format("~s~n", [Title ++ RefreshStr ++ Space ++ UpTime]).
