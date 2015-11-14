@@ -39,6 +39,18 @@ start(Node, Interval) ->
     loop(Node, Interval, ParentPid) end),
   waiting(Node, Pid, Interval).
 
+%%for fetching data from remote data by rpc:call/4
+get_cache_hit_rates(local_node) -> recon_alloc:cache_hit_rates();
+get_cache_hit_rates(Node) -> rpc:call(Node, ?MODULE, get_cache_hit_rates, [local_node]).
+
+get_average_block_sizes(local_node) ->
+  {recon_alloc:average_block_sizes(current), recon_alloc:average_block_sizes(max)};
+get_average_block_sizes(Node) ->
+  rpc:call(Node, ?MODULE, get_average_block_sizes, [local_node]).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Private
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 waiting(Node, Pid, Interval) ->
   Input = io:get_line(""),
   case  Input of
@@ -71,7 +83,7 @@ loop(Node, Interval, ParentPid) ->
   {AverageBlockCurs, AverageBlockMaxs}  = get_average_block_sizes(Node),
 
   observer_cli_lib:move_cursor_to_top_line(),
-  draw_menu(),
+  draw_menu(Node),
   draw_average_block_size_info(AverageBlockCurs, AverageBlockMaxs),
   draw_cache_hit_rates(CacheHitInfo),
   erlang:send_after(Interval, self(), refresh),
@@ -83,39 +95,32 @@ loop(Node, Interval, ParentPid) ->
     go_to_help_view ->  erlang:send(ParentPid, draw_work_done_to_help_view), quit
   end.
 
-get_cache_hit_rates(local_node) -> recon_alloc:cache_hit_rates();
-get_cache_hit_rates(Node) -> rpc:call(Node, ?MODULE, get_cache_hit_rates, [local_node]).
-
-get_average_block_sizes(local_node) ->
-  {recon_alloc:average_block_sizes(current), recon_alloc:average_block_sizes(max)};
-get_average_block_sizes(Node) ->
-  rpc:call(Node, ?MODULE, get_average_block_sizes, [local_node]).
-
-draw_menu() ->
+draw_menu(Node) ->
   [Home, Ets, Alloc, Help]  = observer_cli_lib:get_menu_title(allocator),
   Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "| ", Help, "|"]),
-  UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime()) ++ "|",
+  UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime(Node)) ++ "|",
   RefreshStr = "Refresh: " ++ integer_to_list(?ALLOCATOR_MIN_INTERVAL) ++ "ms",
   Space = lists:duplicate(?ALLOCATOR_BROAD - erlang:length(Title)  - erlang:length(RefreshStr)  - erlang:length(UpTime)+ 90, " "),
   io:format("~s~n", [Title ++ RefreshStr ++ Space ++ UpTime]).
 
 draw_cache_hit_rates(CacheHitInfo) ->
-  io:format("|\e[46m~8.8s|    ~-6.6s | ~7.7s    |~66.66s\e[49m|~n", ["Instance", "Hits", "Calls", "Hit Rate"]),
-  Format = "| ~4.4s   |~10.10s | ~-11.11s|~-59.59s ~6.6s|~n",
+  io:format("|\e[46m    ~8.8s    |    ~-6.6s | ~7.7s    |~89.89s\e[49m|~n", ["Instance", "Hits", "Calls", "Hit Rate"]),
+  Format = "|     ~4.4s       |~10.10s | ~-11.11s|~-82.82s ~6.6s|~n",
   Len = erlang:length(CacheHitInfo),
   [begin
      [{hit_rate, HitRate}, {hits, Hit}, {calls, Call}] = proplists:get_value({instance, Seq}, CacheHitInfo),
      HitRateStr = observer_cli_lib:float_to_percent_with_two_digit(HitRate),
      SeqStr = lists:flatten(io_lib:format("~2..0w", [Seq])),
      RealyHitRate = case Hit == 0 andalso Call == 0 of true -> 0; false -> HitRate end,
-     Process = lists:duplicate(trunc(RealyHitRate * 59), "|"),
+     Process = lists:duplicate(trunc(RealyHitRate * 82), "|"),
      io:format(Format, [SeqStr, observer_cli_lib:to_list(Hit), observer_cli_lib:to_list(Call), Process, HitRateStr])
    end|| Seq <- lists:seq(0, Len - 1)].
 
 draw_average_block_size_info(AverageBlockCurs, AverageBlockMaxs) ->
-  io:format("|\e[46m~-16.16s|~-20.20s|~-20.20s|~-20.20s|~-20.20s\e[49m|~n",
-    ["Allocator Type", "Current Multiblock", "Max Multiblock", "Current Single Block", "Max Single Block"]),
-  Format = "|~-16.16s|~20.20s|~20.20s|~20.20s|~20.20s|~n",
+  io:format("|\e[46m~-16.16s| ~-26.26s | ~-26.26s |~-28.28s| ~-25.25s \e[49m|~n",
+    ["Allocator Type", "Current Multiblock Carriers", "Max Multiblock Carriers",
+      "Current SingleBlock Carriers", "Max Single Block Carriers"]),
+  Format = "|~-16.16s|  ~24.24s  |  ~24.24s  |  ~24.24s  | ~24.24s  |~n",
   [begin
      Content = get_alloc(AllocKey, AverageBlockCurs, AverageBlockMaxs),
      io:format(Format, Content)
@@ -130,7 +135,7 @@ get_alloc(Key, Curs, Maxs) ->
   MaxMbcs = proplists:get_value(mbcs, MaxRes),
   MaxSbcs = proplists:get_value(sbcs, MaxRes),
   [atom_to_list(Key),
-    observer_cli_lib:to_megabyte_list(CurMbcs),
-    observer_cli_lib:to_megabyte_list(MaxMbcs),
-    observer_cli_lib:to_megabyte_list(CurSbcs),
-    observer_cli_lib:to_megabyte_list(MaxSbcs)].
+    observer_cli_lib:to_megabyte_str(CurMbcs),
+    observer_cli_lib:to_megabyte_str(MaxMbcs),
+    observer_cli_lib:to_megabyte_str(CurSbcs),
+    observer_cli_lib:to_megabyte_str(MaxSbcs)].
