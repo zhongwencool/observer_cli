@@ -53,7 +53,7 @@ waiting_last_draw_done_to_other_view(Node, Interval) ->
     draw_work_done_to_home_view  -> observer_cli:start(Node, ?HOME_MIN_INTERVAL);
     draw_work_done_to_allocator_view  -> observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL);
     draw_work_done_to_help_view  -> observer_cli_help:start(Node, ?HELP_MIN_INTERVAL)
-  after Interval -> time_out
+  after Interval -> timeout
   end.
 
 loop(Node, Interal, LastTimeRef, ParentPid) ->
