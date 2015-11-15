@@ -9,3 +9,4 @@
 -define(ALLOCATOR_BROAD, 133).
 -define(SYSTEM_BROAD, 133).
 -define(HELP_BROAD, 133).
+-define(PROCESS_BROAD, 133).

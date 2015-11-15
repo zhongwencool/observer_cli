@@ -10,6 +10,7 @@
 -export([get_menu_title/1]).
 -export([green/1]).
 -export([to_megabyte_str/1]).
+-export([mfa_to_list/1]).
 
 -spec move_cursor_to_top_line() -> ok.
 move_cursor_to_top_line() ->
@@ -63,3 +64,7 @@ to_megabyte_str(M) ->
   Decmial = Val - Integer * 1000,
   lists:flatten(io_lib:format("~w.~4..0wM", [Integer, Decmial])).
 
+mfa_to_list({Module, Fun, Arg}) ->
+  atom_to_list(Module) ++ ":" ++
+    atom_to_list(Fun) ++ "/" ++
+    integer_to_list(Arg).
