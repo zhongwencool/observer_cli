@@ -45,13 +45,20 @@ to_list(Pid) when is_pid(Pid) -> erlang:pid_to_list(Pid);
 to_list(Val) -> Val.
 
 get_menu_title(home) ->
-  [choose(" o(OBSERVER) "), unchoose(" e(ETS/SYSTEM) "), unchoose(" a(ALLOCATOR) "), unchoose("h(HELP) ")];
+  [choose(" o(OBSERVER) "), unchoose(" e(ETS/SYSTEM) "),
+    unchoose(" a(ALLOCATOR) "), unchoose("db(MNESIA) "), unchoose("h(HELP) ")];
 get_menu_title(ets) ->
-  [unchoose(" o(OBSERVER) "), choose(" e(ETS/SYSTEM) "), unchoose(" a(ALLOCATOR) "), unchoose("h(HELP) ")];
+  [unchoose(" o(OBSERVER) "), choose(" e(ETS/SYSTEM) "),
+    unchoose(" a(ALLOCATOR) "), unchoose("db(MNESIA) "), unchoose("h(HELP) ")];
 get_menu_title(allocator) ->
-  [unchoose(" o(OBSERVER) "), unchoose(" e(ETS/SYSTEM) "), choose(" a(ALLOCATOR) "), unchoose("h(HELP) ")];
+  [unchoose(" o(OBSERVER) "), unchoose(" e(ETS/SYSTEM) "),
+    choose(" a(ALLOCATOR) "), unchoose("db(MNESIA) "), unchoose("h(HELP) ")];
 get_menu_title(help) ->
-  [unchoose(" o(OBSERVER) "), unchoose(" e(ETS/SYSTEM) "), unchoose(" a(ALLOCATOR) "), choose("h(HELP) ")].
+  [unchoose(" o(OBSERVER) "), unchoose(" e(ETS/SYSTEM) "),
+    unchoose(" a(ALLOCATOR) "), unchoose("db(MNESIA) "), choose("h(HELP) ")];
+get_menu_title(mnesia) ->
+  [unchoose(" o(OBSERVER) "), unchoose(" e(ETS/SYSTEM) "),
+    unchoose(" a(ALLOCATOR) "), choose("db(MNESIA) "), unchoose("h(HELP) ")].
 
 choose(Title) -> "\e[48;2;184;0;0m" ++ Title ++ "\e[0m".
 unchoose(Title) -> "\e[48;2;80;80;80m" ++ Title ++ "\e[0m".

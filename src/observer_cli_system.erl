@@ -45,6 +45,9 @@ waiting(Node, ChildPid, Interval) ->
     "h\n" ->
       erlang:send(ChildPid, go_to_help_view),
       waiting_last_draw_done_to_other_view(Node, Interval);
+    "db\n" ->
+      erlang:send(ChildPid, go_to_mnesia_view),
+      waiting_last_draw_done_to_other_view(Node, Interval);
     _ -> waiting(Node, ChildPid, Interval)
   end.
 
@@ -52,22 +55,24 @@ waiting_last_draw_done_to_other_view(Node, Interval) ->
   receive
     draw_work_done_to_home_view  -> observer_cli:start(Node, ?HOME_MIN_INTERVAL);
     draw_work_done_to_allocator_view  -> observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL);
-    draw_work_done_to_help_view  -> observer_cli_help:start(Node, ?HELP_MIN_INTERVAL)
+    draw_work_done_to_help_view  -> observer_cli_help:start(Node, ?HELP_MIN_INTERVAL);
+    draw_work_done_to_mnesia_view -> observer_cli_mnesia:start(Node, ?MNESIA_MIN_INTERVAL)
   after Interval -> timeout
   end.
 
-loop(Node, Interal, LastTimeRef, ParentPid) ->
+loop(Node, Interval, LastTimeRef, ParentPid) ->
   observer_cli_lib:move_cursor_to_top_line(),
   refresh(Node),
   observer_cli_ets:start(Node),
   erlang:cancel_timer(LastTimeRef),
-  TimeRef = erlang:send_after(Interal, self(), refresh),
+  TimeRef = erlang:send_after(Interval, self(), refresh),
   receive
     quit -> quit;
     go_to_home_view -> erlang:send(ParentPid, draw_work_done_to_home_view), quit;
     go_to_allocator_view -> erlang:send(ParentPid, draw_work_done_to_allocator_view), quit;
     go_to_help_view -> erlang:send(ParentPid, draw_work_done_to_help_view), quit;
-    _ -> loop(Node, Interal, TimeRef, ParentPid)
+    go_to_mnesia_view -> erlang:send(ParentPid, draw_work_done_to_mnesia_view), quit;
+    _ -> loop(Node, Interval, TimeRef, ParentPid)
   end.
 
 refresh(Node) ->
@@ -103,11 +108,11 @@ draw(System, CPU, Memory, Statistics) ->
   io:format("|~-22.22s| ~-106.106s |~n", ["Compiled for", to_list(proplists:get_value("Compiled for", System))]).
 
 draw_menu(Node) ->
-  [Home, Ets, Alloc, Help]  = observer_cli_lib:get_menu_title(ets),
-  Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "| ", Help, "|"]),
+  [Home, Ets, Alloc, Mnesia, Help]  = observer_cli_lib:get_menu_title(ets),
+  Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "| ", Mnesia, "|", Help, "|"]),
   UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime(Node)) ++ "|",
   RefreshStr = "Refresh: " ++ integer_to_list(?SYSTEM_MIN_INTERVAL) ++ "ms",
-  Space = lists:duplicate(?SYSTEM_BROAD - erlang:length(Title)  - erlang:length(RefreshStr)  - erlang:length(UpTime)+ 90, " "),
+  Space = lists:duplicate(?SYSTEM_BROAD - erlang:length(Title)  - erlang:length(RefreshStr)  - erlang:length(UpTime)+ 110, " "),
   io:format("~s~n", [Title ++ RefreshStr ++ Space ++ UpTime]).
 
 to_list(Val) when is_integer(Val) -> integer_to_list(Val);

@@ -64,6 +64,9 @@ waiting(Node, Pid, Interval) ->
     "h\n" ->
       erlang:send(Pid, go_to_help_view),
       waiting_last_draw_done_to_other_view(Node, Interval);
+    "db\n" ->
+      erlang:send(Pid, go_to_mnesia_view),
+      waiting_last_draw_done_to_other_view(Node, Interval);
     _ -> waiting(Node, Pid, Interval)
   end.
 
@@ -74,7 +77,9 @@ waiting_last_draw_done_to_other_view(Node, Interval) ->
     draw_work_done_to_ets_view ->
       observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL);
     draw_work_done_to_help_view ->
-      observer_cli_help:start(Node, ?HELP_MIN_INTERVAL)
+      observer_cli_help:start(Node, ?HELP_MIN_INTERVAL);
+    draw_work_done_to_mnesia_view ->
+      observer_cli_mnesia:start(Node, ?MNESIA_MIN_INTERVAL)
   after Interval -> time_out
   end.
 
@@ -92,15 +97,16 @@ loop(Node, Interval, ParentPid) ->
     refresh -> loop(Node, Interval, ParentPid);
     go_to_ets_view ->  erlang:send(ParentPid, draw_work_done_to_ets_view), quit;
     go_to_home_view -> erlang:send(ParentPid, draw_work_done_to_home_view), quit;
-    go_to_help_view ->  erlang:send(ParentPid, draw_work_done_to_help_view), quit
+    go_to_help_view ->  erlang:send(ParentPid, draw_work_done_to_help_view), quit;
+    go_to_mnesia_view -> erlang:send(ParentPid, draw_work_done_to_mnesia_view), quit
   end.
 
 draw_menu(Node) ->
-  [Home, Ets, Alloc, Help]  = observer_cli_lib:get_menu_title(allocator),
-  Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "| ", Help, "|"]),
+  [Home, Ets, Alloc, Mnesia, Help]  = observer_cli_lib:get_menu_title(allocator),
+  Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "| ", Mnesia, "|", Help, "|"]),
   UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime(Node)) ++ "|",
   RefreshStr = "Refresh: " ++ integer_to_list(?ALLOCATOR_MIN_INTERVAL) ++ "ms",
-  Space = lists:duplicate(?ALLOCATOR_BROAD - erlang:length(Title)  - erlang:length(RefreshStr)  - erlang:length(UpTime)+ 90, " "),
+  Space = lists:duplicate(?ALLOCATOR_BROAD - erlang:length(Title)  - erlang:length(RefreshStr)  - erlang:length(UpTime)+ 110, " "),
   io:format("~s~n", [Title ++ RefreshStr ++ Space ++ UpTime]).
 
 draw_cache_hit_rates(CacheHitInfo) ->
