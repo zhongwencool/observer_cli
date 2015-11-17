@@ -1,6 +1,6 @@
 {application, observer_cli,
  [
-  {description, "a sharp observer cli top in Erlang"},
+  {description, "Visualize Erlang Nodes On The Command Line"},
   {vsn, "1.0"},
   {modules, [
              observer_cli
