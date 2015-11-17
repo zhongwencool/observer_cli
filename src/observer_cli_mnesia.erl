@@ -1,3 +1,4 @@
+%%% @author zhongwen <zhongwencool@gmail.com>
 -module(observer_cli_mnesia).
 
 -export([start/0]).
@@ -6,7 +7,6 @@
 
 %%for rpc
 -export([get_table_list/2]).
--export([draw_mnesia/1]).
 
 -include("observer_cli.hrl").
 
@@ -25,26 +25,68 @@ start(Node, RefreshMillSecond)when RefreshMillSecond >= ?MNESIA_MIN_INTERVAL ->
     loop(Node, RefreshMillSecond, erlang:make_ref(), ParentPid, true) end),
   waiting(Node, Pid, RefreshMillSecond).
 
+get_table_list(local_node, HideSys) ->
+  Owner = ets:info(schema, owner),
+  case Owner of
+    undefined -> {error, "Mnesia is not running on: " ++ atom_to_list(node())};
+    _->
+      {registered_name, RegName} = process_info(Owner, registered_name),
+      CollectFun = fun(Id, Acc) ->
+        Name = Id,
+        case HideSys andalso ordsets:is_element(Name, mnesia_tables()) orelse Name =:= schema of
+          true -> Acc; %% ignore system table
+          false ->
+            Storage = mnesia:table_info(Id, storage_type),
+            Tab0 = [{name, Name},
+              {owner, Owner},
+              {size, mnesia:table_info(Id, size)},
+              {reg_name, RegName},
+              {type, mnesia:table_info(Id, type)},
+              {memory, mnesia:table_info(Id, memory) * erlang:system_info(wordsize)},
+              {storage, Storage},
+              {index, mnesia:table_info(Id, index)}
+            ],
+            Tab =
+              case Storage  of
+                _ when Storage =:= ram_copies orelse Storage =:=  disc_copies ->
+                  [{fixed, ets:info(Id, fixed)}, {compressed, ets:info(Id, compressed)}|Tab0];
+                disc_only_copies -> [{fixed, dets:info(Id, safe_fixed)}|Tab0];
+                _ -> Tab0
+              end,
+            [Tab|Acc]
+        end
+      end,
+      lists:foldl(CollectFun, [], mnesia:system_info(tables))
+  end;
+get_table_list(Node, HideSys) -> rpc:call(Node, ?MODULE, get_table_list, [local_node, HideSys]).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Private
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 loop(Node, Interval, LastTimeRef, ParentPid, HideSystemTable) ->
   erlang:cancel_timer(LastTimeRef),
   case get_table_list(Node, false) of
-    {error, Reason} -> io:format("Mnesia Error~p~n", [Reason]);
+    {error, Reason} ->
+      observer_cli_lib:move_cursor_to_top_line(),
+      draw_menu(Node, Interval, HideSystemTable),
+      io:format("Mnesia Error   ~p~n", [Reason]),
+      draw_last_line(Node);
     MnesiaList ->
       observer_cli_lib:move_cursor_to_top_line(),
       draw_menu(Node, Interval, HideSystemTable),
       draw_mnesia(MnesiaList),
-      draw_last_line(Node),
-      TimeRef = erlang:send_after(Interval, self(), refresh),
-      receive
-        quit -> quit;
-        go_to_home_view -> erlang:send(ParentPid, draw_work_done_to_home_view), quit;
-        go_to_allocator_view -> erlang:send(ParentPid, draw_work_done_to_allocator_view), quit;
-        go_to_help_view -> erlang:send(ParentPid, draw_work_done_to_help_view), quit;
-        go_to_ets_view ->  erlang:send(ParentPid, draw_work_done_to_ets_view), quit;
-        {new_interval, NewInterval} -> loop(Node, NewInterval, TimeRef, ParentPid, HideSystemTable);
-        {system_table, NewHideSystemTable} -> loop(Node, Interval, TimeRef, ParentPid, NewHideSystemTable);
-        _ -> loop(Node, Interval, TimeRef, ParentPid, HideSystemTable)
-      end
+      draw_last_line(Node)
+  end,
+  TimeRef = erlang:send_after(Interval, self(), refresh),
+  receive
+    quit -> quit;
+    go_to_home_view -> erlang:send(ParentPid, draw_work_done_to_home_view), quit;
+    go_to_allocator_view -> erlang:send(ParentPid, draw_work_done_to_allocator_view), quit;
+    go_to_help_view -> erlang:send(ParentPid, draw_work_done_to_help_view), quit;
+    go_to_ets_view ->  erlang:send(ParentPid, draw_work_done_to_ets_view), quit;
+    {new_interval, NewInterval} -> loop(Node, NewInterval, TimeRef, ParentPid, HideSystemTable);
+    {system_table, NewHideSystemTable} -> loop(Node, Interval, TimeRef, ParentPid, NewHideSystemTable);
+    _ -> loop(Node, Interval, TimeRef, ParentPid, HideSystemTable)
   end.
 
 waiting(Node, ChildPid, Interval) ->
@@ -118,42 +160,6 @@ draw_last_line(Node) ->
 
 get_value(Key, List) ->
   observer_cli_lib:to_list(proplists:get_value(Key, List)).
-
-get_table_list(local_node, HideSys) ->
-  Owner = ets:info(schema, owner),
-  case Owner of
-    undefined ->
-      {error, "Mnesia is not running on: " ++ atom_to_list(node())};
-    _->
-      {registered_name, RegName} = process_info(Owner, registered_name),
-      CollectFun = fun(Id, Acc) ->
-        Name = Id,
-        case HideSys andalso ordsets:is_element(Name, mnesia_tables()) orelse Name =:= schema of
-          true -> Acc; %% ignore system table
-          false ->
-            Storage = mnesia:table_info(Id, storage_type),
-            Tab0 = [{name,Name},
-              {owner,Owner},
-              {size,mnesia:table_info(Id, size)},
-              {reg_name,RegName},
-              {type,mnesia:table_info(Id, type)},
-              {memory,mnesia:table_info(Id, memory) * erlang:system_info(wordsize)},
-              {storage,Storage},
-              {index,mnesia:table_info(Id, index)}
-            ],
-            Tab =
-            case Storage  of
-              _ when Storage =:= ram_copies orelse Storage =:=  disc_copies ->
-                [{fixed, ets:info(Id, fixed)}, {compressed, ets:info(Id, compressed)}|Tab0];
-              disc_only_copies -> [{fixed, dets:info(Id, safe_fixed)}|Tab0];
-              _ -> Tab0
-            end,
-            [Tab|Acc]
-        end
-      end,
-      lists:foldl(CollectFun, [], mnesia:system_info(tables))
-  end;
-get_table_list(Node, HideSys) -> rpc:call(Node, ?MODULE, get_table_list, [local_node, HideSys]).
 
 mnesia_tables() ->
   [ir_AliasDef, ir_ArrayDef, ir_AttributeDef, ir_ConstantDef,
