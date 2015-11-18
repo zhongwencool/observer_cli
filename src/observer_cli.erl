@@ -17,7 +17,7 @@
 -export([get_memory_and_msg_queue_len/2]).
 
 
--define(DEFAULT_RANK_NUM, 20). %%fill full in 13.3 inch screen(24 core)
+-define(DEFAULT_RANK_NUM, 28). %%fill full in 13.3 inch screen(24 core)
 -define(CPU_ALARM_THRESHOLD, 0.8). %% cpu >= this value will be highlight
 -define(COUNT_ALARM_THRESHOLD, 0.85). %% port or process reach max_limit * 0.85 will be highlight
 -define(FAST_COLLECT_INTENAL, 0). %% collect should be fast when we push the keyboard to switch mode
@@ -38,7 +38,10 @@ start(RefreshMillSecond)when
   ChildPid = spawn_link(fun() -> loop(RefreshMillSecond, ParentPid, local_node, 1) end),
   waiting(ChildPid, RefreshMillSecond, local_node).
 
-%%
+-spec start(Node, Cookie, RefreshMillSecond) -> quit when
+  Node:: atom(),
+  Cookie:: atom(),
+  RefreshMillSecond:: pos_integer().
 start(Node, Cookie, RefreshMillSecond)when
   is_atom(Node)
     andalso is_atom(Cookie)
@@ -55,6 +58,9 @@ start(Node, Cookie, RefreshMillSecond)when
       end
   end.
 
+-spec start(Node, RefreshMillSecond) -> quit when
+  Node:: atom(),
+  RefreshMillSecond:: pos_integer().
 start(local_node, RefreshMillSecond) -> start(RefreshMillSecond);
 start(Node, RefreshMillSecond)when
   is_integer(RefreshMillSecond)
@@ -72,11 +78,14 @@ start(Node, RefreshMillSecond)when
   end.
 
 %%for fetching data from remote data by rpc:call/4
+-spec get_stable_system_info(atom()) -> list().
 get_stable_system_info(local_node) ->
   [begin observer_cli_lib:to_list(erlang:system_info(Item))end ||Item<- ?STABLE_SYSTEM_ITEM];
 get_stable_system_info(Node) ->
   rpc:call(Node, ?MODULE, get_stable_system_info, [local_node]).
 
+-spec get_change_system_info(Node)  -> [pos_integer()|pos_integer()|pos_integer()] when
+  Node:: atom().
 get_change_system_info(local_node) ->
   UsedMem = recon_alloc:memory(used),
   AllocatedMem = recon_alloc:memory(allocated),
@@ -84,6 +93,11 @@ get_change_system_info(local_node) ->
 get_change_system_info(Node) ->
   rpc:call(Node, ?MODULE, get_change_system_info, [local_node]).
 
+-spec get_reductions_and_msg_queue_len(Pid, Atom) -> [{reducions, Reductions}|{message_queue_len, Len}]when
+  Pid:: pid(),
+  Atom:: atom(),
+  Reductions:: pos_integer(),
+  Len:: pos_integer().
 get_reductions_and_msg_queue_len(Pid, local_node) ->
   case recon:info(Pid, [reductions, message_queue_len]) of
     undefined -> [{reductions, "die"}, {message_queue_len, "die"}];
@@ -91,6 +105,12 @@ get_reductions_and_msg_queue_len(Pid, local_node) ->
   end;
 get_reductions_and_msg_queue_len(Pid, Node) ->
   rpc:call(Node, ?MODULE, get_reductions_and_msg_queue_len, [Pid, local_node]).
+
+-spec get_memory_and_msg_queue_len(Pid, Node) -> [{memory, Memory}|{message_queue_len, MessageLen}] when
+  Pid:: pid(),
+  Node:: atom(),
+  Memory:: pos_integer(),
+  MessageLen:: pos_integer().
 get_memory_and_msg_queue_len(Pid, local_node) ->
   case recon:info(Pid, [memory, message_queue_len]) of
     undefined -> [{memory, "die"}, {message_queue_len, "die"}];
@@ -99,11 +119,27 @@ get_memory_and_msg_queue_len(Pid, local_node) ->
 get_memory_and_msg_queue_len(Pid, Node) ->
   rpc:call(Node, ?MODULE, get_memory_and_msg_queue_len, [Pid, local_node]).
 
+-spec get_node_stats_list(Node, NodeStatsCostTime) -> [{[Absolutes::{atom(), term()}],
+  [Increments::{atom(), term()}]}] when
+  Node :: atom(),
+  NodeStatsCostTime :: pos_integer().
 get_node_stats_list(local_node, NodeStatsCostTime) ->
   recon:node_stats_list(1, NodeStatsCostTime);
 get_node_stats_list(Node, NodeStatsCostTime) ->
   rpc:call(Node, ?MODULE, get_node_stats_list, [local_node, NodeStatsCostTime]).
 
+-spec get_ranklist_and_cost_time(Node, Func, Type, Interval, Time) -> {Status, RemainTime} when
+  Node:: atom(),
+  Func:: proc_window|proc_count,
+  Type:: memory|binary_memory|reductions|total_heap_size,
+  Interval:: pos_integer(),
+  Time:: pos_integer(),
+  Status:: {pid(),
+            Attr::_,
+            [Name::atom()
+            |{current_function, mfa()}
+            |{initial_call, mfa()}, ...]},
+  RemainTime:: pos_integer().
 get_ranklist_and_cost_time(local_node, proc_window, Type, Interval, Time) when Time =/= ?FAST_COLLECT_INTENAL ->
   RemainTime = 2 * Interval - Time,
   {recon:proc_window(Type, ?DEFAULT_RANK_NUM, RemainTime), RemainTime};
@@ -255,8 +291,8 @@ refresh(Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, NodeStats
   draw_system_line(ProcLimit, SmpSupport, PortLimit, EtsLimit, LogicalProc, MultiScheduling,
     UseMemInt, AlloctedMemInt, UnusedMemInt, ProcSum),
   draw_memory_process_line(ProcSum, MemSum, NewNodeStatsCostTime),
-  draw_scheduler_usage(MemSum),
-  ChoosePid = draw_process_rank(Type, RankList, ?DEFAULT_RANK_NUM, Node, RankPos),
+  SchedulerLineLen = draw_scheduler_usage(MemSum),
+  ChoosePid = draw_process_rank(Type, RankList, ?DEFAULT_RANK_NUM - SchedulerLineLen, Node, RankPos),
   draw_last_line(),
 
   TimeRef = refresh_next_time(Func, Type, Interal, RankCostTime, NodeStatsCostTime),
@@ -378,26 +414,28 @@ draw_scheduler_usage(SchedulerUsage, SchedulerNum) when SchedulerNum < 24 ->
      Process2 = lists:duplicate(trunc(Percent2 * 54), "|"),
      Format = cpu_format_alarm_color(Percent1, Percent2),
      io:format(Format, [CPUSeq1, Process1, CPU1, CPUSeq2, Process2, CPU2])
-   end|| Seq <- lists:seq(1, HalfSchedulerNum)];
+   end|| Seq <- lists:seq(1, HalfSchedulerNum)],
+  HalfSchedulerNum;
 %% >= 24 will split 3 part
 draw_scheduler_usage(SchedulerUsage, SchedulerNum) ->
-  PotSchedulerNum = SchedulerNum div 3,
+  PosSchedulerNum = SchedulerNum div 3,
   [begin
      Percent1 = proplists:get_value(Seq, SchedulerUsage),
-     Percent2 = proplists:get_value(Seq + PotSchedulerNum, SchedulerUsage),
-     Percent3 = proplists:get_value(Seq + 2 * PotSchedulerNum, SchedulerUsage),
+     Percent2 = proplists:get_value(Seq + PosSchedulerNum, SchedulerUsage),
+     Percent3 = proplists:get_value(Seq + 2 * PosSchedulerNum, SchedulerUsage),
      CPU1 = observer_cli_lib:float_to_percent_with_two_digit(Percent1),
      CPU2 = observer_cli_lib:float_to_percent_with_two_digit(Percent2),
      CPU3 = observer_cli_lib:float_to_percent_with_two_digit(Percent3),
      CPUSeq1 = lists:flatten(io_lib:format("~2..0w", [Seq])),
-     CPUSeq2 = lists:flatten(io_lib:format("~2..0w", [Seq + PotSchedulerNum])),
-     CPUSeq3 = lists:flatten(io_lib:format("~2..0w", [Seq + 2 * PotSchedulerNum])),
+     CPUSeq2 = lists:flatten(io_lib:format("~2..0w", [Seq + PosSchedulerNum])),
+     CPUSeq3 = lists:flatten(io_lib:format("~2..0w", [Seq + 2 * PosSchedulerNum])),
      Process1 = lists:duplicate(trunc(Percent1 * 32), "|"),
      Process2 = lists:duplicate(trunc(Percent2 * 32), "|"),
      Process3 = lists:duplicate(trunc(Percent2 * 32), "|"),
      Format = cpu_format_alarm_color(Percent1, Percent2, Percent3),
      io:format(Format, [CPUSeq1, Process1, CPU1, CPUSeq2, Process2, CPU2, CPUSeq3, Process3, CPU3])
-   end|| Seq <- lists:seq(1, PotSchedulerNum)].
+   end|| Seq <- lists:seq(1, PosSchedulerNum)],
+  PosSchedulerNum.
 
 %| Pid            | Reductions| Name or Initial Call        |    Memory|Msg Queue |Current Function                              |
 %| <0.3.0>        |     220329| erl_prim_loader             |    220329|0         |erl_prim_loader:loop/3                        |
@@ -432,7 +470,7 @@ draw_process_rank(memory, MemoryList, Num, Node, RankPos) ->
      io:format(Format,
        [pid_to_list(Pid), observer_cli_lib:to_list(MemVal), NameOrCall,
          observer_cli_lib:to_list(Reductions), observer_cli_lib:to_list(MsgQueueLen), CurFun])
-   end|| Pos <- lists:seq(1, Num)],
+   end|| Pos <- lists:seq(1, erlang:min(Num, erlang:length(MemoryList)))],
   {Pid, _MemVal, _Call} = lists:nth(RankPos, MemoryList),
   Pid;
 draw_process_rank(binary_memory, MemoryList, Num, Node, RankPos) ->
@@ -447,7 +485,7 @@ draw_process_rank(binary_memory, MemoryList, Num, Node, RankPos) ->
      io:format(Format,
        [pid_to_list(Pid), observer_cli_lib:to_list(MemVal), NameOrCall,
          observer_cli_lib:to_list(Reductions), observer_cli_lib:to_list(MsgQueueLen), CurFun])
-   end|| Pos <- lists:seq(1, Num)],
+   end|| Pos <- lists:seq(1, erlang:min(Num, erlang:length(MemoryList)))],
   {Pid, _MemVal, _Call} = lists:nth(RankPos, MemoryList),
   Pid;
 draw_process_rank(reductions, ReductionList, Num, Node, RankPos) ->
@@ -462,7 +500,7 @@ draw_process_rank(reductions, ReductionList, Num, Node, RankPos) ->
      io:format(Format,
        [pid_to_list(Pid), observer_cli_lib:to_list(Reductions), NameOrCall,
          observer_cli_lib:to_list(Memory), observer_cli_lib:to_list(MsgQueueLen), CurFun])
-   end|| Pos <- lists:seq(1, Num)],
+   end|| Pos <- lists:seq(1, erlang:min(Num, erlang:length(ReductionList)))],
   {Pid, _MemVal, _Call} = lists:nth(RankPos, ReductionList),
   Pid;
 draw_process_rank(total_heap_size, HeapList, Num, Node, RankPos) ->
@@ -477,7 +515,7 @@ draw_process_rank(total_heap_size, HeapList, Num, Node, RankPos) ->
      io:format(Format,
        [pid_to_list(Pid), observer_cli_lib:to_list(HeapSize), NameOrCall,
          observer_cli_lib:to_list(Reductions), observer_cli_lib:to_list(MsgQueueLen), CurFun])
-   end|| Pos <- lists:seq(1, Num)],
+   end|| Pos <- lists:seq(1, erlang:min(Num, erlang:length(HeapList)))],
   {Pid, _MemVal, _Call} = lists:nth(RankPos, HeapList),
   Pid.
 

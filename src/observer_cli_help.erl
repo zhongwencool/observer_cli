@@ -8,9 +8,11 @@
 
 -define(BROAD, 133).
 
+-spec start() -> quit.
 start() ->
   start(local_node, ?HELP_MIN_INTERVAL).
 
+-spec start(atom(), pos_integer()) -> quit.
 start(Node, Interval) ->
   ChildPid = spawn_link(fun() ->
     observer_cli_lib:clear_screen(),
@@ -19,6 +21,9 @@ start(Node, Interval) ->
     loop(Interval, Node) end),
   waiting(Node, ChildPid).
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Private
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 waiting(Node, ChildPid) ->
   Input = io:get_line(""),
   case  Input of

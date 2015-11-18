@@ -39,11 +39,15 @@ float_to_percent_with_two_digit(Float) ->
     _ -> lists:flatten(io_lib:format("~2..0w.~2..0w%", [Integer, Decmial]))
   end.
 
+-spec to_list(term()) -> list().
 to_list(Atom) when is_atom(Atom) -> atom_to_list(Atom);
 to_list(Integer) when is_integer(Integer) -> integer_to_list(Integer);
 to_list(Pid) when is_pid(Pid) -> erlang:pid_to_list(Pid);
 to_list(Val) -> Val.
 
+-spec get_menu_title(Menu) -> [Title] when
+  Menu:: home|ets|allocator|mnesia|help,
+  Title:: list().
 get_menu_title(home) ->
   [choose(" o(OBSERVER) "), unchoose(" e(ETS/SYSTEM) "),
     unchoose(" a(ALLOCATOR) "), unchoose("db(MNESIA) "), unchoose("h(HELP) ")];
@@ -63,14 +67,20 @@ get_menu_title(mnesia) ->
 choose(Title) -> "\e[48;2;184;0;0m" ++ Title ++ "\e[0m".
 unchoose(Title) -> "\e[48;2;80;80;80m" ++ Title ++ "\e[0m".
 
+-spec green(list()) -> list().
 green(String) -> "\e[32;1m" ++ String ++ "\e[0m".
 
+-spec to_megabyte_str(pos_integer()) -> list().
 to_megabyte_str(M) ->
   Val = trunc(M/(1024*1024)*1000),
   Integer = Val div 1000,
   Decmial = Val - Integer * 1000,
   lists:flatten(io_lib:format("~w.~4..0wM", [Integer, Decmial])).
 
+-spec mfa_to_list({Module, Fun, Arg}) -> list() when
+  Module:: atom(),
+  Fun:: atom(),
+  Arg:: list().
 mfa_to_list({Module, Fun, Arg}) ->
   atom_to_list(Module) ++ ":" ++
     atom_to_list(Fun) ++ "/" ++

@@ -18,6 +18,7 @@ start() -> start(local_node, ?MNESIA_MIN_INTERVAL).
 start(RefreshMillSecond)when RefreshMillSecond >= ?MNESIA_MIN_INTERVAL ->
   start(local_node, RefreshMillSecond).
 
+-spec start(atom(), pos_integer()) -> quit.
 start(Node, RefreshMillSecond)when RefreshMillSecond >= ?MNESIA_MIN_INTERVAL ->
   ParentPid = self(),
   Pid = spawn_link(fun() ->
@@ -25,6 +26,7 @@ start(Node, RefreshMillSecond)when RefreshMillSecond >= ?MNESIA_MIN_INTERVAL ->
     loop(Node, RefreshMillSecond, erlang:make_ref(), ParentPid, true) end),
   waiting(Node, Pid, RefreshMillSecond).
 
+-spec get_table_list(atom(), true|false) -> list().
 get_table_list(local_node, HideSys) ->
   Owner = ets:info(schema, owner),
   case Owner of

@@ -4,6 +4,7 @@ elvis
 *.o
 *.beam
 *.plt
+doc
 erl_crash.dump
 ebin
 rel/example_project
