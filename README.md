@@ -18,25 +18,37 @@ but you might think that one day observer_cli more convenient than observer.
 ```bash
 $ make && make shell   
 1> observer_cli:start().
-
 ```
-![Top](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_home_11_11.jpg)
+
+![Top](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_home_11_18.jpg)
+
+![Process](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_process_11_18.jpg)
+
 
 ```erlang
-2> observer_cli:system().
+2> observer_cli_system:start().
 ```
-![System](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_ets_11_11.jpg)
+
+![System](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_ets_11_18.jpg)
 
 ```erlang
-2> observer_cli:allocator().
+3> observer_cli_allocator:start().
 ```
-![Allocator](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_allocator_11_11.jpg)
+
+![Allocator](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_allocator_11_18.jpg)
+
 
 ```erlang
-2> observer_cli:help().
+4> observer_cli_mnesia:start().
 ```
-![Help](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_help_11_11.jpg)
 
+![Mnesia](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_mnesia_11_18.jpg)
+
+
+```erlang
+5> observer_cli_help:start().
+```
+![Help](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_help_11_18.jpg)
 
 
 ----------------
@@ -57,7 +69,7 @@ $ make && make shell
 - [x] observer_cli:table(). include all metrics ets in observer's Table Viewer.
 - [x] observer_cli:help()
 - [x] remote node support
-- [ ] ~~mneisa table info~~ You should use mnesia:info or mnesia:system_info() or mnesia:system_info(all).
+- [x] mneisa table info by using mnesia:info, mnesia:system_info/1, 
 - [ ] ~~Draw all appication’s relations.~~
 - [ ] ~~Trace Overview.~~ You should use recon_trace.
 
