@@ -5,7 +5,7 @@
 
 Visualize Erlang Nodes On The Command Line By Using [recon](https://github.com/ferd/recon).
 
-##Target
+##Goal
 Minimal consumption.
 
 Just look like [observer](http://www.erlang.org/doc/apps/observer/observer_ug.html) in shell, 

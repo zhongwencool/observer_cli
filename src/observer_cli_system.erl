@@ -18,6 +18,9 @@ start() -> start(local_node, ?SYSTEM_MIN_INTERVAL).
 start(RefreshMillSecond)when RefreshMillSecond >= ?SYSTEM_MIN_INTERVAL ->
   start(local_node, RefreshMillSecond).
 
+-spec start(Node, RefreshMillSecond) -> quit when
+  Node:: atom(),
+  RefreshMillSecond:: pos_integer().
 start(Node, RefreshMillSecond)when RefreshMillSecond >= ?SYSTEM_MIN_INTERVAL ->
   ParentPid = self(),
   Pid = spawn_link(fun() ->
@@ -26,6 +29,8 @@ start(Node, RefreshMillSecond)when RefreshMillSecond >= ?SYSTEM_MIN_INTERVAL ->
   waiting(Node, Pid, RefreshMillSecond).
 
 %%for fetching data from remote data by rpc:call/4
+-spec get_system_info(Node) -> [tuple()] when
+  Node:: atom().
 get_system_info(local_node) -> observer_backend:sys_info();
 get_system_info(Node) -> rpc:call(Node, ?MODULE, get_system_info, [local_node]).
 

@@ -7,13 +7,14 @@
 
 %% for rpc
 
--spec start(pos_integer(), pos_integer()) -> quit.
+-spec start(pid(), pos_integer()) -> quit.
 start(ProcessPid, RefreshMillSecond)when RefreshMillSecond >= ?PROCESS_MIN_INTERVAL ->
   start(local_node, ProcessPid, RefreshMillSecond).
--spec start(pos_integer()) -> quit.
+-spec start(pid()) -> quit.
 start(ProcessPid) when is_pid(ProcessPid) ->
   start(local_node, ProcessPid, ?PROCESS_MIN_INTERVAL).
 
+-spec start(atom(), pid(), pos_integer()) -> quit.
 start(Node, ProcessPid, RefreshMillSecond)when
   RefreshMillSecond >= ?PROCESS_MIN_INTERVAL
     andalso is_pid(ProcessPid)
@@ -25,6 +26,9 @@ start(Node, ProcessPid, RefreshMillSecond)when
     loop(Node, RefreshMillSecond, ProcessPid, ParentPid, erlang:make_ref(), InitQ, InitQ ) end),
   waiting(Node, ChildPid, RefreshMillSecond).
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Private
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 loop(Node, Interval, ProcessPid, ParentPid, TimeRef, OldRedus, OldMems) ->
   observer_cli_lib:move_cursor_to_top_line(),
   erlang:cancel_timer(TimeRef),
@@ -60,7 +64,7 @@ loop(Node, Interval, ProcessPid, ParentPid, TimeRef, OldRedus, OldMems) ->
     MessageQueueLen, HeapSize, TotalHeapSize, GarbageCollection),
   {NewRedus, NewMems} = draw_reductions_memory(Reductions, Memory, OldRedus, OldMems),
   draw_pid_info(Dictionary, Link, Monitors, MonitoredBy, CurrentStacktrace),
-  draw_last_line(Node),
+  draw_last_line(Node, Interval),
   NewTimeRef = erlang:send_after(Interval, self(), refresh),
   receive
     refresh -> loop(Node, Interval, ProcessPid, ParentPid, NewTimeRef, NewRedus, NewMems);
@@ -116,9 +120,13 @@ draw_reductions_memory(Reduction, Memory, Reductions, Memorys) ->
   io:format("|Memorys: ~122.122s|~n", [get_chart_format(NewMems)]),
   {NewRedus, NewMems}.
 
-draw_last_line(Node) ->
-  io:format("|\e[31;1mINPUT: \e[0m\e[44mq(quit)        b(back)     r:5000(refresh every 5000ms)  ~67.67s\e[49m|~n",
-    [observer_cli_lib:uptime(Node)]).
+draw_last_line(Node, Interval) ->
+  Format =
+    case Interval >= 10000 of
+      true -> "|\e[31;1mINPUT: \e[0m\e[44mq(quit)        b(back)     r:~w(refresh every ~wms)  ~65.65s\e[49m|~n";
+      false -> "|\e[31;1mINPUT: \e[0m\e[44mq(quit)        b(back)     r:~w(refresh every ~wms)  ~67.67s\e[49m|~n"
+    end,
+  io:format(Format, [Interval, Interval, "UpTime:" ++ observer_cli_lib:uptime(Node)]).
 
 get_chart_format(Queue) ->
   List = queue:to_list(Queue),
@@ -126,11 +134,11 @@ get_chart_format(Queue) ->
 
 chart_format([_R], Lines) -> Lines;
 chart_format([R, R|RestRedus], Lines) ->
-  chart_format([R| RestRedus], Lines ++ observer_cli_lib:to_list(R) ++ "===");
+  chart_format([R| RestRedus], Lines ++ observer_cli_lib:to_list(R) ++ "~~>");
 chart_format([R1, R2|RestRedus], Lines)when R1 > R2 ->
-  chart_format([R2| RestRedus], Lines ++ observer_cli_lib:to_list(R1) ++ "---");
+  chart_format([R2| RestRedus], Lines ++ observer_cli_lib:to_list(R1) ++ "~~>");
 chart_format([R1, R2|RestRedus], Lines)when R1 < R2 ->
-  chart_format([R2| RestRedus], Lines ++ observer_cli_lib:to_list(R1) ++ "+++").
+  chart_format([R2| RestRedus], Lines ++ observer_cli_lib:to_list(R1) ++ "~~>").
 
 dict_to_str(Dicts, 10) -> lists:flatten(io_lib:format("~P", [Dicts, 10]));
 dict_to_str(Dicts, Len) ->

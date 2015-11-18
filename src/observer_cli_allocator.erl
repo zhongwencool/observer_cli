@@ -22,7 +22,12 @@
                 temp_alloc
               ]).
 
+-type allocator() :: temp_alloc | eheap_alloc | binary_alloc | ets_alloc
+| driver_alloc | sl_alloc | ll_alloc | fix_alloc
+| std_alloc.
+
 %% @doc List Memory Allocators: std, ll, eheap, ets, fix, binary, driver.
+-spec start() -> quit.
 start() ->
   ParentPid = self(),
   Pid = spawn_link(fun() ->
@@ -31,6 +36,9 @@ start() ->
     loop(local_node, ?ALLOCATOR_MIN_INTERVAL, ParentPid) end),
   waiting(local_node, Pid, ?ALLOCATOR_MIN_INTERVAL).
 
+-spec start(Node, Interval) -> quit when
+  Node:: atom(),
+  Interval:: pos_integer().
 start(Node, Interval) ->
   ParentPid = self(),
   Pid = spawn_link(fun() ->
@@ -40,9 +48,17 @@ start(Node, Interval) ->
   waiting(Node, Pid, Interval).
 
 %%for fetching data from remote data by rpc:call/4
+-spec get_cache_hit_rates(Node) -> [{{instance, non_neg_integer()}, [{Key, Val}]}] when
+  Node:: atom(),
+  Key:: hit_rate | hits | calls,
+  Val:: term().
 get_cache_hit_rates(local_node) -> recon_alloc:cache_hit_rates();
 get_cache_hit_rates(Node) -> rpc:call(Node, ?MODULE, get_cache_hit_rates, [local_node]).
 
+-spec get_average_block_sizes(Node) -> {CurrentSize, MaxSize} when
+  Node:: atom(),
+  CurrentSize:: [{allocator(), [{mbcs | sbcs, pos_integer()}]}],
+  MaxSize:: [{allocator(), [{mbcs | sbcs, pos_integer()}]}].
 get_average_block_sizes(local_node) ->
   {recon_alloc:average_block_sizes(current), recon_alloc:average_block_sizes(max)};
 get_average_block_sizes(Node) ->

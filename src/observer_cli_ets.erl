@@ -15,6 +15,7 @@ start() -> draw_ets_info(local_node).
 -spec start(atom()) -> ok.
 start(Node) -> draw_ets_info(Node).
 
+-spec draw_ets_info(atom()) -> ok.
 draw_ets_info(local_node) ->
   AllEtsInfo = [begin get_ets_info(Tab)  end||Tab <- ets:all()],
   SorEtsInfo = lists:sort(fun({_, Ets1}, {_, Ets2}) ->
