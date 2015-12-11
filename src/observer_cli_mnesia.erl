@@ -21,7 +21,7 @@ start(RefreshMillSecond)when RefreshMillSecond >= ?MNESIA_MIN_INTERVAL ->
 -spec start(atom(), pos_integer()) -> quit.
 start(Node, RefreshMillSecond)when RefreshMillSecond >= ?MNESIA_MIN_INTERVAL ->
   ParentPid = self(),
-  Pid = spawn_link(fun() ->
+  Pid = spawn(fun() ->
     observer_cli_lib:clear_screen(),
     loop(Node, RefreshMillSecond, erlang:make_ref(), ParentPid, true) end),
   waiting(Node, Pid, RefreshMillSecond).
@@ -96,17 +96,17 @@ waiting(Node, ChildPid, Interval) ->
   case  Input of
     "q\n" -> erlang:send(ChildPid, quit);
     "o\n" ->
-      erlang:send(ChildPid, go_to_home_view),
-      waiting_last_draw_done_to_other_view(Node, Interval);
+      erlang:exit(ChildPid, stop),
+      observer_cli:start(Node, ?HOME_MIN_INTERVAL);
     "a\n" ->
-      erlang:send(ChildPid, go_to_allocator_view),
-      waiting_last_draw_done_to_other_view(Node, Interval);
+      erlang:exit(ChildPid, stop),
+      observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL);
     "e\n" ->
-      erlang:send(ChildPid, go_to_ets_view),
-      waiting_last_draw_done_to_other_view(Node, Interval);
+      erlang:exit(ChildPid, stop),
+      observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL);
     "h\n" ->
-      erlang:send(ChildPid, go_to_help_view),
-      waiting_last_draw_done_to_other_view(Node, Interval);
+      erlang:exit(ChildPid, stop),
+      observer_cli_help:start(Node, ?HELP_MIN_INTERVAL);
     "system:true\n" ->
       erlang:send(ChildPid, {system_table, true}),
       waiting(Node, ChildPid, Interval);
@@ -121,15 +121,6 @@ waiting(Node, ChildPid, Interval) ->
           waiting(Node, ChildPid, NewInterval)
       end;
     _ -> waiting(Node, ChildPid, Interval)
-  end.
-
-waiting_last_draw_done_to_other_view(Node, Interval) ->
-  receive
-    draw_work_done_to_home_view  -> observer_cli:start(Node, ?HOME_MIN_INTERVAL);
-    draw_work_done_to_allocator_view  -> observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL);
-    draw_work_done_to_help_view  -> observer_cli_help:start(Node, ?HELP_MIN_INTERVAL);
-    draw_work_done_to_ets_view -> observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL)
-  after Interval -> timeout
   end.
 
 draw_menu(Node, Interval, HideSystemTable) ->

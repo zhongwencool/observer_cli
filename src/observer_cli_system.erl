@@ -23,7 +23,7 @@ start(RefreshMillSecond)when RefreshMillSecond >= ?SYSTEM_MIN_INTERVAL ->
   RefreshMillSecond:: pos_integer().
 start(Node, RefreshMillSecond)when RefreshMillSecond >= ?SYSTEM_MIN_INTERVAL ->
   ParentPid = self(),
-  Pid = spawn_link(fun() ->
+  Pid = spawn(fun() ->
     observer_cli_lib:clear_screen(),
     loop(Node, RefreshMillSecond, erlang:make_ref(), ParentPid) end),
   waiting(Node, Pid, RefreshMillSecond).
@@ -42,27 +42,18 @@ waiting(Node, ChildPid, Interval) ->
   case  Input of
     "q\n" -> erlang:send(ChildPid, quit);
     "o\n" ->
-      erlang:send(ChildPid, go_to_home_view),
-      waiting_last_draw_done_to_other_view(Node, Interval);
+      erlang:exit(ChildPid, stop),
+      observer_cli:start(Node, ?HOME_MIN_INTERVAL);
     "a\n" ->
-      erlang:send(ChildPid, go_to_allocator_view),
-      waiting_last_draw_done_to_other_view(Node, Interval);
+      erlang:exit(ChildPid, stop),
+      observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL);
     "h\n" ->
-      erlang:send(ChildPid, go_to_help_view),
-      waiting_last_draw_done_to_other_view(Node, Interval);
+      erlang:exit(ChildPid, stop),
+      observer_cli_help:start(Node, ?HELP_MIN_INTERVAL);
     "db\n" ->
-      erlang:send(ChildPid, go_to_mnesia_view),
-      waiting_last_draw_done_to_other_view(Node, Interval);
+      erlang:exit(ChildPid, stop),
+      observer_cli_mnesia:start(Node, ?MNESIA_MIN_INTERVAL);
     _ -> waiting(Node, ChildPid, Interval)
-  end.
-
-waiting_last_draw_done_to_other_view(Node, Interval) ->
-  receive
-    draw_work_done_to_home_view  -> observer_cli:start(Node, ?HOME_MIN_INTERVAL);
-    draw_work_done_to_allocator_view  -> observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL);
-    draw_work_done_to_help_view  -> observer_cli_help:start(Node, ?HELP_MIN_INTERVAL);
-    draw_work_done_to_mnesia_view -> observer_cli_mnesia:start(Node, ?MNESIA_MIN_INTERVAL)
-  after Interval -> timeout
   end.
 
 loop(Node, Interval, LastTimeRef, ParentPid) ->
@@ -73,10 +64,6 @@ loop(Node, Interval, LastTimeRef, ParentPid) ->
   TimeRef = erlang:send_after(Interval, self(), refresh),
   receive
     quit -> quit;
-    go_to_home_view -> erlang:send(ParentPid, draw_work_done_to_home_view), quit;
-    go_to_allocator_view -> erlang:send(ParentPid, draw_work_done_to_allocator_view), quit;
-    go_to_help_view -> erlang:send(ParentPid, draw_work_done_to_help_view), quit;
-    go_to_mnesia_view -> erlang:send(ParentPid, draw_work_done_to_mnesia_view), quit;
     _ -> loop(Node, Interval, TimeRef, ParentPid)
   end.
 

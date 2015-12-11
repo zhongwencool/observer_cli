@@ -4,6 +4,7 @@
 
 -export([start/1]).
 -export([start/2]).
+-export([start/3]).
 
 %% for rpc
 
@@ -20,7 +21,7 @@ start(Node, ProcessPid, RefreshMillSecond)when
     andalso is_pid(ProcessPid)
     andalso is_atom(Node) ->
   ParentPid = self(),
-  ChildPid = spawn_link(fun() ->
+  ChildPid = spawn(fun() ->
     observer_cli_lib:clear_screen(),
     InitQ = lists:foldl(fun(_X, Acc) -> queue:in(waiting, Acc) end, queue:new(), lists:seq(1, 5)),
     loop(Node, RefreshMillSecond, ProcessPid, ParentPid, erlang:make_ref(), InitQ, InitQ ) end),
@@ -164,8 +165,8 @@ waiting(Node, ChildPid, Interval) ->
   case  Input of
     "q\n" -> erlang:send(ChildPid, quit);
     "b\n" ->
-      erlang:send(ChildPid, go_back_to_home_view),
-      waiting_last_draw_done_to_other_view(Node, Interval);
+      erlang:exit(ChildPid),
+      observer_cli:start(Node, ?HOME_MIN_INTERVAL);
     [$r, $:| RefreshInterval] ->
       case string:to_integer(RefreshInterval) of
         {error, no_integer} -> waiting(Node, ChildPid, Interval);
@@ -174,12 +175,6 @@ waiting(Node, ChildPid, Interval) ->
           waiting(Node, ChildPid, NewInterval)
       end;
     _ -> waiting(Node, ChildPid, Interval)
-  end.
-
-waiting_last_draw_done_to_other_view(Node, Interval) ->
-  receive
-    draw_work_done_to_home_view  -> observer_cli:start(Node, ?HOME_MIN_INTERVAL)
-  after Interval * 2 -> timeout
   end.
 
 
