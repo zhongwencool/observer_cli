@@ -30,7 +30,7 @@
 -spec start() -> quit.
 start() ->
   ParentPid = self(),
-  Pid = spawn_link(fun() ->
+  Pid = spawn(fun() ->
     observer_cli_lib:move_cursor_to_top_line(),
     observer_cli_lib:clear_screen(),
     loop(local_node, ?ALLOCATOR_MIN_INTERVAL, ParentPid) end),
@@ -41,7 +41,7 @@ start() ->
   Interval:: pos_integer().
 start(Node, Interval) ->
   ParentPid = self(),
-  Pid = spawn_link(fun() ->
+  Pid = spawn(fun() ->
     observer_cli_lib:move_cursor_to_top_line(),
     observer_cli_lib:clear_screen(),
     loop(Node, Interval, ParentPid) end),
@@ -72,17 +72,17 @@ waiting(Node, Pid, Interval) ->
   case  Input of
     "q\n" -> erlang:send(Pid, quit);
     "o\n" ->
-      erlang:send(Pid, go_to_home_view),
-      waiting_last_draw_done_to_other_view(Node, Interval);
+      erlang:exit(Pid, stop),
+      observer_cli:start(Node, ?HOME_MIN_INTERVAL);
     "e\n" ->
-      erlang:send(Pid, go_to_ets_view),
-      waiting_last_draw_done_to_other_view(Node, Interval);
+      erlang:exit(Pid, stop),
+      observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL);
     "h\n" ->
-      erlang:send(Pid, go_to_help_view),
-      waiting_last_draw_done_to_other_view(Node, Interval);
+      erlang:exit(Pid, stop),
+      observer_cli_help:start(Node, ?HELP_MIN_INTERVAL);
     "db\n" ->
-      erlang:send(Pid, go_to_mnesia_view),
-      waiting_last_draw_done_to_other_view(Node, Interval);
+      erlang:exit(Pid, stop),
+      observer_cli_mnesia:start(Node, ?MNESIA_MIN_INTERVAL);
     [$r, $:| RefreshInterval] ->
       case string:to_integer(RefreshInterval) of
         {error, no_integer} -> waiting(Node, Pid, Interval);
@@ -91,19 +91,6 @@ waiting(Node, Pid, Interval) ->
           waiting(Node, Pid, NewInterval)
       end;
     _ -> waiting(Node, Pid, Interval)
-  end.
-
-waiting_last_draw_done_to_other_view(Node, Interval) ->
-  receive
-    draw_work_done_to_home_view ->
-      observer_cli:start(Node, ?HOME_MIN_INTERVAL);
-    draw_work_done_to_ets_view ->
-      observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL);
-    draw_work_done_to_help_view ->
-      observer_cli_help:start(Node, ?HELP_MIN_INTERVAL);
-    draw_work_done_to_mnesia_view ->
-      observer_cli_mnesia:start(Node, ?MNESIA_MIN_INTERVAL)
-  after Interval -> time_out
   end.
 
 loop(Node, Interval, ParentPid) ->
@@ -119,11 +106,7 @@ loop(Node, Interval, ParentPid) ->
   receive
     quit -> quit;
     refresh -> loop(Node, Interval, ParentPid);
-    {new_interval, NewInterval} -> loop(Node, NewInterval, ParentPid);
-    go_to_ets_view ->  erlang:send(ParentPid, draw_work_done_to_ets_view), quit;
-    go_to_home_view -> erlang:send(ParentPid, draw_work_done_to_home_view), quit;
-    go_to_help_view ->  erlang:send(ParentPid, draw_work_done_to_help_view), quit;
-    go_to_mnesia_view -> erlang:send(ParentPid, draw_work_done_to_mnesia_view), quit
+    {new_interval, NewInterval} -> loop(Node, NewInterval, ParentPid)
   end.
 
 draw_menu(Node) ->

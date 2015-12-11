@@ -14,7 +14,7 @@ start() ->
 
 -spec start(atom(), pos_integer()) -> quit.
 start(Node, Interval) ->
-  ChildPid = spawn_link(fun() ->
+  ChildPid = spawn(fun() ->
     observer_cli_lib:clear_screen(),
     draw_menu(Node),
     draw_help(),
@@ -75,7 +75,7 @@ draw_help() ->
   io:format("|\e[48;2;80;80;80mr:5000\e[0m will switch mode to reduction(proc_count) and set the refresh  time to 5000ms                                               |~n"),
   io:format("|\e[48;2;80;80;80mrr:5000\e[0m will switch mode to reduction(proc_window) and set the refresh time to 5000ms                                              |~n"),
   io:format("|\e[48;2;80;80;80mobserver_cli:start(Node, Cookie, Interval) or observer_start:start(Node, Interval)\e[0m Remote node  support:                           |~n"),
-  io:format("|\e[48;2;80;80;80mh(down),k(up)\e[0m to choose the rank process(yellow),it will jump to the process view(recon:info/1) when pressing the enter button     |~n"),
+  io:format("|\e[48;2;80;80;80mh(down), k(up)\e[0m to choose the rank process(yellow), it will jump to the process view(recon:info/1) when pressing the enter button   |~n"),
   io:format("|\e[42mReference\e[49m                                                                                                                          |~n"),
   io:format("|More infomation about recon:proc_count/2 and recon:proc_window/3 refer to https://github.com/ferd/recon/blob/master/src/recon.erl  |~n"),
   io:format("|Any issue please visit: https://github.com/zhongwencool/observer_cli/issues                                                        |~n").

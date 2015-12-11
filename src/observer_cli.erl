@@ -35,7 +35,7 @@ start(RefreshMillSecond)when
   is_integer(RefreshMillSecond)
     andalso RefreshMillSecond >= ?HOME_MIN_INTERVAL ->
   ParentPid = self(),
-  ChildPid = spawn_link(fun() -> loop(RefreshMillSecond, ParentPid, local_node, 1) end),
+  ChildPid = spawn(fun() -> loop(RefreshMillSecond, ParentPid, local_node, 1) end),
   waiting(ChildPid, RefreshMillSecond, local_node).
 
 -spec start(Node, Cookie, RefreshMillSecond) -> quit when
@@ -154,7 +154,7 @@ get_ranklist_and_cost_time(Node, Func, Type, Interval, CollectTime) ->
 
 start_remote_node(RefreshMillSecond, Node) ->
   ParentPid = self(),
-  ChildPid = spawn_link(fun() -> loop(RefreshMillSecond, ParentPid, Node, 1) end),
+  ChildPid = spawn(fun() -> loop(RefreshMillSecond, ParentPid, Node, 1) end),
   waiting(ChildPid, RefreshMillSecond, Node).
 
 waiting(ChildPid, Interval, Node) ->
@@ -163,14 +163,17 @@ waiting(ChildPid, Interval, Node) ->
   case  Operate of
     quit -> erlang:send(ChildPid, quit);
     go_to_ets_view ->
-      erlang:send(ChildPid, go_to_ets_view),
-      waiting_last_draw_done_to_other_view(Interval, Node);
+      erlang:exit(ChildPid, stop),
+      observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL);
     go_to_allocator_view ->
-      erlang:send(ChildPid, go_to_allocator_view),
-      waiting_last_draw_done_to_other_view(Interval, Node);
+      erlang:exit(ChildPid, stop),
+      observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL);
     go_to_help_view ->
-      erlang:send(ChildPid, go_to_help_view),
-      waiting_last_draw_done_to_other_view(Interval, Node);
+      erlang:exit(ChildPid, stop),
+      observer_cli_help:start(Node, ?HELP_MIN_INTERVAL);
+    go_to_mnesia_view ->
+      erlang:exit(ChildPid, stop),
+      observer_cli_mnesia:start(Node, ?MNESIA_MIN_INTERVAL);
     pause_or_resume ->
       erlang:send(ChildPid, pause_or_resume),
       waiting(ChildPid, Interval, Node);
@@ -193,25 +196,14 @@ waiting(ChildPid, Interval, Node) ->
       waiting(ChildPid, Interval, Node);
     go_to_process_view ->
       erlang:send(ChildPid, go_to_process_view),
-      waiting_last_draw_done_to_other_view(Interval, Node);
-    go_to_mnesia_view ->
-      erlang:send(ChildPid, go_to_mnesia_view),
-      waiting_last_draw_done_to_other_view(Interval, Node);
+      waiting_pid_to_process_view(Interval, Node);
     error_input -> waiting(ChildPid, Interval, Node)
   end.
 
-waiting_last_draw_done_to_other_view(Interval, Node) ->
+waiting_pid_to_process_view(Interval, Node) ->
   receive
-    draw_work_done_to_ets_view ->
-      observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL);
-    draw_work_done_to_allocator_view ->
-      observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL);
-    draw_work_done_to_help_view ->
-      observer_cli_help:start(Node, ?HELP_MIN_INTERVAL);
-    draw_work_done_to_mnesia_view ->
-      observer_cli_mnesia:start(Node, ?MNESIA_MIN_INTERVAL);
-    {draw_work_done_to_process_view, ProcessPid} ->
-      observer_cli_process:start(ProcessPid)
+    {select_process_view, ChoosePid} ->
+      observer_cli_process:start(Node, ChoosePid, ?PROCESS_MIN_INTERVAL)
   after Interval * 3 -> timeout
   end.
 
@@ -253,11 +245,7 @@ refresh(Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, _, RankPo
   erlang:cancel_timer(LastTimeRef),
   receive
     quit -> quit;
-    go_to_ets_view ->  erlang:send(ParentPid, draw_work_done_to_ets_view), quit;
-    go_to_allocator_view -> erlang:send(ParentPid, draw_work_done_to_allocator_view), quit;
-    go_to_help_view ->  erlang:send(ParentPid, draw_work_done_to_help_view), quit;
-    go_to_mnesia_view ->  erlang:send(ParentPid, draw_work_done_to_mnesia_view), quit;
-    go_to_process_view -> erlang:send(ParentPid, {draw_work_done_to_process_view, ChoosePid}), quit;
+    go_to_process_view -> erlang:send(ParentPid, {select_process_view, ChoosePid}), quit;
     go_to_down_line ->
       observer_cli_lib:clear_screen(),
       NewRankPos = case RankPos + 1 > ?DEFAULT_RANK_NUM of true -> 1; false -> RankPos + 1 end,
@@ -298,11 +286,7 @@ refresh(Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, NodeStats
   TimeRef = refresh_next_time(Func, Type, Interal, RankCostTime, NodeStatsCostTime),
   receive
     quit -> quit;
-    go_to_ets_view ->  erlang:send(ParentPid, draw_work_done_to_ets_view), quit;
-    go_to_allocator_view ->  erlang:send(ParentPid, draw_work_done_to_allocator_view), quit;
-    go_to_help_view ->  erlang:send(ParentPid, draw_work_done_to_help_view), quit;
-    go_to_mnesia_view ->  erlang:send(ParentPid, draw_work_done_to_mnesia_view), quit;
-    go_to_process_view -> erlang:send(ParentPid, {draw_work_done_to_process_view, ChoosePid}), quit;
+    go_to_process_view -> erlang:send(ParentPid, {select_process_view, ChoosePid}), quit;
     go_to_up_line ->
       observer_cli_lib:clear_screen(),
       NewRankPos = case RankPos - 1 < 1 of true -> ?DEFAULT_RANK_NUM; false -> RankPos - 1 end,
@@ -326,7 +310,8 @@ draw_menu(Func, Type, Interal, Node) ->
   RefreshStr = get_refresh_cost_info(Func, Type, Interal),
   UpTime = observer_cli_lib:green(" " ++ observer_cli_lib:uptime(Node)) ++ "|",
   Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "| ", Mnesia, "|", Help, "|", RefreshStr]),
-  Space = lists:duplicate(?HOME_BROAD - erlang:length(Title) - erlang:length(UpTime) + 110, " "),
+  SpaceLen = ?HOME_BROAD - erlang:length(Title) - erlang:length(UpTime) + 110,
+  Space = case SpaceLen > 0 of  true -> lists:duplicate(SpaceLen, " "); false -> [] end,
   io:format("~s~n", [Title ++ Space ++ UpTime]).
 
 draw_first_line(Version) -> io:format("|~-131.131s|~n", [Version -- "\n"]).
