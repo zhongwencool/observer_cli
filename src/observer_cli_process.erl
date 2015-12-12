@@ -165,7 +165,7 @@ waiting(Node, ChildPid, Interval) ->
   case  Input of
     "q\n" -> erlang:send(ChildPid, quit);
     "b\n" ->
-      erlang:exit(ChildPid),
+      erlang:exit(ChildPid, stop),
       observer_cli:start(Node, ?HOME_MIN_INTERVAL);
     [$r, $:| RefreshInterval] ->
       case string:to_integer(RefreshInterval) of
