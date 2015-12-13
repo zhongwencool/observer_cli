@@ -14,3 +14,5 @@ rel/example_project
 *.iml
 log/
 .erlang.mk
+
+xrefr

@@ -2,21 +2,21 @@
 
 -include("observer_cli.hrl").
 
--export([start/1]).
 -export([start/2]).
 -export([start/3]).
+-export([start/4]).
 
 %% for rpc
 
+-spec start(pid(), pos_integer(), pos_integer()) -> quit.
+start(ProcessPid, RefreshMillSecond, ProcCurPos)when RefreshMillSecond >= ?PROCESS_MIN_INTERVAL ->
+  start(local_node, ProcessPid, RefreshMillSecond, ProcCurPos).
 -spec start(pid(), pos_integer()) -> quit.
-start(ProcessPid, RefreshMillSecond)when RefreshMillSecond >= ?PROCESS_MIN_INTERVAL ->
-  start(local_node, ProcessPid, RefreshMillSecond).
--spec start(pid()) -> quit.
-start(ProcessPid) when is_pid(ProcessPid) ->
-  start(local_node, ProcessPid, ?PROCESS_MIN_INTERVAL).
+start(ProcessPid, ProcCurPos) when is_pid(ProcessPid) ->
+  start(local_node, ProcessPid, ?PROCESS_MIN_INTERVAL, ProcCurPos).
 
--spec start(atom(), pid(), pos_integer()) -> quit.
-start(Node, ProcessPid, RefreshMillSecond)when
+-spec start(atom(), pid(), pos_integer(), pos_integer()) -> quit.
+start(Node, ProcessPid, RefreshMillSecond, ProcCurPos)when
   RefreshMillSecond >= ?PROCESS_MIN_INTERVAL
     andalso is_pid(ProcessPid)
     andalso is_atom(Node) ->
@@ -25,7 +25,7 @@ start(Node, ProcessPid, RefreshMillSecond)when
     observer_cli_lib:clear_screen(),
     InitQ = lists:foldl(fun(_X, Acc) -> queue:in(waiting, Acc) end, queue:new(), lists:seq(1, 5)),
     loop(Node, RefreshMillSecond, ProcessPid, ParentPid, erlang:make_ref(), InitQ, InitQ ) end),
-  waiting(Node, ChildPid, RefreshMillSecond).
+  waiting(Node, ChildPid, RefreshMillSecond, ProcCurPos).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
@@ -33,7 +33,7 @@ start(Node, ProcessPid, RefreshMillSecond)when
 loop(Node, Interval, ProcessPid, ParentPid, TimeRef, OldRedus, OldMems) ->
   observer_cli_lib:move_cursor_to_top_line(),
   erlang:cancel_timer(TimeRef),
-  ProcessInfo = recon:info(ProcessPid),
+  ProcessInfo = get_process_info(Node, ProcessPid),
 
   Meta = proplists:get_value(meta, ProcessInfo),
   RegisteredName = proplists:get_value(registered_name, Meta),
@@ -135,11 +135,11 @@ get_chart_format(Queue) ->
 
 chart_format([_R], Lines) -> Lines;
 chart_format([R, R|RestRedus], Lines) ->
-  chart_format([R| RestRedus], Lines ++ observer_cli_lib:to_list(R) ++ "~~>");
+  chart_format([R| RestRedus], Lines ++ observer_cli_lib:to_list(R) ++ "==>");
 chart_format([R1, R2|RestRedus], Lines)when R1 > R2 ->
-  chart_format([R2| RestRedus], Lines ++ observer_cli_lib:to_list(R1) ++ "~~>");
+  chart_format([R2| RestRedus], Lines ++ observer_cli_lib:to_list(R1) ++ "==>");
 chart_format([R1, R2|RestRedus], Lines)when R1 < R2 ->
-  chart_format([R2| RestRedus], Lines ++ observer_cli_lib:to_list(R1) ++ "~~>").
+  chart_format([R2| RestRedus], Lines ++ observer_cli_lib:to_list(R1) ++ "==>").
 
 dict_to_str(Dicts, 10) -> lists:flatten(io_lib:format("~P", [Dicts, 10]));
 dict_to_str(Dicts, Len) ->
@@ -160,27 +160,22 @@ pids_to_str(Link, Len) ->
 stacktrace_to_str(CurrentStacktrace) ->
   CurrentStacktrace.
 
-waiting(Node, ChildPid, Interval) ->
+waiting(Node, ChildPid, Interval, ProcCurPos) ->
   Input = io:get_line(""),
   case  Input of
     "q\n" -> erlang:send(ChildPid, quit);
     "b\n" ->
       erlang:exit(ChildPid, stop),
-      observer_cli:start(Node, ?HOME_MIN_INTERVAL);
+      observer_cli:start(Node, ?HOME_MIN_INTERVAL, ProcCurPos);
     [$r, $:| RefreshInterval] ->
       case string:to_integer(RefreshInterval) of
-        {error, no_integer} -> waiting(Node, ChildPid, Interval);
+        {error, no_integer} -> waiting(Node, ChildPid, Interval, ProcCurPos);
         {NewInterval, _} when NewInterval >= ?PROCESS_MIN_INTERVAL ->
           erlang:send(ChildPid, {new_interval, NewInterval}),
-          waiting(Node, ChildPid, NewInterval)
+          waiting(Node, ChildPid, NewInterval, ProcCurPos)
       end;
-    _ -> waiting(Node, ChildPid, Interval)
+    _ -> waiting(Node, ChildPid, Interval, ProcCurPos)
   end.
 
-
-
-
-
-
-
-
+get_process_info(local_node, Pid) -> recon:info(Pid);
+get_process_info(Node, Pid) -> rpc:call(Node, recon, info, [Pid]).

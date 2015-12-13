@@ -4,9 +4,9 @@
 -include("observer_cli.hrl").
 
 -export([start/0]).
--export([start/1]).
 -export([start/2]).
 -export([start/3]).
+-export([start/4]).
 
 %% for rpc
 -export([get_stable_system_info/1]).
@@ -21,6 +21,7 @@
 -define(CPU_ALARM_THRESHOLD, 0.8). %% cpu >= this value will be highlight
 -define(COUNT_ALARM_THRESHOLD, 0.85). %% port or process reach max_limit * 0.85 will be highlight
 -define(FAST_COLLECT_INTENAL, 0). %% collect should be fast when we push the keyboard to switch mode
+-define(DEFAULT_PROCESS_POS, 1).
 
 -define(STABLE_SYSTEM_ITEM, [system_version, process_limit, smp_support,
   port_limit, ets_limit, logical_processors, multi_scheduling]).
@@ -28,52 +29,58 @@
 %% @doc observer in erlang shell the refresh time is Milliseconds
 
 -spec start() -> quit.
-start() -> start(?HOME_MIN_INTERVAL).
+start() -> start(?HOME_MIN_INTERVAL, ?DEFAULT_PROCESS_POS).
 
--spec start(pos_integer()) -> quit.
-start(RefreshMillSecond)when
+-spec start(pos_integer(), pos_integer()) -> quit.
+start(RefreshMillSecond, ProcCurPos)when
   is_integer(RefreshMillSecond)
+    andalso is_integer(ProcCurPos)
     andalso RefreshMillSecond >= ?HOME_MIN_INTERVAL ->
   ParentPid = self(),
-  ChildPid = spawn(fun() -> loop(RefreshMillSecond, ParentPid, local_node, 1) end),
-  waiting(ChildPid, RefreshMillSecond, local_node).
+  Tid = ets:new(observer_cli_process_info, [public, set]),
+  ChildPid = spawn(fun() -> loop(Tid, RefreshMillSecond, ParentPid, local_node, ProcCurPos) end),
+  waiting(Tid, ChildPid, RefreshMillSecond, local_node, ProcCurPos).
 
--spec start(Node, Cookie, RefreshMillSecond) -> quit when
+-spec start(Node, RefreshMillSecond, ProcCurPos) -> quit when
   Node:: atom(),
-  Cookie:: atom(),
-  RefreshMillSecond:: pos_integer().
-start(Node, Cookie, RefreshMillSecond)when
-  is_atom(Node)
-    andalso is_atom(Cookie)
-    andalso is_integer(RefreshMillSecond)
-    andalso RefreshMillSecond >= ?HOME_MIN_INTERVAL ->
-  case Node == node() of
-    true -> start(RefreshMillSecond);
-    false ->
-      erlang:set_cookie(Node, Cookie),
-      case net_kernel:connect_node(Node) of
-        true -> start_remote_node(RefreshMillSecond, Node);
-        false -> io:format("remote node ~p(cookie:~p) refuse to be connected ~n", [Node, Cookie]);
-        ignored -> io:format("the local node is not alive ignore remote node~p(cookie:~p)~n", [Node, Cookie])
-      end
-  end.
+  RefreshMillSecond:: pos_integer(),
+  ProcCurPos:: pos_integer().
 
--spec start(Node, RefreshMillSecond) -> quit when
-  Node:: atom(),
-  RefreshMillSecond:: pos_integer().
-start(local_node, RefreshMillSecond) -> start(RefreshMillSecond);
-start(Node, RefreshMillSecond)when
+start(Node, RefreshMillSecond, ProcCurPos)when
   is_integer(RefreshMillSecond)
+    andalso is_integer(ProcCurPos)
     andalso is_atom(Node)
     andalso RefreshMillSecond >= ?HOME_MIN_INTERVAL
     andalso is_atom(Node) ->
-  case Node == node() of
-    true -> start(RefreshMillSecond);
+  case Node == node() orelse Node == local_node of
+    true -> start(RefreshMillSecond, ProcCurPos);
     false ->
       case net_kernel:connect_node(Node) of
-        true -> start_remote_node(RefreshMillSecond, Node);
+        true -> start_remote_node(RefreshMillSecond, Node, ProcCurPos);
         false -> io:format("remote node ~p(cookie:~p) refuse to be connected ~n", [Node, erlang:get_cookie()]);
         ignored -> io:format("the local node is not alive ignore remote node~p(cookie:~p)~n", [Node, erlang:get_cookie()])
+      end
+  end.
+
+-spec start(Node, Cookie, RefreshMillSecond, ProcCurPos) -> quit when
+  Node:: atom(),
+  Cookie:: atom(),
+  RefreshMillSecond:: pos_integer(),
+  ProcCurPos:: pos_integer().
+start(Node, Cookie, RefreshMillSecond, ProcCurPos)when
+  is_atom(Node)
+    andalso is_atom(Cookie)
+    andalso is_integer(RefreshMillSecond)
+    andalso is_integer(ProcCurPos)
+    andalso RefreshMillSecond >= ?HOME_MIN_INTERVAL ->
+  case Node == node() of
+    true -> start(RefreshMillSecond, ProcCurPos);
+    false ->
+      erlang:set_cookie(Node, Cookie),
+      case net_kernel:connect_node(Node) of
+        true -> start_remote_node(RefreshMillSecond, Node, ProcCurPos);
+        false -> io:format("remote node ~p(cookie:~p) refuse to be connected ~n", [Node, Cookie]);
+        ignored -> io:format("the local node is not alive ignore remote node~p(cookie:~p)~n", [Node, Cookie])
       end
   end.
 
@@ -152,59 +159,62 @@ get_ranklist_and_cost_time(Node, Func, Type, Interval, CollectTime) ->
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-start_remote_node(RefreshMillSecond, Node) ->
+start_remote_node(RefreshMillSecond, Node, ProcCurPos) ->
   ParentPid = self(),
-  ChildPid = spawn(fun() -> loop(RefreshMillSecond, ParentPid, Node, 1) end),
-  waiting(ChildPid, RefreshMillSecond, Node).
+  Tid = ets:new(observer_cli_process_info, [public, set]),
+  ChildPid = spawn(fun() -> loop(Tid, RefreshMillSecond, ParentPid, Node, ProcCurPos) end),
+  waiting(Tid, ChildPid, RefreshMillSecond, Node, ProcCurPos).
 
-waiting(ChildPid, Interval, Node) ->
+waiting(Tid, ChildPid, Interval, Node, ProcCurPos) ->
   Input = io:get_line(""),
   Operate = input_to_operation(Input),
   case  Operate of
     quit -> erlang:send(ChildPid, quit);
     go_to_ets_view ->
       erlang:exit(ChildPid, stop),
-      observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL);
+      observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL, ProcCurPos);
     go_to_allocator_view ->
       erlang:exit(ChildPid, stop),
-      observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL);
+      observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL, ProcCurPos);
     go_to_help_view ->
       erlang:exit(ChildPid, stop),
-      observer_cli_help:start(Node, ?HELP_MIN_INTERVAL);
+      observer_cli_help:start(Node, ?HELP_MIN_INTERVAL, ProcCurPos);
     go_to_mnesia_view ->
       erlang:exit(ChildPid, stop),
-      observer_cli_mnesia:start(Node, ?MNESIA_MIN_INTERVAL);
+      observer_cli_mnesia:start(Node, ?MNESIA_MIN_INTERVAL, ProcCurPos);
     pause_or_resume ->
       erlang:send(ChildPid, pause_or_resume),
-      waiting(ChildPid, Interval, Node);
+      waiting(Tid, ChildPid, Interval, Node, ProcCurPos);
     {Func, Type, no_change} ->
       erlang:send(ChildPid, {Func, Type}),
-      waiting(ChildPid, Interval, Node);
+      waiting(Tid, ChildPid, Interval, Node, ProcCurPos);
     {Func, Type, RefreshInterval} ->
       case string:to_integer(RefreshInterval) of
-        {error, no_integer} -> waiting(ChildPid, Interval, Node);
+        {error, no_integer} -> waiting(Tid, ChildPid, Interval, Node, ProcCurPos);
         {NewInterval, _} when NewInterval >= ?HOME_MIN_INTERVAL ->
           erlang:send(ChildPid, {Func, Type, NewInterval}),
-          waiting(ChildPid, NewInterval, Node);
-        {_, _} -> waiting(ChildPid, Interval, Node)
+          waiting(Tid, ChildPid, NewInterval, Node, ProcCurPos);
+        {_, _} -> waiting(Tid, ChildPid, Interval, Node, ProcCurPos)
       end;
-    go_to_down_line ->
-      erlang:send(ChildPid, go_to_down_line),
-      waiting(ChildPid, Interval, Node);
-    go_to_up_line ->
-      erlang:send(ChildPid, go_to_up_line),
-      waiting(ChildPid, Interval, Node);
+    {jump_to_process, Pos} ->
+      case string:to_integer(Pos) of
+        {error, no_integer} -> waiting(Tid, ChildPid, Interval, Node, ProcCurPos);
+        {NewPos, _} ->
+          case ets:lookup(Tid, NewPos) of
+            [] -> waiting(Tid, ChildPid, Interval, Node, NewPos);
+            [{_, ChoosePid}] ->
+              erlang:exit(ChildPid, stop),
+              observer_cli_process:start(Node, ChoosePid, ?PROCESS_MIN_INTERVAL, NewPos)
+          end
+      end;
     go_to_process_view ->
-      erlang:send(ChildPid, go_to_process_view),
-      waiting_pid_to_process_view(Interval, Node);
-    error_input -> waiting(ChildPid, Interval, Node)
-  end.
-
-waiting_pid_to_process_view(Interval, Node) ->
-  receive
-    {select_process_view, ChoosePid} ->
-      observer_cli_process:start(Node, ChoosePid, ?PROCESS_MIN_INTERVAL)
-  after Interval * 3 -> timeout
+      case ets:lookup(Tid, ProcCurPos) of
+        [] -> waiting(Tid, ChildPid, Interval, Node, ProcCurPos);
+        [{_, ChoosePid}] ->
+          erlang:exit(ChildPid, stop),
+          observer_cli_process:start(Node, ChoosePid, ?PROCESS_MIN_INTERVAL, ProcCurPos)
+      end;
+    error_input -> waiting(Tid, ChildPid, Interval, Node, ProcCurPos)
   end.
 
 input_to_operation("q\n") ->  quit;
@@ -229,43 +239,33 @@ input_to_operation("rr\n") -> {proc_window, reductions, no_change};
 input_to_operation("bb\n") -> {proc_window, binary_memory, no_change};
 input_to_operation("tt\n") -> {proc_window, total_heap_size, no_change};
 input_to_operation("mm\n") -> {proc_window, memory, no_change};
-input_to_operation("j\n") -> go_to_down_line;
-input_to_operation("k\n") -> go_to_up_line;
+input_to_operation([$j, $:| Pos]) -> {jump_to_process, Pos};
 input_to_operation("\n") -> go_to_process_view;
 input_to_operation(_)-> error_input.
 
-loop(Interal, ParentPid, Node, RankPos) ->
+loop(Tid, Interal, ParentPid, Node, RankPos) ->
   observer_cli_lib:clear_screen(),
   StableInfo = get_stable_system_info(Node), %%don't refresh the stable information everytime
-  refresh(Node, ParentPid, Interal, proc_count, memory, StableInfo, erlang:make_ref(), 0, RankPos, self(), running).
+  refresh(Tid, Node, ParentPid, Interal, proc_count, memory, StableInfo, erlang:make_ref(), 0, RankPos, running).
 
 %% pause status waiting to be resume
-refresh(Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, _, RankPos, ChoosePid, pause) ->
+refresh(Tid, Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, _, RankPos, pause) ->
   notify_pause_status(),
   erlang:cancel_timer(LastTimeRef),
   receive
     quit -> quit;
-    go_to_process_view -> erlang:send(ParentPid, {select_process_view, ChoosePid}), quit;
-    go_to_down_line ->
-      observer_cli_lib:clear_screen(),
-      NewRankPos = case RankPos + 1 > ?DEFAULT_RANK_NUM of true -> 1; false -> RankPos + 1 end,
-      refresh(Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, NewRankPos, ChoosePid, running);
-    go_to_up_line ->
-      observer_cli_lib:clear_screen(),
-      NewRankPos = case RankPos - 1 < 1 of true -> ?DEFAULT_RANK_NUM; false -> RankPos - 1 end,
-      refresh(Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, NewRankPos, ChoosePid, running);
     pause_or_resume ->
       observer_cli_lib:clear_screen(),
-      refresh(Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, RankPos, ChoosePid, running);
+      refresh(Tid, Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, RankPos, running);
     {NewFunc, NewType, NewInteral} ->
       observer_cli_lib:clear_screen(),
-      refresh(Node, ParentPid, NewInteral, NewFunc, NewType, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, RankPos, ChoosePid, running);
+      refresh(Tid, Node, ParentPid, NewInteral, NewFunc, NewType, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, RankPos, running);
     {NewFunc, NewType} ->
       observer_cli_lib:clear_screen(),
-      refresh(Node, ParentPid, Interal, NewFunc, NewType, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, RankPos, ChoosePid, running)
+      refresh(Tid, Node, ParentPid, Interal, NewFunc, NewType, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, RankPos, running)
   end;
 %% running status
-refresh(Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, NodeStatsCostTime, RankPos, _OldChoosePid, running) ->
+refresh(Tid, Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, NodeStatsCostTime, RankPos, running) ->
   [Version, ProcLimit, SmpSupport, PortLimit, EtsLimit, LogicalProc, MultiScheduling] = StableInfo,
   erlang:cancel_timer(LastTimeRef),
   [{ProcSum, MemSum}] = get_node_stats_list(Node, NodeStatsCostTime),
@@ -280,29 +280,30 @@ refresh(Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, NodeStats
     UseMemInt, AlloctedMemInt, UnusedMemInt, ProcSum),
   draw_memory_process_line(ProcSum, MemSum, NewNodeStatsCostTime),
   SchedulerLineLen = draw_scheduler_usage(MemSum),
-  ChoosePid = draw_process_rank(Type, RankList, ?DEFAULT_RANK_NUM - SchedulerLineLen, Node, RankPos),
+  PidList = draw_process_rank(Type, RankList, ?DEFAULT_RANK_NUM - SchedulerLineLen, Node, RankPos),
   draw_last_line(),
+
+  ets:insert(Tid, PidList),
 
   TimeRef = refresh_next_time(Func, Type, Interal, RankCostTime, NodeStatsCostTime),
   receive
     quit -> quit;
-    go_to_process_view -> erlang:send(ParentPid, {select_process_view, ChoosePid}), quit;
-    go_to_up_line ->
+    {go_to_process_line, NewRankPos} ->
       observer_cli_lib:clear_screen(),
       NewRankPos = case RankPos - 1 < 1 of true -> ?DEFAULT_RANK_NUM; false -> RankPos - 1 end,
-      refresh(Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, NewRankPos, ChoosePid, running);
+      refresh(Tid, Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, NewRankPos, running);
     go_to_down_line ->
       observer_cli_lib:clear_screen(),
       NewRankPos = case RankPos + 1 > ?DEFAULT_RANK_NUM of true -> 1; false -> RankPos + 1 end,
-      refresh(Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, NewRankPos, ChoosePid, running);
+      refresh(Tid, Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, NewRankPos, running);
     pause_or_resume ->
-      refresh(Node, ParentPid, Interal, Func, Type, StableInfo, TimeRef, ?FAST_COLLECT_INTENAL, RankPos, ChoosePid, pause);
+      refresh(Tid, Node, ParentPid, Interal, Func, Type, StableInfo, TimeRef, ?FAST_COLLECT_INTENAL, RankPos, pause);
     {Func, Type} ->
-      refresh(Node, ParentPid, Interal, Func, Type, StableInfo, TimeRef, NewNodeStatsCostTime, RankPos, ChoosePid, running);
+      refresh(Tid, Node, ParentPid, Interal, Func, Type, StableInfo, TimeRef, NewNodeStatsCostTime, RankPos, running);
     {NewFunc, NewType} ->
-      refresh(Node, ParentPid, Interal, NewFunc, NewType, StableInfo, TimeRef, ?FAST_COLLECT_INTENAL, RankPos, ChoosePid, running);
+      refresh(Tid, Node, ParentPid, Interal, NewFunc, NewType, StableInfo, TimeRef, ?FAST_COLLECT_INTENAL, RankPos, running);
     {NewFunc, NewType, NewInteral} ->
-      refresh(Node, ParentPid, NewInteral, NewFunc, NewType, StableInfo, TimeRef, ?FAST_COLLECT_INTENAL, RankPos, ChoosePid, running)
+      refresh(Tid, Node, ParentPid, NewInteral, NewFunc, NewType, StableInfo, TimeRef, ?FAST_COLLECT_INTENAL, RankPos, running)
   end.
 
 draw_menu(Func, Type, Interal, Node) ->
@@ -444,7 +445,7 @@ draw_scheduler_usage(SchedulerUsage, SchedulerNum) ->
 %| <0.9.0>        |         44| proc_lib:init_p/5           |        44|0         |application_master:main_loop/2                |
 %| <0.25.0>       |         36| user                        |        36|0         |group:server_loop/3                           |
 draw_process_rank(memory, MemoryList, Num, Node, RankPos) ->
-  io:format("\e[46m| ~-15.15s|~11.11s| ~-30.30s|~11.11s|~-10.10s|~-47.47s\e[49m|~n", %%cyan background
+  io:format("\e[46m|Pos|~-12.12s|~11.11s| ~-30.30s|~11.11s|~-10.10s|~-47.47s\e[49m|~n", %%cyan background
     ["Pid", "Memory", "Name or Initial Call", "Reductions", "Msg Queue", "Current Function"]),
   [begin
      {Pid, MemVal, Call = [IsName|_]} = lists:nth(Pos, MemoryList),
@@ -453,13 +454,12 @@ draw_process_rank(memory, MemoryList, Num, Node, RankPos) ->
      NameOrCall = display_name_or_inital_call(IsName, InitialCall),
      Format = get_choose_format(RankPos, Pos),
      io:format(Format,
-       [pid_to_list(Pid), observer_cli_lib:to_list(MemVal), NameOrCall,
-         observer_cli_lib:to_list(Reductions), observer_cli_lib:to_list(MsgQueueLen), CurFun])
-   end|| Pos <- lists:seq(1, erlang:min(Num, erlang:length(MemoryList)))],
-  {Pid, _MemVal, _Call} = lists:nth(RankPos, MemoryList),
-  Pid;
+       [observer_cli_lib:to_list(Pos), pid_to_list(Pid), observer_cli_lib:to_list(MemVal), NameOrCall,
+         observer_cli_lib:to_list(Reductions), observer_cli_lib:to_list(MsgQueueLen), CurFun]),
+     {Pos, Pid}
+   end|| Pos <- lists:seq(1, erlang:min(Num, erlang:length(MemoryList)))];
 draw_process_rank(binary_memory, MemoryList, Num, Node, RankPos) ->
-  io:format("\e[46m| ~-15.15s|~11.11s| ~-30.30s|~11.11s|~-10.10s|~-47.47s\e[49m|~n", %%cyan background
+  io:format("\e[46m|Pos|~-12.12s|~11.11s| ~-30.30s|~11.11s|~-10.10s|~-47.47s\e[49m|~n", %%cyan background
     ["Pid", "Bin Memory", "Name or Initial Call", "Reductions", "Msg Queue", "Current Function"]),
   [begin
      {Pid, MemVal, Call = [IsName|_]} = lists:nth(Pos, MemoryList),
@@ -468,13 +468,12 @@ draw_process_rank(binary_memory, MemoryList, Num, Node, RankPos) ->
      NameOrCall = display_name_or_inital_call(IsName, InitialCall),
      Format = get_choose_format(RankPos, Pos),
      io:format(Format,
-       [pid_to_list(Pid), observer_cli_lib:to_list(MemVal), NameOrCall,
-         observer_cli_lib:to_list(Reductions), observer_cli_lib:to_list(MsgQueueLen), CurFun])
-   end|| Pos <- lists:seq(1, erlang:min(Num, erlang:length(MemoryList)))],
-  {Pid, _MemVal, _Call} = lists:nth(RankPos, MemoryList),
-  Pid;
+       [observer_cli_lib:to_list(Pos), pid_to_list(Pid), observer_cli_lib:to_list(MemVal), NameOrCall,
+         observer_cli_lib:to_list(Reductions), observer_cli_lib:to_list(MsgQueueLen), CurFun]),
+     {Pos, Pid}
+   end|| Pos <- lists:seq(1, erlang:min(Num, erlang:length(MemoryList)))];
 draw_process_rank(reductions, ReductionList, Num, Node, RankPos) ->
-  io:format("\e[46m| ~-15.15s|~11.11s| ~-30.30s|~10.10s|~-11.11s|~-47.47s\e[49m|~n", %%cyan background
+  io:format("\e[46m|Pos|~-12.12s|~11.11s| ~-30.30s|~10.10s|~-11.11s|~-47.47s\e[49m|~n", %%cyan background
     ["Pid", "Reductions", "Name or Initial Call", "Memory", "Msg Queue", "Current Function"]),
   [begin
      {Pid, Reductions, Call = [IsName|_]} = lists:nth(Pos, ReductionList),
@@ -483,13 +482,12 @@ draw_process_rank(reductions, ReductionList, Num, Node, RankPos) ->
      NameOrCall = display_name_or_inital_call(IsName, InitialCall),
      Format = get_choose_format(RankPos, Pos),
      io:format(Format,
-       [pid_to_list(Pid), observer_cli_lib:to_list(Reductions), NameOrCall,
-         observer_cli_lib:to_list(Memory), observer_cli_lib:to_list(MsgQueueLen), CurFun])
-   end|| Pos <- lists:seq(1, erlang:min(Num, erlang:length(ReductionList)))],
-  {Pid, _MemVal, _Call} = lists:nth(RankPos, ReductionList),
-  Pid;
+       [observer_cli_lib:to_list(Pos), pid_to_list(Pid), observer_cli_lib:to_list(Reductions), NameOrCall,
+         observer_cli_lib:to_list(Memory), observer_cli_lib:to_list(MsgQueueLen), CurFun]),
+     {Pos, Pid}
+   end|| Pos <- lists:seq(1, erlang:min(Num, erlang:length(ReductionList)))];
 draw_process_rank(total_heap_size, HeapList, Num, Node, RankPos) ->
-  io:format("\e[46m| ~-15.15s|~11.11s| ~-30.30s|~11.11s|~-10.10s|~-47.47s\e[49m|~n", %%cyan background
+  io:format("\e[46m|Pos|~-12.12s|~11.11s| ~-30.30s|~11.11s|~-10.10s|~-47.47s\e[49m|~n", %%cyan background
     ["Pid", "Total Heap Size", "Name or Initial Call", "Reductions", "Msg Queue", "Current Function"]),
   [begin
      {Pid, HeapSize, Call = [IsName|_]} = lists:nth(Pos, HeapList),
@@ -498,24 +496,23 @@ draw_process_rank(total_heap_size, HeapList, Num, Node, RankPos) ->
      NameOrCall = display_name_or_inital_call(IsName, InitialCall),
      Format = get_choose_format(RankPos, Pos),
      io:format(Format,
-       [pid_to_list(Pid), observer_cli_lib:to_list(HeapSize), NameOrCall,
-         observer_cli_lib:to_list(Reductions), observer_cli_lib:to_list(MsgQueueLen), CurFun])
-   end|| Pos <- lists:seq(1, erlang:min(Num, erlang:length(HeapList)))],
-  {Pid, _MemVal, _Call} = lists:nth(RankPos, HeapList),
-  Pid.
+       [observer_cli_lib:to_list(Pos), pid_to_list(Pid), observer_cli_lib:to_list(HeapSize), NameOrCall,
+         observer_cli_lib:to_list(Reductions), observer_cli_lib:to_list(MsgQueueLen), CurFun]),
+     {Pos, Pid}
+   end|| Pos <- lists:seq(1, erlang:min(Num, erlang:length(HeapList)))].
 
 draw_last_line() ->
   io:format("|\e[31;1mINPUT: \e[0m\e[44m~s~s~s~s~s~s~s\e[49m|~n",
-    ["q(quit)   ", "p(pause/unpause)   ", "r/rr(reduction)   ",
-      "m/mm(memory)  ", "b/bb(binary memory)  ", "t/tt(total heap  size)  ", "k(up) / j(down)   "]).
+    ["q(quit)  ", "p(pause/unpause) ", "r/rr(reduction) ",
+      "m/mm(memory) ", "b/bb(binary memory) ", "t/tt(total heap  size) ", "j:pos(jump to process pos)"]).
 
 notify_pause_status() ->
   io:format("\e[31;1m PAUSE  INPUT (p, r/rr, b/bb, h/hh, m/mm) to resume or q to quit \e[0m~n").
 
 get_choose_format(Pos, Pos) ->
-  "|\e[33;1m ~-15.15s|~11.11s| ~-30.30s|~11.11s|~-10.10s|~-47.47s\e[0m|~n";
+  "|\e[33;1m~-3.3s|~-12.12s|~11.11s| ~-30.30s|~11.11s|~-10.10s|~-47.47s\e[0m|~n";
 get_choose_format(_Pos, _RankPos) ->
-  "| ~-15.15s|~11.11s| ~-30.30s|~11.11s|~-10.10s|~-47.47s|~n".
+  "|~-3.3s|~-12.12s|~11.11s| ~-30.30s|~11.11s|~-10.10s|~-47.47s|~n".
 
 refresh_next_time(proc_count, Type, Interal, RankCostTime, NodeStatsCostTime) ->
   erlang:send_after(Interal - RankCostTime - NodeStatsCostTime, self(), {proc_count, Type});
