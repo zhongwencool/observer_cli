@@ -4,7 +4,7 @@
 -include("observer_cli.hrl").
 %% API
 -export([start/0]).
--export([start/2]).
+-export([start/3]).
 
 %%for rpc
 -export([get_average_block_sizes/1]).
@@ -34,18 +34,19 @@ start() ->
     observer_cli_lib:move_cursor_to_top_line(),
     observer_cli_lib:clear_screen(),
     loop(local_node, ?ALLOCATOR_MIN_INTERVAL, ParentPid) end),
-  waiting(local_node, Pid, ?ALLOCATOR_MIN_INTERVAL).
+  waiting(local_node, Pid, ?ALLOCATOR_MIN_INTERVAL, 1).
 
--spec start(Node, Interval) -> quit when
+-spec start(Node, Interval, ProcCurPos) -> quit when
   Node:: atom(),
-  Interval:: pos_integer().
-start(Node, Interval) ->
+  Interval:: pos_integer(),
+  ProcCurPos:: pos_integer().
+start(Node, Interval, ProcCurPos) ->
   ParentPid = self(),
   Pid = spawn(fun() ->
     observer_cli_lib:move_cursor_to_top_line(),
     observer_cli_lib:clear_screen(),
     loop(Node, Interval, ParentPid) end),
-  waiting(Node, Pid, Interval).
+  waiting(Node, Pid, Interval, ProcCurPos).
 
 %%for fetching data from remote data by rpc:call/4
 -spec get_cache_hit_rates(Node) -> [{{instance, non_neg_integer()}, [{Key, Val}]}] when
@@ -67,30 +68,30 @@ get_average_block_sizes(Node) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-waiting(Node, Pid, Interval) ->
+waiting(Node, Pid, Interval, ProcCurPos) ->
   Input = io:get_line(""),
   case  Input of
     "q\n" -> erlang:send(Pid, quit);
     "o\n" ->
       erlang:exit(Pid, stop),
-      observer_cli:start(Node, ?HOME_MIN_INTERVAL);
+      observer_cli:start(Node, ?HOME_MIN_INTERVAL, ProcCurPos);
     "e\n" ->
       erlang:exit(Pid, stop),
-      observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL);
+      observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL, ProcCurPos);
     "h\n" ->
       erlang:exit(Pid, stop),
-      observer_cli_help:start(Node, ?HELP_MIN_INTERVAL);
+      observer_cli_help:start(Node, ?HELP_MIN_INTERVAL, ProcCurPos);
     "db\n" ->
       erlang:exit(Pid, stop),
-      observer_cli_mnesia:start(Node, ?MNESIA_MIN_INTERVAL);
+      observer_cli_mnesia:start(Node, ?MNESIA_MIN_INTERVAL, ProcCurPos);
     [$r, $:| RefreshInterval] ->
       case string:to_integer(RefreshInterval) of
-        {error, no_integer} -> waiting(Node, Pid, Interval);
+        {error, no_integer} -> waiting(Node, Pid, Interval, ProcCurPos);
         {NewInterval, _} when NewInterval >= ?ALLOCATOR_MIN_INTERVAL ->
           erlang:send(Pid, {new_interval, NewInterval}),
-          waiting(Node, Pid, NewInterval)
+          waiting(Node, Pid, NewInterval, ProcCurPos)
       end;
-    _ -> waiting(Node, Pid, Interval)
+    _ -> waiting(Node, Pid, Interval, ProcCurPos)
   end.
 
 loop(Node, Interval, ParentPid) ->

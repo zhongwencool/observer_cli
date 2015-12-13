@@ -2,8 +2,8 @@
 -module(observer_cli_mnesia).
 
 -export([start/0]).
--export([start/1]).
 -export([start/2]).
+-export([start/3]).
 
 %%for rpc
 -export([get_table_list/2]).
@@ -13,18 +13,18 @@
 -define(MAX_SHOW_LEN, 37).
 
 -spec start() -> quit.
-start() -> start(local_node, ?MNESIA_MIN_INTERVAL).
--spec start(pos_integer()) -> quit.
-start(RefreshMillSecond)when RefreshMillSecond >= ?MNESIA_MIN_INTERVAL ->
-  start(local_node, RefreshMillSecond).
+start() -> start(local_node, ?MNESIA_MIN_INTERVAL, 1).
+-spec start(pos_integer(), pos_integer()) -> quit.
+start(RefreshMillSecond, PorcCurPos)when RefreshMillSecond >= ?MNESIA_MIN_INTERVAL ->
+  start(local_node, RefreshMillSecond, PorcCurPos).
 
--spec start(atom(), pos_integer()) -> quit.
-start(Node, RefreshMillSecond)when RefreshMillSecond >= ?MNESIA_MIN_INTERVAL ->
+-spec start(atom(), pos_integer(), pos_integer()) -> quit.
+start(Node, RefreshMillSecond, PorcCurPos)when RefreshMillSecond >= ?MNESIA_MIN_INTERVAL ->
   ParentPid = self(),
   Pid = spawn(fun() ->
     observer_cli_lib:clear_screen(),
     loop(Node, RefreshMillSecond, erlang:make_ref(), ParentPid, true) end),
-  waiting(Node, Pid, RefreshMillSecond).
+  waiting(Node, Pid, RefreshMillSecond, PorcCurPos).
 
 -spec get_table_list(atom(), true|false) -> list().
 get_table_list(local_node, HideSys) ->
@@ -91,36 +91,36 @@ loop(Node, Interval, LastTimeRef, ParentPid, HideSystemTable) ->
     _ -> loop(Node, Interval, TimeRef, ParentPid, HideSystemTable)
   end.
 
-waiting(Node, ChildPid, Interval) ->
+waiting(Node, ChildPid, Interval, PorcCurPos) ->
   Input = io:get_line(""),
   case  Input of
     "q\n" -> erlang:send(ChildPid, quit);
     "o\n" ->
       erlang:exit(ChildPid, stop),
-      observer_cli:start(Node, ?HOME_MIN_INTERVAL);
+      observer_cli:start(Node, ?HOME_MIN_INTERVAL, PorcCurPos);
     "a\n" ->
       erlang:exit(ChildPid, stop),
-      observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL);
+      observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL, PorcCurPos);
     "e\n" ->
       erlang:exit(ChildPid, stop),
-      observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL);
+      observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL, PorcCurPos);
     "h\n" ->
       erlang:exit(ChildPid, stop),
-      observer_cli_help:start(Node, ?HELP_MIN_INTERVAL);
+      observer_cli_help:start(Node, ?HELP_MIN_INTERVAL, PorcCurPos);
     "system:true\n" ->
       erlang:send(ChildPid, {system_table, true}),
-      waiting(Node, ChildPid, Interval);
+      waiting(Node, ChildPid, Interval, PorcCurPos);
     "system:false\n" ->
       erlang:send(ChildPid, {system_table, false}),
-      waiting(Node, ChildPid, Interval);
+      waiting(Node, ChildPid, Interval, PorcCurPos);
     [$r, $:| RefreshInterval] ->
       case string:to_integer(RefreshInterval) of
-        {error, no_integer} -> waiting(Node, ChildPid, Interval);
+        {error, no_integer} -> waiting(Node, ChildPid, Interval, PorcCurPos);
         {NewInterval, _} when NewInterval >= ?MNESIA_MIN_INTERVAL ->
           erlang:send(ChildPid, {new_interval, NewInterval}),
-          waiting(Node, ChildPid, NewInterval)
+          waiting(Node, ChildPid, NewInterval, PorcCurPos)
       end;
-    _ -> waiting(Node, ChildPid, Interval)
+    _ -> waiting(Node, ChildPid, Interval, PorcCurPos)
   end.
 
 draw_menu(Node, Interval, HideSystemTable) ->
