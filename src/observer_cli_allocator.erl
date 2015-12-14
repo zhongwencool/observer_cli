@@ -89,7 +89,8 @@ waiting(Node, Pid, Interval, ProcCurPos) ->
         {error, no_integer} -> waiting(Node, Pid, Interval, ProcCurPos);
         {NewInterval, _} when NewInterval >= ?ALLOCATOR_MIN_INTERVAL ->
           erlang:send(Pid, {new_interval, NewInterval}),
-          waiting(Node, Pid, NewInterval, ProcCurPos)
+          waiting(Node, Pid, NewInterval, ProcCurPos);
+        {_Interval, _} -> waiting(Node, Pid, Interval, ProcCurPos)
       end;
     _ -> waiting(Node, Pid, Interval, ProcCurPos)
   end.
@@ -102,7 +103,7 @@ loop(Node, Interval, ParentPid) ->
   draw_menu(Node),
   draw_average_block_size_info(AverageBlockCurs, AverageBlockMaxs),
   draw_cache_hit_rates(CacheHitInfo),
-  draw_last_line(),
+  draw_last_line(Interval),
   erlang:send_after(Interval, self(), refresh),
   receive
     quit -> quit;
@@ -142,8 +143,9 @@ draw_average_block_size_info(AverageBlockCurs, AverageBlockMaxs) ->
    end||AllocKey <-?UTIL_ALLOCATORS],
   ok.
 
-draw_last_line()  ->
-  io:format("|\e[31;1mINPUT: \e[0m\e[44mq(quit)      ~111.111s\e[49m|~n", ["r:5000(refresh every 5000ms)"]).
+draw_last_line(Interval)  ->
+  Text = io_lib:format("r:~w(refresh every ~wms) refresh time must >= 5000ms", [Interval, Interval]),
+  io:format("|\e[31;1mINPUT: \e[0m\e[44mq(quit)      ~111.111s\e[49m|~n", [Text]).
 
 get_alloc(Key, Curs, Maxs) ->
   CurRes = proplists:get_value(Key, Curs),
