@@ -38,7 +38,7 @@ start(RefreshMillSecond, ProcCurPos)when
     andalso RefreshMillSecond >= ?HOME_MIN_INTERVAL ->
   ParentPid = self(),
   Tid = ets:new(observer_cli_process_info, [public, set]),
-  ChildPid = spawn(fun() -> loop(Tid, RefreshMillSecond, ParentPid, local_node, ProcCurPos) end),
+  ChildPid = spawn(fun() -> loop(Tid, proc_count, memory, RefreshMillSecond, ParentPid, local_node, ProcCurPos) end),
   waiting(Tid, ChildPid, RefreshMillSecond, local_node, ProcCurPos).
 
 -spec start(Node, RefreshMillSecond, ProcCurPos) -> quit when
@@ -159,10 +159,15 @@ get_ranklist_and_cost_time(Node, Func, Type, Interval, CollectTime) ->
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+restart_node(Tid, Node, Module, Func, RefreshMillSecond, ProcCurPos) ->
+  ParentPid = self(),
+  ChildPid = spawn(fun() -> loop(Tid, Module, Func, RefreshMillSecond, ParentPid, Node, ProcCurPos) end),
+  waiting(Tid, ChildPid, RefreshMillSecond, Node, ProcCurPos).
+
 start_remote_node(RefreshMillSecond, Node, ProcCurPos) ->
   ParentPid = self(),
   Tid = ets:new(observer_cli_process_info, [public, set]),
-  ChildPid = spawn(fun() -> loop(Tid, RefreshMillSecond, ParentPid, Node, ProcCurPos) end),
+  ChildPid = spawn(fun() -> loop(Tid, proc_count, memory, RefreshMillSecond, ParentPid, Node, ProcCurPos) end),
   waiting(Tid, ChildPid, RefreshMillSecond, Node, ProcCurPos).
 
 waiting(Tid, ChildPid, Interval, Node, ProcCurPos) ->
@@ -186,13 +191,15 @@ waiting(Tid, ChildPid, Interval, Node, ProcCurPos) ->
       erlang:send(ChildPid, pause_or_resume),
       waiting(Tid, ChildPid, Interval, Node, ProcCurPos);
     {Func, Type, no_change} ->
-      erlang:send(ChildPid, {Func, Type}),
+      erlang:exit(ChildPid, stop),
+      restart_node(Tid, Node, Func, Type, Interval, ProcCurPos),
       waiting(Tid, ChildPid, Interval, Node, ProcCurPos);
     {Func, Type, RefreshInterval} ->
       case string:to_integer(RefreshInterval) of
         {error, no_integer} -> waiting(Tid, ChildPid, Interval, Node, ProcCurPos);
         {NewInterval, _} when NewInterval >= ?HOME_MIN_INTERVAL ->
-          erlang:send(ChildPid, {Func, Type, NewInterval}),
+          erlang:exit(ChildPid, stop),
+          restart_node(Tid, Node, Func, Type, NewInterval, ProcCurPos),
           waiting(Tid, ChildPid, NewInterval, Node, ProcCurPos);
         {_, _} -> waiting(Tid, ChildPid, Interval, Node, ProcCurPos)
       end;
@@ -243,10 +250,10 @@ input_to_operation([$j, $:| Pos]) -> {jump_to_process, Pos};
 input_to_operation("\n") -> go_to_process_view;
 input_to_operation(_)-> error_input.
 
-loop(Tid, Interal, ParentPid, Node, RankPos) ->
+loop(Tid, Module, Func, Interval, ParentPid, Node, RankPos) ->
   observer_cli_lib:clear_screen(),
   StableInfo = get_stable_system_info(Node), %%don't refresh the stable information everytime
-  refresh(Tid, Node, ParentPid, Interal, proc_count, memory, StableInfo, erlang:make_ref(), 0, RankPos, running).
+  refresh(Tid, Node, ParentPid, Interval, Module, Func, StableInfo, erlang:make_ref(), 0, RankPos, running).
 
 %% pause status waiting to be resume
 refresh(Tid, Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, _, RankPos, pause) ->
@@ -257,12 +264,8 @@ refresh(Tid, Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, _, R
     pause_or_resume ->
       observer_cli_lib:clear_screen(),
       refresh(Tid, Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, RankPos, running);
-    {NewFunc, NewType, NewInteral} ->
-      observer_cli_lib:clear_screen(),
-      refresh(Tid, Node, ParentPid, NewInteral, NewFunc, NewType, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, RankPos, running);
-    {NewFunc, NewType} ->
-      observer_cli_lib:clear_screen(),
-      refresh(Tid, Node, ParentPid, Interal, NewFunc, NewType, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, RankPos, running)
+    {Func, Type} ->
+      refresh(Tid, Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, RankPos, running)
   end;
 %% running status
 refresh(Tid, Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, NodeStatsCostTime, RankPos, running) ->
@@ -288,22 +291,10 @@ refresh(Tid, Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, Node
   TimeRef = refresh_next_time(Func, Type, Interal, RankCostTime, NodeStatsCostTime),
   receive
     quit -> quit;
-    {go_to_process_line, NewRankPos} ->
-      observer_cli_lib:clear_screen(),
-      NewRankPos = case RankPos - 1 < 1 of true -> ?DEFAULT_RANK_NUM; false -> RankPos - 1 end,
-      refresh(Tid, Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, NewRankPos, running);
-    go_to_down_line ->
-      observer_cli_lib:clear_screen(),
-      NewRankPos = case RankPos + 1 > ?DEFAULT_RANK_NUM of true -> 1; false -> RankPos + 1 end,
-      refresh(Tid, Node, ParentPid, Interal, Func, Type, StableInfo, LastTimeRef, ?FAST_COLLECT_INTENAL, NewRankPos, running);
     pause_or_resume ->
       refresh(Tid, Node, ParentPid, Interal, Func, Type, StableInfo, TimeRef, ?FAST_COLLECT_INTENAL, RankPos, pause);
     {Func, Type} ->
-      refresh(Tid, Node, ParentPid, Interal, Func, Type, StableInfo, TimeRef, NewNodeStatsCostTime, RankPos, running);
-    {NewFunc, NewType} ->
-      refresh(Tid, Node, ParentPid, Interal, NewFunc, NewType, StableInfo, TimeRef, ?FAST_COLLECT_INTENAL, RankPos, running);
-    {NewFunc, NewType, NewInteral} ->
-      refresh(Tid, Node, ParentPid, NewInteral, NewFunc, NewType, StableInfo, TimeRef, ?FAST_COLLECT_INTENAL, RankPos, running)
+      refresh(Tid, Node, ParentPid, Interal, Func, Type, StableInfo, TimeRef, NewNodeStatsCostTime, RankPos, running)
   end.
 
 draw_menu(Func, Type, Interal, Node) ->
@@ -596,5 +587,4 @@ get_refresh_cost_info(proc_count, Type, Interval) ->
   io_lib:format(" recon:proc_count(~s, ~w) Refresh:~wms", [atom_to_list(Type), Interval div 2, Interval]);
 get_refresh_cost_info(proc_window, Type, Interval) ->
   io_lib:format(" recon:proc_window(~s, ~w) Refresh:~wms",
-    [atom_to_list(Type), Interval*2 - Interval div 2, Interval]).
-
+    [atom_to_list(Type), Interval*2 - Interval div 2, Interval*2]).
