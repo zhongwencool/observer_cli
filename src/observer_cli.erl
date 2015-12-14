@@ -192,15 +192,13 @@ waiting(Tid, ChildPid, Interval, Node, ProcCurPos) ->
       waiting(Tid, ChildPid, Interval, Node, ProcCurPos);
     {Func, Type, no_change} ->
       erlang:exit(ChildPid, stop),
-      restart_node(Tid, Node, Func, Type, Interval, ProcCurPos),
-      waiting(Tid, ChildPid, Interval, Node, ProcCurPos);
+      restart_node(Tid, Node, Func, Type, Interval, ProcCurPos);
     {Func, Type, RefreshInterval} ->
       case string:to_integer(RefreshInterval) of
         {error, no_integer} -> waiting(Tid, ChildPid, Interval, Node, ProcCurPos);
         {NewInterval, _} when NewInterval >= ?HOME_MIN_INTERVAL ->
           erlang:exit(ChildPid, stop),
-          restart_node(Tid, Node, Func, Type, NewInterval, ProcCurPos),
-          waiting(Tid, ChildPid, NewInterval, Node, ProcCurPos);
+          restart_node(Tid, Node, Func, Type, NewInterval, ProcCurPos);
         {_, _} -> waiting(Tid, ChildPid, Interval, Node, ProcCurPos)
       end;
     {jump_to_process, Pos} ->
