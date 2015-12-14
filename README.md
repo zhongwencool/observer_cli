@@ -19,35 +19,22 @@ but you might think that one day observer_cli more convenient than observer.
 $ make && make shell   
 1> observer_cli:start().
 ```
-
+### Process And System Information
+ 
 ![Top](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_home_11_18.jpg)
 
 ![Process](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_process_11_18.jpg)
 
-
-```erlang
-2> observer_cli_system:start().
-```
-
+### ETS And System Information
 ![System](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_ets_11_18.jpg)
 
-```erlang
-3> observer_cli_allocator:start().
-```
-
+### Allocator Information
 ![Allocator](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_allocator_11_18.jpg)
 
-
-```erlang
-4> observer_cli_mnesia:start().
-```
-
+### Mnesia Information
 ![Mnesia](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_mnesia_11_18.jpg)
 
-
-```erlang
-5> observer_cli_help:start().
-```
+### Help Information
 ![Help](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_help_11_18.jpg)
 
 
@@ -56,23 +43,22 @@ $ make && make shell
 
 ```erlang
 > observer_cli:start().%% default refresh interval is 2000
-> observer_cli:start(Interval).
-> observer_cli:start(Node, Cookie, Interval).
-> observer_cli:start(Node, Interval).
+> observer_cli:start(Interval, 1).
+> observer_cli:start(Node, Cookie, Interval, 1).
+> observer_cli:start(Node, Interval, 1).
 ```
 
 -------------------
 ###TODO
 - [x] observer_cli:start(). Processes Memory, Binary, Total Heap Size, Reductions Top.     
-- [x] observer_cli:system(). include System and Architecture, CPU's and Threads metrics  in observer's system 
-- [x] observer_cli:allocator(). Memory Allocators: std, ll, eheap, ets,fix, binary, driver.
-- [x] observer_cli:table(). include all metrics ets in observer's Table Viewer.
-- [x] observer_cli:help()
+- [x] observer_cli_system:start(). include System and Architecture, CPU's and Threads metrics  in observer's system 
+- [x] observer_cli_allocator:start(). Memory Allocators: std, ll, eheap, ets,fix, binary, driver.
+- [x] observer_cli_ets:start(). include all metrics ets in observer's Table Viewer.
+- [x] observer_cli_help:start()
 - [x] remote node support
-- [x] mneisa table info by using mnesia:info, mnesia:system_info/1, 
+- [x] observer_cli_mneisa:start() table info by using mnesia:info, mnesia:system_info/1, 
 - [ ] ~~Draw all appication’s relations.~~
 - [ ] ~~Trace Overview.~~ You should use recon_trace.
-
 
 --------------------
 ###License
