@@ -11,6 +11,7 @@
 -export([green/1]).
 -export([to_megabyte_str/1]).
 -export([mfa_to_list/1]).
+-export([get_line/1]).
 
 -spec move_cursor_to_top_line() -> ok.
 move_cursor_to_top_line() ->
@@ -19,6 +20,11 @@ move_cursor_to_top_line() ->
 -spec clear_screen() -> ok.
 clear_screen() ->
   io:format("\e[H\e[J").
+
+-spec get_line(list()) -> list().
+get_line(Remind) ->
+  Input = io:get_line(Remind),
+  to_list(Input).
 
 %% @doc  return format "124Days 12:12:12"
 -spec uptime(atom()) -> string().
@@ -43,6 +49,7 @@ float_to_percent_with_two_digit(Float) ->
 to_list(Atom) when is_atom(Atom) -> atom_to_list(Atom);
 to_list(Integer) when is_integer(Integer) -> integer_to_list(Integer);
 to_list(Pid) when is_pid(Pid) -> erlang:pid_to_list(Pid);
+to_list(Binary) when is_binary(Binary) -> erlang:binary_to_list(Binary);
 to_list(Val) -> Val.
 
 -spec get_menu_title(Menu) -> [Title] when

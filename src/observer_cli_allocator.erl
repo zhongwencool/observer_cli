@@ -69,7 +69,7 @@ get_average_block_sizes(Node) ->
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 waiting(Node, Pid, Interval, ProcCurPos) ->
-  Input = io:get_line(""),
+  Input = observer_cli_lib:get_line(""),
   case  Input of
     "q\n" -> erlang:send(Pid, quit);
     "o\n" ->

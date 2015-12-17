@@ -92,7 +92,7 @@ loop(Node, Interval, LastTimeRef, ParentPid, HideSystemTable) ->
   end.
 
 waiting(Node, ChildPid, Interval, PorcCurPos) ->
-  Input = io:get_line(""),
+  Input = observer_cli_lib:get_line(""),
   case  Input of
     "q\n" -> erlang:send(ChildPid, quit);
     "o\n" ->

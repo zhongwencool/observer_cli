@@ -39,7 +39,7 @@ get_system_info(Node) -> rpc:call(Node, ?MODULE, get_system_info, [local_node]).
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 waiting(Node, ChildPid, Interval, ProcCurPos) ->
-  Input = io:get_line(""),
+  Input = observer_cli_lib:get_line(""),
   case  Input of
     "q\n" -> erlang:send(ChildPid, quit);
     "o\n" ->

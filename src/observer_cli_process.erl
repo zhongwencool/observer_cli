@@ -161,7 +161,7 @@ stacktrace_to_str(CurrentStacktrace) ->
   CurrentStacktrace.
 
 waiting(Node, ChildPid, Interval, ProcCurPos) ->
-  Input = io:get_line(""),
+  Input = observer_cli_lib:get_line(""),
   case  Input of
     "q\n" -> erlang:send(ChildPid, quit);
     "b\n" ->
