@@ -25,7 +25,7 @@ start(Node, Interval, ProcCurPos) ->
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 waiting(Node, ChildPid, ProcCurPos) ->
-  Input = io:get_line(""),
+  Input = observer_cli_lib:get_line(""),
   case  Input of
     "q\n" ->
       erlang:send(ChildPid, quit),

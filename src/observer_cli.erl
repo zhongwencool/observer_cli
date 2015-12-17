@@ -171,8 +171,9 @@ start_remote_node(RefreshMillSecond, Node, ProcCurPos) ->
   waiting(Tid, ChildPid, RefreshMillSecond, Node, ProcCurPos).
 
 waiting(Tid, ChildPid, Interval, Node, ProcCurPos) ->
-  Input = io:get_line(""),
+  Input = observer_cli_lib:get_line(""),
   Operate = input_to_operation(Input),
+
   case  Operate of
     quit -> erlang:send(ChildPid, quit);
     go_to_ets_view ->
@@ -586,3 +587,4 @@ get_refresh_cost_info(proc_count, Type, Interval) ->
 get_refresh_cost_info(proc_window, Type, Interval) ->
   io_lib:format(" recon:proc_window(~s, ~w) Refresh:~wms",
     [atom_to_list(Type), Interval*2 - Interval div 2, Interval*2]).
+
