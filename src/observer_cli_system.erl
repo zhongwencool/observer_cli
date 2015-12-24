@@ -15,19 +15,19 @@
 -spec start() -> quit.
 start() -> start(local_node, ?SYSTEM_MIN_INTERVAL, 1).
 -spec start(pos_integer(), pos_integer()) -> quit.
-start(RefreshMillSecond, ProcCurPos)when RefreshMillSecond >= ?SYSTEM_MIN_INTERVAL ->
-  start(local_node, RefreshMillSecond, ProcCurPos).
+start(RefreshMillSecond, HomeOpts)when RefreshMillSecond >= ?SYSTEM_MIN_INTERVAL ->
+  start(local_node, RefreshMillSecond, HomeOpts).
 
--spec start(Node, RefreshMillSecond, ProcCurPos) -> quit when
+-spec start(Node, RefreshMillSecond, HomeOpts) -> quit when
   Node:: atom(),
   RefreshMillSecond:: pos_integer(),
-  ProcCurPos:: pos_integer().
-start(Node, RefreshMillSecond, ProcCurPos)when RefreshMillSecond >= ?SYSTEM_MIN_INTERVAL ->
+  HomeOpts:: pos_integer().
+start(Node, RefreshMillSecond, HomeOpts)when RefreshMillSecond >= ?SYSTEM_MIN_INTERVAL ->
   ParentPid = self(),
   Pid = spawn(fun() ->
     observer_cli_lib:clear_screen(),
     loop(Node, RefreshMillSecond, erlang:make_ref(), ParentPid) end),
-  waiting(Node, Pid, RefreshMillSecond, ProcCurPos).
+  waiting(Node, Pid, RefreshMillSecond, HomeOpts).
 
 %%for fetching data from remote data by rpc:call/4
 -spec get_system_info(Node) -> [tuple()] when
@@ -38,31 +38,31 @@ get_system_info(Node) -> rpc:call(Node, ?MODULE, get_system_info, [local_node]).
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-waiting(Node, ChildPid, Interval, ProcCurPos) ->
+waiting(Node, ChildPid, Interval, HomeOpts) ->
   Input = observer_cli_lib:get_line(""),
   case  Input of
     "q\n" -> erlang:send(ChildPid, quit);
     "o\n" ->
       erlang:exit(ChildPid, stop),
-      observer_cli:start(Node, ?HOME_MIN_INTERVAL, ProcCurPos);
+      observer_cli:start(Node, HomeOpts);
     "a\n" ->
       erlang:exit(ChildPid, stop),
-      observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL, ProcCurPos);
+      observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL, HomeOpts);
     "h\n" ->
       erlang:exit(ChildPid, stop),
-      observer_cli_help:start(Node, ?HELP_MIN_INTERVAL, ProcCurPos);
+      observer_cli_help:start(Node, ?HELP_MIN_INTERVAL, HomeOpts);
     "db\n" ->
       erlang:exit(ChildPid, stop),
-      observer_cli_mnesia:start(Node, ?MNESIA_MIN_INTERVAL, ProcCurPos);
+      observer_cli_mnesia:start(Node, ?MNESIA_MIN_INTERVAL, HomeOpts);
     [$r, $:| RefreshInterval] ->
       case string:to_integer(RefreshInterval) of
-        {error, no_integer} -> waiting(Node, ChildPid, Interval, ProcCurPos);
+        {error, no_integer} -> waiting(Node, ChildPid, Interval, HomeOpts);
         {NewInterval, _} when NewInterval >= ?SYSTEM_MIN_INTERVAL ->
           erlang:send(ChildPid, {new_interval, NewInterval}),
-          waiting(Node, ChildPid, NewInterval, ProcCurPos);
-        {_Interval, _} -> waiting(Node, ChildPid, Interval, ProcCurPos)
+          waiting(Node, ChildPid, NewInterval, HomeOpts);
+        {_Interval, _} -> waiting(Node, ChildPid, Interval, HomeOpts)
       end;
-    _ -> waiting(Node, ChildPid, Interval, ProcCurPos)
+    _ -> waiting(Node, ChildPid, Interval, HomeOpts)
   end.
 
 loop(Node, Interval, LastTimeRef, ParentPid) ->
@@ -189,7 +189,7 @@ sys_info() ->
                           _ -> 1
                         end,
 
-  {{_, Input},{_, Output}} = erlang:statistics(io),
+  {{_, Input}, {_, Output}} = erlang:statistics(io),
   [{process_count, erlang:system_info(process_count)},
     {process_limit, erlang:system_info(process_limit)},
     {uptime, element(1, erlang:statistics(wall_clock))},

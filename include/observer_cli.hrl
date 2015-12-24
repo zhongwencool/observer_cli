@@ -12,3 +12,5 @@
 -define(HELP_BROAD, 133).
 -define(PROCESS_BROAD, 133).
 -define(MNESIA_BROAD, 133).
+
+-define(DEFAULT_HOME_OPTS, [{cur_pos, 1}, {running, proc_count, memory, ?SYSTEM_MIN_INTERVAL}]).

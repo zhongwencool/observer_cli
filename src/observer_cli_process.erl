@@ -9,14 +9,14 @@
 %% for rpc
 
 -spec start(pid(), pos_integer(), pos_integer()) -> quit.
-start(ProcessPid, RefreshMillSecond, ProcCurPos)when RefreshMillSecond >= ?PROCESS_MIN_INTERVAL ->
-  start(local_node, ProcessPid, RefreshMillSecond, ProcCurPos).
+start(ProcessPid, RefreshMillSecond, HomeOpts)when RefreshMillSecond >= ?PROCESS_MIN_INTERVAL ->
+  start(local_node, ProcessPid, RefreshMillSecond, HomeOpts).
 -spec start(pid(), pos_integer()) -> quit.
-start(ProcessPid, ProcCurPos) when is_pid(ProcessPid) ->
-  start(local_node, ProcessPid, ?PROCESS_MIN_INTERVAL, ProcCurPos).
+start(ProcessPid, HomeOpts) when is_pid(ProcessPid) ->
+  start(local_node, ProcessPid, ?PROCESS_MIN_INTERVAL, HomeOpts).
 
 -spec start(atom(), pid(), pos_integer(), pos_integer()) -> quit.
-start(Node, ProcessPid, RefreshMillSecond, ProcCurPos)when
+start(Node, ProcessPid, RefreshMillSecond, HomeOpts)when
   RefreshMillSecond >= ?PROCESS_MIN_INTERVAL
     andalso is_pid(ProcessPid)
     andalso is_atom(Node) ->
@@ -25,7 +25,7 @@ start(Node, ProcessPid, RefreshMillSecond, ProcCurPos)when
     observer_cli_lib:clear_screen(),
     InitQ = lists:foldl(fun(_X, Acc) -> queue:in(waiting, Acc) end, queue:new(), lists:seq(1, 5)),
     loop(Node, RefreshMillSecond, ProcessPid, ParentPid, erlang:make_ref(), InitQ, InitQ ) end),
-  waiting(Node, ChildPid, RefreshMillSecond, ProcCurPos).
+  waiting(Node, ChildPid, RefreshMillSecond, HomeOpts).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
@@ -160,21 +160,21 @@ pids_to_str(Link, Len) ->
 stacktrace_to_str(CurrentStacktrace) ->
   CurrentStacktrace.
 
-waiting(Node, ChildPid, Interval, ProcCurPos) ->
+waiting(Node, ChildPid, Interval, HomeOpts) ->
   Input = observer_cli_lib:get_line(""),
   case  Input of
     "q\n" -> erlang:send(ChildPid, quit);
     "b\n" ->
       erlang:exit(ChildPid, stop),
-      observer_cli:start(Node, ?HOME_MIN_INTERVAL, ProcCurPos);
+      observer_cli:start(Node, HomeOpts);
     [$r, $:| RefreshInterval] ->
       case string:to_integer(RefreshInterval) of
-        {error, no_integer} -> waiting(Node, ChildPid, Interval, ProcCurPos);
+        {error, no_integer} -> waiting(Node, ChildPid, Interval, HomeOpts);
         {NewInterval, _} when NewInterval >= ?PROCESS_MIN_INTERVAL ->
           erlang:send(ChildPid, {new_interval, NewInterval}),
-          waiting(Node, ChildPid, NewInterval, ProcCurPos)
+          waiting(Node, ChildPid, NewInterval, HomeOpts)
       end;
-    _ -> waiting(Node, ChildPid, Interval, ProcCurPos)
+    _ -> waiting(Node, ChildPid, Interval, HomeOpts)
   end.
 
 get_process_info(local_node, Pid) -> recon:info(Pid);
