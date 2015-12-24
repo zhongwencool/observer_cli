@@ -3,9 +3,13 @@
 
 -include("observer_cli.hrl").
 
+%% API
 -export([start/0]).
+-export([start/1]).
 -export([start/2]).
--export([start/3]).
+
+%% for switch views
+-export([start_node/2]).
 
 %% for rpc
 -export([get_stable_system_info/1]).
@@ -25,50 +29,45 @@
 
 %% @doc observer in erlang shell the refresh time is Milliseconds
 
--spec start() -> quit.
-start() -> start(?DEFAULT_HOME_OPTS).
+-spec start() -> no_return.
+start() -> start_node(local_node, ?DEFAULT_HOME_OPTS).
 
--spec start(list()) -> quit.
-start(Opts)when is_list(Opts) ->
-  ParentPid = self(),
-  Tid = ets:new(process_info, [public, set]),
-  ChildPid = spawn(fun() -> loop(Tid, ParentPid, local_node, Opts) end),
-  waiting(Tid, ChildPid, local_node, Opts).
-
--spec start(Node, Opts) -> quit when
-  Node:: atom(),
-  Opts:: list().
-
-start(Node, Opts)when is_list(Opts)
-    andalso is_atom(Node) ->
+-spec start(Node) -> no_return when
+  Node:: atom().
+start(Node)when is_atom(Node) ->
   case Node == node() orelse Node == local_node of
-    true -> start(Opts);
+    true -> start_node(local_node, ?DEFAULT_HOME_OPTS);
     false ->
       case net_kernel:connect_node(Node) of
-        true -> start_remote_node(Node, Opts);
+        true -> start_node(Node, ?DEFAULT_HOME_OPTS);
         false -> io:format("remote node ~p(cookie:~p) refuse to be connected ~n", [Node, erlang:get_cookie()]);
         ignored -> io:format("the local node is not alive ignore remote node~p(cookie:~p)~n", [Node, erlang:get_cookie()])
       end
   end.
 
--spec start(Node, Cookie, Opts) -> quit when
+-spec start(Node, Cookies) -> no_return when
   Node:: atom(),
-  Cookie:: atom(),
-  Opts:: list().
-start(Node, Cookie, Opts)when
-  is_atom(Node)
-    andalso is_atom(Cookie)
-    andalso is_list(Opts) ->
+  Cookies:: atom().
+start(Node, Cookie)when is_atom(Node) andalso is_atom(Cookie) ->
   case Node == node() of
-    true -> start(Opts);
+    true -> start_node(local_node, ?DEFAULT_HOME_OPTS);
     false ->
       erlang:set_cookie(Node, Cookie),
       case net_kernel:connect_node(Node) of
-        true -> start_remote_node(Node, Opts);
+        true -> start_node(Node, ?DEFAULT_HOME_OPTS);
         false -> io:format("remote node ~p(cookie:~p) refuse to be connected ~n", [Node, Cookie]);
         ignored -> io:format("the local node is not alive ignore remote node~p(cookie:~p)~n", [Node, Cookie])
       end
   end.
+
+-spec start_node(Node, Opts) -> no_return when
+  Node:: atom(),
+  Opts:: list().
+start_node(Node, Opts)when is_atom(Node) andalso is_list(Opts) ->
+  ParentPid = self(),
+  Tid = ets:new(process_info, [public, set]),
+  ChildPid = spawn(fun() -> loop(Tid, ParentPid, Node, Opts) end),
+  waiting(Tid, ChildPid, local_node, Opts).
 
 %%for fetching data from remote data by rpc:call/4
 -spec get_stable_system_info(atom()) -> list().
@@ -147,12 +146,6 @@ get_ranklist_and_cost_time(Node, Func, Type, Interval, CollectTime) ->
 
 restart_node(Tid, Node, Opts) ->
   ParentPid = self(),
-  ChildPid = spawn(fun() -> loop(Tid, ParentPid, Node, Opts) end),
-  waiting(Tid, ChildPid, Node, Opts).
-
-start_remote_node(Node, Opts) ->
-  ParentPid = self(),
-  Tid = ets:new(process_info, [public, set]),
   ChildPid = spawn(fun() -> loop(Tid, ParentPid, Node, Opts) end),
   waiting(Tid, ChildPid, Node, Opts).
 

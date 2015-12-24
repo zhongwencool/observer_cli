@@ -2,15 +2,14 @@
 -module(observer_cli_ets).
 
 %% API
--export([start/0]).
 -export([start/1]).
+
+%% for rpc
 -export([draw_ets_info/1]).
 
 -define(MAX_SHOW_LEN, 25).
 
 %% @doc List include all metrics in observer's Table Viewer.
--spec start() -> ok.
-start() -> draw_ets_info(local_node).
 
 -spec start(atom()) -> ok.
 start(Node) -> draw_ets_info(Node).

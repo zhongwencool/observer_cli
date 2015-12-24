@@ -1,8 +1,7 @@
 %%% @author zhongwen <zhongwencool@gmail.com>
 -module(observer_cli_mnesia).
 
--export([start/0]).
--export([start/2]).
+%% API
 -export([start/3]).
 
 %%for rpc
@@ -12,14 +11,8 @@
 
 -define(MAX_SHOW_LEN, 37).
 
--spec start() -> quit.
-start() -> start(local_node, ?MNESIA_MIN_INTERVAL, 1).
--spec start(pos_integer(), pos_integer()) -> quit.
-start(RefreshMillSecond, HomeOpts)when RefreshMillSecond >= ?MNESIA_MIN_INTERVAL ->
-  start(local_node, RefreshMillSecond, HomeOpts).
-
--spec start(atom(), pos_integer(), pos_integer()) -> quit.
-start(Node, RefreshMillSecond, HomeOpts)when RefreshMillSecond >= ?MNESIA_MIN_INTERVAL ->
+-spec start(atom(), pos_integer(), list()) -> no_return.
+start(Node, RefreshMillSecond, HomeOpts) ->
   ParentPid = self(),
   Pid = spawn(fun() ->
     observer_cli_lib:clear_screen(),
@@ -97,7 +90,7 @@ waiting(Node, ChildPid, Interval, HomeOpts) ->
     "q\n" -> erlang:send(ChildPid, quit);
     "o\n" ->
       erlang:exit(ChildPid, stop),
-      observer_cli:start(Node, HomeOpts);
+      observer_cli:start_node(Node, HomeOpts);
     "a\n" ->
       erlang:exit(ChildPid, stop),
       observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL, HomeOpts);

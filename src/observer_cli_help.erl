@@ -3,16 +3,9 @@
 
 -include("observer_cli.hrl").
 %% API
--export([start/0]).
 -export([start/3]).
 
--define(BROAD, 133).
-
--spec start() -> quit.
-start() ->
-  start(local_node, ?HELP_MIN_INTERVAL, 1).
-
--spec start(atom(), pos_integer(), pos_integer()) -> quit.
+-spec start(atom(), pos_integer(), list()) -> no_return.
 start(Node, Interval, HomeOpts) ->
   ChildPid = spawn(fun() ->
     observer_cli_lib:clear_screen(),
@@ -32,7 +25,7 @@ waiting(Node, ChildPid, HomeOpts) ->
       "";
     "o\n" ->
       erlang:send(ChildPid, go_to_other_view),
-      observer_cli:start(Node, HomeOpts);
+      observer_cli:start_node(Node, HomeOpts);
     "e\n" ->
       erlang:send(ChildPid, go_to_other_view),
       observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL, HomeOpts);
@@ -65,7 +58,7 @@ draw_help() ->
   io:format("|only represents the increments between two refresh interval. The total bytes in and out in \e[48;2;80;80;80me(ETS/SYSTEM)\e[0m view.                     |~n"),
 
   io:format("|\e[42mAbout o(OBSERVER)'s Command\e[49m                                                                                                        |~n"),
-  io:format("|\e[48;2;80;80;80mRemote node support:\e[0m  |observer_cli:start(Node, Cookie, Interval, 1) | observer_start:start(Node, Interval, 1)                     |~n"),
+  io:format("|\e[48;2;80;80;80mRemote node support:\e[0m  |observer_cli:start(Node, Cookie) | observer_start:start(Node)                                     |~n"),
 
   io:format("|\e[48;2;80;80;80mr:5000\e[0m   will switch mode to reduction(proc_count) and set the refresh  time to 5000ms                                             |~n"),
   io:format("|\e[48;2;80;80;80mrr:5000\e[0m   will switch mode to reduction(proc_window) and set the refresh time to 5000ms                                            |~n"),
@@ -87,5 +80,5 @@ draw_menu(Node) ->
   [Home, Ets, Alloc, Mnesia, Help]  = observer_cli_lib:get_menu_title(help),
   Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "| ", Mnesia, "|", Help, "|"]),
   UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime(Node)) ++ "|",
-  Space = lists:duplicate(?BROAD - erlang:length(Title)    - erlang:length(UpTime)+ 110, " "),
+  Space = lists:duplicate(?HELP_BROAD - erlang:length(Title)    - erlang:length(UpTime)+ 110, " "),
   io:format("~s~n", [Title ++ Space ++ UpTime]).
