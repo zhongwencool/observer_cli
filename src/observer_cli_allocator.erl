@@ -3,7 +3,6 @@
 
 -include("observer_cli.hrl").
 %% API
--export([start/0]).
 -export([start/3]).
 
 %%for rpc
@@ -27,16 +26,8 @@
 | std_alloc.
 
 %% @doc List Memory Allocators: std, ll, eheap, ets, fix, binary, driver.
--spec start() -> quit.
-start() ->
-  ParentPid = self(),
-  Pid = spawn(fun() ->
-    observer_cli_lib:move_cursor_to_top_line(),
-    observer_cli_lib:clear_screen(),
-    loop(local_node, ?ALLOCATOR_MIN_INTERVAL, ParentPid) end),
-  waiting(local_node, Pid, ?ALLOCATOR_MIN_INTERVAL, ?DEFAULT_HOME_OPTS).
 
--spec start(Node, Interval, HomeOpts) -> quit when
+-spec start(Node, Interval, HomeOpts) -> no_return when
   Node:: atom(),
   Interval:: pos_integer(),
   HomeOpts:: list().
@@ -74,7 +65,7 @@ waiting(Node, Pid, Interval, HomeOpts) ->
     "q\n" -> erlang:send(Pid, quit);
     "o\n" ->
       erlang:exit(Pid, stop),
-      observer_cli:start(Node, HomeOpts);
+      observer_cli:start_node(Node, HomeOpts);
     "e\n" ->
       erlang:exit(Pid, stop),
       observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL, HomeOpts);

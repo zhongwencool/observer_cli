@@ -2,24 +2,10 @@
 
 -include("observer_cli.hrl").
 
--export([start/2]).
--export([start/3]).
 -export([start/4]).
 
-%% for rpc
-
--spec start(pid(), pos_integer(), pos_integer()) -> quit.
-start(ProcessPid, RefreshMillSecond, HomeOpts)when RefreshMillSecond >= ?PROCESS_MIN_INTERVAL ->
-  start(local_node, ProcessPid, RefreshMillSecond, HomeOpts).
--spec start(pid(), pos_integer()) -> quit.
-start(ProcessPid, HomeOpts) when is_pid(ProcessPid) ->
-  start(local_node, ProcessPid, ?PROCESS_MIN_INTERVAL, HomeOpts).
-
--spec start(atom(), pid(), pos_integer(), pos_integer()) -> quit.
-start(Node, ProcessPid, RefreshMillSecond, HomeOpts)when
-  RefreshMillSecond >= ?PROCESS_MIN_INTERVAL
-    andalso is_pid(ProcessPid)
-    andalso is_atom(Node) ->
+-spec start(atom(), pid(), pos_integer(), list()) -> no_return.
+start(Node, ProcessPid, RefreshMillSecond, HomeOpts) ->
   ParentPid = self(),
   ChildPid = spawn(fun() ->
     observer_cli_lib:clear_screen(),
@@ -31,6 +17,7 @@ start(Node, ProcessPid, RefreshMillSecond, HomeOpts)when
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 loop(Node, Interval, ProcessPid, ParentPid, TimeRef, OldRedus, OldMems) ->
+  redraw_screen_to_blank(),
   observer_cli_lib:move_cursor_to_top_line(),
   erlang:cancel_timer(TimeRef),
   ProcessInfo = get_process_info(Node, ProcessPid),
@@ -73,6 +60,11 @@ loop(Node, Interval, ProcessPid, ParentPid, TimeRef, OldRedus, OldMems) ->
     quit -> quit;
     go_back_to_home_view -> erlang:send(ParentPid, draw_work_done_to_home_view)
   end.
+
+redraw_screen_to_blank() ->
+  observer_cli_lib:move_cursor_to_top_line(),
+  BlankLine = lists:concat(lists:duplicate(?PROCESS_BROAD, " ")),
+  [begin io:format(BlankLine) end || _Q <- lists:seq(1, 35)].
 
 draw_line(RegisteredName, GroupLeader, Status, TrapExit, InitialCall,
     MessageQueueLen, HeapSize, TotalHeapSize, GarbageCollection) ->
@@ -166,7 +158,7 @@ waiting(Node, ChildPid, Interval, HomeOpts) ->
     "q\n" -> erlang:send(ChildPid, quit);
     "b\n" ->
       erlang:exit(ChildPid, stop),
-      observer_cli:start(Node, HomeOpts);
+      observer_cli:start_node(Node, HomeOpts);
     [$r, $:| RefreshInterval] ->
       case string:to_integer(RefreshInterval) of
         {error, no_integer} -> waiting(Node, ChildPid, Interval, HomeOpts);
@@ -179,3 +171,4 @@ waiting(Node, ChildPid, Interval, HomeOpts) ->
 
 get_process_info(local_node, Pid) -> recon:info(Pid);
 get_process_info(Node, Pid) -> rpc:call(Node, recon, info, [Pid]).
+
