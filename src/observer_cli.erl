@@ -37,7 +37,7 @@ start(RefreshMillSecond, ProcCurPos)when
     andalso is_integer(ProcCurPos)
     andalso RefreshMillSecond >= ?HOME_MIN_INTERVAL ->
   ParentPid = self(),
-  Tid = ets:new(observer_cli_process_info, [public, set]),
+  Tid = ets:new(process_info, [public, set]),
   ChildPid = spawn(fun() -> loop(Tid, proc_count, memory, RefreshMillSecond, ParentPid, local_node, ProcCurPos) end),
   waiting(Tid, ChildPid, RefreshMillSecond, local_node, ProcCurPos).
 
@@ -166,7 +166,7 @@ restart_node(Tid, Node, Module, Func, RefreshMillSecond, ProcCurPos) ->
 
 start_remote_node(RefreshMillSecond, Node, ProcCurPos) ->
   ParentPid = self(),
-  Tid = ets:new(observer_cli_process_info, [public, set]),
+  Tid = ets:new(process_info, [public, set]),
   ChildPid = spawn(fun() -> loop(Tid, proc_count, memory, RefreshMillSecond, ParentPid, Node, ProcCurPos) end),
   waiting(Tid, ChildPid, RefreshMillSecond, Node, ProcCurPos).
 
