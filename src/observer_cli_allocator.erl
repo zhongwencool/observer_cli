@@ -34,19 +34,19 @@ start() ->
     observer_cli_lib:move_cursor_to_top_line(),
     observer_cli_lib:clear_screen(),
     loop(local_node, ?ALLOCATOR_MIN_INTERVAL, ParentPid) end),
-  waiting(local_node, Pid, ?ALLOCATOR_MIN_INTERVAL, 1).
+  waiting(local_node, Pid, ?ALLOCATOR_MIN_INTERVAL, ?DEFAULT_HOME_OPTS).
 
--spec start(Node, Interval, ProcCurPos) -> quit when
+-spec start(Node, Interval, HomeOpts) -> quit when
   Node:: atom(),
   Interval:: pos_integer(),
-  ProcCurPos:: pos_integer().
-start(Node, Interval, ProcCurPos) ->
+  HomeOpts:: list().
+start(Node, Interval, HomeOpts) ->
   ParentPid = self(),
   Pid = spawn(fun() ->
     observer_cli_lib:move_cursor_to_top_line(),
     observer_cli_lib:clear_screen(),
     loop(Node, Interval, ParentPid) end),
-  waiting(Node, Pid, Interval, ProcCurPos).
+  waiting(Node, Pid, Interval, HomeOpts).
 
 %%for fetching data from remote data by rpc:call/4
 -spec get_cache_hit_rates(Node) -> [{{instance, non_neg_integer()}, [{Key, Val}]}] when
@@ -68,31 +68,31 @@ get_average_block_sizes(Node) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-waiting(Node, Pid, Interval, ProcCurPos) ->
+waiting(Node, Pid, Interval, HomeOpts) ->
   Input = observer_cli_lib:get_line(""),
   case  Input of
     "q\n" -> erlang:send(Pid, quit);
     "o\n" ->
       erlang:exit(Pid, stop),
-      observer_cli:start(Node, ?HOME_MIN_INTERVAL, ProcCurPos);
+      observer_cli:start(Node, HomeOpts);
     "e\n" ->
       erlang:exit(Pid, stop),
-      observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL, ProcCurPos);
+      observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL, HomeOpts);
     "h\n" ->
       erlang:exit(Pid, stop),
-      observer_cli_help:start(Node, ?HELP_MIN_INTERVAL, ProcCurPos);
+      observer_cli_help:start(Node, ?HELP_MIN_INTERVAL, HomeOpts);
     "db\n" ->
       erlang:exit(Pid, stop),
-      observer_cli_mnesia:start(Node, ?MNESIA_MIN_INTERVAL, ProcCurPos);
+      observer_cli_mnesia:start(Node, ?MNESIA_MIN_INTERVAL, HomeOpts);
     [$r, $:| RefreshInterval] ->
       case string:to_integer(RefreshInterval) of
-        {error, no_integer} -> waiting(Node, Pid, Interval, ProcCurPos);
+        {error, no_integer} -> waiting(Node, Pid, Interval, HomeOpts);
         {NewInterval, _} when NewInterval >= ?ALLOCATOR_MIN_INTERVAL ->
           erlang:send(Pid, {new_interval, NewInterval}),
-          waiting(Node, Pid, NewInterval, ProcCurPos);
-        {_Interval, _} -> waiting(Node, Pid, Interval, ProcCurPos)
+          waiting(Node, Pid, NewInterval, HomeOpts);
+        {_Interval, _} -> waiting(Node, Pid, Interval, HomeOpts)
       end;
-    _ -> waiting(Node, Pid, Interval, ProcCurPos)
+    _ -> waiting(Node, Pid, Interval, HomeOpts)
   end.
 
 loop(Node, Interval, ParentPid) ->
@@ -100,7 +100,7 @@ loop(Node, Interval, ParentPid) ->
   {AverageBlockCurs, AverageBlockMaxs}  = get_average_block_sizes(Node),
 
   observer_cli_lib:move_cursor_to_top_line(),
-  draw_menu(Node),
+  draw_menu(Node, Interval),
   draw_average_block_size_info(AverageBlockCurs, AverageBlockMaxs),
   draw_cache_hit_rates(CacheHitInfo),
   draw_last_line(Interval),
@@ -111,11 +111,11 @@ loop(Node, Interval, ParentPid) ->
     {new_interval, NewInterval} -> loop(Node, NewInterval, ParentPid)
   end.
 
-draw_menu(Node) ->
+draw_menu(Node, Interval) ->
   [Home, Ets, Alloc, Mnesia, Help]  = observer_cli_lib:get_menu_title(allocator),
   Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "| ", Mnesia, "|", Help, "|"]),
   UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime(Node)) ++ "|",
-  RefreshStr = "Refresh: " ++ integer_to_list(?ALLOCATOR_MIN_INTERVAL) ++ "ms",
+  RefreshStr = "Refresh: " ++ integer_to_list(Interval) ++ "ms",
   Space = lists:duplicate(?ALLOCATOR_BROAD - erlang:length(Title)  - erlang:length(RefreshStr)  - erlang:length(UpTime)+ 110, " "),
   io:format("~s~n", [Title ++ RefreshStr ++ Space ++ UpTime]).
 

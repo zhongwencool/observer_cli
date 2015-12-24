@@ -13,18 +13,18 @@ start() ->
   start(local_node, ?HELP_MIN_INTERVAL, 1).
 
 -spec start(atom(), pos_integer(), pos_integer()) -> quit.
-start(Node, Interval, ProcCurPos) ->
+start(Node, Interval, HomeOpts) ->
   ChildPid = spawn(fun() ->
     observer_cli_lib:clear_screen(),
     draw_menu(Node),
     draw_help(),
     loop(Interval, Node) end),
-  waiting(Node, ChildPid, ProcCurPos).
+  waiting(Node, ChildPid, HomeOpts).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-waiting(Node, ChildPid, ProcCurPos) ->
+waiting(Node, ChildPid, HomeOpts) ->
   Input = observer_cli_lib:get_line(""),
   case  Input of
     "q\n" ->
@@ -32,17 +32,17 @@ waiting(Node, ChildPid, ProcCurPos) ->
       "";
     "o\n" ->
       erlang:send(ChildPid, go_to_other_view),
-      observer_cli:start(Node, ?HOME_MIN_INTERVAL, ProcCurPos);
+      observer_cli:start(Node, HomeOpts);
     "e\n" ->
       erlang:send(ChildPid, go_to_other_view),
-      observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL, ProcCurPos);
+      observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL, HomeOpts);
     "db\n" ->
       erlang:send(ChildPid, go_to_other_view),
-      observer_cli_mnesia:start(Node, ?MNESIA_MIN_INTERVAL, ProcCurPos);
+      observer_cli_mnesia:start(Node, ?MNESIA_MIN_INTERVAL, HomeOpts);
     "a\n" ->
       erlang:send(ChildPid, go_to_other_view),
-      observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL, ProcCurPos);
-    _ -> waiting(Node, ChildPid, ProcCurPos)
+      observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL, HomeOpts);
+    _ -> waiting(Node, ChildPid, HomeOpts)
   end.
 
 loop(Interval, Node) ->
