@@ -145,7 +145,7 @@ draw_average_block_size_info(AverageBlockCurs, AverageBlockMaxs) ->
 
 draw_last_line(Interval)  ->
   Text = io_lib:format("r:~w(refresh every ~wms) refresh time must >= 5000ms", [Interval, Interval]),
-  io:format("|\e[31;1mINPUT: \e[0m\e[44mq(quit)      ~111.111s\e[49m|~n", [Text]).
+  io:format("|\e[31;1mINPUT: \e[0m\e[44mq(quit)      ~-111.111s\e[49m|~n", [Text]).
 
 get_alloc(Key, Curs, Maxs) ->
   CurRes = proplists:get_value(Key, Curs),

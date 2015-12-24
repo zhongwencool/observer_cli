@@ -32,7 +32,7 @@ start(Node, RefreshMillSecond, ProcCurPos)when RefreshMillSecond >= ?SYSTEM_MIN_
 %%for fetching data from remote data by rpc:call/4
 -spec get_system_info(Node) -> [tuple()] when
   Node:: atom().
-get_system_info(local_node) -> observer_backend:sys_info();
+get_system_info(local_node) -> sys_info();
 get_system_info(Node) -> rpc:call(Node, ?MODULE, get_system_info, [local_node]).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -54,21 +54,31 @@ waiting(Node, ChildPid, Interval, ProcCurPos) ->
     "db\n" ->
       erlang:exit(ChildPid, stop),
       observer_cli_mnesia:start(Node, ?MNESIA_MIN_INTERVAL, ProcCurPos);
+    [$r, $:| RefreshInterval] ->
+      case string:to_integer(RefreshInterval) of
+        {error, no_integer} -> waiting(Node, ChildPid, Interval, ProcCurPos);
+        {NewInterval, _} when NewInterval >= ?SYSTEM_MIN_INTERVAL ->
+          erlang:send(ChildPid, {new_interval, NewInterval}),
+          waiting(Node, ChildPid, NewInterval, ProcCurPos);
+        {_Interval, _} -> waiting(Node, ChildPid, Interval, ProcCurPos)
+      end;
     _ -> waiting(Node, ChildPid, Interval, ProcCurPos)
   end.
 
 loop(Node, Interval, LastTimeRef, ParentPid) ->
   observer_cli_lib:move_cursor_to_top_line(),
-  refresh(Node),
+  refresh(Node, Interval),
   observer_cli_ets:start(Node),
+  draw_last_line(Interval),
   erlang:cancel_timer(LastTimeRef),
   TimeRef = erlang:send_after(Interval, self(), refresh),
   receive
     quit -> quit;
+    {new_interval, NewInterval} -> loop(Node, NewInterval, TimeRef, ParentPid);
     _ -> loop(Node, Interval, TimeRef, ParentPid)
   end.
 
-refresh(Node) ->
+refresh(Node, Interval) ->
   SysInfo = get_system_info(Node),
   {Info, Stat} = info_fields(),
   SystemAndCPU = observer_lib:fill_info(Info, SysInfo),
@@ -77,7 +87,7 @@ refresh(Node) ->
   CPU = proplists:get_value("CPU's and Threads", SystemAndCPU),
   {_, _, Memory} = lists:keyfind("Memory Usage", 1, MemAndStatistics),
   {_, _, Statistics} = lists:keyfind("Statistics", 1, MemAndStatistics),
-  draw_menu(Node),
+  draw_menu(Node, Interval),
   draw(System, CPU, Memory, Statistics).
 
 draw(System, CPU, Memory, Statistics) ->
@@ -100,13 +110,17 @@ draw(System, CPU, Memory, Statistics) ->
    end|| Pos<- lists:seq(1, 6)],
   io:format("|~-22.22s| ~-106.106s |~n", ["Compiled for", to_list(proplists:get_value("Compiled for", System))]).
 
-draw_menu(Node) ->
+draw_menu(Node, Interval) ->
   [Home, Ets, Alloc, Mnesia, Help]  = observer_cli_lib:get_menu_title(ets),
   Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "| ", Mnesia, "|", Help, "|"]),
   UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime(Node)) ++ "|",
-  RefreshStr = "Refresh: " ++ integer_to_list(?SYSTEM_MIN_INTERVAL) ++ "ms",
+  RefreshStr = "Refresh: " ++ integer_to_list(Interval) ++ "ms",
   Space = lists:duplicate(?SYSTEM_BROAD - erlang:length(Title)  - erlang:length(RefreshStr)  - erlang:length(UpTime)+ 110, " "),
   io:format("~s~n", [Title ++ RefreshStr ++ Space ++ UpTime]).
+
+draw_last_line(Interval)  ->
+  Text = io_lib:format("r:~w(refresh every ~wms)ms", [Interval, Interval]),
+  io:format("|\e[31;1mINPUT: \e[0m\e[44mq(quit)      ~-111.111s\e[49m|~n", [Text]).
 
 to_list(Val) when is_integer(Val) -> integer_to_list(Val);
 to_list(Val) when is_atom(Val) -> atom_to_list(Val);
@@ -162,3 +176,50 @@ info_fields() ->
       ]}
          ],
   {Info, Stat}.
+
+sys_info() ->
+  MemInfo = try erlang:memory() of
+              Mem -> Mem
+            catch _:_ -> []
+            end,
+
+  SchedulersOnline = erlang:system_info(schedulers_online),
+  SchedulersAvailable = case erlang:system_info(multi_scheduling) of
+                          enabled -> SchedulersOnline;
+                          _ -> 1
+                        end,
+
+  {{_, Input},{_, Output}} = erlang:statistics(io),
+  [{process_count, erlang:system_info(process_count)},
+    {process_limit, erlang:system_info(process_limit)},
+    {uptime, element(1, erlang:statistics(wall_clock))},
+    {run_queue, erlang:statistics(run_queue)},
+    {io_input, Input},
+    {io_output,  Output},
+
+    {logical_processors, erlang:system_info(logical_processors)},
+    {logical_processors_online, erlang:system_info(logical_processors_online)},
+    {logical_processors_available, erlang:system_info(logical_processors_available)},
+    {schedulers, erlang:system_info(schedulers)},
+    {schedulers_online, SchedulersOnline},
+    {schedulers_available, SchedulersAvailable},
+
+    {otp_release, erlang:system_info(otp_release)},
+    {version, erlang:system_info(version)},
+    {system_architecture, erlang:system_info(system_architecture)},
+    {kernel_poll, erlang:system_info(kernel_poll)},
+    {smp_support, erlang:system_info(smp_support)},
+    {threads, erlang:system_info(threads)},
+    {thread_pool_size, erlang:system_info(thread_pool_size)},
+    {wordsize_internal, erlang:system_info({wordsize, internal})},
+    {wordsize_external, erlang:system_info({wordsize, external})},
+    {alloc_info, alloc_info()}
+    | MemInfo].
+
+
+alloc_info() ->
+  AlcuAllocs = erlang:system_info(alloc_util_allocators),
+  try erlang:system_info({allocator_sizes, AlcuAllocs}) of
+    Allocators -> Allocators
+  catch _:_ -> []
+  end.
