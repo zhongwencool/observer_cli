@@ -13,4 +13,22 @@
 -define(PROCESS_BROAD, 133).
 -define(MNESIA_BROAD, 133).
 
--define(DEFAULT_HOME_OPTS, [{cur_pos, 1}, {running, proc_count, memory, ?SYSTEM_MIN_INTERVAL}]).
+-record(home, {func = proc_count, type = memory, cur_pos = 1, interval = ?SYSTEM_MIN_INTERVAL}).
+-record(system, {interval = ?SYSTEM_MIN_INTERVAL}).
+-record(allocate, {interval = ?SYSTEM_MIN_INTERVAL}).
+-record(db, {interval = ?MNESIA_MIN_INTERVAL}).
+-record(help, {interval = ?HELP_MIN_INTERVAL}).
+-record(process,{interval = ?PROCESS_MIN_INTERVAL}).
+
+-record(view_opts, {home = #home{},
+                    sys = #system{},
+                    allocate = #allocate{},
+                    db = #db{},
+                    help = #help{},
+                    process = #process{}}).
+
+-export_type([view_opts/0]).
+
+-type(view_opts():: #view_opts{}).
+
+

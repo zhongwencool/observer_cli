@@ -4,23 +4,22 @@
 -include("observer_cli.hrl").
 
 %% API
--export([start/3]).
+-export([start/2]).
 
 %%for rpc call
 -export([get_system_info/1]).
 
 %% @doc List System and Architecture, CPU's and Threads metrics  in observer's system
 
--spec start(Node, RefreshMillSecond, HomeOpts) -> no_return() when
+-spec start(Node, ViewOpts) -> no_return() when
   Node:: atom(),
-  RefreshMillSecond:: pos_integer(),
-  HomeOpts:: pos_integer().
-start(Node, RefreshMillSecond, HomeOpts) ->
+  ViewOpts:: view_opts().
+start(Node, #view_opts{sys = #system{interval = RefreshMillSecond}} = ViewOpts) ->
   ParentPid = self(),
   Pid = spawn(fun() ->
     observer_cli_lib:clear_screen(),
     loop(Node, RefreshMillSecond, erlang:make_ref(), ParentPid) end),
-  waiting(Node, Pid, RefreshMillSecond, HomeOpts).
+  waiting(Node, Pid, ViewOpts).
 
 %%for fetching data from remote data by rpc:call/4
 -spec get_system_info(Node) -> [tuple()] when
@@ -31,31 +30,31 @@ get_system_info(Node) -> rpc:call(Node, ?MODULE, get_system_info, [local_node]).
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-waiting(Node, ChildPid, Interval, HomeOpts) ->
+waiting(Node, ChildPid, #view_opts{sys = SysOpts} = ViewOpts) ->
   Input = observer_cli_lib:get_line(""),
   case  Input of
     "q\n" -> erlang:send(ChildPid, quit);
     "o\n" ->
       erlang:exit(ChildPid, stop),
-      observer_cli:start_node(Node, HomeOpts);
+      observer_cli:start_node(Node, ViewOpts);
     "a\n" ->
       erlang:exit(ChildPid, stop),
-      observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL, HomeOpts);
+      observer_cli_allocator:start(Node, ViewOpts);
     "h\n" ->
       erlang:exit(ChildPid, stop),
-      observer_cli_help:start(Node, ?HELP_MIN_INTERVAL, HomeOpts);
+      observer_cli_help:start(Node, ViewOpts);
     "db\n" ->
       erlang:exit(ChildPid, stop),
-      observer_cli_mnesia:start(Node, ?MNESIA_MIN_INTERVAL, HomeOpts);
+      observer_cli_mnesia:start(Node, ViewOpts);
     [$r, $:| RefreshInterval] ->
       case string:to_integer(RefreshInterval) of
-        {error, no_integer} -> waiting(Node, ChildPid, Interval, HomeOpts);
+        {error, no_integer} -> waiting(Node, ChildPid, ViewOpts);
         {NewInterval, _} when NewInterval >= ?SYSTEM_MIN_INTERVAL ->
           erlang:send(ChildPid, {new_interval, NewInterval}),
-          waiting(Node, ChildPid, NewInterval, HomeOpts);
-        {_Interval, _} -> waiting(Node, ChildPid, Interval, HomeOpts)
+          waiting(Node, ChildPid, ViewOpts#view_opts{sys = SysOpts#system{interval = NewInterval}});
+        {_Interval, _} -> waiting(Node, ChildPid, ViewOpts)
       end;
-    _ -> waiting(Node, ChildPid, Interval, HomeOpts)
+    _ -> waiting(Node, ChildPid, ViewOpts)
   end.
 
 loop(Node, Interval, LastTimeRef, ParentPid) ->
@@ -120,8 +119,8 @@ to_list(Val) when is_atom(Val) -> atom_to_list(Val);
 to_list({bytes, Val}) ->
   M = trunc(Val/(1024*1024)*1000),
   Integer = M div 1000,
-  Decmial = M - Integer * 1000,
-  lists:flatten(io_lib:format("~w.~4..0wM", [Integer, Decmial]));
+  Decimal = M - Integer * 1000,
+  lists:flatten(io_lib:format("~w.~4..0wM", [Integer, Decimal]));
 to_list(Val) -> Val.
 
 byte_to_megabyte({bytes, Val}, {bytes, Total}) when is_integer(Val) ->

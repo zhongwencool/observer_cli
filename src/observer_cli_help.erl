@@ -3,21 +3,21 @@
 
 -include("observer_cli.hrl").
 %% API
--export([start/3]).
+-export([start/2]).
 
--spec start(atom(), pos_integer(), list()) -> no_return.
-start(Node, Interval, HomeOpts) ->
+-spec start(atom(), view_opts()) -> no_return.
+start(Node, #view_opts{help = #help{interval = Interval}} = ViewOpts) ->
   ChildPid = spawn(fun() ->
     observer_cli_lib:clear_screen(),
     draw_menu(Node),
     draw_help(),
     loop(Interval, Node) end),
-  waiting(Node, ChildPid, HomeOpts).
+  waiting(Node, ChildPid, ViewOpts).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-waiting(Node, ChildPid, HomeOpts) ->
+waiting(Node, ChildPid, ViewOpts) ->
   Input = observer_cli_lib:get_line(""),
   case  Input of
     "q\n" ->
@@ -25,17 +25,17 @@ waiting(Node, ChildPid, HomeOpts) ->
       "";
     "o\n" ->
       erlang:send(ChildPid, go_to_other_view),
-      observer_cli:start_node(Node, HomeOpts);
+      observer_cli:start_node(Node, ViewOpts);
     "e\n" ->
       erlang:send(ChildPid, go_to_other_view),
-      observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL, HomeOpts);
+      observer_cli_system:start(Node, ViewOpts);
     "db\n" ->
       erlang:send(ChildPid, go_to_other_view),
-      observer_cli_mnesia:start(Node, ?MNESIA_MIN_INTERVAL, HomeOpts);
+      observer_cli_mnesia:start(Node, ViewOpts);
     "a\n" ->
       erlang:send(ChildPid, go_to_other_view),
-      observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL, HomeOpts);
-    _ -> waiting(Node, ChildPid, HomeOpts)
+      observer_cli_allocator:start(Node, ViewOpts);
+    _ -> waiting(Node, ChildPid, ViewOpts)
   end.
 
 loop(Interval, Node) ->
@@ -58,7 +58,7 @@ draw_help() ->
   io:format("|only represents the increments between two refresh interval. The total bytes in and out in \e[48;2;80;80;80me(ETS/SYSTEM)\e[0m view.                     |~n"),
 
   io:format("|\e[42mAbout o(OBSERVER)'s Command\e[49m                                                                                                        |~n"),
-  io:format("|\e[48;2;80;80;80mRemote node support:\e[0m  |observer_cli:start(Node, Cookie) | observer_start:start(Node)                                     |~n"),
+  io:format("|\e[48;2;80;80;80mRemote node support:\e[0m  |observer_cli:start(Node, Cookie) | observer_start:start(Node)                                               |~n"),
 
   io:format("|\e[48;2;80;80;80mr:5000\e[0m   will switch mode to reduction(proc_count) and set the refresh  time to 5000ms                                             |~n"),
   io:format("|\e[48;2;80;80;80mrr:5000\e[0m   will switch mode to reduction(proc_window) and set the refresh time to 5000ms                                            |~n"),
@@ -74,7 +74,8 @@ draw_help() ->
 
   io:format("|\e[42mReference\e[49m                                                                                                                          |~n"),
   io:format("|More infomation about recon:proc_count/2 and recon:proc_window/3 refer to https://github.com/ferd/recon/blob/master/src/recon.erl  |~n"),
-  io:format("|Any issue please visit: https://github.com/zhongwencool/observer_cli/issues                                                        |~n").
+  io:format("|Any issue please visit: https://github.com/zhongwencool/observer_cli/issues                                                        |~n"),
+  io:format("|___________________________________________________________________________________________________________________________________|~n").
 
 draw_menu(Node) ->
   [Home, Ets, Alloc, Mnesia, Help]  = observer_cli_lib:get_menu_title(help),
