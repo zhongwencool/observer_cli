@@ -2,7 +2,7 @@
 -module(observer_cli_mnesia).
 
 %% API
--export([start/3]).
+-export([start/2]).
 
 %%for rpc
 -export([get_table_list/2]).
@@ -11,13 +11,13 @@
 
 -define(MAX_SHOW_LEN, 37).
 
--spec start(atom(), pos_integer(), list()) -> no_return.
-start(Node, RefreshMillSecond, HomeOpts) ->
+-spec start(atom(), list()) -> no_return.
+start(Node, #view_opts{db = #db{interval = RefreshMillSecond}} = HomeOpts) ->
   ParentPid = self(),
   Pid = spawn(fun() ->
     observer_cli_lib:clear_screen(),
     loop(Node, RefreshMillSecond, erlang:make_ref(), ParentPid, true) end),
-  waiting(Node, Pid, RefreshMillSecond, HomeOpts).
+  waiting(Node, Pid, HomeOpts).
 
 -spec get_table_list(atom(), true|false) -> list().
 get_table_list(local_node, HideSys) ->
@@ -84,7 +84,7 @@ loop(Node, Interval, LastTimeRef, ParentPid, HideSystemTable) ->
     _ -> loop(Node, Interval, TimeRef, ParentPid, HideSystemTable)
   end.
 
-waiting(Node, ChildPid, Interval, HomeOpts) ->
+waiting(Node, ChildPid, #view_opts{db = DBOpts} = HomeOpts) ->
   Input = observer_cli_lib:get_line(""),
   case  Input of
     "q\n" -> erlang:send(ChildPid, quit);
@@ -93,27 +93,27 @@ waiting(Node, ChildPid, Interval, HomeOpts) ->
       observer_cli:start_node(Node, HomeOpts);
     "a\n" ->
       erlang:exit(ChildPid, stop),
-      observer_cli_allocator:start(Node, ?ALLOCATOR_MIN_INTERVAL, HomeOpts);
+      observer_cli_allocator:start(Node, HomeOpts);
     "e\n" ->
       erlang:exit(ChildPid, stop),
-      observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL, HomeOpts);
+      observer_cli_system:start(Node, HomeOpts);
     "h\n" ->
       erlang:exit(ChildPid, stop),
-      observer_cli_help:start(Node, ?HELP_MIN_INTERVAL, HomeOpts);
+      observer_cli_help:start(Node, HomeOpts);
     "system:true\n" ->
       erlang:send(ChildPid, {system_table, true}),
-      waiting(Node, ChildPid, Interval, HomeOpts);
+      waiting(Node, ChildPid, HomeOpts);
     "system:false\n" ->
       erlang:send(ChildPid, {system_table, false}),
-      waiting(Node, ChildPid, Interval, HomeOpts);
+      waiting(Node, ChildPid, HomeOpts);
     [$r, $:| RefreshInterval] ->
       case string:to_integer(RefreshInterval) of
-        {error, no_integer} -> waiting(Node, ChildPid, Interval, HomeOpts);
+        {error, no_integer} -> waiting(Node, ChildPid, HomeOpts);
         {NewInterval, _} when NewInterval >= ?MNESIA_MIN_INTERVAL ->
           erlang:send(ChildPid, {new_interval, NewInterval}),
-          waiting(Node, ChildPid, NewInterval, HomeOpts)
+          waiting(Node, ChildPid, HomeOpts#view_opts{db = DBOpts#db{interval = NewInterval}})
       end;
-    _ -> waiting(Node, ChildPid, Interval, HomeOpts)
+    _ -> waiting(Node, ChildPid, HomeOpts)
   end.
 
 draw_menu(Node, Interval, HideSystemTable) ->

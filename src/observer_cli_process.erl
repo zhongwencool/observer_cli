@@ -2,16 +2,17 @@
 
 -include("observer_cli.hrl").
 
--export([start/4]).
+-export([start/3]).
 
--spec start(atom(), pid(), pos_integer(), list()) -> no_return.
-start(Node, ProcessPid, RefreshMillSecond, HomeOpts) ->
-  ParentPid = self(),
+-spec start(atom(), pid(), view_opts()) -> no_return.
+start(Node, ProcessPid, Opts) ->
+  #view_opts{process = #process{ interval = RefreshMillSecond}} = Opts,
+    ParentPid = self(),
   ChildPid = spawn(fun() ->
     observer_cli_lib:clear_screen(),
     InitQ = lists:foldl(fun(_X, Acc) -> queue:in(waiting, Acc) end, queue:new(), lists:seq(1, 5)),
-    loop(Node, RefreshMillSecond, ProcessPid, ParentPid, erlang:make_ref(), InitQ, InitQ ) end),
-  waiting(Node, ChildPid, RefreshMillSecond, HomeOpts).
+    loop(Node, RefreshMillSecond, ProcessPid, ParentPid, erlang:make_ref(), InitQ, InitQ) end),
+  waiting(Node, ChildPid, Opts).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
@@ -152,21 +153,21 @@ pids_to_str(Link, Len) ->
 stacktrace_to_str(CurrentStacktrace) ->
   CurrentStacktrace.
 
-waiting(Node, ChildPid, Interval, HomeOpts) ->
+waiting(Node, ChildPid, #view_opts{process = ProcOpts} = Opts) ->
   Input = observer_cli_lib:get_line(""),
   case  Input of
     "q\n" -> erlang:send(ChildPid, quit);
     "b\n" ->
       erlang:exit(ChildPid, stop),
-      observer_cli:start_node(Node, HomeOpts);
+      observer_cli:start_node(Node, Opts);
     [$r, $:| RefreshInterval] ->
       case string:to_integer(RefreshInterval) of
-        {error, no_integer} -> waiting(Node, ChildPid, Interval, HomeOpts);
+        {error, no_integer} -> waiting(Node, ChildPid, Opts);
         {NewInterval, _} when NewInterval >= ?PROCESS_MIN_INTERVAL ->
           erlang:send(ChildPid, {new_interval, NewInterval}),
-          waiting(Node, ChildPid, NewInterval, HomeOpts)
+          waiting(Node, ChildPid, Opts#view_opts{process = ProcOpts#process{interval = NewInterval}})
       end;
-    _ -> waiting(Node, ChildPid, Interval, HomeOpts)
+    _ -> waiting(Node, ChildPid, Opts)
   end.
 
 get_process_info(local_node, Pid) -> recon:info(Pid);

@@ -81,8 +81,8 @@ green(String) -> "\e[32;1m" ++ String ++ "\e[0m".
 to_megabyte_str(M) ->
   Val = trunc(M/(1024*1024)*1000),
   Integer = Val div 1000,
-  Decmial = Val - Integer * 1000,
-  lists:flatten(io_lib:format("~w.~4..0wM", [Integer, Decmial])).
+  Decimal = Val - Integer * 1000,
+  lists:flatten(io_lib:format("~w.~4..0wM", [Integer, Decimal])).
 
 -spec mfa_to_list({Module, Fun, Arg}) -> list() when
   Module:: atom(),

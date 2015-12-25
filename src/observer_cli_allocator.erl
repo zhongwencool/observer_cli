@@ -3,7 +3,7 @@
 
 -include("observer_cli.hrl").
 %% API
--export([start/3]).
+-export([start/2]).
 
 %%for rpc
 -export([get_average_block_sizes/1]).
@@ -27,17 +27,16 @@
 
 %% @doc List Memory Allocators: std, ll, eheap, ets, fix, binary, driver.
 
--spec start(Node, Interval, HomeOpts) -> no_return when
+-spec start(Node, ViewOpts) -> no_return when
   Node:: atom(),
-  Interval:: pos_integer(),
-  HomeOpts:: list().
-start(Node, Interval, HomeOpts) ->
+  ViewOpts:: view_opts().
+start(Node, #view_opts{allocate = #allocate{interval = Interval}} = ViewOpts) ->
   ParentPid = self(),
   Pid = spawn(fun() ->
     observer_cli_lib:move_cursor_to_top_line(),
     observer_cli_lib:clear_screen(),
     loop(Node, Interval, ParentPid) end),
-  waiting(Node, Pid, Interval, HomeOpts).
+  waiting(Node, Pid, ViewOpts).
 
 %%for fetching data from remote data by rpc:call/4
 -spec get_cache_hit_rates(Node) -> [{{instance, non_neg_integer()}, [{Key, Val}]}] when
@@ -59,31 +58,31 @@ get_average_block_sizes(Node) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-waiting(Node, Pid, Interval, HomeOpts) ->
+waiting(Node, Pid, #view_opts{allocate = AllocatorOpts} = ViewOpts) ->
   Input = observer_cli_lib:get_line(""),
   case  Input of
     "q\n" -> erlang:send(Pid, quit);
     "o\n" ->
       erlang:exit(Pid, stop),
-      observer_cli:start_node(Node, HomeOpts);
+      observer_cli:start_node(Node, ViewOpts);
     "e\n" ->
       erlang:exit(Pid, stop),
-      observer_cli_system:start(Node, ?SYSTEM_MIN_INTERVAL, HomeOpts);
+      observer_cli_system:start(Node, ViewOpts);
     "h\n" ->
       erlang:exit(Pid, stop),
-      observer_cli_help:start(Node, ?HELP_MIN_INTERVAL, HomeOpts);
+      observer_cli_help:start(Node, ViewOpts);
     "db\n" ->
       erlang:exit(Pid, stop),
-      observer_cli_mnesia:start(Node, ?MNESIA_MIN_INTERVAL, HomeOpts);
+      observer_cli_mnesia:start(Node, ViewOpts);
     [$r, $:| RefreshInterval] ->
       case string:to_integer(RefreshInterval) of
-        {error, no_integer} -> waiting(Node, Pid, Interval, HomeOpts);
+        {error, no_integer} -> waiting(Node, Pid, ViewOpts);
         {NewInterval, _} when NewInterval >= ?ALLOCATOR_MIN_INTERVAL ->
           erlang:send(Pid, {new_interval, NewInterval}),
-          waiting(Node, Pid, NewInterval, HomeOpts);
-        {_Interval, _} -> waiting(Node, Pid, Interval, HomeOpts)
+          waiting(Node, Pid, ViewOpts#view_opts{allocate = AllocatorOpts#allocate{interval = NewInterval}});
+        {_Interval, _} -> waiting(Node, Pid, ViewOpts)
       end;
-    _ -> waiting(Node, Pid, Interval, HomeOpts)
+    _ -> waiting(Node, Pid, ViewOpts)
   end.
 
 loop(Node, Interval, ParentPid) ->
