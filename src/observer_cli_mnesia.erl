@@ -150,7 +150,7 @@ draw_mnesia(MnesiaList, IncrRows) ->
   ok.
 
 draw_last_line(Node, Interval) ->
-  io:format("|\e[31;1mINPUT: \e[0m\e[44mq(quit)  system:false/true  r~w(refresh every ~wms)  ~66.66s\e[49m|~n",
+  io:format("|\e[31;1mINPUT: \e[0m\e[44mq(quit)  system:false/true  r~w(refresh every ~wms)   ~66.66s\e[49m|~n",
     [Interval, Interval, atom_to_list(Node)]).
 
 get_value(Key, List) ->
