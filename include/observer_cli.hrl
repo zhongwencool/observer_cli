@@ -1,17 +1,12 @@
 
+-define(COLUMN_WIDTH, 133).
+
 -define(SYSTEM_MIN_INTERVAL, 5000).
 -define(ALLOCATOR_MIN_INTERVAL, 5000).
 -define(HOME_MIN_INTERVAL, 2000).
 -define(HELP_MIN_INTERVAL, 1000).
 -define(PROCESS_MIN_INTERVAL, 1000).
 -define(MNESIA_MIN_INTERVAL, 5000).
-
--define(HOME_BROAD, 133).
--define(ALLOCATOR_BROAD, 133).
--define(SYSTEM_BROAD, 133).
--define(HELP_BROAD, 133).
--define(PROCESS_BROAD, 133).
--define(MNESIA_BROAD, 133).
 
 -record(home, {func = proc_count, type = memory, cur_pos = 1, interval = ?SYSTEM_MIN_INTERVAL}).
 -record(system, {interval = ?SYSTEM_MIN_INTERVAL}).
@@ -25,10 +20,10 @@
                     allocate = #allocate{},
                     db = #db{},
                     help = #help{},
-                    process = #process{}}).
+                    process = #process{},
+                    incr_rows = 0
+  }).
 
 -export_type([view_opts/0]).
 
 -type(view_opts():: #view_opts{}).
-
-

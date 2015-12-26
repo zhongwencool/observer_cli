@@ -64,7 +64,7 @@ loop(Node, Interval, ProcessPid, ParentPid, TimeRef, OldRedus, OldMems) ->
 
 redraw_screen_to_blank() ->
   observer_cli_lib:move_cursor_to_top_line(),
-  BlankLine = lists:concat(lists:duplicate(?PROCESS_BROAD, " ")),
+  BlankLine = lists:concat(lists:duplicate(?COLUMN_WIDTH, " ")),
   [begin io:format(BlankLine) end || _Q <- lists:seq(1, 35)].
 
 draw_line(RegisteredName, GroupLeader, Status, TrapExit, InitialCall,
@@ -117,8 +117,8 @@ draw_reductions_memory(Reduction, Memory, Reductions, Memorys) ->
 draw_last_line(Node, Interval) ->
   Format =
     case Interval >= 10000 of
-      true -> "|\e[31;1mINPUT: \e[0m\e[44mq(quit)        b(back)     r:~w(refresh every ~wms)  ~65.65s\e[49m|~n";
-      false -> "|\e[31;1mINPUT: \e[0m\e[44mq(quit)        b(back)     r:~w(refresh every ~wms)  ~67.67s\e[49m|~n"
+      true -> "|\e[31;1mINPUT: \e[0m\e[44mq(quit)        b(back)      r~w(refresh every ~wms)  ~65.65s\e[49m|~n";
+      false -> "|\e[31;1mINPUT: \e[0m\e[44mq(quit)        b(back)      r~w(refresh every ~wms)  ~67.67s\e[49m|~n"
     end,
   io:format(Format, [Interval, Interval, "UpTime:" ++ observer_cli_lib:uptime(Node)]).
 
@@ -137,16 +137,16 @@ chart_format([R1, R2|RestRedus], Lines)when R1 < R2 ->
 dict_to_str(Dicts, 10) -> lists:flatten(io_lib:format("~P", [Dicts, 10]));
 dict_to_str(Dicts, Len) ->
   Str = lists:flatten(io_lib:format("~P", [Dicts, Len])),
-  case length(Str) >= ?PROCESS_BROAD of
-    true -> string:sub_string(Str, 1, ?PROCESS_BROAD - 7) ++ ".....";
+  case length(Str) >= ?COLUMN_WIDTH of
+    true -> string:sub_string(Str, 1, ?COLUMN_WIDTH - 7) ++ ".....";
     false -> dict_to_str(Dicts, Len + 1)
   end.
 
 pids_to_str(Link, 13) -> lists:flatten(io_lib:format("~P", [Link, 13]));
 pids_to_str(Link, Len) ->
   Str = lists:flatten(io_lib:format("~P", [Link, Len])),
-  case length(Str) >= ?PROCESS_BROAD of
-    true -> string:sub_string(Str, 1, ?PROCESS_BROAD - 7) ++ ".....";
+  case length(Str) >= ?COLUMN_WIDTH of
+    true -> string:sub_string(Str, 1, ?COLUMN_WIDTH - 7) ++ ".....";
     false -> dict_to_str(Link, Len + 1)
   end.
 
@@ -160,7 +160,7 @@ waiting(Node, ChildPid, #view_opts{process = ProcOpts} = Opts) ->
     "b\n" ->
       erlang:exit(ChildPid, stop),
       observer_cli:start_node(Node, Opts);
-    [$r, $:| RefreshInterval] ->
+    [$r| RefreshInterval] ->
       case string:to_integer(RefreshInterval) of
         {error, no_integer} -> waiting(Node, ChildPid, Opts);
         {NewInterval, _} when NewInterval >= ?PROCESS_MIN_INTERVAL ->
@@ -172,4 +172,3 @@ waiting(Node, ChildPid, #view_opts{process = ProcOpts} = Opts) ->
 
 get_process_info(local_node, Pid) -> recon:info(Pid);
 get_process_info(Node, Pid) -> rpc:call(Node, recon, info, [Pid]).
-
