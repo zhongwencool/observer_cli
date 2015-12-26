@@ -8,12 +8,12 @@ Visualize Erlang Nodes On The Command Line By Using [recon](https://github.com/f
 ##Goal
 Minimal consumption.
 
-Just look like [observer](http://www.erlang.org/doc/apps/observer/observer_ug.html) in shell, 
+Just look like [observer](http://www.erlang.org/doc/apps/observer/observer_ug.html), but in shell, 
 
-but you might think that one day observer_cli more convenient than observer.
+you might think observer_cli would be more convenient than observer.
 
 ------------------
-###Try Try Try...
+###Try ...
 
 ```bash
 $ make && make shell   
@@ -21,21 +21,21 @@ $ make && make shell
 ```
 ### Process And System Information
  
-![Top](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_home_11_18.jpg)
+![Top](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_home_2015_12_26.jpg)
 
-![Process](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_process_11_18.jpg)
+![Process](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_process_20151226.jpg)
 
 ### ETS And System Information
-![System](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_ets_11_18.jpg)
+![System](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_system_20151226.jpg)
 
 ### Allocator Information
-![Allocator](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_allocator_11_18.jpg)
+![Allocator](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_allocate_20151226.jpg)
 
 ### Mnesia Information
-![Mnesia](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_mnesia_11_18.jpg)
+![Mnesia](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_db_20151226.jpg)
 
 ### Help Information
-![Help](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_help_11_18.jpg)
+![Help](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_help_20151226.jpg)
 
 
 ----------------
