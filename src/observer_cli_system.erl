@@ -14,11 +14,11 @@
 -spec start(Node, ViewOpts) -> no_return() when
   Node:: atom(),
   ViewOpts:: view_opts().
-start(Node, #view_opts{sys = #system{interval = RefreshMillSecond}} = ViewOpts) ->
+start(Node, #view_opts{sys = #system{interval = RefreshMillSecond}, incr_rows = IncrRows} = ViewOpts) ->
   ParentPid = self(),
   Pid = spawn(fun() ->
     observer_cli_lib:clear_screen(),
-    loop(Node, RefreshMillSecond, erlang:make_ref(), ParentPid) end),
+    loop(Node, RefreshMillSecond, IncrRows, erlang:make_ref(), ParentPid) end),
   waiting(Node, Pid, ViewOpts).
 
 %%for fetching data from remote data by rpc:call/4
@@ -46,7 +46,7 @@ waiting(Node, ChildPid, #view_opts{sys = SysOpts} = ViewOpts) ->
     "db\n" ->
       erlang:exit(ChildPid, stop),
       observer_cli_mnesia:start(Node, ViewOpts);
-    [$r, $:| RefreshInterval] ->
+    [$r| RefreshInterval] ->
       case string:to_integer(RefreshInterval) of
         {error, no_integer} -> waiting(Node, ChildPid, ViewOpts);
         {NewInterval, _} when NewInterval >= ?SYSTEM_MIN_INTERVAL ->
@@ -54,20 +54,28 @@ waiting(Node, ChildPid, #view_opts{sys = SysOpts} = ViewOpts) ->
           waiting(Node, ChildPid, ViewOpts#view_opts{sys = SysOpts#system{interval = NewInterval}});
         {_Interval, _} -> waiting(Node, ChildPid, ViewOpts)
       end;
+    [$i| IncrRows] ->
+      case string:to_integer(IncrRows) of
+        {error, no_integer} -> waiting(Node, ChildPid, ViewOpts);
+        {NewIncrRows, _} ->
+          erlang:send(ChildPid, {incr_rows, NewIncrRows}),
+          waiting(Node, ChildPid, ViewOpts#view_opts{incr_rows = NewIncrRows})
+      end;
     _ -> waiting(Node, ChildPid, ViewOpts)
   end.
 
-loop(Node, Interval, LastTimeRef, ParentPid) ->
+loop(Node, Interval, IncrRows, LastTimeRef, ParentPid) ->
   observer_cli_lib:move_cursor_to_top_line(),
   refresh(Node, Interval),
-  observer_cli_ets:start(Node),
+  observer_cli_ets:draw_ets_info(Node, IncrRows),
   draw_last_line(Interval),
   erlang:cancel_timer(LastTimeRef),
   TimeRef = erlang:send_after(Interval, self(), refresh),
   receive
     quit -> quit;
-    {new_interval, NewInterval} -> loop(Node, NewInterval, TimeRef, ParentPid);
-    _ -> loop(Node, Interval, TimeRef, ParentPid)
+    {new_interval, NewInterval} -> loop(Node, NewInterval, IncrRows, TimeRef, ParentPid);
+    {incr_rows, NewIncrRows} -> loop(Node, Interval, NewIncrRows, TimeRef, ParentPid);
+    _ -> loop(Node, Interval, IncrRows, TimeRef, ParentPid)
   end.
 
 refresh(Node, Interval) ->
@@ -104,14 +112,15 @@ draw(System, CPU, Memory, Statistics) ->
 
 draw_menu(Node, Interval) ->
   [Home, Ets, Alloc, Mnesia, Help]  = observer_cli_lib:get_menu_title(ets),
-  Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "| ", Mnesia, "|", Help, "|"]),
+  Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "|", Mnesia, "|", Help, "|"]),
   UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime(Node)) ++ "|",
   RefreshStr = "Refresh: " ++ integer_to_list(Interval) ++ "ms",
-  Space = lists:duplicate(?SYSTEM_BROAD - erlang:length(Title)  - erlang:length(RefreshStr)  - erlang:length(UpTime)+ 110, " "),
+  SpaceLen = ?COLUMN_WIDTH - erlang:length(Title)  - erlang:length(RefreshStr)  - erlang:length(UpTime)+ 110,
+  Space = case SpaceLen > 0 of  true -> lists:duplicate(SpaceLen, " "); false -> [] end,
   io:format("~s~n", [Title ++ RefreshStr ++ Space ++ UpTime]).
 
 draw_last_line(Interval)  ->
-  Text = io_lib:format("r:~w(refresh every ~wms)ms", [Interval, Interval]),
+  Text = io_lib:format("r~w(refresh every ~wms)", [Interval, Interval]),
   io:format("|\e[31;1mINPUT: \e[0m\e[44mq(quit)      ~-111.111s\e[49m|~n", [Text]).
 
 to_list(Val) when is_integer(Val) -> integer_to_list(Val);

@@ -12,11 +12,11 @@
 -define(MAX_SHOW_LEN, 37).
 
 -spec start(atom(), list()) -> no_return.
-start(Node, #view_opts{db = #db{interval = RefreshMillSecond}} = HomeOpts) ->
+start(Node, #view_opts{db = #db{interval = RefreshMillSecond}, incr_rows = IncrRows} = HomeOpts) ->
   ParentPid = self(),
   Pid = spawn(fun() ->
     observer_cli_lib:clear_screen(),
-    loop(Node, RefreshMillSecond, erlang:make_ref(), ParentPid, true) end),
+    loop(Node, RefreshMillSecond, erlang:make_ref(), ParentPid, IncrRows, true) end),
   waiting(Node, Pid, HomeOpts).
 
 -spec get_table_list(atom(), true|false) -> list().
@@ -58,19 +58,19 @@ get_table_list(Node, HideSys) -> rpc:call(Node, ?MODULE, get_table_list, [local_
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-loop(Node, Interval, LastTimeRef, ParentPid, HideSystemTable) ->
+loop(Node, Interval, LastTimeRef, ParentPid, IncrRows, HideSystemTable) ->
   erlang:cancel_timer(LastTimeRef),
   case get_table_list(Node, false) of
     {error, Reason} ->
       observer_cli_lib:move_cursor_to_top_line(),
       draw_menu(Node, Interval, HideSystemTable),
       io:format("Mnesia Error   ~p~n", [Reason]),
-      draw_last_line(Node);
+      draw_last_line(Node, Interval);
     MnesiaList ->
       observer_cli_lib:move_cursor_to_top_line(),
       draw_menu(Node, Interval, HideSystemTable),
-      draw_mnesia(MnesiaList),
-      draw_last_line(Node)
+      draw_mnesia(MnesiaList, IncrRows),
+      draw_last_line(Node, Interval)
   end,
   TimeRef = erlang:send_after(Interval, self(), refresh),
   receive
@@ -79,9 +79,10 @@ loop(Node, Interval, LastTimeRef, ParentPid, HideSystemTable) ->
     go_to_allocator_view -> erlang:send(ParentPid, draw_work_done_to_allocator_view), quit;
     go_to_help_view -> erlang:send(ParentPid, draw_work_done_to_help_view), quit;
     go_to_ets_view ->  erlang:send(ParentPid, draw_work_done_to_ets_view), quit;
-    {new_interval, NewInterval} -> loop(Node, NewInterval, TimeRef, ParentPid, HideSystemTable);
-    {system_table, NewHideSystemTable} -> loop(Node, Interval, TimeRef, ParentPid, NewHideSystemTable);
-    _ -> loop(Node, Interval, TimeRef, ParentPid, HideSystemTable)
+    {new_interval, NewInterval} -> loop(Node, NewInterval, TimeRef, ParentPid, IncrRows, HideSystemTable);
+    {system_table, NewHideSystemTable} -> loop(Node, Interval, TimeRef, ParentPid, IncrRows, NewHideSystemTable);
+    {incr_rows, NewIncrRows} -> loop(Node, Interval, TimeRef, ParentPid, NewIncrRows, HideSystemTable);
+    _ -> loop(Node, Interval, TimeRef, ParentPid, IncrRows, HideSystemTable)
   end.
 
 waiting(Node, ChildPid, #view_opts{db = DBOpts} = HomeOpts) ->
@@ -106,25 +107,33 @@ waiting(Node, ChildPid, #view_opts{db = DBOpts} = HomeOpts) ->
     "system:false\n" ->
       erlang:send(ChildPid, {system_table, false}),
       waiting(Node, ChildPid, HomeOpts);
-    [$r, $:| RefreshInterval] ->
+    [$r| RefreshInterval] ->
       case string:to_integer(RefreshInterval) of
         {error, no_integer} -> waiting(Node, ChildPid, HomeOpts);
         {NewInterval, _} when NewInterval >= ?MNESIA_MIN_INTERVAL ->
           erlang:send(ChildPid, {new_interval, NewInterval}),
           waiting(Node, ChildPid, HomeOpts#view_opts{db = DBOpts#db{interval = NewInterval}})
       end;
+    [$i| IncrRows] ->
+      case string:to_integer(IncrRows) of
+        {error, no_integer} -> waiting(Node, ChildPid, HomeOpts);
+        {NewIncrRows, _} ->
+          erlang:send(ChildPid, {incr_rows, NewIncrRows}),
+          waiting(Node, ChildPid, HomeOpts#view_opts{incr_rows = NewIncrRows})
+      end;
     _ -> waiting(Node, ChildPid, HomeOpts)
   end.
 
 draw_menu(Node, Interval, HideSystemTable) ->
   [Home, Ets, Alloc, Mnesia, Help]  = observer_cli_lib:get_menu_title(mnesia),
-  Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "| ", Mnesia, "|", Help, "|"]),
+  Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "|", Mnesia, "|", Help, "|"]),
   UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime(Node)) ++ "|",
   RefreshStr = "Refresh: " ++ integer_to_list(Interval) ++ "ms" ++ " HideSystemTable:" ++ atom_to_list(HideSystemTable),
-  Space = lists:duplicate(?MNESIA_BROAD - erlang:length(Title)  - erlang:length(RefreshStr)  - erlang:length(UpTime)+ 110, " "),
+  SpaceLen = ?COLUMN_WIDTH - erlang:length(Title)  - erlang:length(RefreshStr)  - erlang:length(UpTime)+ 110,
+  Space = case SpaceLen > 0 of  true -> lists:duplicate(SpaceLen, " "); false -> [] end,
   io:format("~s~n", [Title ++ RefreshStr ++ Space ++ UpTime]).
 
-draw_mnesia(MnesiaList) ->
+draw_mnesia(MnesiaList, IncrRows) ->
   SortMneisaList = lists:sort(fun(Table1, Table2) ->
     proplists:get_value(memory, Table1) > proplists:get_value(memory, Table2)
   end, MnesiaList),
@@ -137,12 +146,12 @@ draw_mnesia(MnesiaList) ->
      Owner = get_value(owner, Mnesia), Storage = get_value(storage, Mnesia),
      io:format("|~-24.24s|~-14.14s|~-14.14s|~-10.10s|~18.18s|~-12.12s|~-12.12s|~20.20s|~n",
        [Name, Memory, Size, Type, Storage, Owner, Index, RegName])
-   end||Mnesia <- lists:sublist(SortMneisaList, ?MAX_SHOW_LEN)],
+   end||Mnesia <- lists:sublist(SortMneisaList, ?MAX_SHOW_LEN + IncrRows)],
   ok.
 
-draw_last_line(Node) ->
-  io:format("|\e[31;1mINPUT: \e[0m\e[44mq(quit)  system:false/true  r:5000(refresh every 5000ms)  ~66.66s\e[49m|~n",
-    [atom_to_list(Node)]).
+draw_last_line(Node, Interval) ->
+  io:format("|\e[31;1mINPUT: \e[0m\e[44mq(quit)  system:false/true  r~w(refresh every ~wms)  ~66.66s\e[49m|~n",
+    [Interval, Interval, atom_to_list(Node)]).
 
 get_value(Key, List) ->
   observer_cli_lib:to_list(proplists:get_value(Key, List)).

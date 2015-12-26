@@ -74,7 +74,7 @@ waiting(Node, Pid, #view_opts{allocate = AllocatorOpts} = ViewOpts) ->
     "db\n" ->
       erlang:exit(Pid, stop),
       observer_cli_mnesia:start(Node, ViewOpts);
-    [$r, $:| RefreshInterval] ->
+    [$r| RefreshInterval] ->
       case string:to_integer(RefreshInterval) of
         {error, no_integer} -> waiting(Node, Pid, ViewOpts);
         {NewInterval, _} when NewInterval >= ?ALLOCATOR_MIN_INTERVAL ->
@@ -103,10 +103,11 @@ loop(Node, Interval, ParentPid) ->
 
 draw_menu(Node, Interval) ->
   [Home, Ets, Alloc, Mnesia, Help]  = observer_cli_lib:get_menu_title(allocator),
-  Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "| ", Mnesia, "|", Help, "|"]),
+  Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "|", Mnesia, "|", Help, "|"]),
   UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime(Node)) ++ "|",
   RefreshStr = "Refresh: " ++ integer_to_list(Interval) ++ "ms",
-  Space = lists:duplicate(?ALLOCATOR_BROAD - erlang:length(Title)  - erlang:length(RefreshStr)  - erlang:length(UpTime)+ 110, " "),
+  SpaceLen = ?COLUMN_WIDTH - erlang:length(Title)  - erlang:length(RefreshStr)  - erlang:length(UpTime)+ 110,
+  Space = case SpaceLen > 0 of  true -> lists:duplicate(SpaceLen, " "); false -> [] end,
   io:format("~s~n", [Title ++ RefreshStr ++ Space ++ UpTime]).
 
 draw_cache_hit_rates(CacheHitInfo) ->
@@ -134,7 +135,7 @@ draw_average_block_size_info(AverageBlockCurs, AverageBlockMaxs) ->
   ok.
 
 draw_last_line(Interval)  ->
-  Text = io_lib:format("r:~w(refresh every ~wms) refresh time must >= 5000ms", [Interval, Interval]),
+  Text = io_lib:format("r~w(refresh every ~wms) refresh time must >= 5000ms", [Interval, Interval]),
   io:format("|\e[31;1mINPUT: \e[0m\e[44mq(quit)      ~-111.111s\e[49m|~n", [Text]).
 
 get_alloc(Key, Curs, Maxs) ->

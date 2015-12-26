@@ -5,6 +5,8 @@
 %% API
 -export([start/2]).
 
+-define(HELP_COLUMN_WIDTH, 85).
+
 -spec start(atom(), view_opts()) -> no_return.
 start(Node, #view_opts{help = #help{interval = Interval}} = ViewOpts) ->
   ChildPid = spawn(fun() ->
@@ -53,33 +55,45 @@ loop(Interval, Node) ->
   end.
 
 draw_help() ->
-  io:format("|Due to bytes in and out of the node, number of garbage colelctor runs, words of memory that were garbage collected, and the global |~n"),
-  io:format("|reductions count for the node never stop increasing, \e[48;2;80;80;80mo(OBSERVER)\e[0m's \"IO input/out\", \"Gc Count\", \"Gc Words Reclaimed\"                |~n"),
-  io:format("|only represents the increments between two refresh interval. The total bytes in and out in \e[48;2;80;80;80me(ETS/SYSTEM)\e[0m view.                     |~n"),
 
-  io:format("|\e[42mAbout o(OBSERVER)'s Command\e[49m                                                                                                        |~n"),
-  io:format("|\e[48;2;80;80;80mRemote node support:\e[0m  |observer_cli:start(Node, Cookie) | observer_start:start(Node)                                               |~n"),
+  io:format("|\e[42m1. Stare Mode\e[49m                                                                      |~n"),
+  io:format("| \e[48;2;80;80;80m1.1\e[0m  observer_cli:start()                                                         |~n"),
+  io:format("| \e[48;2;80;80;80m1.2\e[0m  observer_cli:start(Node)                                                     |~n"),
+  io:format("| \e[48;2;80;80;80m1.3\e[0m  observer_start:start(Node, Cookie)                                           |~n"),
 
-  io:format("|\e[48;2;80;80;80mr:5000\e[0m   will switch mode to reduction(proc_count) and set the refresh  time to 5000ms                                             |~n"),
-  io:format("|\e[48;2;80;80;80mrr:5000\e[0m   will switch mode to reduction(proc_window) and set the refresh time to 5000ms                                            |~n"),
+  io:format("|\e[42m2. o(OBSERVER) Commands\e[49m                                                            |~n"),
+  io:format("| \e[48;2;80;80;80mr     \e[0m switch mode to reduction(proc_count)                                       |~n"),
+  io:format("| \e[48;2;80;80;80mrr    \e[0m switch mode to reduction(proc_window)                                      |~n"),
+  io:format("| \e[48;2;80;80;80mr5000 \e[0m switch mode to reduction(proc_count) and refresh time(5000ms)              |~n"),
+  io:format("| \e[48;2;80;80;80mrr5000\e[0m switch mode to reduction(proc_window) and refresh time(5000ms)             |~n"),
+  io:format("| \e[48;2;80;80;80mj13   \e[0m choose the 13th process(yellow) recon process by recon:info/1              |~n"),
+  io:format("| \e[48;2;80;80;80mi2    \e[0m increase 2 rank process rows                                               |~n"),
+  io:format("| \e[48;2;80;80;80mi-3   \e[0m decrease 3 rank process rows                                               |~n"),
+  io:format("| \e[48;2;80;80;80mp     \e[0m pause/unpause the view                                                     |~n"),
 
-  io:format("|\e[48;2;80;80;80mj:number\e[0m   to choose the rank process(yellow), it will jump to the process view(recon:info/1) when pressing the enter button       |~n"),
+  io:format("|\e[42m3. About o(OBSERVER)'s Interval\e[49m                                                    |~n"),
+  io:format("| If \e[48;2;80;80;80mo(OBSERVER)\e[0m's refreshtime is 2000ms, it will be divided into two sections      |~n"),
+  io:format("| 1. collect IO information:(2000 div 2) = 1000 ms by using recon:node_stats_list/2;|~n"),
+  io:format("| 2. the time of collecting process info deps on which mode you choose:             |~n"),
+  io:format("| |... using r mode's(recon:proc_count/2), the cost time is closed to 0             |~n"),
+  io:format("| |... using rr mode's(recon:proc_window/3), (2 * 1000 - 1000 div 2) = 3000 ms.     |~n"),
 
-  io:format("|\e[42mAbout o(OBSERVER)'s Interval\e[49m                                                                                                       |~n"),
-  io:format("|If the refresh interval of \e[48;2;80;80;80mo(OBSERVER)\e[0m's is 2000ms, the 2000ms will be divided into two sections:                                  |~n"),
-  io:format("|1. collect IO information it take (2000 div 2) = 1000 ms by using recon:node_stats_list/2;                                         |~n"),
-  io:format("|2. the time of collecting process info deps on which mode you choose:                                                              |~n"),
-  io:format("| 2.1 if you use r mode's(recon:proc_count/2), it will be  very fast, the time can be ignored,                                      |~n"),
-  io:format("| 2.2 if you use rr mode's(recon:proc_window/3), it will took (2 * 1000 - 1000 div 2) = 3000 ms.                                    |~n"),
+  io:format("|\e[42m4. About o(OBSERVER)'s IO Output/Input\e[49m                                             |~n"),
+  io:format("| Due to bytes in and out of the node, number of garbage colelctor runs, words of   |~n"),
+  io:format("| memory that were garbage collected, and the global reductions count for the node  |~n"),
+  io:format("| never stop increasing, \e[48;2;80;80;80mo(OBSERVER)\e[0m's \"IO input/out\", \"Gc Words Reclaimed\", \"Gc    |~n"),
+  io:format("| Count\" only represents the increments between two refresh interval                |~n"),
+  io:format("| The total bytes in and out in \e[48;2;80;80;80me(ETS/SYSTEM)\e[0m view.                                 |~n"),
 
-  io:format("|\e[42mReference\e[49m                                                                                                                          |~n"),
-  io:format("|More infomation about recon:proc_count/2 and recon:proc_window/3 refer to https://github.com/ferd/recon/blob/master/src/recon.erl  |~n"),
-  io:format("|Any issue please visit: https://github.com/zhongwencool/observer_cli/issues                                                        |~n"),
-  io:format("|___________________________________________________________________________________________________________________________________|~n").
+  io:format("|\e[42m5. Reference\e[49m                                                                       |~n"),
+  io:format("|More infomation about recon:proc_count/2 and recon:proc_window/3                   |~n"),
+  io:format("refer to https://github.com/ferd/recon/blob/master/src/recon.erl                    |~n"),
+  io:format("|Any issue please visit: https://github.com/zhongwencool/observer_cli/issues        |~n"),
+  io:format("|___________________________________________________________________________________|~n").
 
 draw_menu(Node) ->
   [Home, Ets, Alloc, Mnesia, Help]  = observer_cli_lib:get_menu_title(help),
-  Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "| ", Mnesia, "|", Help, "|"]),
+  Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "|", Mnesia, "|", Help, "|"]),
   UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime(Node)) ++ "|",
-  Space = lists:duplicate(?HELP_BROAD - erlang:length(Title)    - erlang:length(UpTime)+ 110, " "),
+  Space = lists:duplicate(?HELP_COLUMN_WIDTH - erlang:length(Title)    - erlang:length(UpTime)+ 110, " "),
   io:format("~s~n", [Title ++ Space ++ UpTime]).

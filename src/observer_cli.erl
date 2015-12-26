@@ -15,7 +15,7 @@
 -export([get_stable_system_info/1]).
 -export([get_change_system_info/1]).
 -export([get_node_stats_list/2]).
--export([get_ranklist_and_cost_time/5]).
+-export([get_ranklist_and_cost_time/6]).
 -export([get_reductions_and_msg_queue_len/2]).
 -export([get_memory_and_msg_queue_len/2]).
 
@@ -66,8 +66,8 @@ start(Node, Cookie)when is_atom(Node) andalso is_atom(Cookie) ->
 start_node(Node, Opts)when is_atom(Node) andalso is_record(Opts, view_opts) ->
   ParentPid = self(),
   Tid = ets:new(process_info, [public, set]),
-  ChildPid = spawn(fun() -> loop(Tid, ParentPid, Node, Opts#view_opts.home) end),
-  waiting(Tid, ChildPid, local_node, Opts).
+  ChildPid = spawn(fun() -> loop(Tid, ParentPid, Node, Opts#view_opts.home, Opts#view_opts.incr_rows) end),
+  waiting(Tid, ChildPid, Node, Opts).
 
 %%for fetching data from remote data by rpc:call/4
 -spec get_stable_system_info(atom()) -> list().
@@ -120,11 +120,12 @@ get_node_stats_list(local_node, NodeStatsCostTime) ->
 get_node_stats_list(Node, NodeStatsCostTime) ->
   rpc:call(Node, ?MODULE, get_node_stats_list, [local_node, NodeStatsCostTime]).
 
--spec get_ranklist_and_cost_time(Node, Func, Type, Interval, Time) -> {Status, RemainTime} when
+-spec get_ranklist_and_cost_time(Node, Func, Type, Interval, IncRows, Time) -> {Status, RemainTime} when
   Node:: atom(),
   Func:: proc_window|proc_count,
   Type:: memory|binary_memory|reductions|total_heap_size,
   Interval:: pos_integer(),
+  IncRows:: integer(),
   Time:: pos_integer(),
   Status:: {pid(),
             Attr::_,
@@ -132,13 +133,13 @@ get_node_stats_list(Node, NodeStatsCostTime) ->
             |{current_function, mfa()}
             |{initial_call, mfa()}, ...]},
   RemainTime:: pos_integer().
-get_ranklist_and_cost_time(local_node, proc_window, Type, Interval, Time) when Time =/= ?FAST_COLLECT_INTERVAL ->
+get_ranklist_and_cost_time(local_node, proc_window, Type, Interval, IncRows, Time) when Time =/= ?FAST_COLLECT_INTERVAL ->
   RemainTime = 2 * Interval - Time,
-  {recon:proc_window(Type, ?DEFAULT_RANK_NUM, RemainTime), RemainTime};
-get_ranklist_and_cost_time(local_node, _, Type, _Interval, _CollectTime) ->
-  {recon:proc_count(Type, ?DEFAULT_RANK_NUM), 0};
-get_ranklist_and_cost_time(Node, Func, Type, Interval, CollectTime) ->
-  rpc:call(Node, ?MODULE, get_ranklist_and_cost_time, [local_node, Func, Type, Interval, CollectTime]).
+  {recon:proc_window(Type, ?DEFAULT_RANK_NUM + IncRows, RemainTime), RemainTime};
+get_ranklist_and_cost_time(local_node, _, Type, _Interval, IncRows, _CollectTime) ->
+  {recon:proc_count(Type, ?DEFAULT_RANK_NUM + IncRows), 0};
+get_ranklist_and_cost_time(Node, Func, Type, Interval, IncRows, CollectTime) ->
+  rpc:call(Node, ?MODULE, get_ranklist_and_cost_time, [local_node, Func, Type, Interval, IncRows, CollectTime]).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
@@ -146,10 +147,10 @@ get_ranklist_and_cost_time(Node, Func, Type, Interval, CollectTime) ->
 
 restart_node(Tid, Node, Opts) ->
   ParentPid = self(),
-  ChildPid = spawn(fun() -> loop(Tid, ParentPid, Node, Opts#view_opts.home) end),
+  ChildPid = spawn(fun() -> loop(Tid, ParentPid, Node, Opts#view_opts.home, Opts#view_opts.incr_rows) end),
   waiting(Tid, ChildPid, Node, Opts).
 
-waiting(Tid, ChildPid,Node, Opts) ->
+waiting(Tid, ChildPid, Node, Opts) ->
   #view_opts{home = Home = #home{cur_pos = CurPos}} = Opts,
   Input = observer_cli_lib:get_line(""),
   Operate = input_to_operation(Input),
@@ -204,6 +205,13 @@ waiting(Tid, ChildPid,Node, Opts) ->
           erlang:exit(ChildPid, stop),
           observer_cli_process:start(Node, ChoosePid, Opts)
       end;
+    {incr_rows, IncrRows} ->
+      case string:to_integer(IncrRows) of
+        {error, no_integer} -> waiting(Tid, ChildPid, Node, Opts);
+        {NewIncrRows, _} ->
+          erlang:exit(ChildPid, stop),
+          restart_node(Tid, Node, Opts#view_opts{incr_rows = NewIncrRows})
+      end;
     error_input -> waiting(Tid, ChildPid, Node, Opts)
   end.
 
@@ -213,60 +221,66 @@ input_to_operation("e\n") -> go_to_ets_view;
 input_to_operation("a\n") -> go_to_allocator_view;
 input_to_operation("h\n") -> go_to_help_view;
 input_to_operation("db\n") -> go_to_mnesia_view;
-input_to_operation([$r, $:| RefreshInterval]) -> {proc_count, reductions, RefreshInterval};
-input_to_operation([$b, $:| RefreshInterval]) -> {proc_count, binary_memory, RefreshInterval};
-input_to_operation([$t, $:| RefreshInterval]) -> {proc_count, total_heap_size, RefreshInterval};
-input_to_operation([$m, $:| RefreshInterval]) -> {proc_count, memory, RefreshInterval};
+
 input_to_operation("r\n") -> {proc_count, reductions, no_change};
 input_to_operation("b\n") -> {proc_count, binary_memory, no_change};
 input_to_operation("t\n") -> {proc_count, total_heap_size, no_change};
 input_to_operation("m\n") -> {proc_count, memory, no_change};
-input_to_operation([$r, $r, $:| RefreshInterval]) -> {proc_window, reductions, RefreshInterval};
-input_to_operation([$b, $b, $:| RefreshInterval]) -> {proc_window, binary_memory, RefreshInterval};
-input_to_operation([$t, $t, $:| RefreshInterval]) -> {proc_window, total_heap_size, RefreshInterval};
-input_to_operation([$m, $m, $:| RefreshInterval]) -> {proc_window, memory, RefreshInterval};
+
 input_to_operation("rr\n") -> {proc_window, reductions, no_change};
 input_to_operation("bb\n") -> {proc_window, binary_memory, no_change};
 input_to_operation("tt\n") -> {proc_window, total_heap_size, no_change};
 input_to_operation("mm\n") -> {proc_window, memory, no_change};
-input_to_operation([$j, $:| Pos]) -> {jump_to_process, Pos};
+
+input_to_operation([$r, $r| RefreshInterval]) -> {proc_window, reductions, RefreshInterval};
+input_to_operation([$b, $b| RefreshInterval]) -> {proc_window, binary_memory, RefreshInterval};
+input_to_operation([$t, $t| RefreshInterval]) -> {proc_window, total_heap_size, RefreshInterval};
+input_to_operation([$m, $m| RefreshInterval]) -> {proc_window, memory, RefreshInterval};
+
+input_to_operation([$r| RefreshInterval]) -> {proc_count, reductions, RefreshInterval};
+input_to_operation([$b| RefreshInterval]) -> {proc_count, binary_memory, RefreshInterval};
+input_to_operation([$t| RefreshInterval]) -> {proc_count, total_heap_size, RefreshInterval};
+input_to_operation([$m| RefreshInterval]) -> {proc_count, memory, RefreshInterval};
+
+input_to_operation([$j| Pos]) -> {jump_to_process, Pos};
 input_to_operation("\n") -> go_to_process_view;
+input_to_operation([$i|IncrRow]) -> {incr_rows, IncrRow};
 input_to_operation(_)-> error_input.
 
-loop(Tid, ParentPid, Node, #home{cur_pos = RankPos, func = Func, type = Type, interval = Interval}) ->
+loop(Tid, ParentPid, Node, #home{cur_pos = RankPos, func = Func, type = Type, interval = Interval}, IncRows) ->
   observer_cli_lib:clear_screen(),
   StableInfo = get_stable_system_info(Node), %%don't refresh the stable information everytime
-  refresh(Tid, Node, ParentPid, Interval, Func, Type, StableInfo, erlang:make_ref(), 0, RankPos, running).
+  refresh(Tid, Node, ParentPid, Interval, Func, Type, StableInfo, erlang:make_ref(), 0, RankPos, IncRows, running).
 
 %% pause status waiting to be resume
-refresh(Tid, Node, ParentPid, Interval, Func, Type, StableInfo, LastTimeRef, _, RankPos, pause) ->
+refresh(Tid, Node, ParentPid, Interval, Func, Type, StableInfo, LastTimeRef, _, RankPos, IncRows, pause) ->
   notify_pause_status(),
   erlang:cancel_timer(LastTimeRef),
   receive
     quit -> quit;
     pause_or_resume ->
       observer_cli_lib:clear_screen(),
-      refresh(Tid, Node, ParentPid, Interval, Func, Type, StableInfo, LastTimeRef, ?FAST_COLLECT_INTERVAL, RankPos, running);
+      refresh(Tid, Node, ParentPid, Interval, Func, Type, StableInfo, LastTimeRef, ?FAST_COLLECT_INTERVAL, RankPos, IncRows, running);
     {Func, Type} ->
-      refresh(Tid, Node, ParentPid, Interval, Func, Type, StableInfo, LastTimeRef, ?FAST_COLLECT_INTERVAL, RankPos, running)
+      refresh(Tid, Node, ParentPid, Interval, Func, Type, StableInfo, LastTimeRef, ?FAST_COLLECT_INTERVAL, RankPos, IncRows, running)
   end;
 %% running status
-refresh(Tid, Node, ParentPid, Interval, Func, Type, StableInfo, LastTimeRef, NodeStatsCostTime, RankPos, running) ->
+refresh(Tid, Node, ParentPid, Interval, Func, Type, StableInfo, LastTimeRef, NodeStatsCostTime, RankPos, IncRows, running) ->
   [Version, ProcLimit, SmpSupport, PortLimit, EtsLimit, LogicalProc, MultiScheduling] = StableInfo,
   erlang:cancel_timer(LastTimeRef),
   [{ProcSum, MemSum}] = get_node_stats_list(Node, NodeStatsCostTime),
-  {RankList, RankCostTime} = get_ranklist_and_cost_time(Node, Func, Type, Interval, NodeStatsCostTime),
+  {RankList, RankCostTime} = get_ranklist_and_cost_time(Node, Func, Type, Interval, IncRows, NodeStatsCostTime),
   [UseMemInt, AlloctedMemInt, UnusedMemInt] = get_change_system_info(Node),
   NewNodeStatsCostTime = Interval div 2,
   %% draw
   observer_cli_lib:move_cursor_to_top_line(),
-  draw_menu(Func, Type, Interval, Node),
+  draw_menu(Func, Type, Interval, Node, IncRows),
   draw_first_line(Version),
   draw_system_line(ProcLimit, SmpSupport, PortLimit, EtsLimit, LogicalProc, MultiScheduling,
     UseMemInt, AlloctedMemInt, UnusedMemInt, ProcSum),
   draw_memory_process_line(ProcSum, MemSum, NewNodeStatsCostTime),
   SchedulerLineLen = draw_scheduler_usage(MemSum),
-  PidList = draw_process_rank(Type, RankList, ?DEFAULT_RANK_NUM - SchedulerLineLen, Node, RankPos),
+  PidList = draw_process_rank(Type, RankList, ?DEFAULT_RANK_NUM + IncRows - SchedulerLineLen, Node, RankPos),
   draw_last_line(),
 
   ets:insert(Tid, PidList),
@@ -275,17 +289,17 @@ refresh(Tid, Node, ParentPid, Interval, Func, Type, StableInfo, LastTimeRef, Nod
   receive
     quit -> quit;
     pause_or_resume ->
-      refresh(Tid, Node, ParentPid, Interval, Func, Type, StableInfo, TimeRef, ?FAST_COLLECT_INTERVAL, RankPos, pause);
+      refresh(Tid, Node, ParentPid, Interval, Func, Type, StableInfo, TimeRef, ?FAST_COLLECT_INTERVAL, RankPos, IncRows, pause);
     {Func, Type} ->
-      refresh(Tid, Node, ParentPid, Interval, Func, Type, StableInfo, TimeRef, NewNodeStatsCostTime, RankPos, running)
+      refresh(Tid, Node, ParentPid, Interval, Func, Type, StableInfo, TimeRef, NewNodeStatsCostTime, RankPos, IncRows, running)
   end.
 
-draw_menu(Func, Type, Interval, Node) ->
+draw_menu(Func, Type, Interval, Node, IncrRows) ->
   [Home, Ets, Alloc, Mnesia, Help]  = observer_cli_lib:get_menu_title(home),
-  RefreshStr = get_refresh_cost_info(Func, Type, Interval),
+  RefreshStr = get_refresh_cost_info(Func, Type, Interval, IncrRows),
   UpTime = observer_cli_lib:green(" " ++ observer_cli_lib:uptime(Node)) ++ "|",
-  Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "| ", Mnesia, "|", Help, "|", RefreshStr]),
-  SpaceLen = ?HOME_BROAD - erlang:length(Title) - erlang:length(UpTime) + 110,
+  Title = lists:flatten(["|", Home, "|", Ets, "|", Alloc, "|", Mnesia, "|", Help, "|", RefreshStr]),
+  SpaceLen = ?COLUMN_WIDTH - erlang:length(Title) - erlang:length(UpTime) + 110,
   Space = case SpaceLen > 0 of  true -> lists:duplicate(SpaceLen, " "); false -> [] end,
   io:format("~s~n", [Title ++ Space ++ UpTime]).
 
@@ -478,7 +492,7 @@ draw_process_rank(total_heap_size, HeapList, Num, Node, RankPos) ->
 draw_last_line() ->
   io:format("|\e[31;1mINPUT: \e[0m\e[44m~s~s~s~s~s~s~s\e[49m|~n",
     ["q(quit)  ", "p(pause/unpause) ", "r/rr(reduction) ",
-      "m/mm(memory) ", "b/bb(binary memory) ", "t/tt(total heap  size) ", "j:pos(jump to process pos)"]).
+      "m/mm(memory) ", "b/bb(binary memory) ", "t/tt(total heap  size) ", "jpos(jump to process pos) "]).
 
 notify_pause_status() ->
   io:format("\e[31;1m PAUSE  INPUT (p, r/rr, b/bb, h/hh, m/mm) to resume or q to quit \e[0m~n").
@@ -566,9 +580,8 @@ count_format_alarm_color(_PortThreshold, _PortCount, _ProcThreshold, _ProcCount)
 display_name_or_initial_call(IsName, _Call)when is_atom(IsName) -> atom_to_list(IsName);
 display_name_or_initial_call(_IsName, Call) -> Call.
 
-get_refresh_cost_info(proc_count, Type, Interval) ->
-  io_lib:format(" recon:proc_count(~s, ~w) Refresh:~wms", [atom_to_list(Type), Interval div 2, Interval]);
-get_refresh_cost_info(proc_window, Type, Interval) ->
-  io_lib:format(" recon:proc_window(~s, ~w) Refresh:~wms",
-    [atom_to_list(Type), Interval*2 - Interval div 2, Interval*2]).
-
+get_refresh_cost_info(proc_count, Type, Interval, IncrRow) ->
+  io_lib:format("recon:proc_count(~s, ~w, 0) Refresh:~wms", [atom_to_list(Type), IncrRow + ?DEFAULT_RANK_NUM, Interval]);
+get_refresh_cost_info(proc_window, Type, Interval, IncrRow) ->
+  io_lib:format(" recon:proc_window(~s, ~w, ~w) Refresh:~wms",
+    [atom_to_list(Type), IncrRow + ?DEFAULT_RANK_NUM, Interval*2 - Interval div 2, Interval*2]).
