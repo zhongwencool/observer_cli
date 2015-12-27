@@ -16,7 +16,7 @@ you might think observer_cli would be more convenient than observer.
 ###Try ...
 
 ```bash
-$ make && make shell   
+$ ./rebar3 shell   
 1> observer_cli:start().
 ```
 ### Process And System Information
