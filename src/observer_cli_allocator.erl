@@ -87,11 +87,11 @@ waiting(Node, Pid, #view_opts{allocate = AllocatorOpts} = ViewOpts) ->
 
 loop(Node, Interval, ParentPid) ->
   CacheHitInfo = get_cache_hit_rates(Node),
-  {AverageBlockCurs, AverageBlockMaxs}  = get_average_block_sizes(Node),
+  {AverageBlockCurs, AverageBlockMaxes}  = get_average_block_sizes(Node),
 
   observer_cli_lib:move_cursor_to_top_line(),
   draw_menu(Node, Interval),
-  draw_average_block_size_info(AverageBlockCurs, AverageBlockMaxs),
+  draw_average_block_size_info(AverageBlockCurs, AverageBlockMaxes),
   draw_cache_hit_rates(CacheHitInfo),
   draw_last_line(Interval),
   erlang:send_after(Interval, self(), refresh),
@@ -118,18 +118,18 @@ draw_cache_hit_rates(CacheHitInfo) ->
      [{hit_rate, HitRate}, {hits, Hit}, {calls, Call}] = proplists:get_value({instance, Seq}, CacheHitInfo),
      HitRateStr = observer_cli_lib:float_to_percent_with_two_digit(HitRate),
      SeqStr = lists:flatten(io_lib:format("~2..0w", [Seq])),
-     RealyHitRate = case Hit == 0 andalso Call == 0 of true -> 0; false -> HitRate end,
-     Process = lists:duplicate(trunc(RealyHitRate * 82), "|"),
+     TrueHitRate = case Hit == 0 andalso Call == 0 of true -> 0; false -> HitRate end,
+     Process = lists:duplicate(trunc(TrueHitRate * 82), "|"),
      io:format(Format, [SeqStr, observer_cli_lib:to_list(Hit), observer_cli_lib:to_list(Call), Process, HitRateStr])
    end|| Seq <- lists:seq(0, Len - 1)].
 
-draw_average_block_size_info(AverageBlockCurs, AverageBlockMaxs) ->
+draw_average_block_size_info(AverageBlockCurs, AverageBlockMaxes) ->
   io:format("|\e[46m~-16.16s| ~-26.26s | ~-26.26s |~-28.28s| ~-25.25s \e[49m|~n",
     ["Allocator Type", "Current Multiblock Carriers", "Max Multiblock Carriers",
       "Current SingleBlock Carriers", "Max Single Block Carriers"]),
   Format = "|~-16.16s|  ~24.24s  |  ~24.24s  |  ~24.24s  | ~24.24s  |~n",
   [begin
-     Content = get_alloc(AllocKey, AverageBlockCurs, AverageBlockMaxs),
+     Content = get_alloc(AllocKey, AverageBlockCurs, AverageBlockMaxes),
      io:format(Format, Content)
    end||AllocKey <-?UTIL_ALLOCATORS],
   ok.
@@ -138,9 +138,9 @@ draw_last_line(Interval)  ->
   Text = io_lib:format("r~w(refresh every ~wms) refresh time must >= 5000ms", [Interval, Interval]),
   io:format("|\e[31;1mINPUT: \e[0m\e[44mq(quit)      ~-111.111s\e[49m|~n", [Text]).
 
-get_alloc(Key, Curs, Maxs) ->
+get_alloc(Key, Curs, Maxes) ->
   CurRes = proplists:get_value(Key, Curs),
-  MaxRes = proplists:get_value(Key, Maxs),
+  MaxRes = proplists:get_value(Key, Maxes),
   CurMbcs = proplists:get_value(mbcs, CurRes),
   CurSbcs = proplists:get_value(sbcs, CurRes),
   MaxMbcs = proplists:get_value(mbcs, MaxRes),

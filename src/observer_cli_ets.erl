@@ -56,11 +56,11 @@ get_ets_info(Tab) ->
       {type, unread},
       {keypos, unread},
       {protection, unread}]};
-    Infos when is_list(Infos)->
-      Owner = proplists:get_value(owner, Infos),
+    Info when is_list(Info)->
+      Owner = proplists:get_value(owner, Info),
       case is_reg(Owner) of
-        Owner -> {Tab, Infos};
-        Reg -> {Tab, lists:keyreplace(Owner, 1, Infos, {owner, Reg})}
+        Owner -> {Tab, Info};
+        Reg -> {Tab, lists:keyreplace(Owner, 1, Info, {owner, Reg})}
       end
   end.
 
