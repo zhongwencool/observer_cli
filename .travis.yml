@@ -1,5 +1,6 @@
 language: erlang
 otp_release:
+  - 18.0
   - 17.3
   - 17.1
   - 17.0
@@ -10,7 +11,7 @@ otp_release:
   - R16B
   - R15B03
   - R15B02
-script: "rm -rf deps ebin test/*.beam logs && ./rebar3 compile && ./elvis rock --config ./elvis.config"
+script: "rm -rf deps ebin test/*.beam logs && ./rebar3 compile"
 branches:
   only:
     - master
