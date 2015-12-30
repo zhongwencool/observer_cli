@@ -8,22 +8,32 @@
 -define(PROCESS_MIN_INTERVAL, 1000).
 -define(MNESIA_MIN_INTERVAL, 5000).
 
--record(home, {func = proc_count, type = memory, cur_pos = 1, interval = ?SYSTEM_MIN_INTERVAL}).
--record(system, {interval = ?SYSTEM_MIN_INTERVAL}).
--record(allocate, {interval = ?SYSTEM_MIN_INTERVAL}).
--record(db, {interval = ?MNESIA_MIN_INTERVAL}).
--record(help, {interval = ?HELP_MIN_INTERVAL}).
--record(process,{interval = ?PROCESS_MIN_INTERVAL}).
+-record(home, {func = proc_count :: atom(),
+               type = memory :: atom(),
+               cur_pos = 1 :: integer(),
+               interval = ?SYSTEM_MIN_INTERVAL :: integer()}).
+-record(system, {interval = ?SYSTEM_MIN_INTERVAL :: integer()}).
+-record(allocate, {interval = ?SYSTEM_MIN_INTERVAL :: integer()}).
+-record(db, {interval = ?MNESIA_MIN_INTERVAL :: integer()}).
+-record(help, {interval = ?HELP_MIN_INTERVAL :: integer()}).
+-record(process,{interval = ?PROCESS_MIN_INTERVAL :: integer()}).
 
--record(view_opts, {home = #home{},
-                    sys = #system{},
-                    allocate = #allocate{},
-                    db = #db{},
-                    help = #help{},
-                    process = #process{},
-                    incr_rows = 0
+-record(view_opts, {home = #home{} :: home(),
+                    sys = #system{} :: system(),
+                    allocate = #allocate{} :: allocate(),
+                    db = #db{} :: db(),
+                    help = #help{} :: help(),
+                    process = #process{} :: process(),
+                    incr_rows = 0 :: integer()
   }).
 
 -export_type([view_opts/0]).
 
 -type(view_opts():: #view_opts{}).
+-type(home():: #home{}).
+-type(system():: #system{}).
+-type(allocate():: #allocate{}).
+-type(db():: #db{}).
+-type(help():: #help{}).
+-type(process():: #process{}).
+

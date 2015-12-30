@@ -39,10 +39,10 @@ uptime(Node) -> rpc:call(Node, ?MODULE, uptime, [local_node]).
 float_to_percent_with_two_digit(Float) ->
   Val = trunc(Float*10000),
   Integer = Val div 100,
-  Decmial = Val - Integer * 100,
+  Decimal = Val - Integer * 100,
   case Integer of
     100 -> "100.0%";
-    _ -> lists:flatten(io_lib:format("~2..0w.~2..0w%", [Integer, Decmial]))
+    _ -> lists:flatten(io_lib:format("~2..0w.~2..0w%", [Integer, Decimal]))
   end.
 
 -spec to_list(term()) -> list().
@@ -56,23 +56,23 @@ to_list(Val) -> Val.
   Menu:: home|ets|allocator|mnesia|help,
   Title:: list().
 get_menu_title(home) ->
-  [choose("o(OBSERVER)"), unchoose("e(ETS/SYSTEM)"),
-    unchoose("a(ALLOCATOR)"), unchoose("db(MNESIA)"), unchoose("h(HELP)")];
+  [select("o(OBSERVER)"), unselect("e(ETS/SYSTEM)"),
+    unselect("a(ALLOCATOR)"), unselect("db(MNESIA)"), unselect("h(HELP)")];
 get_menu_title(ets) ->
-  [unchoose("o(OBSERVER)"), choose("e(ETS/SYSTEM)"),
-    unchoose("a(ALLOCATOR)"), unchoose("db(MNESIA)"), unchoose("h(HELP)")];
+  [unselect("o(OBSERVER)"), select("e(ETS/SYSTEM)"),
+    unselect("a(ALLOCATOR)"), unselect("db(MNESIA)"), unselect("h(HELP)")];
 get_menu_title(allocator) ->
-  [unchoose("o(OBSERVER)"), unchoose("e(ETS/SYSTEM)"),
-    choose("a(ALLOCATOR)"), unchoose("db(MNESIA)"), unchoose("h(HELP)")];
+  [unselect("o(OBSERVER)"), unselect("e(ETS/SYSTEM)"),
+    select("a(ALLOCATOR)"), unselect("db(MNESIA)"), unselect("h(HELP)")];
 get_menu_title(help) ->
-  [unchoose("o(OBSERVER)"), unchoose("e(ETS/SYSTEM)"),
-    unchoose("a(ALLOCATOR)"), unchoose("db(MNESIA)"), choose("h(HELP)")];
+  [unselect("o(OBSERVER)"), unselect("e(ETS/SYSTEM)"),
+    unselect("a(ALLOCATOR)"), unselect("db(MNESIA)"), select("h(HELP)")];
 get_menu_title(mnesia) ->
-  [unchoose("o(OBSERVER)"), unchoose("e(ETS/SYSTEM)"),
-    unchoose("a(ALLOCATOR)"), choose("db(MNESIA)"), unchoose("h(HELP)")].
+  [unselect("o(OBSERVER)"), unselect("e(ETS/SYSTEM)"),
+    unselect("a(ALLOCATOR)"), select("db(MNESIA)"), unselect("h(HELP)")].
 
-choose(Title) -> "\e[48;2;184;0;0m" ++ Title ++ "\e[0m".
-unchoose(Title) -> "\e[48;2;80;80;80m" ++ Title ++ "\e[0m".
+select(Title) -> "\e[48;2;184;0;0m" ++ Title ++ "\e[0m".
+unselect(Title) -> "\e[48;2;80;80;80m" ++ Title ++ "\e[0m".
 
 -spec green(list()) -> list().
 green(String) -> "\e[32;1m" ++ String ++ "\e[0m".

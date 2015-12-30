@@ -35,13 +35,13 @@ start() -> start_node(local_node, #view_opts{}).
 -spec start(Node) -> no_return when
   Node:: atom().
 start(Node)when is_atom(Node) ->
-  case Node == node() orelse Node == local_node of
+  case Node == local_node orelse Node == node() of
     true -> start_node(local_node, #view_opts{});
     false ->
       case net_kernel:connect_node(Node) of
         true -> start_node(Node, #view_opts{});
         false -> io:format("remote node ~p(cookie:~p) refuse to be connected ~n", [Node, erlang:get_cookie()]);
-        ignored -> io:format("the local node is not alive ignore remote node~p(cookie:~p)~n", [Node, erlang:get_cookie()])
+        ignored -> io:format("Ignore remote node~p(cookie:~p) connecting~n", [Node, erlang:get_cookie()])
       end
   end.
 
@@ -56,7 +56,7 @@ start(Node, Cookie)when is_atom(Node) andalso is_atom(Cookie) ->
       case net_kernel:connect_node(Node) of
         true -> start_node(Node, #view_opts{});
         false -> io:format("remote node ~p(cookie:~p) refuse to be connected ~n", [Node, Cookie]);
-        ignored -> io:format("the local node is not alive ignore remote node~p(cookie:~p)~n", [Node, Cookie])
+        ignored -> io:format("Ignore remote node~p(cookie:~p) connecting~n", [Node, Cookie])
       end
   end.
 
@@ -194,8 +194,7 @@ waiting(Tid, ChildPid, Node, Opts) ->
             [{_, ChoosePid}] ->
               erlang:exit(ChildPid, stop),
               NewHomeView = Home#home{cur_pos = NewPos},
-              observer_cli_process:start(Node, ChoosePid,
-                Opts#view_opts{home = NewHomeView})
+              observer_cli_process:start(Node, ChoosePid, Opts#view_opts{home = NewHomeView})
           end
       end;
     go_to_process_view ->
@@ -270,14 +269,14 @@ refresh(Tid, Node, ParentPid, Interval, Func, Type, StableInfo, LastTimeRef, Nod
   erlang:cancel_timer(LastTimeRef),
   [{ProcSum, MemSum}] = get_node_stats_list(Node, NodeStatsCostTime),
   {RankList, RankCostTime} = get_ranklist_and_cost_time(Node, Func, Type, Interval, IncRows, NodeStatsCostTime),
-  [UseMemInt, AlloctedMemInt, UnusedMemInt] = get_change_system_info(Node),
+  [UseMemInt, AllocatedMemInt, UnusedMemInt] = get_change_system_info(Node),
   NewNodeStatsCostTime = Interval div 2,
   %% draw
   observer_cli_lib:move_cursor_to_top_line(),
   draw_menu(Func, Type, Interval, Node, IncRows),
   draw_first_line(Version),
   draw_system_line(ProcLimit, SmpSupport, PortLimit, EtsLimit, LogicalProc, MultiScheduling,
-    UseMemInt, AlloctedMemInt, UnusedMemInt, ProcSum),
+    UseMemInt, AllocatedMemInt, UnusedMemInt, ProcSum),
   draw_memory_process_line(ProcSum, MemSum, NewNodeStatsCostTime),
   SchedulerLineLen = draw_scheduler_usage(MemSum),
   PidList = draw_process_rank(Type, RankList, ?DEFAULT_RANK_NUM + IncRows - SchedulerLineLen, Node, RankPos),
@@ -310,21 +309,21 @@ draw_first_line(Version) -> io:format("|~-131.131s|~n", [Version -- "\n"]).
 %Port Count | 6/65536            | Multi Scheduling   | enabled                | Use Mem              | 19.0814M           60.59%|
 %Ets Limit  | 2053               | Logical Processors | 4                      | Unuse Mem            | 12.0537M           38.34%|
 draw_system_line(ProcLimit, SmpSupport, PortLimit, EtsLimit, LogicalProc, MultiScheduling,
-    UseMemInt, AlloctedMemInt, UnusedMemInt, ProcSum) ->
+    UseMemInt, AllocatedMemInt, UnusedMemInt, ProcSum) ->
   UseMem = observer_cli_lib:to_megabyte_str(UseMemInt),
-  AlloctedMem = observer_cli_lib:to_megabyte_str(AlloctedMemInt),
-  UnunsedMem = observer_cli_lib:to_megabyte_str(UnusedMemInt),
-  UsePrce = observer_cli_lib:float_to_percent_with_two_digit(UseMemInt/AlloctedMemInt),
-  UnusePrce = observer_cli_lib:float_to_percent_with_two_digit(UnusedMemInt/AlloctedMemInt),
+  AllocatedMem = observer_cli_lib:to_megabyte_str(AllocatedMemInt),
+  UnUsedMem = observer_cli_lib:to_megabyte_str(UnusedMemInt),
+  UsePercent = observer_cli_lib:float_to_percent_with_two_digit(UseMemInt/AllocatedMemInt),
+  UnUsePercent = observer_cli_lib:float_to_percent_with_two_digit(UnusedMemInt/AllocatedMemInt),
   {ProcFormat, ProcCount, PortFormat, PortCount} = get_port_proc_count_info(PortLimit, ProcLimit, ProcSum),
   io:format("|\e[46m~-10.10s | ~-20.20s| ~-18.18s | ~-23.23s | ~-20.20s | ~-26.26s\e[49m|~n", %%cyan background
     ["System ", "Count/Limit", "System Switch", "State", "Memory Info", "Megabyte"]),
   io:format(ProcFormat,
-    ["Proc Count", ProcCount, "Smp Support", SmpSupport, "Allocted Mem", AlloctedMem]),
+    ["Proc Count", ProcCount, "Smp Support", SmpSupport, "Allocted Mem", AllocatedMem]),
   io:format(PortFormat,
-    ["Port Count", PortCount, "Multi Scheduling", MultiScheduling, "Use Mem", UseMem, UsePrce]),
+    ["Port Count", PortCount, "Multi Scheduling", MultiScheduling, "Use Mem", UseMem, UsePercent]),
   io:format("|~-10.10s | ~-20.20s| ~-18.18s | ~-23.23s | ~-20.20s | ~-20.20s~6.6s|~n",
-    ["Ets Limit", EtsLimit, "Logical Processors", LogicalProc, "Unuse Mem", UnunsedMem, UnusePrce]).
+    ["Ets Limit", EtsLimit, "Logical Processors", LogicalProc, "Unuse Mem", UnUsedMem, UnUsePercent]).
 
 %Memory     | Megabyte           | Process State      | Count                  | Memory               | State                    |
 %Total      | 19.0999M       100%| Binary             | 0.0182M          00.91%| IO Output            | 0.0000M                  |
@@ -336,36 +335,35 @@ draw_memory_process_line(ProcSum, MemSum, Interval) ->
   TotalMem = observer_cli_lib:to_megabyte_str(TotalMemInt),
   ProcMemInt = proplists:get_value(memory_procs, ProcSum),
   ProcMem = observer_cli_lib:to_megabyte_str(ProcMemInt),
-  ProcMemPerc = observer_cli_lib:float_to_percent_with_two_digit(ProcMemInt/TotalMemInt),
+  ProcMemPercent = observer_cli_lib:float_to_percent_with_two_digit(ProcMemInt/TotalMemInt),
   AtomMemInt = proplists:get_value(memory_atoms, ProcSum),
   AtomMem = observer_cli_lib:to_megabyte_str(AtomMemInt),
-  AtomMemPerc = observer_cli_lib:float_to_percent_with_two_digit(AtomMemInt/TotalMemInt),
+  AtomMemPercent = observer_cli_lib:float_to_percent_with_two_digit(AtomMemInt/TotalMemInt),
   BinMemInt = proplists:get_value(memory_bin, ProcSum),
   BinMem = observer_cli_lib:to_megabyte_str(BinMemInt),
-  BinMemPerc = observer_cli_lib:float_to_percent_with_two_digit(BinMemInt/TotalMemInt),
+  BinMemPercent = observer_cli_lib:float_to_percent_with_two_digit(BinMemInt/TotalMemInt),
   CodeMemInt = erlang:memory(code),
   CodeMem = observer_cli_lib:to_megabyte_str(CodeMemInt),
-  CodeMemPerc = observer_cli_lib:float_to_percent_with_two_digit(CodeMemInt/TotalMemInt),
+  CodeMemPercent = observer_cli_lib:float_to_percent_with_two_digit(CodeMemInt/TotalMemInt),
   EtsMemInt = proplists:get_value(memory_ets, ProcSum),
   EtsMem = observer_cli_lib:to_megabyte_str(EtsMemInt),
-  EtsMemPerc = observer_cli_lib:float_to_percent_with_two_digit(EtsMemInt/TotalMemInt),
-  Runqueue = integer_to_list(proplists:get_value(run_queue, ProcSum)),
+  EtsMemPercent = observer_cli_lib:float_to_percent_with_two_digit(EtsMemInt/TotalMemInt),
+  RunQueue = integer_to_list(proplists:get_value(run_queue, ProcSum)),
   BytesIn = observer_cli_lib:to_megabyte_str(proplists:get_value(bytes_in, MemSum)),
   BytesOut = observer_cli_lib:to_megabyte_str(proplists:get_value(bytes_out, MemSum)),
   GcCount = observer_cli_lib:to_list(proplists:get_value(gc_count, MemSum)),
   GcWordsReclaimed = observer_cli_lib:to_list(proplists:get_value(gc_words_reclaimed, MemSum)),
   Reductions = integer_to_list(proplists:get_value(reductions, MemSum)),
-  %"|\e[46m~-10.10s | ~-20.20s| ~-18.18s | ~-23.23s | ~-20.20s | ~-26.26s\e[49m|~n
   io:format("|\e[46m~-10.10s | ~-19.19s | ~-18.18s | ~-23.23s | ~-20.20s | ~-26.26s\e[49m|~n", %%cyan background
     ["Memory", "State", "Memory ", "State", "Memory", "Interval: " ++ integer_to_list(Interval) ++ "ms"]),
   io:format("|~-10.10s | ~-14.14s~6.6s| ~-18.18s | ~-18.18s~6.6s| ~-20.20s | ~-26.26s|~n",
-    ["Total", TotalMem, "100%", "Binary", BinMem, BinMemPerc, "IO Output", BytesOut]),
+    ["Total", TotalMem, "100%", "Binary", BinMem, BinMemPercent, "IO Output", BytesOut]),
   io:format("|~-10.10s | ~-14.14s~6.6s| ~-18.18s | ~-18.18s~6.6s| ~-20.20s | ~-26.26s|~n",
-    ["Process", ProcMem, ProcMemPerc, "Code", CodeMem, CodeMemPerc, "IO Input", BytesIn]),
+    ["Process", ProcMem, ProcMemPercent, "Code", CodeMem, CodeMemPercent, "IO Input", BytesIn]),
   io:format("|~-10.10s | ~-14.14s~6.6s| ~-18.18s | ~-23.23s | ~-20.20s | ~-26.26s|~n",
-    ["Atom", AtomMem, AtomMemPerc, "Reductions", Reductions, "Gc Count", GcCount]),
+    ["Atom", AtomMem, AtomMemPercent, "Reductions", Reductions, "Gc Count", GcCount]),
   io:format("|~-10.10s | ~-14.14s~6.6s| ~-18.18s | ~-23.23s | ~-20.20s | ~-26.26s|~n",
-    ["Ets", EtsMem, EtsMemPerc, "Run Queue", Runqueue, "Gc Words Reclaimed", GcWordsReclaimed]).
+    ["Ets", EtsMem, EtsMemPercent, "Run Queue", RunQueue, "Gc Words Reclaimed", GcWordsReclaimed]).
 
 %|01[|||||||||||||||||||||||||||||||                     59.66%]  |03[||||||||||                                          19.59%]|
 %|02[|||||||||||||||||||||||||||||||                     61.02%]  |04[|||||||                                             14.44%]|

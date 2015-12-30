@@ -81,8 +81,8 @@ loop(Node, Interval, IncrRows, LastTimeRef, ParentPid) ->
 refresh(Node, Interval) ->
   SysInfo = get_system_info(Node),
   {Info, Stat} = info_fields(),
-  SystemAndCPU = observer_lib:fill_info(Info, SysInfo),
-  MemAndStatistics = observer_lib:fill_info(Stat, SysInfo),
+  SystemAndCPU = fill_info(Info, SysInfo),
+  MemAndStatistics = fill_info(Stat, SysInfo),
   System = proplists:get_value("System and Architecture", SystemAndCPU),
   CPU = proplists:get_value("CPU's and Threads", SystemAndCPU),
   {_, _, Memory} = lists:keyfind("Memory Usage", 1, MemAndStatistics),
@@ -100,13 +100,13 @@ draw(System, CPU, Memory, Statistics) ->
      {SysKey, SysVal} = lists:nth(Pos, NewSystem),
      {CpuKey, CpuVal} = lists:nth(Pos, CPU),
      {MemKey, MemVal} = lists:nth(Pos, Memory),
-     {StatisKey, StatisVal} =
+     {StatisticsKey, StatisticsVal} =
        case lists:nth(Pos, Statistics) of
          {"Up time", _} -> {"Smp Support", to_list(proplists:get_value("Smp Support", System))};
          Value -> Value
        end,
      io:format(Format, [SysKey, to_list(SysVal), CpuKey, to_list(CpuVal),
-       MemKey, byte_to_megabyte(MemVal, TotalMem), StatisKey, to_list(StatisVal)])
+       MemKey, byte_to_megabyte(MemVal, TotalMem), StatisticsKey, to_list(StatisticsVal)])
    end|| Pos<- lists:seq(1, 6)],
   io:format("|~-22.22s| ~-106.106s |~n", ["Compiled for", to_list(proplists:get_value("Compiled for", System))]).
 
@@ -135,9 +135,9 @@ to_list(Val) -> Val.
 byte_to_megabyte({bytes, Val}, {bytes, Total}) when is_integer(Val) ->
   M = trunc(Val/(1024*1024)*1000),
   Integer = M div 1000,
-  Decmial = M - Integer * 1000,
-  Perc = observer_cli_lib:float_to_percent_with_two_digit(Val/Total),
-  lists:flatten(io_lib:format("~w.~4..0wM ~s", [Integer, Decmial, Perc])).
+  Decimal = M - Integer * 1000,
+  Percent = observer_cli_lib:float_to_percent_with_two_digit(Val/Total),
+  lists:flatten(io_lib:format("~w.~4..0wM ~s", [Integer, Decimal, Percent])).
 
 info_fields() ->
   Info = [{"System and Architecture",
@@ -219,8 +219,42 @@ sys_info() ->
 
 
 alloc_info() ->
-  AlcuAllocs = erlang:system_info(alloc_util_allocators),
-  try erlang:system_info({allocator_sizes, AlcuAllocs}) of
+  Alloc = erlang:system_info(alloc_util_allocators),
+  try erlang:system_info({allocator_sizes, Alloc}) of
     Allocators -> Allocators
   catch _:_ -> []
   end.
+
+fill_info([{dynamic, Key}|Rest], Data) when is_atom(Key) ->
+  case get_value(Key, Data) of
+    undefined -> [undefined | fill_info(Rest, Data)];
+    {Str, Value} -> [{Str, Value} | fill_info(Rest, Data)]
+  end;
+fill_info([{Str, Key}|Rest], Data) when is_atom(Key) ->
+  case get_value(Key, Data) of
+    undefined -> [undefined | fill_info(Rest, Data)];
+    Value -> [{Str, Value} | fill_info(Rest, Data)]
+  end;
+fill_info([{Str, Attrib, Key}|Rest], Data) when is_atom(Key) ->
+  case get_value(Key, Data) of
+    undefined -> [undefined | fill_info(Rest, Data)];
+    Value -> [{Str, Attrib, Value} | fill_info(Rest, Data)]
+  end;
+fill_info([{Str, {Format, Key}}|Rest], Data) when is_atom(Key) ->
+  case get_value(Key, Data) of
+    undefined -> [undefined | fill_info(Rest, Data)];
+    Value -> [{Str, {Format, Value}} | fill_info(Rest, Data)]
+  end;
+fill_info([{Str, Attrib, {Format, Key}}|Rest], Data) when is_atom(Key) ->
+  case get_value(Key, Data) of
+    undefined -> [undefined | fill_info(Rest, Data)];
+    Value -> [{Str, Attrib, {Format, Value}} | fill_info(Rest, Data)]
+  end;
+fill_info([{Str, SubStructure}|Rest], Data) when is_list(SubStructure) ->
+  [{Str, fill_info(SubStructure, Data)}|fill_info(Rest, Data)];
+fill_info([{Str, Attrib, SubStructure}|Rest], Data) ->
+  [{Str, Attrib, fill_info(SubStructure, Data)}|fill_info(Rest, Data)];
+fill_info([], _) -> [].
+
+get_value(Key, Data) ->
+  proplists:get_value(Key, Data).
