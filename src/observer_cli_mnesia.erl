@@ -24,36 +24,38 @@ get_table_list(local_node, HideSys) ->
   Owner = ets:info(schema, owner),
   case Owner of
     undefined -> {error, "Mnesia is not running on: " ++ atom_to_list(node())};
-    _->
-      {registered_name, RegName} = process_info(Owner, registered_name),
-      CollectFun = fun(Id, Acc) ->
-        Name = Id,
-        case HideSys andalso ordsets:is_element(Name, mnesia_tables()) orelse Name =:= schema of
-          true -> Acc; %% ignore system table
-          false ->
-            Storage = mnesia:table_info(Id, storage_type),
-            Tab0 = [{name, Name},
-              {owner, Owner},
-              {size, mnesia:table_info(Id, size)},
-              {reg_name, RegName},
-              {type, mnesia:table_info(Id, type)},
-              {memory, mnesia:table_info(Id, memory) * erlang:system_info(wordsize)},
-              {storage, Storage},
-              {index, mnesia:table_info(Id, index)}
-            ],
-            Tab =
-              case Storage  of
-                _ when Storage =:= ram_copies orelse Storage =:=  disc_copies ->
-                  [{fixed, ets:info(Id, fixed)}, {compressed, ets:info(Id, compressed)}|Tab0];
-                disc_only_copies -> [{fixed, dets:info(Id, safe_fixed)}|Tab0];
-                _ -> Tab0
-              end,
-            [Tab|Acc]
-        end
-      end,
-      lists:foldl(CollectFun, [], mnesia:system_info(tables))
+    _-> get_table_list2(Owner, HideSys)
   end;
 get_table_list(Node, HideSys) -> rpc:call(Node, ?MODULE, get_table_list, [local_node, HideSys]).
+
+get_table_list2(Owner, HideSys) ->
+  {registered_name, RegName} = process_info(Owner, registered_name),
+  CollectFun = fun(Id, Acc) ->
+    case HideSys andalso ordsets:is_element(Id, mnesia_tables()) orelse Id =:= schema of
+      true -> Acc; %% ignore system table
+      false ->
+        Storage = mnesia:table_info(Id, storage_type),
+        Tab0 = [{name, Id},
+          {owner, Owner},
+          {size, mnesia:table_info(Id, size)},
+          {reg_name, RegName},
+          {type, mnesia:table_info(Id, type)},
+          {memory, mnesia:table_info(Id, memory) * erlang:system_info(wordsize)},
+          {storage, Storage},
+          {index, mnesia:table_info(Id, index)}
+        ],
+        Tab =
+          case Storage  of
+            _ when Storage =:= ram_copies orelse Storage =:=  disc_copies ->
+              [{fixed, ets:info(Id, fixed)}, {compressed, ets:info(Id, compressed)}|Tab0];
+            disc_only_copies ->
+              [{fixed, dets:info(Id, safe_fixed)}|Tab0];
+            _ -> Tab0
+          end,
+        [Tab|Acc]
+    end
+               end,
+  lists:foldl(CollectFun, [], mnesia:system_info(tables)).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
