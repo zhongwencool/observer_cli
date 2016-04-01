@@ -3,7 +3,7 @@
 ##observer_cli
 [![Build Status](https://travis-ci.org/zhongwencool/observer_cli.svg?branch=master)](https://travis-ci.org/zhongwencool/observer_cli)
 
-Visualize Erlang Nodes On The Command Line By Using [recon](https://github.com/ferd/recon).
+Visualize Erlang/Elixir Nodes On The Command Line By Using [recon](https://github.com/ferd/recon).
 
 ##Goal
 Minimal consumption.
@@ -13,10 +13,26 @@ Just look like [observer](http://www.erlang.org/doc/apps/observer/observer_ug.ht
 you might think observer_cli would be more convenient than observer.
 
 ------------------
+###Install
+Elixir
+
+```ex
+# mix.exs
+   def deps do
+     [{:observer_cli, "~> 1.0.4"}]
+   end
+```
+Erlang 
+
+```erlang
+%% rebar.config
+{deps, [{observer_cli, ".*", {git, "git://github.com/zhongwencool/observer_cli.git",{tag,"1.0.4"}}}
+```
+------------------
 ###Try ...
 
 ```bash
-$ ./rebar3 shell   
+$ rebar3 shell   
 1> observer_cli:start().
 ```
 ### Process And System Information
