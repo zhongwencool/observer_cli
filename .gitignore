@@ -1,4 +1,5 @@
 .eunit
+_build
 deps
 elvis
 *.o
