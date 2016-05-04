@@ -17,6 +17,7 @@
 -export([get_node_stats_list/2]).
 -export([get_ranklist_and_cost_time/6]).
 -export([get_reductions_and_msg_queue_len/2]).
+-export([get_reductions_and_memory/2]).
 -export([get_memory_and_msg_queue_len/2]).
 
 -define(DEFAULT_RANK_NUM, 28). %%fill full in 13.3 inch screen(24 core)
@@ -111,6 +112,19 @@ get_memory_and_msg_queue_len(Pid, local_node) ->
 get_memory_and_msg_queue_len(Pid, Node) ->
   rpc:call(Node, ?MODULE, get_memory_and_msg_queue_len, [Pid, local_node]).
 
+-spec get_reductions_and_memory(Pid, Node) -> [{reductions, Reductions}| {memory, Memory}] when
+  Pid:: pid(),
+  Node:: atom(),
+  Reductions:: pos_integer(),
+  Memory:: pos_integer().
+get_reductions_and_memory(Pid, local_node) ->
+  case recon:info(Pid, [reductions, memory]) of
+    undefined -> [{reductions, "die"}, {memory, "die"}];
+    Info -> Info
+  end;
+get_reductions_and_memory(Pid, Node) ->
+  rpc:call(Node, ?MODULE, get_reductions_and_memory, [Pid, local_node]).
+
 -spec get_node_stats_list(Node, NodeStatsCostTime) -> [{[Absolutes::{atom(), term()}],
   [Increments::{atom(), term()}]}] when
   Node :: atom(),
@@ -123,7 +137,7 @@ get_node_stats_list(Node, NodeStatsCostTime) ->
 -spec get_ranklist_and_cost_time(Node, Func, Type, Interval, IncRows, Time) -> {Status, RemainTime} when
   Node:: atom(),
   Func:: proc_window|proc_count,
-  Type:: memory|binary_memory|reductions|total_heap_size,
+  Type:: memory|binary_memory|reductions|total_heap_size|message_queue_len,
   Interval:: pos_integer(),
   IncRows:: integer(),
   Time:: pos_integer(),
@@ -225,20 +239,24 @@ input_to_operation("r\n") -> {proc_count, reductions, no_change};
 input_to_operation("b\n") -> {proc_count, binary_memory, no_change};
 input_to_operation("t\n") -> {proc_count, total_heap_size, no_change};
 input_to_operation("m\n") -> {proc_count, memory, no_change};
+input_to_operation("mq\n") -> {proc_count, message_queue_len, no_change};
 
 input_to_operation("rr\n") -> {proc_window, reductions, no_change};
 input_to_operation("bb\n") -> {proc_window, binary_memory, no_change};
 input_to_operation("tt\n") -> {proc_window, total_heap_size, no_change};
 input_to_operation("mm\n") -> {proc_window, memory, no_change};
+input_to_operation("mmq\n") -> {proc_window, message_queue_len, no_change};
 
 input_to_operation([$r, $r| RefreshInterval]) -> {proc_window, reductions, RefreshInterval};
 input_to_operation([$b, $b| RefreshInterval]) -> {proc_window, binary_memory, RefreshInterval};
 input_to_operation([$t, $t| RefreshInterval]) -> {proc_window, total_heap_size, RefreshInterval};
+input_to_operation([$m, $m, $q| RefreshInterval]) -> {proc_window, message_queue_len, RefreshInterval};
 input_to_operation([$m, $m| RefreshInterval]) -> {proc_window, memory, RefreshInterval};
 
 input_to_operation([$r| RefreshInterval]) -> {proc_count, reductions, RefreshInterval};
 input_to_operation([$b| RefreshInterval]) -> {proc_count, binary_memory, RefreshInterval};
 input_to_operation([$t| RefreshInterval]) -> {proc_count, total_heap_size, RefreshInterval};
+input_to_operation([$m, $q| RefreshInterval]) -> {proc_count, message_queue_len, RefreshInterval};
 input_to_operation([$m| RefreshInterval]) -> {proc_count, memory, RefreshInterval};
 
 input_to_operation([$j| Pos]) -> {jump_to_process, Pos};
@@ -485,12 +503,26 @@ draw_process_rank(total_heap_size, HeapList, Num, Node, RankPos) ->
        [observer_cli_lib:to_list(Pos), pid_to_list(Pid), observer_cli_lib:to_list(HeapSize), NameOrCall,
          observer_cli_lib:to_list(Reductions), observer_cli_lib:to_list(MsgQueueLen), CurFun]),
      {Pos, Pid}
-   end|| Pos <- lists:seq(1, erlang:min(Num, erlang:length(HeapList)))].
+   end|| Pos <- lists:seq(1, erlang:min(Num, erlang:length(HeapList)))];
+draw_process_rank(message_queue_len, MQLenList, Num, Node, RankPos) ->
+  io:format("\e[46m|Pos|~-12.12s|~11.11s| ~-30.30s|~10.10s|~-11.11s|~-47.47s\e[49m|~n", %%cyan background
+    ["Pid", "Msg Queue", "Name or Initial Call", "Memory", "Reductions", "Current Function"]),
+  [begin
+     {Pid, MQLen, Call = [IsName|_]} = lists:nth(Pos, MQLenList),
+     [{_, Reductions}, {_, Memory}]= get_reductions_and_memory(Pid, Node),
+     {CurFun, InitialCall} = get_current_initial_call(Call),
+     NameOrCall = display_name_or_initial_call(IsName, InitialCall),
+     Format = get_choose_format(RankPos, Pos),
+     io:format(Format,
+       [observer_cli_lib:to_list(Pos), pid_to_list(Pid), observer_cli_lib:to_list(MQLen), NameOrCall,
+         observer_cli_lib:to_list(Memory), observer_cli_lib:to_list(Reductions), CurFun]),
+     {Pos, Pid}
+   end|| Pos <- lists:seq(1, erlang:min(Num, erlang:length(MQLenList)))].
 
 draw_last_line() ->
-  io:format("|\e[31;1mINPUT: \e[0m\e[44m~s~s~s~s~s~s~s\e[49m|~n",
-    ["q(quit)  ", "p(pause/unpause) ", "r/rr(reduction) ",
-      "m/mm(memory) ", "b/bb(binary memory) ", "t/tt(total heap  size) ", "jpos(jump to process pos) "]).
+  io:format("|\e[46m~s~s~s~s~s~s~s~s\e[49m|~n",
+    ["q(quit) ", "p(pause) ", "r/rr(reduction) ",
+      "m/mm(memory) ", "b/bb(binary memory) ", "t/tt(total heap size) ", "mq/mmq(message queue) ", "j9(jump to process 9)"]).
 
 notify_pause_status() ->
   io:format("\e[31;1m PAUSE  INPUT (p, r/rr, b/bb, h/hh, m/mm) to resume or q to quit \e[0m~n").
@@ -579,7 +611,7 @@ display_name_or_initial_call(IsName, _Call)when is_atom(IsName) -> atom_to_list(
 display_name_or_initial_call(_IsName, Call) -> Call.
 
 get_refresh_cost_info(proc_count, Type, Interval, IncrRow) ->
-  io_lib:format("recon:proc_count(~s, ~w, 0) Refresh:~wms", [atom_to_list(Type), IncrRow + ?DEFAULT_RANK_NUM, Interval]);
+  io_lib:format("recon:proc_count(~s,~w,0) Refresh:~wms", [atom_to_list(Type), IncrRow + ?DEFAULT_RANK_NUM, Interval]);
 get_refresh_cost_info(proc_window, Type, Interval, IncrRow) ->
-  io_lib:format(" recon:proc_window(~s, ~w, ~w) Refresh:~wms",
+  io_lib:format("recon:proc_window(~s,~w,~w) Refresh:~wms",
     [atom_to_list(Type), IncrRow + ?DEFAULT_RANK_NUM, Interval*2 - Interval div 2, Interval*2]).
