@@ -4,7 +4,7 @@ use Mix.Project
     def project do
       [
        app: :observer_cli,
-       version: "1.0.4",
+       version: "1.0.5",
        description: "Visualize Erlang Nodes On The Command Line",
        deps: deps,
        package: package,
