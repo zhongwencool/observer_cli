@@ -525,7 +525,7 @@ draw_last_line() ->
       "m/mm(memory) ", "b/bb(binary memory) ", "t/tt(total heap size) ", "mq/mmq(message queue) ", "j9(jump to process 9)"]).
 
 notify_pause_status() ->
-  io:format("\e[31;1m PAUSE  INPUT (p, r/rr, b/bb, h/hh, m/mm) to resume or q to quit \e[0m~n").
+  io:format("\e[31;1m PAUSE  INPUT (p, r/rr, b/bb, t/tt, m/mm) to resume or q to quit \e[0m~n").
 
 get_choose_format(Pos, Pos) ->
   "|\e[33;1m~-3.3s|~-12.12s|~11.11s| ~-30.30s|~11.11s|~-10.10s|~-47.47s\e[0m|~n";
