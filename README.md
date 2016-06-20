@@ -21,6 +21,9 @@ Elixir
    def deps do
      [{:observer_cli, "~> 1.0.5"}]
    end
+   def application do
+     [applications: [:observer_cli]]
+  end
 ```
 Erlang 
 
