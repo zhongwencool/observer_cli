@@ -19,7 +19,7 @@ Elixir
 ```ex
 # mix.exs
    def deps do
-     [{:observer_cli, "~> 1.0.5"}]
+     [{:observer_cli, "~> 1.0.6", manager: :rebar3}]
    end
    def application do
      [applications: [:observer_cli]]
@@ -35,7 +35,7 @@ Erlang
 ###Try ...
 
 ```bash
-$ rebar3 shell   
+$ rebar3 shell
 1> observer_cli:start().
 ```
 ### Process And System Information
