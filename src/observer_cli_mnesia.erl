@@ -139,7 +139,7 @@ draw_mnesia(MnesiaList, IncrRows) ->
   SortMneisaList = lists:sort(fun(Table1, Table2) ->
     proplists:get_value(memory, Table1) > proplists:get_value(memory, Table2)
   end, MnesiaList),
-  io:format("|\e[46m~-24.24s|~-14.14s|~-14.14s|~-10.10s|~18.18s|~-12.12s|~-12.12s|~20.20s\e[49m|~n",
+  io:format("|\e[0m\e[44m~-24.24s|~-14.14s|~-14.14s|~-10.10s|~18.18s|~-12.12s|~-12.12s|~20.20s\e[49m|~n",
     ["name", "memory", "size", "type", "storage", "owner", "index", "reg_name"]),
   [begin
      Name = get_value(name, Mnesia), Memory = get_value(memory, Mnesia),

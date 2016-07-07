@@ -111,7 +111,7 @@ draw_menu(Node, Interval) ->
   io:format("~s~n", [Title ++ RefreshStr ++ Space ++ UpTime]).
 
 draw_cache_hit_rates(CacheHitInfo) ->
-  io:format("|\e[46m    ~8.8s    |    ~-6.6s | ~7.7s    |~89.89s\e[49m|~n", ["Instance", "Hits", "Calls", "Hit Rate"]),
+  io:format("|\e[0m\e[44m    ~8.8s    |    ~-6.6s | ~7.7s    |~89.89s\e[49m|~n", ["Instance", "Hits", "Calls", "Hit Rate"]),
   Format = "|     ~4.4s       |~10.10s | ~-11.11s|~-82.82s ~6.6s|~n",
   Len = erlang:length(CacheHitInfo),
   [begin
@@ -124,7 +124,7 @@ draw_cache_hit_rates(CacheHitInfo) ->
    end|| Seq <- lists:seq(0, Len - 1)].
 
 draw_average_block_size_info(AverageBlockCurs, AverageBlockMaxes) ->
-  io:format("|\e[46m~-16.16s| ~-26.26s | ~-26.26s |~-28.28s| ~-25.25s \e[49m|~n",
+  io:format("|\e[0m\e[44m~-16.16s| ~-26.26s | ~-26.26s |~-28.28s| ~-25.25s \e[49m|~n",
     ["Allocator Type", "Current Multiblock Carriers", "Max Multiblock Carriers",
       "Current SingleBlock Carriers", "Max Single Block Carriers"]),
   Format = "|~-16.16s|  ~24.24s  |  ~24.24s  |  ~24.24s  | ~24.24s  |~n",

@@ -81,7 +81,7 @@ draw_line(RegisteredName, GroupLeader, Status, TrapExit, InitialCall,
   GroupLeaderStr = erlang:pid_to_list(GroupLeader),
 
   Format = "|~-15.15s|~52.52s|~17.17s|~12.12s|~18.18s|~12.12s|~n",
-  io:format("|\e[46m~-15.15s|~-52.52s|~-17.17s|~-12.12s|~-18.18s|~-12.12s\e[49m|~n",
+  io:format("|\e[0m\e[44m~-15.15s|~-52.52s|~-17.17s|~-12.12s|~-18.18s|~-12.12s\e[49m|~n",
     ["Meta", "Value", "Memory Used", "Value", "Garbage Collection", "Value"]),
   io:format(Format, ["registered_name", RegisteredName, "message_queue_len", MessageQueueLenStr, "min_bin_vheap_size", MinBinVHeapSize]),
   io:format(Format , ["initial_call", InitialCallStr, "heap_size", HeapSizeStr, "min_heap_size", MinHeapSize]),
