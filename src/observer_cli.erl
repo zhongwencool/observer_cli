@@ -334,7 +334,7 @@ draw_system_line(ProcLimit, SmpSupport, PortLimit, EtsLimit, LogicalProc, MultiS
   UsePercent = observer_cli_lib:float_to_percent_with_two_digit(UseMemInt/AllocatedMemInt),
   UnUsePercent = observer_cli_lib:float_to_percent_with_two_digit(UnusedMemInt/AllocatedMemInt),
   {ProcFormat, ProcCount, PortFormat, PortCount} = get_port_proc_count_info(PortLimit, ProcLimit, ProcSum),
-  io:format("|\e[46m~-10.10s | ~-20.20s| ~-18.18s | ~-23.23s | ~-20.20s | ~-26.26s\e[49m|~n", %%cyan background
+  io:format("|\e[0m\e[44m~-10.10s | ~-20.20s| ~-18.18s | ~-23.23s | ~-20.20s | ~-26.26s\e[49m|~n",
     ["System ", "Count/Limit", "System Switch", "State", "Memory Info", "Megabyte"]),
   io:format(ProcFormat,
     ["Proc Count", ProcCount, "Smp Support", SmpSupport, "Allocted Mem", AllocatedMem]),
@@ -372,7 +372,7 @@ draw_memory_process_line(ProcSum, MemSum, Interval) ->
   GcCount = observer_cli_lib:to_list(proplists:get_value(gc_count, MemSum)),
   GcWordsReclaimed = observer_cli_lib:to_list(proplists:get_value(gc_words_reclaimed, MemSum)),
   Reductions = integer_to_list(proplists:get_value(reductions, MemSum)),
-  io:format("|\e[46m~-10.10s | ~-19.19s | ~-18.18s | ~-23.23s | ~-20.20s | ~-26.26s\e[49m|~n", %%cyan background
+  io:format("|\e[0m\e[44m~-10.10s | ~-19.19s | ~-18.18s | ~-23.23s | ~-20.20s | ~-26.26s\e[49m|~n", %%cyan background
     ["Memory", "State", "Memory ", "State", "Memory", "Interval: " ++ integer_to_list(Interval) ++ "ms"]),
   io:format("|~-10.10s | ~-14.14s~6.6s| ~-18.18s | ~-18.18s~6.6s| ~-20.20s | ~-26.26s|~n",
     ["Total", TotalMem, "100%", "Binary", BinMem, BinMemPercent, "IO Output", BytesOut]),
@@ -449,7 +449,7 @@ draw_scheduler_usage(SchedulerUsage, SchedulerNum) ->
 %| <0.9.0>        |         44| proc_lib:init_p/5           |        44|0         |application_master:main_loop/2                |
 %| <0.25.0>       |         36| user                        |        36|0         |group:server_loop/3                           |
 draw_process_rank(memory, MemoryList, Num, Node, RankPos) ->
-  io:format("\e[46m|Pos|~-12.12s|~11.11s| ~-30.30s|~11.11s|~-10.10s|~-47.47s\e[49m|~n", %%cyan background
+  io:format("\e[0m\e[44m|Pos|~-12.12s|~11.11s| ~-30.30s|~11.11s|~-10.10s|~-47.47s\e[49m|~n", %%cyan background
     ["Pid", "Memory", "Name or Initial Call", "Reductions", "Msg Queue", "Current Function"]),
   [begin
      {Pid, MemVal, Call = [IsName|_]} = lists:nth(Pos, MemoryList),
@@ -463,7 +463,7 @@ draw_process_rank(memory, MemoryList, Num, Node, RankPos) ->
      {Pos, Pid}
    end|| Pos <- lists:seq(1, erlang:min(Num, erlang:length(MemoryList)))];
 draw_process_rank(binary_memory, MemoryList, Num, Node, RankPos) ->
-  io:format("\e[46m|Pos|~-12.12s|~11.11s| ~-30.30s|~11.11s|~-10.10s|~-47.47s\e[49m|~n", %%cyan background
+  io:format("\e[0m\e[44m|Pos|~-12.12s|~11.11s| ~-30.30s|~11.11s|~-10.10s|~-47.47s\e[49m|~n", %%cyan background
     ["Pid", "Bin Memory", "Name or Initial Call", "Reductions", "Msg Queue", "Current Function"]),
   [begin
      {Pid, MemVal, Call = [IsName|_]} = lists:nth(Pos, MemoryList),
@@ -477,7 +477,7 @@ draw_process_rank(binary_memory, MemoryList, Num, Node, RankPos) ->
      {Pos, Pid}
    end|| Pos <- lists:seq(1, erlang:min(Num, erlang:length(MemoryList)))];
 draw_process_rank(reductions, ReductionList, Num, Node, RankPos) ->
-  io:format("\e[46m|Pos|~-12.12s|~11.11s| ~-30.30s|~10.10s|~-11.11s|~-47.47s\e[49m|~n", %%cyan background
+  io:format("\e[0m\e[44m|Pos|~-12.12s|~11.11s| ~-30.30s|~10.10s|~-11.11s|~-47.47s\e[49m|~n", %%cyan background
     ["Pid", "Reductions", "Name or Initial Call", "Memory", "Msg Queue", "Current Function"]),
   [begin
      {Pid, Reductions, Call = [IsName|_]} = lists:nth(Pos, ReductionList),
@@ -491,7 +491,7 @@ draw_process_rank(reductions, ReductionList, Num, Node, RankPos) ->
      {Pos, Pid}
    end|| Pos <- lists:seq(1, erlang:min(Num, erlang:length(ReductionList)))];
 draw_process_rank(total_heap_size, HeapList, Num, Node, RankPos) ->
-  io:format("\e[46m|Pos|~-12.12s|~11.11s| ~-30.30s|~11.11s|~-10.10s|~-47.47s\e[49m|~n", %%cyan background
+  io:format("\e[0m\e[44m|Pos|~-12.12s|~11.11s| ~-30.30s|~11.11s|~-10.10s|~-47.47s\e[49m|~n", %%cyan background
     ["Pid", "Total Heap Size", "Name or Initial Call", "Reductions", "Msg Queue", "Current Function"]),
   [begin
      {Pid, HeapSize, Call = [IsName|_]} = lists:nth(Pos, HeapList),
@@ -505,7 +505,7 @@ draw_process_rank(total_heap_size, HeapList, Num, Node, RankPos) ->
      {Pos, Pid}
    end|| Pos <- lists:seq(1, erlang:min(Num, erlang:length(HeapList)))];
 draw_process_rank(message_queue_len, MQLenList, Num, Node, RankPos) ->
-  io:format("\e[46m|Pos|~-12.12s|~11.11s| ~-30.30s|~10.10s|~-11.11s|~-47.47s\e[49m|~n", %%cyan background
+  io:format("\e[0m\e[44m|Pos|~-12.12s|~11.11s| ~-30.30s|~10.10s|~-11.11s|~-47.47s\e[49m|~n", %%cyan background
     ["Pid", "Msg Queue", "Name or Initial Call", "Memory", "Reductions", "Current Function"]),
   [begin
      {Pid, MQLen, Call = [IsName|_]} = lists:nth(Pos, MQLenList),
@@ -520,7 +520,7 @@ draw_process_rank(message_queue_len, MQLenList, Num, Node, RankPos) ->
    end|| Pos <- lists:seq(1, erlang:min(Num, erlang:length(MQLenList)))].
 
 draw_last_line() ->
-  io:format("|\e[46m~s~s~s~s~s~s~s~s\e[49m|~n",
+  io:format("|\e[0m\e[44m~s~s~s~s~s~s~s~s\e[49m|~n",
     ["q(quit) ", "p(pause) ", "r/rr(reduction) ",
       "m/mm(memory) ", "b/bb(binary memory) ", "t/tt(total heap size) ", "mq/mmq(message queue) ", "j9(jump to process 9)"]).
 

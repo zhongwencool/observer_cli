@@ -14,7 +14,7 @@ draw_ets_info(local_node, IncrRows) ->
   SorEtsInfo = lists:sort(fun({_, Ets1}, {_, Ets2}) ->
     proplists:get_value(memory, Ets1) > proplists:get_value(memory, Ets2)
   end, AllEtsInfo),
-  io:format("|\e[46m~-24.24s|~-12.12s|~-12.12s|~-12.12s|~-10.10s|~6.6s|~-24.24s|~-12.12s|~-11.11s\e[49m|~n",
+  io:format("|\e[0m\e[44m~-24.24s|~-12.12s|~-12.12s|~-12.12s|~-10.10s|~6.6s|~-24.24s|~-12.12s|~-11.11s\e[49m|~n",
     ["id or name", "memory", "size", "type", "protection",
       "keypos", "write/read concurrency", "owner", "named_table"]),
   [begin
