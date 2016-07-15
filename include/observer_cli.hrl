@@ -24,7 +24,7 @@
 
 -record(help, {interval = ?HELP_MIN_INTERVAL :: integer()}).
 -record(inet, {interval = ?INET_MIN_INTERVAL :: integer(),
-               rows = 39 :: integer(),
+               rows = 38 :: integer(),
                func = inet_count :: atom(),
                type = cnt :: atom()}).
 
