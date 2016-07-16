@@ -189,12 +189,21 @@ waiting(Tid, ChildPid, Node, Opts) ->
         pause_or_resume ->
             erlang:send(ChildPid, pause_or_resume),
             waiting(Tid, ChildPid, Node, Opts);
+        {new_interval, Interval} -> 
+            case string:to_integer(Interval) of
+                {error, no_integer} -> waiting(Tid, ChildPid, Node, Opts);
+                {NewInterval, _} when NewInterval >= ?HOME_MIN_INTERVAL ->
+                    erlang:exit(ChildPid, stop),
+                    NewHomeView = Home#home{interval = NewInterval},
+                    restart_node(Tid, Node, Opts#view_opts{home = NewHomeView});
+                {_, _} -> waiting(Tid, ChildPid, Node, Opts)
+            end;
         {Func, Type, no_change} ->
             erlang:exit(ChildPid, stop),
             NewHomeView = Home#home{func = Func, type = Type},
             restart_node(Tid, Node, Opts#view_opts{home = NewHomeView});
-        {Func, Type, RefreshInterval} ->
-            case string:to_integer(RefreshInterval) of
+        {Func, Type, Interval} ->
+            case string:to_integer(Interval) of
                 {error, no_integer} -> waiting(Tid, ChildPid, Node, Opts);
                 {NewInterval, _} when NewInterval >= ?HOME_MIN_INTERVAL ->
                     erlang:exit(ChildPid, stop),
@@ -230,7 +239,7 @@ waiting(Tid, ChildPid, Node, Opts) ->
                     restart_node(Tid, Node, Opts#view_opts{home = NewHomeView})
             end;
         error_input -> waiting(Tid, ChildPid, Node, Opts)
-    end.
+     end.
 
 input_to_operation("q\n") ->  quit;
 input_to_operation("p\n") -> pause_or_resume;
@@ -252,21 +261,22 @@ input_to_operation("tt\n") -> {proc_window, total_heap_size, no_change};
 input_to_operation("mm\n") -> {proc_window, memory, no_change};
 input_to_operation("mmq\n") -> {proc_window, message_queue_len, no_change};
 
-input_to_operation([$r, $r| RefreshInterval]) -> {proc_window, reductions, RefreshInterval};
-input_to_operation([$b, $b| RefreshInterval]) -> {proc_window, binary_memory, RefreshInterval};
-input_to_operation([$t, $t| RefreshInterval]) -> {proc_window, total_heap_size, RefreshInterval};
-input_to_operation([$m, $m, $q| RefreshInterval]) -> {proc_window, message_queue_len, RefreshInterval};
-input_to_operation([$m, $m| RefreshInterval]) -> {proc_window, memory, RefreshInterval};
+input_to_operation([$i| Interval]) -> {new_interval, Interval};
+input_to_operation([$r, $r| Interval]) -> {proc_window, reductions, Interval};
+input_to_operation([$b, $b| Interval]) -> {proc_window, binary_memory, Interval};
+input_to_operation([$t, $t| Interval]) -> {proc_window, total_heap_size, Interval};
+input_to_operation([$m, $m, $q| Interval]) -> {proc_window, message_queue_len, Interval};
+input_to_operation([$m, $m| Interval]) -> {proc_window, memory, Interval};
 
-input_to_operation([$r| RefreshInterval]) -> {proc_count, reductions, RefreshInterval};
-input_to_operation([$b| RefreshInterval]) -> {proc_count, binary_memory, RefreshInterval};
-input_to_operation([$t| RefreshInterval]) -> {proc_count, total_heap_size, RefreshInterval};
-input_to_operation([$m, $q| RefreshInterval]) -> {proc_count, message_queue_len, RefreshInterval};
-input_to_operation([$m| RefreshInterval]) -> {proc_count, memory, RefreshInterval};
+input_to_operation([$r, $o, $w|Row]) -> {new_rows, Row};
+input_to_operation([$r| Interval]) -> {proc_count, reductions, Interval};
+input_to_operation([$b| Interval]) -> {proc_count, binary_memory, Interval};
+input_to_operation([$t| Interval]) -> {proc_count, total_heap_size, Interval};
+input_to_operation([$m, $q| Interval]) -> {proc_count, message_queue_len, Interval};
+input_to_operation([$m| Interval]) -> {proc_count, memory, Interval};
 
 input_to_operation([$j| Pos]) -> {jump_to_process, Pos};
 input_to_operation("\n") -> go_to_process_view;
-input_to_operation([$i|Row]) -> {new_rows, Row};
 input_to_operation(_)-> error_input.
 
 loop(Tid, ParentPid, Node, #home{cur_pos = RankPos, func = Func, type = Type, interval = Interval}, Rows) ->
@@ -624,7 +634,7 @@ display_name_or_initial_call(IsName, _Call)when is_atom(IsName) -> atom_to_list(
 display_name_or_initial_call(_IsName, Call) -> Call.
 
 get_refresh_cost_info(proc_count, Type, Interval, Rows) ->
-    io_lib:format("recon:proc_count(~p,~w) Refresh:~wms", [Type, Rows, Interval]);
+    io_lib:format("recon:proc_count(~p,~w) Interval:~wms", [Type, Rows, Interval]);
 get_refresh_cost_info(proc_window, Type, Interval, Rows) ->
-    io_lib:format("recon:proc_window(~p,~w,~w) Refresh:~wms", [Type, Rows, Interval*2 - Interval div 2, Interval*2]).
+    io_lib:format("recon:proc_window(~p,~w,~w) Interval:~wms", [Type, Rows, Interval*2 - Interval div 2, Interval*2]).
 

@@ -78,8 +78,8 @@ waiting(Node, Pid, #view_opts{allocate = AllocatorOpts} = ViewOpts) ->
         "db\n" ->
             erlang:exit(Pid, stop),
             observer_cli_mnesia:start(Node, ViewOpts);
-        [$r| RefreshInterval] ->
-            case string:to_integer(RefreshInterval) of
+        [$i| Interval] ->
+            case string:to_integer(Interval) of
                 {error, no_integer} -> waiting(Node, Pid, ViewOpts);
                 {NewInterval, _} when NewInterval >= ?ALLOCATOR_MIN_INTERVAL ->
                     erlang:send(Pid, {new_interval, NewInterval}),
@@ -108,7 +108,7 @@ loop(Node, Interval, ParentPid) ->
 draw_menu(Node, Interval) ->
     Title = observer_cli_lib:get_menu_title(allocator),
     UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime(Node)) ++ "|",
-    RefreshStr = "Refresh: " ++ integer_to_list(Interval) ++ "ms",
+    RefreshStr = "Interval: " ++ integer_to_list(Interval) ++ "ms",
     SpaceLen = ?COLUMN_WIDTH - erlang:length(Title)  - erlang:length(RefreshStr)  - erlang:length(UpTime)+ 130,
     Space = case SpaceLen > 0 of  true -> lists:duplicate(SpaceLen, " "); false -> [] end,
     io:format("~s~n", [Title ++ RefreshStr ++ Space ++ UpTime]).
@@ -138,7 +138,7 @@ draw_average_block_size_info(AverageBlockCurs, AverageBlockMaxes) ->
     ok.
 
 draw_last_line(Interval)  ->
-    Text = io_lib:format("r~w(refresh every ~wms) refresh time must >= 5000ms", [Interval, Interval]),
+    Text = io_lib:format("i~w(Interval ~wms) time must >= 5000ms", [Interval, Interval]),
     io:format("|\e[31;1mINPUT: \e[0m\e[44mq(quit)      ~-111.111s\e[49m|~n", [Text]).
 
 get_alloc(Key, Curs, Maxes) ->

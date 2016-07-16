@@ -68,11 +68,11 @@ draw_help() ->
     io:format("|\e[42m2. o(OBSERVER) Commands\e[49m                                                            |~n"),
     io:format("| \e[48;2;80;80;80mr     \e[0m switch mode to reduction(proc_count)                                       |~n"),
     io:format("| \e[48;2;80;80;80mrr    \e[0m switch mode to reduction(proc_window)                                      |~n"),
+    io:format("| \e[48;2;80;80;80mi3000   \e[0m set interval time to 3000ms                                              |~n"),
     io:format("| \e[48;2;80;80;80mr5000 \e[0m switch mode to reduction(proc_count) and refresh time(5000ms)              |~n"),
     io:format("| \e[48;2;80;80;80mrr6000\e[0m switch mode to reduction(proc_window) and refresh time(5000ms)             |~n"),
     io:format("| \e[48;2;80;80;80mj13   \e[0m choose the 13th process(yellow line) recon process by recon:info/1         |~n"),
-    io:format("| \e[48;2;80;80;80mi2    \e[0m increase 2 rank process rows                                               |~n"),
-    io:format("| \e[48;2;80;80;80mi-3   \e[0m decrease 3 rank process rows                                               |~n"),
+    io:format("| \e[48;2;80;80;80mrow10    \e[0m show 10 rank process rows                                               |~n"),
     io:format("| \e[48;2;80;80;80mp     \e[0m pause/unpause the view                                                     |~n"),
 
     io:format("|\e[42m3. About o(OBSERVER)'s Interval\e[49m                                                    |~n"),
@@ -87,7 +87,7 @@ draw_help() ->
     io:format("| memory that were garbage collected, and the global reductions count for the node  |~n"),
     io:format("| never stop increasing, \e[48;2;80;80;80mo(OBSERVER)\e[0m's \"IO input/out\", \"Gc Words Reclaimed\", \"Gc    |~n"),
     io:format("| Count\" only represents the increments between two refresh interval                |~n"),
-    io:format("| The total bytes in and out in \e[48;2;80;80;80me(ETS/SYSTEM)\e[0m view.                                 |~n"),
+    io:format("| The total bytes in and out in \e[48;2;80;80;80me(ETS)\e[0m view.                                        |~n"),
 
     io:format("|\e[42m5. Reference\e[49m                                                                       |~n"),
     io:format("|More infomation about recon:proc_count/2 and recon:proc_window/3                   |~n"),
@@ -100,3 +100,4 @@ draw_menu(Node) ->
     UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime(Node)) ++ "|",
     Space = lists:duplicate(?HELP_COLUMN_WIDTH - erlang:length(Title)    - erlang:length(UpTime)+ 130, " "),
     io:format("~s~n", [Title ++ Space ++ UpTime]).
+

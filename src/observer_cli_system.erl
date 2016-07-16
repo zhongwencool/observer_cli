@@ -50,15 +50,15 @@ waiting(Node, ChildPid, #view_opts{sys = SysOpts} = ViewOpts) ->
         "db\n" ->
             erlang:exit(ChildPid, stop),
             observer_cli_mnesia:start(Node, ViewOpts);
-        [$r| RefreshInterval] ->
-            case string:to_integer(RefreshInterval) of
+        [$i| Interval] ->
+            case string:to_integer(Interval) of
                 {error, no_integer} -> waiting(Node, ChildPid, ViewOpts);
                 {NewInterval, _} when NewInterval >= ?SYSTEM_MIN_INTERVAL ->
                     erlang:send(ChildPid, {new_interval, NewInterval}),
                     waiting(Node, ChildPid, ViewOpts#view_opts{sys = SysOpts#system{interval = NewInterval}});
                 {_Interval, _} -> waiting(Node, ChildPid, ViewOpts)
             end;
-        [$i| NewRows] ->
+        [$r, $o, $w| NewRows] ->
             case string:to_integer(NewRows) of
                 {error, no_integer} -> waiting(Node, ChildPid, ViewOpts);
                 {NewRows2, _} ->
@@ -121,13 +121,13 @@ draw(System, CPU, Memory, Statistics) ->
 draw_menu(Node, Interval) ->
     Title  = observer_cli_lib:get_menu_title(ets),
     UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime(Node)) ++ "|",
-    RefreshStr = "Refresh: " ++ integer_to_list(Interval) ++ "ms",
+    RefreshStr = "Interval: " ++ integer_to_list(Interval) ++ "ms",
     SpaceLen = ?COLUMN_WIDTH - erlang:length(Title)  - erlang:length(RefreshStr)  - erlang:length(UpTime)+ 130,
     Space = case SpaceLen > 0 of  true -> lists:duplicate(SpaceLen, " "); false -> [] end,
     io:format("~s~n", [Title ++ RefreshStr ++ Space ++ UpTime]).
 
 draw_last_line(Interval)  ->
-    Text = io_lib:format("r~w(refresh every ~wms) i2/i-2 increase/decrease rows", [Interval, Interval]),
+    Text = io_lib:format("i~w(Interval ~wms must >=5000ms) row10(show 10 rows)", [Interval, Interval]),
     io:format("|\e[31;1mINPUT: \e[0m\e[44mq(quit)      ~-111.111s\e[49m|~n", [Text]).
 
 to_list(Val) when is_integer(Val) -> integer_to_list(Val);

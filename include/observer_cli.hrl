@@ -3,11 +3,11 @@
 
 -define(SYSTEM_MIN_INTERVAL, 5000).
 -define(ALLOCATOR_MIN_INTERVAL, 5000).
--define(HOME_MIN_INTERVAL, 2000).
+-define(HOME_MIN_INTERVAL, 1000).
 -define(HELP_MIN_INTERVAL, 1000).
 -define(PROCESS_MIN_INTERVAL, 1000).
 -define(MNESIA_MIN_INTERVAL, 5000).
--define(INET_MIN_INTERVAL, 2000).
+-define(INET_MIN_INTERVAL, 1000).
 
 -record(home, {func = proc_count :: atom(),
                type = memory :: atom(),
