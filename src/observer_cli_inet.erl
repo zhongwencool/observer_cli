@@ -5,7 +5,7 @@
 %% API
 -export([start/2]).
 %%for rpc call
--export([get_inet_info/5]).
+-export([get_inet_info/6]).
 
 -define(INET_COLUMN_WIDTH, 85).
 
@@ -16,19 +16,22 @@ start(Node, #view_opts{inet = #inet{interval = Interval,
                                     type = Type}} = ViewOpts) ->
     ParentPid = self(),
     Pid = spawn(fun() -> observer_cli_lib:clear_screen(),
-                         loop(Node, Function, Type, Interval, Rows, erlang:make_ref(), ParentPid)
+                         loop(Node, Function, Type, Interval, Rows, erlang:make_ref(), ParentPid, 0)
                 end),
     waiting(Node, Pid, ViewOpts).
 
 %%for fetching data from remote data by rpc:call/4
--spec get_inet_info(Node, Function, Type, Rows, Ms) -> [tuple()] when
+-spec get_inet_info(Node, Function, Type, Rows, Ms, Count) -> [tuple()] when
       Node:: atom(),
       Function:: atom(),
       Type:: atom(),
       Rows:: integer(),
+      Count:: integer(),
       Ms:: integer().
-get_inet_info(local_node, Function, Type, Rows, Ms) -> inet_info(Function, Type, Rows, Ms);
-get_inet_info(Node, Function, Type, Rows, Ms) -> rpc:call(Node, ?MODULE, get_inet_info, [local_node, Function, Type, Rows, Ms]).
+get_inet_info(local_node, Function, Type, Rows, Ms, Count) -> 
+    inet_info(Function, Type, Rows, Ms, Count);
+get_inet_info(Node, Function, Type, Rows, Ms, Count) ->
+    rpc:call(Node, ?MODULE, get_inet_info, [local_node, Function, Type, Rows, Ms, Count]).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
@@ -78,15 +81,15 @@ waiting(Node, ChildPid, ViewOpts = #view_opts{inet = InetOpts}) ->
         "oct\n" ->
             erlang:exit(ChildPid, stop),
             observer_cli_inet:start(Node, ViewOpts#view_opts{inet = InetOpts#inet{type = oct}});
-        [$r| RefreshInterval] ->
-            case string:to_integer(RefreshInterval) of
+        [$i| Interval] ->
+            case string:to_integer(Interval) of
                 {error, no_integer} -> waiting(Node, ChildPid, ViewOpts);
                 {NewInterval, _} when NewInterval >= ?INET_MIN_INTERVAL ->
                     erlang:send(ChildPid, {new_interval, NewInterval}),
                     waiting(Node, ChildPid, ViewOpts#view_opts{inet = InetOpts#inet{interval = NewInterval}});
                 {_Interval, _} -> waiting(Node, ChildPid, ViewOpts)
             end;
-        [$i| Rows] ->
+        [$r, $o, $w| Rows] ->
             case string:to_integer(Rows) of
                 {error, no_integer} -> waiting(Node, ChildPid, ViewOpts);
                 {NewRows, _} ->
@@ -96,10 +99,10 @@ waiting(Node, ChildPid, ViewOpts = #view_opts{inet = InetOpts}) ->
         _ -> waiting(Node, ChildPid, ViewOpts)
     end.
 
-loop(Node, Function, Type, Interval, Rows, LastTimeRef, ParentPid) ->
+loop(Node, Function, Type, Interval, Rows, LastTimeRef, ParentPid, Count) ->
     observer_cli_lib:move_cursor_to_top_line(),
     draw_menu(Node, Function, Type, Interval, Rows),
-    Inets = get_inet_info(Node, Function, Type, Rows, Interval),
+    Inets = get_inet_info(Node, Function, Type, Rows, Interval, Count),
     draw_inet_rows(Inets, Type, Function, Interval, Rows),
     draw_last_line(Interval),
     erlang:cancel_timer(LastTimeRef),
@@ -109,12 +112,13 @@ loop(Node, Function, Type, Interval, Rows, LastTimeRef, ParentPid) ->
         quit ->
             quit;
         {new_interval, NewInterval} -> 
-            loop(Node, Function, Type, NewInterval, Rows, TimeRef, ParentPid);
+            observer_cli_lib:clear_screen(),
+            loop(Node, Function, Type, NewInterval, Rows, TimeRef, ParentPid, Count + 1);
         {new_rows, NewRows} -> 
             observer_cli_lib:clear_screen(),
-            loop(Node, Function, Type, Interval, NewRows, TimeRef, ParentPid);
+            loop(Node, Function, Type, Interval, NewRows, TimeRef, ParentPid, Count + 1);
         _ ->
-            loop(Node, Function, Type, Interval, Rows, TimeRef, ParentPid)
+            loop(Node, Function, Type, Interval, Rows, TimeRef, ParentPid, Count + 1)
     end.
 
 draw_menu(Node, Func, Type, Interval, Rows) ->
@@ -148,7 +152,7 @@ draw_inet_rows(Inets, Type, _, _, _) ->
          QueueSize = observer_cli_lib:to_list(proplists:get_value(queue_size, MemoryUsed)),
          Memory = observer_cli_lib:to_list(proplists:get_value(memory, MemoryUsed)),
          NewValue = case Info of
-                        [{Type, Value}] -> Value;
+                        [{Type, Value}] -> observer_cli_lib:to_list(Value);
                         [{_, Value1}, {_, Value2}]-> io_lib:format("~w(~w+~w)", [Value, Value1, Value2])
                     end,
          io:format("|~-12.12s|~12.12s| ~-28.28s|~15.15s| ~-15.15s|~20.20s| ~-20.20s|~n",
@@ -156,17 +160,19 @@ draw_inet_rows(Inets, Type, _, _, _) ->
      end|| {Port, Value, Info} <- Inets].
 
 draw_last_line(Interval)  ->
-    Format = "r~w(refresh every ~wms) ic(inet_count) iw(inet_window) rc(recv_cnt) ro(recv_oct) sc(send_cnt) so(send_oct) cnt oct",
+    Format = "i~w(Interval ~wms must>=1000) ic(inet_count) iw(inet_window) rc(recv_cnt) ro(recv_oct) sc(send_cnt) so(send_oct) cnt oct",
     Text = io_lib:format(Format, [Interval, Interval]),
     io:format("|\e[31;1mINPUT: \e[0m\e[44m~-124.124s\e[49m|~n", [Text]).
 
 get_refresh_str(inet_count, Type, Interval, Rows) ->
-    io_lib:format("recon:inet_count(~p,~w) Refresh:~wms", [Type, Rows, Interval]);
+    io_lib:format("recon:inet_count(~p,~w) Interval:~wms", [Type, Rows, Interval]);
 get_refresh_str(inet_window, Type, Interval, Rows) ->
-    io_lib:format("recon:inet_window(~p,~w,~w) Refresh:~wms", [Type, Rows, Interval, Interval]).
+    io_lib:format("recon:inet_window(~p,~w,~w) Interval:~wms", [Type, Rows, Interval, Interval]).
 
-inet_info(inet_count, Type, Num, _) ->
+inet_info(inet_count, Type, Num, _, _) ->
     recon:inet_count(Type, Num);
-inet_info(inet_window, Type, Num, Ms) ->
+inet_info(inet_window, Type, Num, _, 0) ->
+    recon:inet_count(Type, Num);
+inet_info(inet_window, Type, Num, Ms, _) ->
     recon:inet_window(Type, Num, Ms).
 
