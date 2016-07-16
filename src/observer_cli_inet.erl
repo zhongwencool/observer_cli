@@ -134,7 +134,7 @@ draw_inet_rows([], Type, inet_count, _Interval, Rows) ->
     io:format("Get nothing for recon:inet_count(~p, ~p)~n", [Type, Rows]);
 draw_inet_rows([], Type, inet_window, Interval, Rows) ->
     io:format("Get nothing for recon:inet_window(~p, ~p, ~p)~n", [Type, Rows, Interval]);
-draw_inet_rows(Inets, Type, _, _, _) ->
+draw_inet_rows(Inets, Type, Function, _, _) ->
     NewType = case Type of
                   cnt -> "cnt(recv_cnt+send_cnt)";
                   oct -> "oct(recv_oct+send_oct)";
@@ -151,9 +151,10 @@ draw_inet_rows(Inets, Type, _, _, _) ->
          Output = observer_cli_lib:to_list(proplists:get_value(output, IO)),
          QueueSize = observer_cli_lib:to_list(proplists:get_value(queue_size, MemoryUsed)),
          Memory = observer_cli_lib:to_list(proplists:get_value(memory, MemoryUsed)),
-         NewValue = case Info of
-                        [{Type, Value1}] -> io_lib:format("Diff:~w Now:~w)", [Value, Value1]);
-                        [{_, Value1}, {_, Value2}]-> io_lib:format("~w(~w+~w)", [Value, Value1, Value2])
+         NewValue = case {Function, Info} of
+                        {inet_window, [{Type, Value1}]} -> io_lib:format("Diff:~w Now:~w)", [Value, Value1]);
+                        {inet_count, [{Type, Value}]} -> observer_cli_lib:to_list(Value);
+                        {_, [{_, Value1}, {_, Value2}]}-> io_lib:format("~w(~w+~w)", [Value, Value1, Value2])
                     end,
          io:format("|~-12.12s|~12.12s| ~-28.28s|~15.15s| ~-15.15s|~20.20s| ~-20.20s|~n",
                    [observer_cli_lib:to_list(Port), Name, NewValue, QueueSize, Memory, Input, Output])

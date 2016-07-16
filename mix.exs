@@ -4,7 +4,7 @@ defmodule ObserverCli.Mixfile do
   def project do
     [
       app: :observer_cli,
-      version: "1.0.6",
+      version: "1.0.7",
       description: "Visualize Erlang Nodes On The Command Line",
       deps: deps,
       package: package,
@@ -19,7 +19,7 @@ defmodule ObserverCli.Mixfile do
   end
   def deps do
     [
-      {:recon, "~> 2.3.1", manager: :rebar3},
+      {:recon, "~> 2.3.1"},
     ]
   end
 
