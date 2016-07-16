@@ -152,7 +152,7 @@ draw_inet_rows(Inets, Type, _, _, _) ->
          QueueSize = observer_cli_lib:to_list(proplists:get_value(queue_size, MemoryUsed)),
          Memory = observer_cli_lib:to_list(proplists:get_value(memory, MemoryUsed)),
          NewValue = case Info of
-                        [{Type, Value}] -> observer_cli_lib:to_list(Value);
+                        [{Type, Value1}] -> io_lib:format("Diff:~w Now:~w)", [Value, Value1]);
                         [{_, Value1}, {_, Value2}]-> io_lib:format("~w(~w+~w)", [Value, Value1, Value2])
                     end,
          io:format("|~-12.12s|~12.12s| ~-28.28s|~15.15s| ~-15.15s|~20.20s| ~-20.20s|~n",
