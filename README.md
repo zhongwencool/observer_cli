@@ -19,7 +19,7 @@ Elixir
 ```ex
 # mix.exs
    def deps do
-     [{:observer_cli, "~> 1.0.6", manager: :rebar3}]
+     [{:observer_cli, "~> 1.0.7"}]
    end
    def application do
      [applications: [:observer_cli]]
@@ -29,7 +29,7 @@ Erlang
 
 ```erlang
 %% rebar.config
-{deps, [{observer_cli, ".*", {git, "git://github.com/zhongwencool/observer_cli.git",{tag,"1.0.5"}}}
+{deps, [observer_cli]}
 ```
 ------------------
 ###Try ...
