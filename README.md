@@ -2,6 +2,7 @@
 -----------------
 ##observer_cli
 [![Build Status](https://travis-ci.org/zhongwencool/observer_cli.svg?branch=master)](https://travis-ci.org/zhongwencool/observer_cli)
+[![Hex.pm](https://img.shields.io/hexpm/v/observer_cli.svg)](http://hex.pm/packages/observer_cli)
 
 Visualize Erlang/Elixir Nodes On The Command Line By Using [recon](https://github.com/ferd/recon).
 
@@ -19,7 +20,7 @@ Elixir
 ```ex
 # mix.exs
    def deps do
-     [{:observer_cli, "~> 1.0.7"}]
+     [{:observer_cli, "~> 1.0.8"}]
    end
    def application do
      [applications: [:observer_cli]]
