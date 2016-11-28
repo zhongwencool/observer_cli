@@ -1,7 +1,7 @@
 {application, observer_cli,
  [
   {description, "Visualize Erlang Nodes On The Command Line"},
-  {vsn, "1.0.6"},
+  {vsn, "1.0.8"},
   {modules, [
              observer_cli
             ]},
@@ -16,3 +16,4 @@
    {licenses, ["MIT"]},
    {links, [{"Github", "https://github.com/zhongwencool/observer_cli"}]}
  ]}.
+
