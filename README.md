@@ -20,7 +20,7 @@ Elixir
 ```ex
 # mix.exs
    def deps do
-     [{:observer_cli, "~> 1.0.8"}]
+     [{:observer_cli, "~> 1.0.9"}]
    end
    def application do
      [applications: [:observer_cli]]
