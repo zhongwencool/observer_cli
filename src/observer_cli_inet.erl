@@ -30,8 +30,10 @@ start(Node, #view_opts{inet = #inet{interval = Interval,
       Ms:: integer().
 get_inet_info(local_node, Function, Type, Rows, Ms, Count) -> 
     inet_info(Function, Type, Rows, Ms, Count);
-get_inet_info(Node, Function, Type, Rows, Ms, Count) ->
-    rpc:call(Node, ?MODULE, get_inet_info, [local_node, Function, Type, Rows, Ms, Count]).
+get_inet_info(_Node, _Function, _Type, _Rows, _Ms, _Count) ->
+    io:format("\e[48;2;184;0;0mDon't Support remote node. erlang:port_info/2 badarg if Port is not a local port identifier.\e[0m~n"),
+    io:format("You can see Net by observer_cli:start/0 on local node.~n"),
+    [].
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private

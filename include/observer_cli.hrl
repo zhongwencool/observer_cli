@@ -1,30 +1,30 @@
 
 -define(COLUMN_WIDTH, 133).
 
--define(SYSTEM_MIN_INTERVAL, 5000).
--define(ALLOCATOR_MIN_INTERVAL, 5000).
+-define(SYSTEM_MIN_INTERVAL, 2000).
+-define(ALLOCATOR_MIN_INTERVAL, 2000).
 -define(HOME_MIN_INTERVAL, 1000).
 -define(HELP_MIN_INTERVAL, 1000).
 -define(PROCESS_MIN_INTERVAL, 1000).
--define(MNESIA_MIN_INTERVAL, 5000).
+-define(MNESIA_MIN_INTERVAL, 2000).
 -define(INET_MIN_INTERVAL, 1000).
 
 -record(home, {func = proc_count :: atom(),
                type = memory :: atom(),
                cur_pos = 1 :: integer(),
-               rows = 26 :: integer(),
+               rows = 18 :: integer(),
                interval = ?SYSTEM_MIN_INTERVAL :: integer()}).
 
 -record(system, {interval = ?SYSTEM_MIN_INTERVAL :: integer(),
-                 rows = 30 :: integer()}).
+                 rows = 22 :: integer()}).
 -record(allocate, {interval = ?SYSTEM_MIN_INTERVAL :: integer()}).
 
 -record(db, {interval = ?MNESIA_MIN_INTERVAL :: integer(),
-             rows = 37 :: integer()}).
+             rows = 29 :: integer()}).
 
 -record(help, {interval = ?HELP_MIN_INTERVAL :: integer()}).
 -record(inet, {interval = ?INET_MIN_INTERVAL :: integer(),
-               rows = 38 :: integer(),
+               rows = 30 :: integer(),
                func = inet_count :: atom(),
                type = cnt :: atom()}).
 
