@@ -83,7 +83,7 @@ draw_help() ->
     io:format("| |... using rr mode's(recon:proc_window/3), (2 * 1000 - 1000 div 2) = 3000 ms.     |~n"),
 
     io:format("|\e[42m4. About o(OBSERVER)'s IO Output/Input\e[49m                                             |~n"),
-    io:format("| Due to bytes in and out of the node, number of garbage colelctor runs, words of   |~n"),
+    io:format("| Due to bytes in and out of the node, number of garbage collector runs, words of   |~n"),
     io:format("| memory that were garbage collected, and the global reductions count for the node  |~n"),
     io:format("| never stop increasing, \e[48;2;80;80;80mo(OBSERVER)\e[0m's \"IO input/out\", \"Gc Words Reclaimed\", \"Gc    |~n"),
     io:format("| Count\" only represents the increments between two refresh interval                |~n"),
