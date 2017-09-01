@@ -49,7 +49,7 @@ $ rebar3 shell
     
 2. `observer_cli <TARGETNODE> <TARGETCOOKIE>` to monitor remote node. 
    
-   :exclamation: **ensure obsever_cli application start on target node.**
+   :exclamation: **ensure observer_cli application start on target node.**
 
 ----------------
 ### Process And System Information
