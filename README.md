@@ -1,6 +1,6 @@
 
 -----------------
-#observer_cli
+# observer_cli
 [![Build Status](https://travis-ci.org/zhongwencool/observer_cli.svg?branch=master)](https://travis-ci.org/zhongwencool/observer_cli)
 [![Hex.pm](https://img.shields.io/hexpm/v/observer_cli.svg)](http://hex.pm/packages/observer_cli)
 
@@ -8,7 +8,8 @@ Visualize Erlang/Elixir Nodes On The Command Line By Using [recon](https://githu
 
 [Animation Show](http://zhongwencool.github.io/observer_cli/).
 
-##Goal
+## Goal
+
 Minimal consumption.
 
 Just look like [observer](http://www.erlang.org/doc/apps/observer/observer_ug.html), but in shell, 
@@ -16,7 +17,8 @@ Just look like [observer](http://www.erlang.org/doc/apps/observer/observer_ug.ht
 you might think observer_cli would be more convenient than observer.
 
 ------------------
-###Install
+### Install
+
 **Erlang**
 ```erlang
 %% rebar.config
@@ -33,21 +35,21 @@ you might think observer_cli would be more convenient than observer.
   end
 ```
 ------------------
-###Try In Shell
+### Try In Shell
 
 ```bash
 $ rebar3 shell
 1> observer_cli:start().
 ```
 
-###Escriptize
+### Escriptize
 1. `rebar3 escriptize` to generate an escript executable containing the project's and its dependencies' BEAM files.
 
     Place script(`_build/default/bin/observer_cli`) anywhere in your path and use `observer_cli` command.
     
 2. `observer_cli <TARGETNODE> <TARGETCOOKIE>` to monitor remote node. 
    
-   :exclamation: **ensure obsever_cli application start on target node.**
+   :exclamation: **ensure observer_cli application start on target node.**
 
 ----------------
 ### Process And System Information
@@ -69,7 +71,7 @@ $ rebar3 shell
 ![Help](http://7q5a9k.com1.z0.glb.clouddn.com/observer_cli_help_20151226.jpg)
 
 ----------------
-###Command
+### Command
 
 ```erlang
 > observer_cli:start().%% default refresh interval is 2000
@@ -78,7 +80,7 @@ $ rebar3 shell
 ```
 
 -------------------
-###TODO
+### TODO
 - [x] Processes Memory, Binary, Total Heap Size, Reductions Top.     
 - [x] include System and Architecture, CPU's and Threads metrics  in observer's system 
 - [x] Memory Allocators: std, ll, eheap, ets,fix, binary, driver.
@@ -90,7 +92,7 @@ $ rebar3 shell
 - [ ] ~~Trace Overview.~~ You should use recon_trace.
 
 ----------------
-###Changelog
+### Changelog
 
 - 1.1.0
   - Support escript, `observer_cli <TARGETNODE> <COOKIE>`
@@ -99,5 +101,5 @@ $ rebar3 shell
   - Upgrade rebar3 to 3.3.3 for publish hex repo.
     
 --------------------
-###License
+### License
 See the [LICENSE](https://github.com/zhongwencool/observer_cli/blob/master/LICENSE) file for license rights and limitations (MIT).
