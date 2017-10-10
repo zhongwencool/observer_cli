@@ -99,7 +99,7 @@ draw_pid_info(Dictionary, Link, Monitors, MonitoredBy, CurrentStacktrace) ->
     io:format("|Link: ~-125.125s|~n", [LinkStr]),
     io:format("|Monitors: ~-121.121s|~n", [MonitorsStr]),
     io:format("|MonitoredBy: ~-118.118s|~n", [MonitoredByStr]),
-    io:format("|CurrentStatckTraces: ~p~n", [CurrentStacktraceStr]).
+    io:format("|CurrentStackTraces: ~p~n", [CurrentStacktraceStr]).
 
 draw_reductions_memory(Reduction, Memory, Reductions, Memorys) ->
     {NewRedus, NewMems}
