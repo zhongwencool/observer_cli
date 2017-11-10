@@ -24,7 +24,7 @@ draw_ets_info(local_node, Rows) ->
          IdOrName =
              case is_atom(Id) of
                  true -> atom_to_list(Id);
-                 false -> observer_cli_lib:to_list(Id) ++ "/" ++ Name
+                 false -> Name ++ "/" ++ observer_cli_lib:to_list(Id)
              end,
          io:format("|~-24.24s|~-12.12s|~-12.12s|~-12.12s|~-10.10s|~6.6s|~-24.24s|~-12.12s|~10.10s |~n",
                    [IdOrName, Memory, Size, Type, Protect, KeyPos, Write ++ "/" ++ Read, Owner, NamedTable])

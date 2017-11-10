@@ -51,6 +51,7 @@ to_list(Integer) when is_integer(Integer) -> integer_to_list(Integer);
 to_list(Pid) when is_pid(Pid) -> erlang:pid_to_list(Pid);
 to_list(Binary) when is_binary(Binary) -> erlang:binary_to_list(Binary);
 to_list(Port)when is_port(Port) -> erlang:port_to_list(Port);
+to_list(Ref) when is_reference(Ref) -> erlang:ref_to_list(Ref);
 to_list(Val) -> Val.
 
 -spec get_menu_title('allocator'|'ets'|'help'|'home'|'inet'|'mnesia') -> list().
@@ -59,7 +60,7 @@ get_menu_title(Type) ->
     lists:flatten(["|", Home, "|", Ets, "|", Inet, "|", Alloc, "|", Mnesia, "|", Help, "|"]).
 
 get_menu_title2(home) ->
-    [select("o(OBSERVER)"), unselect("e(ETS)"), unselect("n(NET)"), 
+    [select("o(OBSERVER)"), unselect("e(ETS)"), unselect("n(NET)"),
      unselect("a(ALLOCATOR)"), unselect("db(MNESIA)"), unselect("h(HELP)")];
 get_menu_title2(ets) ->
     [unselect("o(OBSERVER)"), select("e(ETS)"), unselect("n(NET)"),
@@ -68,10 +69,10 @@ get_menu_title2(allocator) ->
     [unselect("o(OBSERVER)"), unselect("e(ETS)"), unselect("n(NET)"),
      select("a(ALLOCATOR)"), unselect("db(MNESIA)"), unselect("h(HELP)")];
 get_menu_title2(help) ->
-    [unselect("o(OBSERVER)"), unselect("e(ETS)"), unselect("n(NET)"), 
+    [unselect("o(OBSERVER)"), unselect("e(ETS)"), unselect("n(NET)"),
      unselect("a(ALLOCATOR)"), unselect("db(MNESIA)"), select("h(HELP)")];
 get_menu_title2(inet) ->
-    [unselect("o(OBSERVER)"), unselect("e(ETS)"), select("n(NET)"), 
+    [unselect("o(OBSERVER)"), unselect("e(ETS)"), select("n(NET)"),
      unselect("a(ALLOCATOR)"), unselect("db(MNESIA)"), unselect("h(HELP)")];
 get_menu_title2(mnesia) ->
     [unselect("o(OBSERVER)"), unselect("e(ETS)"), unselect("n(NET)"),
