@@ -3,143 +3,94 @@
 
 -include("observer_cli.hrl").
 %% API
--export([start/2]).
-
-%%for rpc
--export([get_average_block_sizes/1]).
--export([get_cache_hit_rates/1]).
+-export([start/1]).
 
 -define(UTIL_ALLOCATORS,
-        [binary_alloc,
-         driver_alloc,
-         eheap_alloc,
-         ets_alloc,
-         fix_alloc,
-         ll_alloc,
-         sl_alloc,
-         std_alloc,
-         temp_alloc
-        ]).
-
--type allocator() :: temp_alloc | eheap_alloc | binary_alloc | ets_alloc
-                   | driver_alloc | sl_alloc | ll_alloc | fix_alloc
-                   | std_alloc.
+    [binary_alloc,
+        driver_alloc,
+        eheap_alloc,
+        ets_alloc,
+        fix_alloc,
+        ll_alloc,
+        sl_alloc,
+        std_alloc,
+        temp_alloc
+    ]).
 
 %% @doc List Memory Allocators: std, ll, eheap, ets, fix, binary, driver.
-
--spec start(Node, ViewOpts) -> no_return when
-      Node:: atom(),
-      ViewOpts:: view_opts().
-start(Node, #view_opts{allocate = #allocate{interval = Interval}} = ViewOpts) ->
-    ParentPid = self(),
+-spec start(ViewOpts) -> no_return when
+    ViewOpts :: view_opts().
+start(#view_opts{allocate = #allocate{interval = Interval}} = ViewOpts) ->
     Pid = spawn(fun() ->
-                        observer_cli_lib:move_cursor_to_top_line(),
-                        observer_cli_lib:clear_screen(),
-                        loop(Node, Interval, ParentPid) 
+        ?output(?CLEAR),
+        render_worker(Interval, undefined)
                 end),
-    waiting(Node, Pid, ViewOpts).
-
-%%for fetching data from remote data by rpc:call/4
--spec get_cache_hit_rates(Node) -> [{{instance, non_neg_integer()}, [{Key, Val}]}] when
-      Node:: atom(),
-      Key:: hit_rate | hits | calls,
-      Val:: term().
-get_cache_hit_rates(local_node) -> recon_alloc:cache_hit_rates();
-get_cache_hit_rates(Node) -> rpc:call(Node, ?MODULE, get_cache_hit_rates, [local_node]).
-
--spec get_average_block_sizes(Node) -> {CurrentSize, MaxSize} when
-      Node:: atom(),
-      CurrentSize:: [{allocator(), [{mbcs | sbcs, pos_integer()}]}],
-      MaxSize:: [{allocator(), [{mbcs | sbcs, pos_integer()}]}].
-get_average_block_sizes(local_node) ->
-    {recon_alloc:average_block_sizes(current), recon_alloc:average_block_sizes(max)};
-get_average_block_sizes(Node) ->
-    rpc:call(Node, ?MODULE, get_average_block_sizes, [local_node]).
+    manager(Pid, ViewOpts).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-waiting(Node, Pid, #view_opts{allocate = AllocatorOpts} = ViewOpts) ->
-    Input = observer_cli_lib:get_line(""),
-    case  Input of
-        "q\n" -> erlang:send(Pid, quit);
-        "o\n" ->
-            erlang:exit(Pid, stop),
-            observer_cli:start_node(Node, ViewOpts);
-        "e\n" ->
-            erlang:exit(Pid, stop),
-            observer_cli_system:start(Node, ViewOpts);
-        "n\n" ->
-            erlang:exit(Pid, stop),
-            observer_cli_inet:start(Node, ViewOpts);
-        "h\n" ->
-            erlang:exit(Pid, stop),
-            observer_cli_help:start(Node, ViewOpts);
-        "db\n" ->
-            erlang:exit(Pid, stop),
-            observer_cli_mnesia:start(Node, ViewOpts);
-        [$i| Interval] ->
-            case string:to_integer(Interval) of
-                {error, no_integer} -> waiting(Node, Pid, ViewOpts);
-                {NewInterval, _} when NewInterval >= ?ALLOCATOR_MIN_INTERVAL ->
-                    erlang:send(Pid, {new_interval, NewInterval}),
-                    waiting(Node, Pid, ViewOpts#view_opts{allocate = AllocatorOpts#allocate{interval = NewInterval}});
-                {_Interval, _} -> waiting(Node, Pid, ViewOpts)
-            end;
-        _ -> waiting(Node, Pid, ViewOpts)
+manager(Pid, #view_opts{allocate = AllocatorOpts} = ViewOpts) ->
+    case observer_cli_lib:parse_cmd(ViewOpts, Pid) of
+        quit -> erlang:send(Pid, quit);
+        {new_interval, NewInterval} ->
+            erlang:send(Pid, {new_interval, NewInterval}),
+            NewAllocate = AllocatorOpts#allocate{interval = NewInterval},
+            manager(Pid, ViewOpts#view_opts{allocate = NewAllocate});
+        _ -> manager(Pid, ViewOpts)
     end.
 
-loop(Node, Interval, ParentPid) ->
-    CacheHitInfo = get_cache_hit_rates(Node),
-    {AverageBlockCurs, AverageBlockMaxes}  = get_average_block_sizes(Node),
-
-    observer_cli_lib:move_cursor_to_top_line(),
-    draw_menu(Node, Interval),
-    draw_average_block_size_info(AverageBlockCurs, AverageBlockMaxes),
-    draw_cache_hit_rates(CacheHitInfo),
-    draw_last_line(Interval),
-    erlang:send_after(Interval, self(), refresh),
+render_worker(Interval, LastTimeRef) ->
+    CacheHitInfo = recon_alloc:cache_hit_rates(),
+    AverageBlockCurs = recon_alloc:average_block_sizes(current),
+    AverageBlockMaxes = recon_alloc:average_block_sizes(max),
+    Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
+    Menu = observer_cli_lib:render_menu(allocator, Text, 133),
+    BlockView = render_average_block_size_info(AverageBlockCurs, AverageBlockMaxes),
+    HitView = render_cache_hit_rates(CacheHitInfo),
+    LastLine = render_last_line(Interval),
+    ?output([?CURSOR_TOP, Menu, BlockView, HitView, LastLine]),
+    NextTimeRef = observer_cli_lib:next_redraw(LastTimeRef, Interval),
     receive
         quit -> quit;
-        refresh -> loop(Node, Interval, ParentPid);
-        {new_interval, NewInterval} -> loop(Node, NewInterval, ParentPid)
+        {new_interval, NewInterval} -> render_worker(NewInterval, NextTimeRef);
+        redraw -> render_worker(Interval, NextTimeRef)
     end.
 
-draw_menu(Node, Interval) ->
-    Title = observer_cli_lib:get_menu_title(allocator),
-    UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime(Node)) ++ "|",
-    RefreshStr = "Interval: " ++ integer_to_list(Interval) ++ "ms",
-    SpaceLen = ?COLUMN_WIDTH - erlang:length(Title)  - erlang:length(RefreshStr)  - erlang:length(UpTime)+ 130,
-    Space = case SpaceLen > 0 of  true -> lists:duplicate(SpaceLen, " "); false -> [] end,
-    io:format("~s~n", [Title ++ RefreshStr ++ Space ++ UpTime]).
-
-draw_cache_hit_rates(CacheHitInfo) ->
-    io:format("|\e[0m\e[44m    ~8.8s    |    ~-6.6s | ~7.7s    |~89.89s\e[49m|~n", ["Instance", "Hits", "Calls", "Hit Rate"]),
-    Format = "|     ~4.4s       |~10.10s | ~-11.11s|~-82.82s ~6.6s|~n",
+render_cache_hit_rates(CacheHitInfo) ->
+    Title = ?render([?BLUE_BG, ?W("Instance", 8), ?W("Hits", 10), ?W("Calls", 11), ?W("Hit Rate", 100), ?RESET_BG]),
     Len = erlang:length(CacheHitInfo),
-    [begin
+    View = [begin
          [{hit_rate, HitRate}, {hits, Hit}, {calls, Call}] = proplists:get_value({instance, Seq}, CacheHitInfo),
          HitRateStr = observer_cli_lib:float_to_percent_with_two_digit(HitRate),
          SeqStr = lists:flatten(io_lib:format("~2..0w", [Seq])),
          TrueHitRate = case Hit == 0 andalso Call == 0 of true -> 0; false -> HitRate end,
-         Process = lists:duplicate(trunc(TrueHitRate * 82), "|"),
-         io:format(Format, [SeqStr, observer_cli_lib:to_list(Hit), observer_cli_lib:to_list(Call), Process, HitRateStr])
-     end|| Seq <- lists:seq(0, Len - 1)].
+         Process = lists:duplicate(trunc(TrueHitRate * 91), "|"),
+         ?render([?W(SeqStr, 8),
+             ?W(observer_cli_lib:to_list(Hit), 10),
+             ?W(observer_cli_lib:to_list(Call), 11),
+             ?W(Process, 91),
+             ?W(HitRateStr, 6)])
+            end || Seq <- lists:seq(0, Len - 1)],
+    [Title|View].
 
-draw_average_block_size_info(AverageBlockCurs, AverageBlockMaxes) ->
-    io:format("|\e[0m\e[44m~-16.16s| ~-26.26s | ~-26.26s |~-28.28s| ~-25.25s \e[49m|~n",
-              ["Allocator Type", "Current Multiblock Carriers", "Max Multiblock Carriers",
-               "Current SingleBlock Carriers", "Max Single Block Carriers"]),
-    Format = "|~-16.16s|  ~24.24s  |  ~24.24s  |  ~24.24s  | ~24.24s  |~n",
-    [begin
-         Content = get_alloc(AllocKey, AverageBlockCurs, AverageBlockMaxes),
-         io:format(Format, Content)
-     end||AllocKey <-?UTIL_ALLOCATORS],
-    ok.
+render_average_block_size_info(AverageBlockCurs, AverageBlockMaxes) ->
+    Title = ?render([ ?BLUE_BG,
+        ?W("Allocator Type", 16), ?W("Current Multiblock Carriers", 28),
+        ?W("Max Multiblock Carriers", 28), ?W("Current SingleBlock Carriers", 27),
+        ?W("Max Single Block Carriers", 27),
+        ?RESET_BG]),
+    View =
+        [begin
+             [Type, CMC, MMC, CSC, MSBC] = get_alloc(AllocKey, AverageBlockCurs, AverageBlockMaxes),
+             ?render([?W(Type, 16), ?W(CMC, 28), ?W(MMC, 28), ?W(CSC, 27), ?W(MSBC, 27)])
+         end || AllocKey <- ?UTIL_ALLOCATORS],
+    [Title|View].
 
-draw_last_line(Interval)  ->
-    Text = io_lib:format("i~w(Interval ~wms) time must >= 5000ms", [Interval, Interval]),
-    io:format("|\e[31;1mINPUT: \e[0m\e[44mq(quit)      ~-111.111s\e[49m|~n", [Text]).
+render_last_line(Interval) ->
+    Text = io_lib:format("i~w(Interval ~wms must >=1000ms) ", [Interval, Interval]),
+    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?BLUE_BG, "q(quit) ",
+        ?W(Text, ?COLUMN - 11), ?RESET_BG]).
 
 get_alloc(Key, Curs, Maxes) ->
     CurRes = proplists:get_value(Key, Curs),
@@ -149,7 +100,7 @@ get_alloc(Key, Curs, Maxes) ->
     MaxMbcs = proplists:get_value(mbcs, MaxRes),
     MaxSbcs = proplists:get_value(sbcs, MaxRes),
     [atom_to_list(Key),
-     observer_cli_lib:to_megabyte_str(CurMbcs),
-     observer_cli_lib:to_megabyte_str(MaxMbcs),
-     observer_cli_lib:to_megabyte_str(CurSbcs),
-     observer_cli_lib:to_megabyte_str(MaxSbcs)].
+        observer_cli_lib:to_megabyte_str(CurMbcs),
+        observer_cli_lib:to_megabyte_str(MaxMbcs),
+        observer_cli_lib:to_megabyte_str(CurSbcs),
+        observer_cli_lib:to_megabyte_str(MaxSbcs)].

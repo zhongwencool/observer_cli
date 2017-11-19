@@ -2,172 +2,136 @@
 -module(observer_cli_mnesia).
 
 %% API
--export([start/2]).
-
-%%for rpc
--export([get_table_list/2]).
+-export([start/1]).
 
 -include("observer_cli.hrl").
 
--spec start(_, #view_opts{}) -> any().
+-spec start(#view_opts{}) -> any().
 
-start(Node, #view_opts{db = #db{interval = MillSecond, rows = Rows} } = HomeOpts) ->
-    ParentPid = self(),
-    Pid = spawn(fun() -> observer_cli_lib:clear_screen(),
-                         loop(Node, MillSecond, erlang:make_ref(), ParentPid, Rows, true)
+start(#view_opts{db = #db{interval = MillSecond}} = HomeOpts) ->
+    Pid = spawn(fun() ->
+        ?output(?CLEAR),
+        render_worker(MillSecond, undefined, true)
                 end),
-    waiting(Node, Pid, HomeOpts).
-
--spec get_table_list(atom(), true|false) -> list().
-get_table_list(local_node, HideSys) ->
-    Owner = ets:info(schema, owner),
-    case Owner of
-        undefined -> {error, "Mnesia is not running on: " ++ atom_to_list(node())};
-        _-> get_table_list2(Owner, HideSys)
-    end;
-get_table_list(Node, HideSys) -> rpc:call(Node, ?MODULE, get_table_list, [local_node, HideSys]).
-
-get_table_list2(Owner, HideSys) ->
-    {registered_name, RegName} = process_info(Owner, registered_name),
-    CollectFun = fun(Id, Acc) ->
-                         case HideSys andalso ordsets:is_element(Id, mnesia_tables()) orelse Id =:= schema of
-                             true -> Acc; %% ignore system table
-                             false ->
-                                 Storage = mnesia:table_info(Id, storage_type),
-                                 Tab0 = [{name, Id},
-                                         {owner, Owner},
-                                         {size, mnesia:table_info(Id, size)},
-                                         {reg_name, RegName},
-                                         {type, mnesia:table_info(Id, type)},
-                                         {memory, mnesia:table_info(Id, memory) * erlang:system_info(wordsize)},
-                                         {storage, Storage},
-                                         {index, mnesia:table_info(Id, index)}
-                                        ],
-                                 Tab =
-                                     case Storage  of
-                                         _ when Storage =:= ram_copies orelse Storage =:=  disc_copies ->
-                                             [{fixed, ets:info(Id, fixed)}, {compressed, ets:info(Id, compressed)}|Tab0];
-                                         disc_only_copies ->
-                                             [{fixed, dets:info(Id, safe_fixed)}|Tab0];
-                                         _ -> Tab0
-                                     end,
-                                 [Tab|Acc]
-                         end
-                 end,
-    lists:foldl(CollectFun, [], mnesia:system_info(tables)).
+    manager(Pid, HomeOpts).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-loop(Node, Interval, LastTimeRef, ParentPid, Rows, HideSystemTable) ->
-    erlang:cancel_timer(LastTimeRef),
-    case get_table_list(Node, false) of
+render_worker(Interval, LastTimeRef, HideSystemTable) ->
+    {ok, IORows} = io:rows(),
+    Rows = IORows - 5,
+    Text = "Interval: " ++ integer_to_list(Interval) ++ "ms"
+        ++ " HideSystemTable:" ++ atom_to_list(HideSystemTable),
+    Menu = observer_cli_lib:render_menu(mnesia, Text, 133),
+    LastLine = render_last_line(Interval),
+    case get_table_list(false) of
         {error, Reason} ->
-            observer_cli_lib:move_cursor_to_top_line(),
-            draw_menu(Node, Interval, HideSystemTable),
-            io:format("Mnesia Error   ~p~n", [Reason]),
-            draw_last_line(Node, Interval);
+            ErrInfo = io_lib:format("Mnesia Error   ~p~n", [Reason]),
+            ?output([?CURSOR_TOP, Menu, ErrInfo, LastLine]);
         MnesiaList ->
-            observer_cli_lib:move_cursor_to_top_line(),
-            draw_menu(Node, Interval, HideSystemTable),
-            draw_mnesia(MnesiaList, Rows),
-            draw_last_line(Node, Interval)
+            Info = render_mnesia(MnesiaList, Rows),
+            ?output([?CURSOR_TOP, Menu, Info, LastLine])
     end,
-    TimeRef = erlang:send_after(Interval, self(), refresh),
+    TimeRef = observer_cli_lib:next_redraw(LastTimeRef, Interval),
     receive
         quit -> quit;
-        go_to_home_view -> erlang:send(ParentPid, draw_work_done_to_home_view), quit;
-        go_to_allocator_view -> erlang:send(ParentPid, draw_work_done_to_allocator_view), quit;
-        go_to_help_view -> erlang:send(ParentPid, draw_work_done_to_help_view), quit;
-        go_to_ets_view ->  erlang:send(ParentPid, draw_work_done_to_ets_view), quit;
-        {new_interval, NewInterval} -> loop(Node, NewInterval, TimeRef, ParentPid, Rows, HideSystemTable);
-        {system_table, NewHideSystemTable} -> loop(Node, Interval, TimeRef, ParentPid, Rows, NewHideSystemTable);
-        {new_rows, NewRows} -> loop(Node, Interval, TimeRef, ParentPid, NewRows, HideSystemTable);
-        _ -> loop(Node, Interval, TimeRef, ParentPid, Rows, HideSystemTable)
+        {new_interval, NewInterval} -> render_worker(NewInterval, TimeRef, HideSystemTable);
+        {system_table, NewHideSystemTable} -> render_worker(Interval, TimeRef, NewHideSystemTable);
+        _ -> render_worker(Interval, TimeRef, HideSystemTable)
     end.
 
-waiting(Node, ChildPid, #view_opts{db = DBOpts} = HomeOpts) ->
-    Input = observer_cli_lib:get_line(""),
-    case  Input of
-        "q\n" -> erlang:send(ChildPid, quit);
-        "o\n" ->
-            erlang:exit(ChildPid, stop),
-            observer_cli:start_node(Node, HomeOpts);
-        "a\n" ->
-            erlang:exit(ChildPid, stop),
-            observer_cli_allocator:start(Node, HomeOpts);
-        "e\n" ->
-            erlang:exit(ChildPid, stop),
-            observer_cli_system:start(Node, HomeOpts);
-        "n\n" ->
-            erlang:exit(ChildPid, stop),
-            observer_cli_inet:start(Node, HomeOpts);
-        "h\n" ->
-            erlang:exit(ChildPid, stop),
-            observer_cli_help:start(Node, HomeOpts);
+manager(ChildPid, #view_opts{db = DBOpts} = HomeOpts) ->
+    case observer_cli_lib:parse_cmd(HomeOpts, ChildPid) of
+        quit -> erlang:send(ChildPid, quit);
+        {new_interval, NewMs} = Msg ->
+            erlang:send(ChildPid, Msg),
+            manager(ChildPid, HomeOpts#view_opts{db = DBOpts#db{interval = NewMs}});
         "system:true\n" ->
             erlang:send(ChildPid, {system_table, true}),
-            waiting(Node, ChildPid, HomeOpts);
+            manager(ChildPid, HomeOpts);
         "system:false\n" ->
             erlang:send(ChildPid, {system_table, false}),
-            waiting(Node, ChildPid, HomeOpts);
-        [$i| Interval] ->
-            case string:to_integer(Interval) of
-                {error, no_integer} -> waiting(Node, ChildPid, HomeOpts);
-                {NewInterval, _} when NewInterval >= ?MNESIA_MIN_INTERVAL ->
-                    erlang:send(ChildPid, {new_interval, NewInterval}),
-                    waiting(Node, ChildPid, HomeOpts#view_opts{db = DBOpts#db{interval = NewInterval}})
-            end;
-        [$r, $o, $w|NewRows] ->
-            case string:to_integer(NewRows) of
-                {error, no_integer} -> waiting(Node, ChildPid, HomeOpts);
-                {NewRows2, _} ->
-                    erlang:send(ChildPid, {new_rows, NewRows2}),
-                    waiting(Node, ChildPid, HomeOpts#view_opts{db = DBOpts#db{rows = NewRows2}})
-            end;
-        _ -> waiting(Node, ChildPid, HomeOpts)
+            manager(ChildPid, HomeOpts);
+        _ -> manager(ChildPid, HomeOpts)
     end.
 
-draw_menu(Node, Interval, HideSystemTable) ->
-    Title = observer_cli_lib:get_menu_title(mnesia),
-    UpTime = observer_cli_lib:green(" Uptime:" ++ observer_cli_lib:uptime(Node)) ++ "|",
-    RefreshStr = "Interval: " ++ integer_to_list(Interval) ++ "ms" ++ " HideSystemTable:" ++ atom_to_list(HideSystemTable),
-    SpaceLen = ?COLUMN_WIDTH - erlang:length(Title)  - erlang:length(RefreshStr)  - erlang:length(UpTime)+ 130,
-    Space = case SpaceLen > 0 of  true -> lists:duplicate(SpaceLen, " "); false -> [] end,
-    io:format("~s~n", [Title ++ RefreshStr ++ Space ++ UpTime]).
-
-draw_mnesia(MnesiaList, Rows) ->
-    SortMneisaList = lists:sort(fun(Table1, Table2) ->
-                                        proplists:get_value(memory, Table1) > proplists:get_value(memory, Table2)
+render_mnesia(MnesiaList, Rows) ->
+    SortMnesiaList = lists:sort(fun(Table1, Table2) ->
+        proplists:get_value(memory, Table1) > proplists:get_value(memory, Table2)
                                 end, MnesiaList),
-    io:format("|\e[0m\e[44m~-24.24s|~-14.14s|~-14.14s|~-10.10s|~18.18s|~-12.12s|~-12.12s|~20.20s\e[49m|~n",
-              ["name", "memory", "size", "type", "storage", "owner", "index", "reg_name"]),
-    [begin
-         Name = get_value(name, Mnesia), Memory = get_value(memory, Mnesia),
-         Size = get_value(size, Mnesia), Type = get_value(type, Mnesia),
-         RegName = get_value(reg_name, Mnesia), Index = get_value(index, Mnesia),
-         Owner = get_value(owner, Mnesia), Storage = get_value(storage, Mnesia),
-         io:format("|~-24.24s|~-14.14s|~-14.14s|~-10.10s|~18.18s|~-12.12s|~-12.12s|~20.20s|~n",
-                   [Name, Memory, Size, Type, Storage, Owner, Index, RegName])
-     end||Mnesia <- lists:sublist(SortMneisaList, Rows)],
-    ok.
+    Title = ?render([?BLUE_BG,
+        ?W("name", 24), ?W("memory", 14), ?W("size", 14),
+        ?W("type", 10), ?W("storage", 13), ?W("owner", 12),
+        ?W("index", 9), ?W("reg_name", 21),
+        ?RESET_BG]),
+    View =
+        [begin
+             Name = get_value(name, Mnesia), Memory = get_value(memory, Mnesia),
+             Size = get_value(size, Mnesia), Type = get_value(type, Mnesia),
+             RegName = get_value(reg_name, Mnesia), Index = get_value(index, Mnesia),
+             Owner = get_value(owner, Mnesia), Storage = get_value(storage, Mnesia),
+             ?render([
+                 ?W(Name, 24), ?W(Memory, 14), ?W(Size, 14),
+                 ?W(Type, 10), ?W(Storage, 13), ?W(Owner, 12),
+                 ?W(Index, 9), ?W(RegName, 21)
+             ])
+         end || Mnesia <- lists:sublist(SortMnesiaList, Rows)],
+    [Title | View].
 
-draw_last_line(Node, Interval) ->
-    Format = "|\e[31;1mINPUT: \e[0m\e[44mq(quit)  system:false/true  i~w(Interval ~wms must>=5000ms) row10(show 10 rows)  ~47.47s\e[49m|~n",
-    io:format(Format, [Interval, Interval, atom_to_list(Node)]).
+render_last_line(Interval) ->
+    Text = io_lib:format("i~w(Interval ~wms must >=1000ms system:false/true) ", [Interval, Interval]),
+    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?BLUE_BG, "q(quit) ",
+        ?W(Text, ?COLUMN - 11), ?RESET_BG]).
 
 get_value(Key, List) ->
     observer_cli_lib:to_list(proplists:get_value(Key, List)).
 
 mnesia_tables() ->
     [ir_AliasDef, ir_ArrayDef, ir_AttributeDef, ir_ConstantDef,
-     ir_Contained, ir_Container, ir_EnumDef, ir_ExceptionDef,
-     ir_IDLType, ir_IRObject, ir_InterfaceDef, ir_ModuleDef,
-     ir_ORB, ir_OperationDef, ir_PrimitiveDef, ir_Repository,
-     ir_SequenceDef, ir_StringDef, ir_StructDef, ir_TypedefDef,
-     ir_UnionDef, logTable, logTransferTable, mesh_meas,
-     mesh_type, mnesia_clist, orber_CosNaming,
-     orber_objkeys, user
+        ir_Contained, ir_Container, ir_EnumDef, ir_ExceptionDef,
+        ir_IDLType, ir_IRObject, ir_InterfaceDef, ir_ModuleDef,
+        ir_ORB, ir_OperationDef, ir_PrimitiveDef, ir_Repository,
+        ir_SequenceDef, ir_StringDef, ir_StructDef, ir_TypedefDef,
+        ir_UnionDef, logTable, logTransferTable, mesh_meas,
+        mesh_type, mnesia_clist, orber_CosNaming,
+        orber_objkeys, user
     ].
+
+get_table_list(HideSys) ->
+    Owner = ets:info(schema, owner),
+    case Owner of
+        undefined -> {error, "Mnesia is not running on: " ++ atom_to_list(node())};
+        _ -> get_table_list2(Owner, HideSys)
+    end.
+
+get_table_list2(Owner, HideSys) ->
+    {registered_name, RegName} = process_info(Owner, registered_name),
+    CollectFun = fun(Id, Acc) ->
+        case HideSys andalso ordsets:is_element(Id, mnesia_tables()) orelse Id =:= schema of
+            true -> Acc; %% ignore system table
+            false ->
+                Storage = mnesia:table_info(Id, storage_type),
+                Tab0 = [{name, Id},
+                    {owner, Owner},
+                    {size, mnesia:table_info(Id, size)},
+                    {reg_name, RegName},
+                    {type, mnesia:table_info(Id, type)},
+                    {memory, mnesia:table_info(Id, memory) * erlang:system_info(wordsize)},
+                    {storage, Storage},
+                    {index, mnesia:table_info(Id, index)}
+                ],
+                Tab =
+                    case Storage of
+                        _ when Storage =:= ram_copies orelse Storage =:= disc_copies ->
+                            [{fixed, ets:info(Id, fixed)}, {compressed, ets:info(Id, compressed)} | Tab0];
+                        disc_only_copies ->
+                            [{fixed, dets:info(Id, safe_fixed)} | Tab0];
+                        _ -> Tab0
+                    end,
+                [Tab | Acc]
+        end
+                 end,
+    lists:foldl(CollectFun, [], mnesia:system_info(tables)).
 
 
