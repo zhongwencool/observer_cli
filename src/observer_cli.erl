@@ -21,13 +21,14 @@ start() -> start(#view_opts{}).
 -spec start(Node) -> no_return when Node :: atom().
 start(Node) when Node =:= node() -> start(#view_opts{});
 start(Node) when is_atom(Node) -> rpc_start(Node);
-start(#view_opts{home = Home = #home{tid = undefined}} = Opts) ->
+start(#view_opts{home = Home = #home{tid = undefined},
+                 terminal_row = TerminalRow} = Opts) ->
     Tid = ets:new(process_info, [public, set]),
     NewHome = Home#home{tid = Tid},
-    ChildPid = spawn(fun() -> render_worker(NewHome) end),
+    ChildPid = spawn(fun() -> render_worker(TerminalRow, NewHome) end),
     manager(ChildPid, Opts#view_opts{home =NewHome});
-start(#view_opts{home = Home} = Opts) ->
-    ChildPid = spawn(fun() -> render_worker(Home) end),
+start(#view_opts{home = Home, terminal_row = TerminalRow} = Opts) ->
+    ChildPid = spawn(fun() -> render_worker(TerminalRow, Home) end),
     manager(ChildPid, Opts).
 
 -spec start(Node, Cookies) -> no_return when
@@ -43,7 +44,13 @@ start(Node, Cookie) when is_atom(Node) andalso is_atom(Cookie) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 rpc_start(Node) ->
     case net_kernel:connect_node(Node) of
-        true -> rpc:call(Node, ?MODULE, start, [#view_opts{}]);
+        true ->
+            {ok, TerminalRow} =
+                case io:rows(user) of
+                    {error, _} -> rpc:call(Node, io, rows, [user]);
+                    {ok, _} -> {ok, undefined}
+                end,
+            rpc:call(Node, ?MODULE, start, [#view_opts{terminal_row = TerminalRow}]);
         false -> connect_error("Remote node ~p(cookie:~p) refuse to be connected ~n", Node);
         ignored -> connect_error("Ignore remote node~p(cookie:~p) connecting~n", Node)
     end.
@@ -69,52 +76,56 @@ manager(ChildPid, Opts) ->
         _ -> manager(ChildPid, Opts)
     end.
 
-render_worker(#home{} = Home) ->
+render_worker(TerminalRow, #home{} = Home) ->
     ?output(?CLEAR),
     StableInfo = get_stable_system_info(),
-    redraw(running, StableInfo, erlang:make_ref(), 0, Home).
+    redraw(running, StableInfo, erlang:make_ref(), 0, Home, TerminalRow).
 
 %% pause status waiting to be resume
-redraw(pause, StableInfo, LastTimeRef, _, #home{func = Func, type = Type} = Home) ->
+redraw(pause, StableInfo, LastTimeRef, _, #home{func = Func, type = Type} = Home, TerminalRow) ->
     notify_pause_status(),
     erlang:cancel_timer(LastTimeRef),
     receive
         quit -> quit;
         pause_or_resume ->
             ?output(?CLEAR),
-            redraw(running, StableInfo, LastTimeRef, ?FAST_COLLECT_INTERVAL, Home);
+            redraw(running, StableInfo, LastTimeRef, ?FAST_COLLECT_INTERVAL, Home, TerminalRow);
         {Func, Type} ->
-            redraw(running, StableInfo, LastTimeRef, ?FAST_COLLECT_INTERVAL, Home)
+            redraw(running, StableInfo, LastTimeRef, ?FAST_COLLECT_INTERVAL, Home, TerminalRow)
     end;
 %% running status
 redraw(running, StableInfo, LastTimeRef, NodeStatsCostTime, #home{tid = Tid,
-    interval = Interval, func = Func, type = Type, cur_pos = RankPos} = Home) ->
+    interval = Interval, func = Func, type = Type, cur_pos = RankPos} = Home, TerminalRow0) ->
+    {ok, TerminalRow} =
+        case TerminalRow0 of
+            undefined -> io:rows(user);
+            _ -> {ok, TerminalRow0}
+        end,
     erlang:cancel_timer(LastTimeRef),
     [{ProcSum, MemSum}] = recon:node_stats_list(1, NodeStatsCostTime),
-    
-    {ok, IORows} = io:rows(),
+
     {CPURow, CPULine} = render_scheduler_usage(MemSum),
-    Rows = IORows - 14 - CPURow,
-    
+    Rows = TerminalRow - 14 - CPURow,
+
     {RankList, RankCostTime} = get_ranklist_and_cost_time(Func, Type, Interval, Rows, NodeStatsCostTime),
     [UseMemInt, AllocatedMemInt, UnusedMemInt] = get_change_system_info(),
     NewNodeStatsCostTime = Interval div 2,
-    
+
     Text = get_refresh_cost_info(Func, Type, Interval, Rows),
     MenuLine = observer_cli_lib:render_menu(home, Text, 133),
-    
+
     SystemLine = render_system_line(StableInfo, UseMemInt, AllocatedMemInt, UnusedMemInt, ProcSum),
     MemLine = render_memory_process_line(ProcSum, MemSum, NewNodeStatsCostTime),
     {PidList, RankLine} = render_process_rank(Type, RankList, Rows, RankPos),
     LastLine = render_last_line(),
     ?output([?CURSOR_TOP, MenuLine, SystemLine, MemLine, CPULine, RankLine, LastLine]),
-    
+
     catch ets:insert(Tid, PidList),
     TimeRef = refresh_next_time(Func, Type, Interval, RankCostTime, NodeStatsCostTime),
     receive
         quit -> quit;
-        pause_or_resume -> redraw(pause, StableInfo, TimeRef, ?FAST_COLLECT_INTERVAL, Home);
-        {Func, Type} -> redraw(running, StableInfo, TimeRef, NewNodeStatsCostTime, Home)
+        pause_or_resume -> redraw(pause, StableInfo, TimeRef, ?FAST_COLLECT_INTERVAL, Home, TerminalRow);
+        {Func, Type} -> redraw(running, StableInfo, TimeRef, NewNodeStatsCostTime, Home, TerminalRow)
     end.
 
 render_system_line(StableInfo, UseMemInt, AllocatedMemInt, UnusedMemInt, ProcSum) ->

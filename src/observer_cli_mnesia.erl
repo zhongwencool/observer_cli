@@ -8,19 +8,23 @@
 
 -spec start(#view_opts{}) -> any().
 
-start(#view_opts{db = #db{interval = MillSecond}} = HomeOpts) ->
+start(#view_opts{db = #db{interval = MillSecond}, terminal_row = TerminalRow} = HomeOpts) ->
     Pid = spawn(fun() ->
         ?output(?CLEAR),
-        render_worker(MillSecond, undefined, true)
+        render_worker(MillSecond, undefined, true, TerminalRow)
                 end),
     manager(Pid, HomeOpts).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-render_worker(Interval, LastTimeRef, HideSystemTable) ->
-    {ok, IORows} = io:rows(),
-    Rows = IORows - 5,
+render_worker(Interval, LastTimeRef, HideSystemTable, TerminalRow0) ->
+    {ok, TerminalRow} =
+        case TerminalRow0 of
+            undefined -> io:rows(user);
+            _ -> {ok, TerminalRow0}
+        end,
+    Rows = TerminalRow - 5,
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms"
         ++ " HideSystemTable:" ++ atom_to_list(HideSystemTable),
     Menu = observer_cli_lib:render_menu(mnesia, Text, 133),
@@ -36,9 +40,9 @@ render_worker(Interval, LastTimeRef, HideSystemTable) ->
     TimeRef = observer_cli_lib:next_redraw(LastTimeRef, Interval),
     receive
         quit -> quit;
-        {new_interval, NewInterval} -> render_worker(NewInterval, TimeRef, HideSystemTable);
-        {system_table, NewHideSystemTable} -> render_worker(Interval, TimeRef, NewHideSystemTable);
-        _ -> render_worker(Interval, TimeRef, HideSystemTable)
+        {new_interval, NewInterval} -> render_worker(NewInterval, TimeRef, HideSystemTable, TerminalRow);
+        {system_table, NewHideSystemTable} -> render_worker(Interval, TimeRef, NewHideSystemTable, TerminalRow);
+        _ -> render_worker(Interval, TimeRef, HideSystemTable, TerminalRow)
     end.
 
 manager(ChildPid, #view_opts{db = DBOpts} = HomeOpts) ->
