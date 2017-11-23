@@ -46,8 +46,8 @@ rpc_start(Node) ->
     case net_kernel:connect_node(Node) of
         true ->
             {ok, TerminalRow} =
-                case io:rows(user) of
-                    {error, _} -> rpc:call(Node, io, rows, [user]);
+                case io:rows() of
+                    {error, _} -> rpc:call(Node, io, rows, []);
                     {ok, _} -> {ok, undefined}
                 end,
             rpc:call(Node, ?MODULE, start, [#view_opts{terminal_row = TerminalRow}]);
@@ -98,7 +98,7 @@ redraw(running, StableInfo, LastTimeRef, NodeStatsCostTime, #home{tid = Tid,
     interval = Interval, func = Func, type = Type, cur_pos = RankPos} = Home, TerminalRow0) ->
     {ok, TerminalRow} =
         case TerminalRow0 of
-            undefined -> io:rows(user);
+            undefined -> io:rows();
             _ -> {ok, TerminalRow0}
         end,
     erlang:cancel_timer(LastTimeRef),

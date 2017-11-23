@@ -33,7 +33,7 @@ manager(ChildPid, #view_opts{sys = SysOpts} = ViewOpts) ->
 render_worker(Interval, LastTimeRef, TerminalRow0) ->
     {ok, TerminalRow} =
         case TerminalRow0 of
-            undefined -> io:rows(user);
+            undefined -> io:rows();
             _ -> {ok, TerminalRow0}
         end,
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",

@@ -21,7 +21,7 @@ start(#view_opts{db = #db{interval = MillSecond}, terminal_row = TerminalRow} = 
 render_worker(Interval, LastTimeRef, HideSystemTable, TerminalRow0) ->
     {ok, TerminalRow} =
         case TerminalRow0 of
-            undefined -> io:rows(user);
+            undefined -> io:rows();
             _ -> {ok, TerminalRow0}
         end,
     Rows = TerminalRow - 5,

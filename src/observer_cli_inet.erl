@@ -39,7 +39,7 @@ manager(ChildPid, ViewOpts = #view_opts{inet = InetOpts}) ->
 render_worker(Function, Type, Interval, LastTimeRef, Count, TerminalRow0) ->
     {ok, TerminalRow} =
         case TerminalRow0 of
-            undefined -> io:rows(user);
+            undefined -> io:rows();
             _ -> {ok, TerminalRow0}
         end,
     Rows = TerminalRow - 4,
