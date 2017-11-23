@@ -19,11 +19,7 @@ start(#view_opts{db = #db{interval = MillSecond}, terminal_row = TerminalRow} = 
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 render_worker(Interval, LastTimeRef, HideSystemTable, TerminalRow0) ->
-    {ok, TerminalRow} =
-        case TerminalRow0 of
-            undefined -> io:rows();
-            _ -> {ok, TerminalRow0}
-        end,
+    TerminalRow = observer_cli_lib:to_row(TerminalRow0),
     Rows = TerminalRow - 5,
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms"
         ++ " HideSystemTable:" ++ atom_to_list(HideSystemTable),

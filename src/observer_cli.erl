@@ -11,6 +11,7 @@
 -define(CPU_ALARM_THRESHOLD, 0.8). %% cpu >= this value will be highlight
 -define(COUNT_ALARM_THRESHOLD, 0.85). %% port or process reach max_limit * 0.85 will be highlight
 -define(FAST_COLLECT_INTERVAL, 0). %% collect should be fast when we push the keyboard to switch mode
+-define(DEFAULT_ROW_SIZE, 47). %% the number from 13' mbp
 
 -define(STABLE_SYSTEM_ITEM, [system_version, process_limit, smp_support,
     port_limit, ets_limit, logical_processors, multi_scheduling]).
@@ -45,10 +46,10 @@ start(Node, Cookie) when is_atom(Node) andalso is_atom(Cookie) ->
 rpc_start(Node) ->
     case net_kernel:connect_node(Node) of
         true ->
-            {ok, TerminalRow} =
+            TerminalRow =
                 case io:rows() of
-                    {error, _} -> rpc:call(Node, io, rows, []);
-                    {ok, _} -> {ok, undefined}
+                    {error, _} -> ?DEFAULT_ROW_SIZE;
+                    {ok, _} -> undefined
                 end,
             rpc:call(Node, ?MODULE, start, [#view_opts{terminal_row = TerminalRow}]);
         false -> connect_error("Remote node ~p(cookie:~p) refuse to be connected ~n", Node);
@@ -96,11 +97,7 @@ redraw(pause, StableInfo, LastTimeRef, _, #home{func = Func, type = Type} = Home
 %% running status
 redraw(running, StableInfo, LastTimeRef, NodeStatsCostTime, #home{tid = Tid,
     interval = Interval, func = Func, type = Type, cur_pos = RankPos} = Home, TerminalRow0) ->
-    {ok, TerminalRow} =
-        case TerminalRow0 of
-            undefined -> io:rows();
-            _ -> {ok, TerminalRow0}
-        end,
+    TerminalRow = observer_cli_lib:to_row(TerminalRow0),
     erlang:cancel_timer(LastTimeRef),
     [{ProcSum, MemSum}] = recon:node_stats_list(1, NodeStatsCostTime),
 
@@ -253,7 +250,7 @@ render_scheduler_usage(SchedulerUsage, SchedulerNum) ->
 
 render_process_rank(memory, MemoryList, Num, RankPos) ->
     Title = ?render([
-        ?W("Pid", 15), ?W(?RED, "↓Memory↓", 11),
+        ?W("Pid", 15), ?W(?RED, "Memory", 11),
         ?W("Name or Initial Call", 30),
         ?W("Reductions", 10), ?W("Msg Queue", 10), ?W("Current Function",47),
         ?RESET]),
@@ -272,7 +269,7 @@ render_process_rank(memory, MemoryList, Num, RankPos) ->
     {ProcList, [Title|Rows]};
 render_process_rank(binary_memory, MemoryList, Num, RankPos) ->
     Title = ?render([
-        ?W("Pid", 15), ?W(?RED, "↓BinMemory↓",11),
+        ?W("Pid", 15), ?W(?RED, "BinMemory",11),
         ?W("Name or Initial Call", 30),
         ?W("Reductions", 10), ?W("Msg Queue", 10), ?W("Current Function",47),
         ?RESET]),
@@ -291,7 +288,7 @@ render_process_rank(binary_memory, MemoryList, Num, RankPos) ->
     {ProcList, [Title|Rows]};
 render_process_rank(reductions, ReductionList, Num, RankPos) ->
     Title = ?render([
-        ?W("Pid", 15), ?W(?RED, "↓Reductions↓",11),
+        ?W("Pid", 15), ?W(?RED, "Reductions",11),
         ?W("Name or Initial Call", 30),
         ?W("Memory", 10), ?W("Msg Queue", 10), ?W("Current Function",47),
         ?RESET]),
@@ -310,7 +307,7 @@ render_process_rank(reductions, ReductionList, Num, RankPos) ->
     {ProcList, [Title|Rows]};
 render_process_rank(total_heap_size, HeapList, Num, RankPos) ->
     Title = ?render([
-        ?W("Pid", 15), ?W(?RED, "↓TotalHeap↓",11),
+        ?W("Pid", 15), ?W(?RED, "TotalHeap",11),
         ?W("Name or Initial Call", 30),
         ?W("Reductions", 10), ?W("Msg Queue", 10), ?W("Current Function",47),
         ?RESET]),
@@ -329,7 +326,7 @@ render_process_rank(total_heap_size, HeapList, Num, RankPos) ->
     {ProcList, [Title|Rows]};
 render_process_rank(message_queue_len, MQLenList, Num, RankPos) ->
     Title = ?render([
-        ?W("Pid", 15), ?W(?RED, "↓Msg Queue↓",11),
+        ?W("Pid", 15), ?W(?RED, "Msg Queue",11),
         ?W("Name or Initial Call", 30),
         ?W("Memory", 10), ?W("Reductions", 10), ?W("Current Function",47),
         ?RESET]),

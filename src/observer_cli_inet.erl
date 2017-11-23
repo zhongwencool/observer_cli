@@ -37,11 +37,7 @@ manager(ChildPid, ViewOpts = #view_opts{inet = InetOpts}) ->
     end.
 
 render_worker(Function, Type, Interval, LastTimeRef, Count, TerminalRow0) ->
-    {ok, TerminalRow} =
-        case TerminalRow0 of
-            undefined -> io:rows();
-            _ -> {ok, TerminalRow0}
-        end,
+    TerminalRow = observer_cli_lib:to_row(TerminalRow0),
     Rows = TerminalRow - 4,
     Text = get_refresh_str(Function, Type, Interval, Rows),
     Menu = observer_cli_lib:render_menu(inet, Text, 133),

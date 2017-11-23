@@ -31,11 +31,7 @@ manager(ChildPid, #view_opts{sys = SysOpts} = ViewOpts) ->
     end.
 
 render_worker(Interval, LastTimeRef, TerminalRow0) ->
-    {ok, TerminalRow} =
-        case TerminalRow0 of
-            undefined -> io:rows();
-            _ -> {ok, TerminalRow0}
-        end,
+    TerminalRow = observer_cli_lib:to_row(TerminalRow0),
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
     Menu = observer_cli_lib:render_menu(ets, Text, 133),
     Sys = render_sys_info(),
