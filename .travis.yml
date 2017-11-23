@@ -1,15 +1,11 @@
 language: erlang
 otp_release:
-  - 18.0
-  - 17.1
-  - 17.0
+  - 20.1
+  - 19.3
+  - 18.3
+  - 17.5
   - R16B03-1
-  - R16B03
-  - R16B02
-  - R16B01
-  - R16B
   - R15B03
-  - R15B02
 
 env:
   - PATH=$HOME/.cache/rebar3/bin/:$PATH

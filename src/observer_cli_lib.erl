@@ -15,6 +15,7 @@
 -export([render/1]).
 -export([next_redraw/2]).
 -export([render_menu/3]).
+-export([to_row/1]).
 
 -spec uptime() -> list().
 uptime() ->
@@ -140,7 +141,7 @@ parse_cmd(ViewOpts, Pid) ->
         "so\n" -> send_oct;
         "cnt\n" -> cnt;
         "oct\n" -> oct;
-        
+
         "q\n" -> quit;
         "h\n" ->
             erlang:exit(Pid, stop),
@@ -168,7 +169,7 @@ parse_cmd(ViewOpts, Pid) ->
                 {ok, NewInterval} -> {new_interval, NewInterval};
                 {error, _} -> error_input
             end;
-        
+
         %% home
         "p\n" -> pause_or_resume;
         "r\n" -> {proc_count, reductions, no_change};
@@ -245,3 +246,9 @@ next_redraw(LastTimeRef, Interval) ->
     LastTimeRef =/= undefined andalso erlang:cancel_timer(LastTimeRef),
     erlang:send_after(Interval, self(), redraw).
 
+-spec to_row(undefined | integer()) -> integer().
+to_row(TerminalRow) when is_integer(TerminalRow) ->
+    TerminalRow;
+to_row(_) ->
+    {ok, TerminalRow} = io:rows(),
+    TerminalRow.
