@@ -8,10 +8,11 @@
 -define(INET_COLUMN_WIDTH, 85).
 
 -spec start(view_opts()) -> no_return.
-start(#view_opts{inet = #inet{interval = Interval, func = Function, type = Type}} = ViewOpts) ->
+start(#view_opts{inet = #inet{interval = Interval, func = Function, type = Type},
+                 terminal_row = TerminalRow} = ViewOpts) ->
     Pid = spawn(fun() ->
         ?output(?CLEAR),
-        render_worker(Function, Type, Interval, undefined, 0)
+        render_worker(Function, Type, Interval, undefined, 0, TerminalRow)
                 end),
     manager(Pid, ViewOpts).
 
@@ -35,9 +36,9 @@ manager(ChildPid, ViewOpts = #view_opts{inet = InetOpts}) ->
         _ -> manager(ChildPid, ViewOpts)
     end.
 
-render_worker(Function, Type, Interval, LastTimeRef, Count) ->
-    {ok, IORow} = io:rows(),
-    Rows = IORow - 4,
+render_worker(Function, Type, Interval, LastTimeRef, Count, TerminalRow0) ->
+    TerminalRow = observer_cli_lib:to_row(TerminalRow0),
+    Rows = TerminalRow - 4,
     Text = get_refresh_str(Function, Type, Interval, Rows),
     Menu = observer_cli_lib:render_menu(inet, Text, 133),
     InetInfo = inet_info(Function, Type, Rows, Interval, Count),
@@ -50,8 +51,8 @@ render_worker(Function, Type, Interval, LastTimeRef, Count) ->
         quit -> quit;
         {new_interval, NewInterval} ->
             ?output(?CLEAR),
-            render_worker(Function, Type, NewInterval, TimeRef, Count + 1);
-        _ -> render_worker(Function, Type, Interval, TimeRef, Count + 1)
+            render_worker(Function, Type, NewInterval, TimeRef, Count + 1, TerminalRow);
+        _ -> render_worker(Function, Type, Interval, TimeRef, Count + 1, TerminalRow)
     end.
 
 render_inet_rows([], Type, inet_count, _Interval, Rows) ->
@@ -97,7 +98,7 @@ render_last_line(Interval) ->
     Text = io_lib:format(Format, [Interval, Interval]),
     ?render([?UNDERLINE,?RED, "INPUT:", ?RESET, ?BLUE_BG, "q(quit) ",
         ?W(Text, ?COLUMN - 11), ?RESET_BG]).
-    
+
 get_refresh_str(inet_count, Type, Interval, Rows) ->
     io_lib:format("recon:inet_count(~p,~w) Interval:~wms", [Type, Rows, Interval]);
 get_refresh_str(inet_window, Type, Interval, Rows) ->

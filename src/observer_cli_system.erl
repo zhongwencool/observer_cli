@@ -10,10 +10,10 @@
 
 -spec start(ViewOpts) -> no_return() when
     ViewOpts :: view_opts().
-start(#view_opts{sys = #system{interval = Interval}} = ViewOpts) ->
+start(#view_opts{sys = #system{interval = Interval}, terminal_row = TerminalRow} = ViewOpts) ->
     Pid = spawn(fun() ->
         ?output(?CLEAR),
-        render_worker(Interval, undefined)
+        render_worker(Interval, undefined, TerminalRow)
                 end),
     manager(Pid, ViewOpts).
 
@@ -30,19 +30,19 @@ manager(ChildPid, #view_opts{sys = SysOpts} = ViewOpts) ->
         _ -> manager(ChildPid, ViewOpts)
     end.
 
-render_worker(Interval, LastTimeRef) ->
+render_worker(Interval, LastTimeRef, TerminalRow0) ->
+    TerminalRow = observer_cli_lib:to_row(TerminalRow0),
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
     Menu = observer_cli_lib:render_menu(ets, Text, 133),
     Sys = render_sys_info(),
-    {ok, Row} = io:rows(),
-    Ets = observer_cli_ets:render_ets_info(erlang:max(0, Row - 12)),
+    Ets = observer_cli_ets:render_ets_info(erlang:max(0, TerminalRow - 12)),
     LastLine = render_last_line(Interval),
     ?output([?CURSOR_TOP, Menu, Sys, Ets, LastLine]),
     NextTimeRef = observer_cli_lib:next_redraw(LastTimeRef, Interval),
     receive
         quit -> quit;
-        {new_interval, NewMs} -> render_worker(NewMs, NextTimeRef);
-        _ -> render_worker(Interval, NextTimeRef)
+        {new_interval, NewMs} -> render_worker(NewMs, NextTimeRef, TerminalRow);
+        _ -> render_worker(Interval, NextTimeRef, TerminalRow)
     end.
 
 render_sys_info() ->
@@ -153,13 +153,13 @@ sys_info() ->
                   Mem -> Mem
               catch _:_ -> []
               end,
-    
+
     SchedulersOnline = erlang:system_info(schedulers_online),
     SchedulersAvailable = case erlang:system_info(multi_scheduling) of
                               enabled -> SchedulersOnline;
                               _ -> 1
                           end,
-    
+
     {{_, Input}, {_, Output}} = erlang:statistics(io),
     [{process_count, erlang:system_info(process_count)},
         {process_limit, erlang:system_info(process_limit)},
@@ -167,14 +167,14 @@ sys_info() ->
         {run_queue, erlang:statistics(run_queue)},
         {io_input, Input},
         {io_output, Output},
-        
+
         {logical_processors, erlang:system_info(logical_processors)},
         {logical_processors_online, erlang:system_info(logical_processors_online)},
         {logical_processors_available, erlang:system_info(logical_processors_available)},
         {schedulers, erlang:system_info(schedulers)},
         {schedulers_online, SchedulersOnline},
         {schedulers_available, SchedulersAvailable},
-        
+
         {otp_release, erlang:system_info(otp_release)},
         {version, erlang:system_info(version)},
         {system_architecture, erlang:system_info(system_architecture)},
