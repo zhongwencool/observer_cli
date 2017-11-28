@@ -52,8 +52,8 @@ rpc_start(Node) ->
                     {ok, _} -> undefined
                 end,
             rpc:call(Node, ?MODULE, start, [#view_opts{terminal_row = TerminalRow}]);
-        false -> connect_error("Remote node ~p(cookie:~p) refuse to be connected ~n", Node);
-        ignored -> connect_error("Ignore remote node~p(cookie:~p) connecting~n", Node)
+        false -> connect_error(<<"Remote node ~p(cookie:~p) refuse to be connected ~n">>, Node);
+        ignored -> connect_error(<<"Ignore remote node~p(cookie:~p) connecting~n">>, Node)
     end.
 
 manager(ChildPid, Opts) ->
@@ -465,7 +465,7 @@ get_ranklist_and_cost_time(_, Type, _Interval, Rows, _CollectTime) ->
     {recon:proc_count(Type, Rows), 0}.
 
 connect_error(Prompt, Node) ->
-    Prop = ?RED ++ Prompt ++ ?RESET,
+    Prop = <<?RED/binary, Prompt/binary, ?RESET/binary>>,
     ?output(Prop, [Node, erlang:get_cookie()]).
 
 start_process_view(Tid, Pos, ChildPid, Opts) ->
