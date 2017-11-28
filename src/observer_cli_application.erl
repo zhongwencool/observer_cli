@@ -9,7 +9,7 @@
 
 %% @doc List application info
 
--spec start(ViewOpts) -> no_return when ViewOpts:: view_opts().
+-spec start(ViewOpts) -> no_return when ViewOpts :: view_opts().
 start(#view_opts{} = ViewOpts) ->
     Pid = spawn(fun() ->
         ?output(?CLEAR),
@@ -27,7 +27,7 @@ manager(Pid, ViewOpts) ->
     end.
 
 render_worker(Interval) ->
-    Menu  = observer_cli_lib:render_menu(app, "", 126),
+    Menu = observer_cli_lib:render_menu(app, "", 126),
     Info = render_application_info(),
     LastLine = render_last_line(),
     ?output([?CURSOR_TOP, Menu, Info, LastLine]),
@@ -37,8 +37,8 @@ render_worker(Interval) ->
         redraw -> render_worker(Interval)
     end.
 
-render_last_line()  ->
-    ?render([?UNDERLINE,?RED, "INPUT:", ?RESET, ?BLUE_BG, "q(quit)",
+render_last_line() ->
+    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?BLUE_BG, "q(quit)",
         ?W(" ", ?COLUMN - 17), ?RESET_BG]).
 
 render_application_info() ->
@@ -59,7 +59,7 @@ render_application_info() ->
     [RunView, LoadedView, StartingView, SPFView, LoadingView].
 
 render_running_apps(RunningApps, StartedApps, LoadedApps) ->
-    Title = ?render([?BLUE_BG,?W("Status", 8),
+    Title = ?render([?BLUE_BG, ?W("Status", 8),
         ?W("Application", 14), ?W("Vsn", 8), ?W("Type", 10),
         ?W("Application", 14), ?W("Vsn", 8), ?W("Type", 10),
         ?W("Application", 14), ?W("Vsn", 8), ?W("Type", 10),
@@ -72,7 +72,7 @@ draw_running_apps_1([{RunningApp, _}], StartedApps, LoadedApps, Acc) ->
     {value, {_, _Desc, Vsn}, NewLoadedApps} = lists:keytake(RunningApp, 1, LoadedApps),
     {NewLoadedApps, Acc ++ [?render([?W("Running", 8),
         ?GREEN, ?W(RunningApp, 14), ?RESET, ?W(Vsn, 10), ?W(Type, 90)])]};
-draw_running_apps_1([{App1,_}, {App2, _}], StartedApps, LoadedApps, Acc) ->
+draw_running_apps_1([{App1, _}, {App2, _}], StartedApps, LoadedApps, Acc) ->
     {_, Type1} = lists:keyfind(App1, 1, StartedApps),
     {_, Type2} = lists:keyfind(App2, 1, StartedApps),
     {value, {_, _Desc1, Vsn1}, LoadedApps1} = lists:keytake(App1, 1, LoadedApps),
@@ -81,7 +81,7 @@ draw_running_apps_1([{App1,_}, {App2, _}], StartedApps, LoadedApps, Acc) ->
         ?GREEN, ?W(App1, 14), ?RESET, ?W(Vsn1, 8), ?W(Type1, 10),
         ?GREEN, ?W(App2, 14), ?RESET, ?W(Vsn2, 8), ?W(Type2, 51)])]
     };
-draw_running_apps_1([{App1,_}, {App2, _}, {App3, _}|Rest], StartedApps, LoadedApps, Acc) ->
+draw_running_apps_1([{App1, _}, {App2, _}, {App3, _} | Rest], StartedApps, LoadedApps, Acc) ->
     {_, Type1} = lists:keyfind(App1, 1, StartedApps),
     {_, Type2} = lists:keyfind(App2, 1, StartedApps),
     {_, Type3} = lists:keyfind(App3, 1, StartedApps),
@@ -96,7 +96,7 @@ draw_running_apps_1([{App1,_}, {App2, _}, {App3, _}|Rest], StartedApps, LoadedAp
 
 draw_loaded_apps([]) -> [];
 draw_loaded_apps(Apps) ->
-    Title = ?render([?BLUE_BG,?W("Status", 8),
+    Title = ?render([?BLUE_BG, ?W("Status", 8),
         ?W("Application", 14), ?W("Vsn", 8), ?W("Type", 10),
         ?W("Application", 14), ?W("Vsn", 8), ?W("Type", 10),
         ?W("Application", 14), ?W("Vsn", 8), ?W("Type", 10),
@@ -111,7 +111,7 @@ draw_loaded_apps_1([{App1, _Desc1, Vsn1}, {App2, _Desc2, Vsn2}], Acc) ->
     Acc ++ [?render([?W("Loaded", 8),
         ?YELLOW, ?W(App1, 14), ?RESET, ?W(Vsn1, 8), ?W("******", 10),
         ?YELLOW, ?W(App2, 14), ?RESET, ?W(Vsn2, 8), ?W("******", 51)])];
-draw_loaded_apps_1([{App1, _Desc1, Vsn1}, {App2, _Desc2, Vsn2}, {App3, _Desc3, Vsn3}|Apps], Acc) ->
+draw_loaded_apps_1([{App1, _Desc1, Vsn1}, {App2, _Desc2, Vsn2}, {App3, _Desc3, Vsn3} | Apps], Acc) ->
     NewAcc = Acc ++
         [?render([?W("Loaded", 8),
             ?YELLOW, ?W(App1, 14), ?RESET, ?W(Vsn1, 8), ?W("******", 10),
@@ -133,7 +133,7 @@ draw_starting_apps_1([{App, RestartType, Type, From}], Acc) ->
     Acc ++ [?render([?W("Starting", 8),
         ?L_GREEN, ?W(App, 14), ?RESET, ?W(RestartType, 11), ?W(Type, 11), ?W(FromStr, 75)])];
 draw_starting_apps_1([{App1, RestartType1, Type1, From1},
-    {App2, RestartType2, Type2, From2}|Apps], Acc) ->
+    {App2, RestartType2, Type2, From2} | Apps], Acc) ->
     From1Str = observer_cli_lib:to_list(From1),
     From2Str = observer_cli_lib:to_list(From2),
     NewAcc = Acc ++ [?render([?W("Starting", 8),
@@ -150,7 +150,7 @@ draw_start_p_false_1([{App, RestartType, Type, From}], Acc) ->
     FromStr = observer_cli_lib:to_list(From),
     Acc ++ [?render([?W("SPFalse", 8),
         ?L_GREEN, ?W(App, 14), ?RESET, ?W(RestartType, 11), ?W(Type, 11), ?W(FromStr, 75)])];
-draw_start_p_false_1([{App1, RestartType1, Type1, From1}, {App2, RestartType2, Type2, From2}|Apps], Acc) ->
+draw_start_p_false_1([{App1, RestartType1, Type1, From1}, {App2, RestartType2, Type2, From2} | Apps], Acc) ->
     From1Str = observer_cli_lib:to_list(From1),
     From2Str = observer_cli_lib:to_list(From2),
     NewAcc = Acc ++ [?render([?W("SPFalse", 8),
@@ -185,7 +185,7 @@ draw_loading_apps_1([{App1, From1}, {App2, From2}, {App3, From3}], Acc) ->
         ?L_GREEN, ?W(App1, 14), ?RESET, ?W(From1Str, 11),
         ?L_GREEN, ?W(App2, 14), ?RESET, ?W(From2Str, 11),
         ?L_GREEN, ?W(App3, 14), ?RESET, ?W(From3Str, 43)])];
-draw_loading_apps_1([{App1, From1}, {App2, From2}, {App3, From3}, {App4, From4}|Apps], Acc) ->
+draw_loading_apps_1([{App1, From1}, {App2, From2}, {App3, From3}, {App4, From4} | Apps], Acc) ->
     From1Str = observer_cli_lib:to_list(From1),
     From2Str = observer_cli_lib:to_list(From2),
     From3Str = observer_cli_lib:to_list(From3),

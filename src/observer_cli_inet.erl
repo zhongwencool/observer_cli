@@ -9,7 +9,7 @@
 
 -spec start(view_opts()) -> no_return.
 start(#view_opts{inet = #inet{interval = Interval, func = Function, type = Type},
-                 terminal_row = TerminalRow} = ViewOpts) ->
+    terminal_row = TerminalRow} = ViewOpts) ->
     Pid = spawn(fun() ->
         ?output(?CLEAR),
         render_worker(Function, Type, Interval, undefined, 0, TerminalRow)
@@ -66,7 +66,7 @@ render_inet_rows(Inets, Type, Function, _, _) ->
                   _ -> atom_to_list(Type)
               end,
     Title = ?render([?BLUE_BG,
-        ?W("Port", 12), ?W("Name", 12),?W(NewType, 15), ?W("QueueSize", 23),
+        ?W("Port", 12), ?W("Name", 12), ?W(NewType, 15), ?W("QueueSize", 23),
         ?W("Memory", 23), ?W("Input", 15), ?W("Output", 20),
         ?RESET_BG]),
     View =
@@ -91,12 +91,12 @@ render_inet_rows(Inets, Type, Function, _, _) ->
                  ?W(Memory, 23), ?W(Input, 15), ?W(Output, 20)
              ])
          end || {Port, Value, Info} <- Inets],
-    [Title|View].
+    [Title | View].
 
 render_last_line(Interval) ->
     Format = "i~w(Interval ~wms must>=1000) ic(inet_count) iw(inet_window) rc(recv_cnt) ro(recv_oct) sc(send_cnt) so(send_oct) cnt oct",
     Text = io_lib:format(Format, [Interval, Interval]),
-    ?render([?UNDERLINE,?RED, "INPUT:", ?RESET, ?BLUE_BG, "q(quit) ",
+    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?BLUE_BG, "q(quit) ",
         ?W(Text, ?COLUMN - 11), ?RESET_BG]).
 
 get_refresh_str(inet_count, Type, Interval, Rows) ->

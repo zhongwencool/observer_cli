@@ -56,25 +56,25 @@ get_menu_title(Type) ->
     ["|", Home, "|", Ets, "|", App, "|", Inet, "|", Alloc, "|", Mnesia, "|", Help, "|"].
 
 get_menu_title2(home) ->
-    [select("h(HOME)"), unselect("e(ETS)"), unselect("a(APP)"), unselect("n(NET)"),
+    [select("h(HOME)"), unselect("e(ETS/SYS)"), unselect("a(APP)"), unselect("n(NET)"),
      unselect("c(CARRIER)"), unselect("db(MNESIA)"), unselect("d(DOC)")];
 get_menu_title2(ets) ->
-    [unselect("h(HOME)"), select("e(ETS)"), unselect("a(APP)"), unselect("n(NET)"),
+    [unselect("h(HOME)"), select("e(ETS/SYS)"), unselect("a(APP)"), unselect("n(NET)"),
      unselect("c(CARRIER)"), unselect("db(MNESIA)"), unselect("d(DOC)")];
 get_menu_title2(allocator) ->
-    [unselect("h(HOME)"), unselect("e(ETS)"), unselect("a(APP)"), unselect("n(NET)"),
+    [unselect("h(HOME)"), unselect("e(ETS/SYS)"), unselect("a(APP)"), unselect("n(NET)"),
      select("c(CARRIER)"), unselect("db(MNESIA)"), unselect("d(DOC)")];
 get_menu_title2(doc) ->
-    [unselect("h(HOME)"), unselect("e(ETS)"), unselect("a(APP)"), unselect("n(NET)"),
+    [unselect("h(HOME)"), unselect("e(ETS/SYS)"), unselect("a(APP)"), unselect("n(NET)"),
      unselect("c(CARRIER)"), unselect("db(MNESIA)"), select("d(DOC)")];
 get_menu_title2(inet) ->
-    [unselect("h(HOME)"), unselect("e(ETS)"), unselect("a(APP)"), select("n(NET)"),
+    [unselect("h(HOME)"), unselect("e(ETS/SYS)"), unselect("a(APP)"), select("n(NET)"),
      unselect("c(CARRIER)"), unselect("db(MNESIA)"), unselect("d(DOC)")];
 get_menu_title2(mnesia) ->
-    [unselect("h(HOME)"), unselect("e(ETS)"), unselect("a(APP)"), unselect("n(NET)"),
+    [unselect("h(HOME)"), unselect("e(ETS/SYS)"), unselect("a(APP)"), unselect("n(NET)"),
      unselect("c(CARRIER)"), select("db(MNESIA)"), unselect("d(DOC)")];
 get_menu_title2(app) ->
-    [unselect("h(HOME)"), unselect("e(ETS)"), select("a(APP)"), unselect("n(NET)"),
+    [unselect("h(HOME)"), unselect("e(ETS/SYS)"), select("a(APP)"), unselect("n(NET)"),
       unselect("c(CARRIER)"), unselect("db(MNESIA)"), unselect("d(DOC)")].
 
 select(Title) -> [?RED_BG, Title, ?RESET_BG].
