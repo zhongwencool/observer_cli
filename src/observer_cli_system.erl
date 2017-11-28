@@ -86,11 +86,11 @@ render_sys_info(System, CPU, Memory, Statistics) ->
          end || Pos <- lists:seq(1, 6)],
     Compile = ?render([?UNDERLINE, ?W("compiled for", 22),
         ?W(to_list(proplists:get_value("Compiled for", System)), 113), ?RESET]),
-    [Title|(Row ++ [Compile])].
+    [Title | (Row ++ [Compile])].
 
 render_last_line(Interval) ->
     Text = io_lib:format("i~w(Interval ~wms must >=1000ms) ", [Interval, Interval]),
-    ?render([?UNDERLINE,?RED, "INPUT:", ?RESET, ?BLUE_BG, "q(quit) ",
+    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?BLUE_BG, "q(quit) ",
         ?W(Text, ?COLUMN - 11), ?RESET_BG]).
 
 to_list(Val) when is_integer(Val) -> integer_to_list(Val);
@@ -153,13 +153,13 @@ sys_info() ->
                   Mem -> Mem
               catch _:_ -> []
               end,
-
+    
     SchedulersOnline = erlang:system_info(schedulers_online),
     SchedulersAvailable = case erlang:system_info(multi_scheduling) of
                               enabled -> SchedulersOnline;
                               _ -> 1
                           end,
-
+    
     {{_, Input}, {_, Output}} = erlang:statistics(io),
     [{process_count, erlang:system_info(process_count)},
         {process_limit, erlang:system_info(process_limit)},
@@ -167,14 +167,14 @@ sys_info() ->
         {run_queue, erlang:statistics(run_queue)},
         {io_input, Input},
         {io_output, Output},
-
+        
         {logical_processors, erlang:system_info(logical_processors)},
         {logical_processors_online, erlang:system_info(logical_processors_online)},
         {logical_processors_available, erlang:system_info(logical_processors_available)},
         {schedulers, erlang:system_info(schedulers)},
         {schedulers_online, SchedulersOnline},
         {schedulers_available, SchedulersAvailable},
-
+        
         {otp_release, erlang:system_info(otp_release)},
         {version, erlang:system_info(version)},
         {system_architecture, erlang:system_info(system_architecture)},
