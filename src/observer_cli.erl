@@ -23,11 +23,11 @@ start() -> start(#view_opts{}).
 start(Node) when Node =:= node() -> start(#view_opts{});
 start(Node) when is_atom(Node) -> rpc_start(Node);
 start(#view_opts{home = Home = #home{tid = undefined},
-                 terminal_row = TerminalRow} = Opts) ->
+    terminal_row = TerminalRow} = Opts) ->
     Tid = ets:new(process_info, [public, set]),
     NewHome = Home#home{tid = Tid},
     ChildPid = spawn(fun() -> render_worker(TerminalRow, NewHome) end),
-    manager(ChildPid, Opts#view_opts{home =NewHome});
+    manager(ChildPid, Opts#view_opts{home = NewHome});
 start(#view_opts{home = Home, terminal_row = TerminalRow} = Opts) ->
     ChildPid = spawn(fun() -> render_worker(TerminalRow, Home) end),
     manager(ChildPid, Opts).
@@ -100,23 +100,19 @@ redraw(running, StableInfo, LastTimeRef, NodeStatsCostTime, #home{tid = Tid,
     TerminalRow = observer_cli_lib:to_row(TerminalRow0),
     erlang:cancel_timer(LastTimeRef),
     [{ProcSum, MemSum}] = recon:node_stats_list(1, NodeStatsCostTime),
-
     {CPURow, CPULine} = render_scheduler_usage(MemSum),
     Rows = TerminalRow - 14 - CPURow,
-
     {RankList, RankCostTime} = get_ranklist_and_cost_time(Func, Type, Interval, Rows, NodeStatsCostTime),
     [UseMemInt, AllocatedMemInt, UnusedMemInt] = get_change_system_info(),
     NewNodeStatsCostTime = Interval div 2,
-
     Text = get_refresh_cost_info(Func, Type, Interval, Rows),
     MenuLine = observer_cli_lib:render_menu(home, Text, 133),
-
     SystemLine = render_system_line(StableInfo, UseMemInt, AllocatedMemInt, UnusedMemInt, ProcSum),
     MemLine = render_memory_process_line(ProcSum, MemSum, NewNodeStatsCostTime),
     {PidList, RankLine} = render_process_rank(Type, RankList, Rows, RankPos),
     LastLine = render_last_line(),
     ?output([?CURSOR_TOP, MenuLine, SystemLine, MemLine, CPULine, RankLine, LastLine]),
-
+    
     catch ets:insert(Tid, PidList),
     TimeRef = refresh_next_time(Func, Type, Interval, RankCostTime, NodeStatsCostTime),
     receive
@@ -181,11 +177,11 @@ render_memory_process_line(ProcSum, MemSum, Interval) ->
         ?BLUE_BG, ?W("Memory", 10), ?W("State", 21), ?W("Memory", 20), ?W("State", 24),
         ?W("Memory", 20), ?W("Interval: " ++ integer_to_list(Interval) ++ "ms", 28), ?RESET_BG]),
     Row2 = ?render([
-        ?W("Total",10), ?W(TotalMem, 12), ?W("100%", 6), ?W("Binary", 20),
+        ?W("Total", 10), ?W(TotalMem, 12), ?W("100%", 6), ?W("Binary", 20),
         ?W(BinMem, 15), ?W(BinMemPercent, 6), ?W("IO Output", 20), ?W(BytesOut, 28)]),
     Row3 = ?render([
         ?W("Process", 10), ?W(ProcMem, 12), ?W(ProcMemPercent, 6), ?W("Code", 20),
-        ?W(CodeMem, 15), ?W(CodeMemPercent, 6),?W("IO Input", 20), ?W(BytesIn, 28)]),
+        ?W(CodeMem, 15), ?W(CodeMemPercent, 6), ?W("IO Input", 20), ?W(BytesIn, 28)]),
     Row4 = ?render([
         ?W("Atom", 10), ?W(AtomMem, 12), ?W(AtomMemPercent, 6), ?W("Reductions", 20),
         ?W(Reductions, 24), ?W("Gc Count", 20), ?W(GcCount, 28)]),
@@ -215,8 +211,9 @@ render_scheduler_usage(SchedulerUsage, SchedulerNum) when SchedulerNum < 24 ->
              Format = cpu_format_alarm_color(Percent1, Percent2),
              case Seq =:= HalfSchedulerNum of
                  false -> io_lib:format(Format, [CPUSeq1, Process1, CPU1, CPUSeq2, Process2, CPU2]);
-                 true -> io_lib:format(<<?UNDERLINE/binary, Format/binary, ?RESET/binary>>,
-                     [CPUSeq1, Process1, CPU1, CPUSeq2, Process2, CPU2])
+                 true ->
+                     io_lib:format(<<?UNDERLINE/binary, Format/binary, ?RESET/binary>>,
+                         [CPUSeq1, Process1, CPU1, CPUSeq2, Process2, CPU2])
              end
          end || Seq <- lists:seq(1, HalfSchedulerNum)],
     {HalfSchedulerNum, CPU};
@@ -252,7 +249,7 @@ render_process_rank(memory, MemoryList, Num, RankPos) ->
     Title = ?render([
         ?W("Pid", 15), ?W(?RED, "Memory", 11),
         ?W("Name or Initial Call", 30),
-        ?W("Reductions", 10), ?W("Msg Queue", 10), ?W("Current Function",47),
+        ?W("Reductions", 10), ?W("Msg Queue", 10), ?W("Current Function", 47),
         ?RESET]),
     {Rows, ProcList} =
         lists:foldr(fun(Pos, {Acc1, Acc2}) ->
@@ -264,14 +261,14 @@ render_process_rank(memory, MemoryList, Num, RankPos) ->
             R = io_lib:format(Format,
                 [observer_cli_lib:to_list(Pos), pid_to_list(Pid), observer_cli_lib:to_list(MemVal), NameOrCall,
                     observer_cli_lib:to_list(Reductions), observer_cli_lib:to_list(MsgQueueLen), CurFun]),
-            {[R|Acc1], [{Pos, Pid}|Acc2]}
+            {[R | Acc1], [{Pos, Pid} | Acc2]}
                     end, {[], []}, lists:seq(1, erlang:min(Num, erlang:length(MemoryList)))),
-    {ProcList, [Title|Rows]};
+    {ProcList, [Title | Rows]};
 render_process_rank(binary_memory, MemoryList, Num, RankPos) ->
     Title = ?render([
-        ?W("Pid", 15), ?W(?RED, "BinMemory",11),
+        ?W("Pid", 15), ?W(?RED, "BinMemory", 11),
         ?W("Name or Initial Call", 30),
-        ?W("Reductions", 10), ?W("Msg Queue", 10), ?W("Current Function",47),
+        ?W("Reductions", 10), ?W("Msg Queue", 10), ?W("Current Function", 47),
         ?RESET]),
     {Rows, ProcList} =
         lists:foldr(fun(Pos, {Acc1, Acc2}) ->
@@ -283,14 +280,14 @@ render_process_rank(binary_memory, MemoryList, Num, RankPos) ->
             R = io_lib:format(Format,
                 [observer_cli_lib:to_list(Pos), pid_to_list(Pid), observer_cli_lib:to_list(MemVal), NameOrCall,
                     observer_cli_lib:to_list(Reductions), observer_cli_lib:to_list(MsgQueueLen), CurFun]),
-            {[R|Acc1], [{Pos, Pid}|Acc2]}
+            {[R | Acc1], [{Pos, Pid} | Acc2]}
                     end, {[], []}, lists:seq(1, erlang:min(Num, erlang:length(MemoryList)))),
-    {ProcList, [Title|Rows]};
+    {ProcList, [Title | Rows]};
 render_process_rank(reductions, ReductionList, Num, RankPos) ->
     Title = ?render([
-        ?W("Pid", 15), ?W(?RED, "Reductions",11),
+        ?W("Pid", 15), ?W(?RED, "Reductions", 11),
         ?W("Name or Initial Call", 30),
-        ?W("Memory", 10), ?W("Msg Queue", 10), ?W("Current Function",47),
+        ?W("Memory", 10), ?W("Msg Queue", 10), ?W("Current Function", 47),
         ?RESET]),
     {Rows, ProcList} =
         lists:foldr(fun(Pos, {Acc1, Acc2}) ->
@@ -302,14 +299,14 @@ render_process_rank(reductions, ReductionList, Num, RankPos) ->
             R = io_lib:format(Format,
                 [observer_cli_lib:to_list(Pos), pid_to_list(Pid), observer_cli_lib:to_list(Reductions), NameOrCall,
                     observer_cli_lib:to_list(Memory), observer_cli_lib:to_list(MsgQueueLen), CurFun]),
-            {[R|Acc1], [{Pos, Pid}|Acc2]}
+            {[R | Acc1], [{Pos, Pid} | Acc2]}
                     end, {[], []}, lists:seq(1, erlang:min(Num, erlang:length(ReductionList)))),
-    {ProcList, [Title|Rows]};
+    {ProcList, [Title | Rows]};
 render_process_rank(total_heap_size, HeapList, Num, RankPos) ->
     Title = ?render([
-        ?W("Pid", 15), ?W(?RED, "TotalHeap",11),
+        ?W("Pid", 15), ?W(?RED, "TotalHeap", 11),
         ?W("Name or Initial Call", 30),
-        ?W("Reductions", 10), ?W("Msg Queue", 10), ?W("Current Function",47),
+        ?W("Reductions", 10), ?W("Msg Queue", 10), ?W("Current Function", 47),
         ?RESET]),
     {Rows, ProcList} =
         lists:foldr(fun(Pos, {Acc1, Acc2}) ->
@@ -318,17 +315,17 @@ render_process_rank(total_heap_size, HeapList, Num, RankPos) ->
             {CurFun, InitialCall} = get_current_initial_call(Call),
             NameOrCall = display_name_or_initial_call(IsName, InitialCall),
             Format = get_choose_format(RankPos, Pos),
-         R = io_lib:format(Format,
-             [observer_cli_lib:to_list(Pos), pid_to_list(Pid), observer_cli_lib:to_list(HeapSize), NameOrCall,
-                 observer_cli_lib:to_list(Reductions), observer_cli_lib:to_list(MsgQueueLen), CurFun]),
-            {[R|Acc1], [{Pos, Pid}|Acc2]}
+            R = io_lib:format(Format,
+                [observer_cli_lib:to_list(Pos), pid_to_list(Pid), observer_cli_lib:to_list(HeapSize), NameOrCall,
+                    observer_cli_lib:to_list(Reductions), observer_cli_lib:to_list(MsgQueueLen), CurFun]),
+            {[R | Acc1], [{Pos, Pid} | Acc2]}
                     end, {[], []}, lists:seq(1, erlang:min(Num, erlang:length(HeapList)))),
-    {ProcList, [Title|Rows]};
+    {ProcList, [Title | Rows]};
 render_process_rank(message_queue_len, MQLenList, Num, RankPos) ->
     Title = ?render([
-        ?W("Pid", 15), ?W(?RED, "Msg Queue",11),
+        ?W("Pid", 15), ?W(?RED, "Msg Queue", 11),
         ?W("Name or Initial Call", 30),
-        ?W("Memory", 10), ?W("Reductions", 10), ?W("Current Function",47),
+        ?W("Memory", 10), ?W("Reductions", 10), ?W("Current Function", 47),
         ?RESET]),
     {Rows, ProcList} =
         lists:foldr(fun(Pos, {Acc1, Acc2}) ->
@@ -340,14 +337,14 @@ render_process_rank(message_queue_len, MQLenList, Num, RankPos) ->
             R = io_lib:format(Format,
                 [observer_cli_lib:to_list(Pos), pid_to_list(Pid), observer_cli_lib:to_list(MQLen), NameOrCall,
                     observer_cli_lib:to_list(Memory), observer_cli_lib:to_list(Reductions), CurFun]),
-            {[R|Acc1], [{Pos, Pid}|Acc2]}
+            {[R | Acc1], [{Pos, Pid} | Acc2]}
                     end, {[], []}, lists:seq(1, erlang:min(Num, erlang:length(MQLenList)))),
-    {ProcList, [Title|Rows]}.
+    {ProcList, [Title | Rows]}.
 
 render_last_line() ->
     Text = "q(quit) p(pause) r/rr(reduction) " ++
         "m/mm(memory) b/bb(binary memory) t/tt(total heap size) mq/mmq(message queue) j9(jump to process 9)",
-    ?render([?UNDERLINE,?RED, "INPUT:", ?RESET, ?BLUE_BG,
+    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?BLUE_BG,
         ?W(Text, ?COLUMN - 3), ?RESET_BG]).
 
 notify_pause_status() ->
@@ -400,7 +397,7 @@ cpu_format_alarm_color(Percent1, Percent2) ->
             true -> ?RED;
             false -> ?GREEN
         end,
-    <<"|", Warning1/binary, "|~-2.2s ~-57.57s", "~s", Warning2/binary," |~-2.2s ~-57.57s", " ~s", "  |~n">>.
+    <<"|", Warning1/binary, "|~-2.2s ~-57.57s", "~s", Warning2/binary, " |~-2.2s ~-57.57s", " ~s", "  |~n">>.
 
 cpu_format_alarm_color(Percent1, Percent2, Percent3) ->
     Warning1 =
@@ -419,8 +416,8 @@ cpu_format_alarm_color(Percent1, Percent2, Percent3) ->
             false -> ?GREEN
         end,
     <<"|", Warning1/binary, "|~-2.2s ~-34.34s", " ~s",
-        Warning2/binary," |~-2.2s ~-34.34s", " ~s",
-        Warning3/binary," |~-2.2s ~-34.34s", " ~s",
+        Warning2/binary, " |~-2.2s ~-34.34s", " ~s",
+        Warning3/binary, " |~-2.2s ~-34.34s", " ~s",
         " |~n">>.
 
 display_name_or_initial_call(IsName, _Call) when is_atom(IsName) -> atom_to_list(IsName);
