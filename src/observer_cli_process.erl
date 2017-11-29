@@ -60,7 +60,7 @@ render_worker(Interval, ProcessPid, TimeRef, OldRedus, OldMems) ->
     Line1 = render_line(RegisteredName, GroupLeader, Status, TrapExit, InitialCall,
         MessageQueueLen, HeapSize, TotalHeapSize, GarbageCollection),
     {NewRedus, NewMems, Line2} = render_reductions_memory(Reductions, Memory, OldRedus, OldMems),
-    Line3 = render_pid_info(Dictionary, Link, Monitors, MonitoredBy, CurrentStacktrace),
+    Line3 = render_pid_info(ProcessPid, Dictionary, Link, Monitors, MonitoredBy, CurrentStacktrace),
     Line4 = render_last_line(Interval),
     redraw_screen_to_blank(),
     ?output([?CURSOR_TOP, Line1, Line2, Line3, Line4]),
@@ -99,13 +99,15 @@ render_line(RegisteredName, GroupLeader, Status, TrapExit, InitialCall,
     io_lib:format(Format, ["status", Status, "trap_exit", TrapExit, "minor_gcs", MinorGcs])].
 
 
-render_pid_info(Dictionary, Link, Monitors, MonitoredBy, CurrentStacktrace) ->
+render_pid_info(Pid, Dictionary, Link, Monitors, MonitoredBy, CurrentStacktrace) ->
+    PidStr = pid_to_list(Pid),
     DictionaryStr = dict_to_str(Dictionary, 4),
     LinkStr = pids_to_str(Link, 8),
     MonitorsStr = pids_to_str(Monitors, 8),
     MonitoredByStr = pids_to_str(MonitoredBy, 8),
     CurrentStacktraceStr = stacktrace_to_str(CurrentStacktrace),
-    [io_lib:format("|Dictionary: ~-119.119s|~n", [DictionaryStr]),
+    [io_lib:format("|Pid: ~-125s |~n", [PidStr]),
+    io_lib:format("|Dictionary: ~-119.119s|~n", [DictionaryStr]),
     io_lib:format("|Link: ~-125.125s|~n", [LinkStr]),
     io_lib:format("|Monitors: ~-121.121s|~n", [MonitorsStr]),
     io_lib:format("|MonitoredBy: ~-118.118s|~n", [MonitoredByStr]),
