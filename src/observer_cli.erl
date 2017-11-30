@@ -117,8 +117,8 @@ redraw(running, StableInfo, LastTimeRef, NodeStatsCostTime, #home{tid = Tid,
     TimeRef = refresh_next_time(Func, Type, Interval, RankCostTime, NodeStatsCostTime),
     receive
         quit -> quit;
-        pause_or_resume -> redraw(pause, StableInfo, TimeRef, ?FAST_COLLECT_INTERVAL, Home, TerminalRow);
-        {Func, Type} -> redraw(running, StableInfo, TimeRef, NewNodeStatsCostTime, Home, TerminalRow)
+        pause_or_resume -> redraw(pause, StableInfo, TimeRef, ?FAST_COLLECT_INTERVAL, Home, TerminalRow0);
+        {Func, Type} -> redraw(running, StableInfo, TimeRef, NewNodeStatsCostTime, Home, TerminalRow0)
     end.
 
 render_system_line(StableInfo, UseMemInt, AllocatedMemInt, UnusedMemInt, ProcSum) ->
