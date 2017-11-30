@@ -36,9 +36,9 @@ render_worker(Interval, LastTimeRef, HideSystemTable, TerminalRow0) ->
     TimeRef = observer_cli_lib:next_redraw(LastTimeRef, Interval),
     receive
         quit -> quit;
-        {new_interval, NewInterval} -> render_worker(NewInterval, TimeRef, HideSystemTable, TerminalRow);
-        {system_table, NewHideSystemTable} -> render_worker(Interval, TimeRef, NewHideSystemTable, TerminalRow);
-        _ -> render_worker(Interval, TimeRef, HideSystemTable, TerminalRow)
+        {new_interval, NewInterval} -> render_worker(NewInterval, TimeRef, HideSystemTable, TerminalRow0);
+        {system_table, NewHideSystemTable} -> render_worker(Interval, TimeRef, NewHideSystemTable, TerminalRow0);
+        _ -> render_worker(Interval, TimeRef, HideSystemTable, TerminalRow0)
     end.
 
 manager(ChildPid, #view_opts{db = DBOpts} = HomeOpts) ->

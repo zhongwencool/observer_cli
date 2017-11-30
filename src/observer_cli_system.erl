@@ -41,8 +41,8 @@ render_worker(Interval, LastTimeRef, TerminalRow0) ->
     NextTimeRef = observer_cli_lib:next_redraw(LastTimeRef, Interval),
     receive
         quit -> quit;
-        {new_interval, NewMs} -> render_worker(NewMs, NextTimeRef, TerminalRow);
-        _ -> render_worker(Interval, NextTimeRef, TerminalRow)
+        {new_interval, NewMs} -> render_worker(NewMs, NextTimeRef, TerminalRow0);
+        _ -> render_worker(Interval, NextTimeRef, TerminalRow0)
     end.
 
 render_sys_info() ->

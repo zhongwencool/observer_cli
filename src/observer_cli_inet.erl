@@ -51,8 +51,8 @@ render_worker(Function, Type, Interval, LastTimeRef, Count, TerminalRow0) ->
         quit -> quit;
         {new_interval, NewInterval} ->
             ?output(?CLEAR),
-            render_worker(Function, Type, NewInterval, TimeRef, Count + 1, TerminalRow);
-        _ -> render_worker(Function, Type, Interval, TimeRef, Count + 1, TerminalRow)
+            render_worker(Function, Type, NewInterval, TimeRef, Count + 1, TerminalRow0);
+        _ -> render_worker(Function, Type, Interval, TimeRef, Count + 1, TerminalRow0)
     end.
 
 render_inet_rows([], Type, inet_count, _Interval, Rows) ->
