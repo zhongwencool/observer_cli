@@ -80,6 +80,9 @@ $ rebar3 shell --name 'observer_cli@127.0.0.1'
 
 ----------------
 ### Changelog
+- 1.2.1
+  - fixed autosize not work.
+  - try best to make color adjust all platform.
 - 1.2.0
   - add application GUI.
   - Rearrange GUI and optimize render. 
