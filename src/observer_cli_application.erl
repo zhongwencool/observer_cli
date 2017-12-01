@@ -38,8 +38,8 @@ render_worker(Interval) ->
     end.
 
 render_last_line() ->
-    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?BLUE_BG, "q(quit)",
-        ?W(" ", ?COLUMN - 17), ?RESET_BG]).
+    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?UNDERLINE, ?GRAY_BG, "q(quit)",
+        ?W(" ", ?COLUMN - 17), ?RESET]).
 
 render_application_info() ->
     [
@@ -59,11 +59,11 @@ render_application_info() ->
     [RunView, LoadedView, StartingView, SPFView, LoadingView].
 
 render_running_apps(RunningApps, StartedApps, LoadedApps) ->
-    Title = ?render([?BLUE_BG, ?W("Status", 8),
+    Title = ?render([?UNDERLINE, ?GRAY_BG, ?W("Status", 8),
         ?W("Application", 14), ?W("Vsn", 8), ?W("Type", 10),
         ?W("Application", 14), ?W("Vsn", 8), ?W("Type", 10),
         ?W("Application", 14), ?W("Vsn", 8), ?W("Type", 10),
-        ?RESET_BG]),
+        ?RESET]),
     draw_running_apps_1(RunningApps, StartedApps, LoadedApps, Title).
 
 draw_running_apps_1([], _StartedApps, LoadedApps, Render) -> {LoadedApps, Render};
@@ -96,11 +96,11 @@ draw_running_apps_1([{App1, _}, {App2, _}, {App3, _} | Rest], StartedApps, Loade
 
 draw_loaded_apps([]) -> [];
 draw_loaded_apps(Apps) ->
-    Title = ?render([?BLUE_BG, ?W("Status", 8),
+    Title = ?render([?UNDERLINE, ?GRAY_BG, ?W("Status", 8),
         ?W("Application", 14), ?W("Vsn", 8), ?W("Type", 10),
         ?W("Application", 14), ?W("Vsn", 8), ?W("Type", 10),
         ?W("Application", 14), ?W("Vsn", 8), ?W("Type", 10),
-        ?RESET_BG]),
+        ?RESET]),
     draw_loaded_apps_1(Apps, Title).
 
 draw_loaded_apps_1([], Acc) -> Acc;
@@ -121,10 +121,10 @@ draw_loaded_apps_1([{App1, _Desc1, Vsn1}, {App2, _Desc2, Vsn2}, {App3, _Desc3, V
 
 render_starting_apps([]) -> [];
 render_starting_apps(Apps) ->
-    Title = ?render([?BLUE_BG, ?W("Status", 8),
+    Title = ?render([?UNDERLINE, ?GRAY_BG, ?W("Status", 8),
         ?W("Application", 14), ?W("RestartType", 11), ?W("Type", 11), ?W("From", 14),
         ?W("Application", 14), ?W("RestartType", 11), ?W("Type", 11), ?W("From", 13),
-        ?RESET_BG]),
+        ?RESET]),
     draw_starting_apps_1(Apps, Title).
 
 draw_starting_apps_1([], Acc) -> Acc;
@@ -160,10 +160,10 @@ draw_start_p_false_1([{App1, RestartType1, Type1, From1}, {App2, RestartType2, T
 
 render_loading_apps([]) -> [];
 render_loading_apps(Apps) ->
-    Title = ?render([?BLUE_BG, ?W("Status", 8),
+    Title = ?render([?UNDERLINE, ?GRAY_BG, ?W("Status", 8),
         ?W("Application", 14), ?W("From", 11), ?W("Application", 14), ?W("From", 11),
         ?W("Application", 14), ?W("From", 11), ?W("Application", 14), ?W("From", 10),
-        ?RESET_BG]),
+        ?RESET]),
     draw_loading_apps_1(Apps, Title).
 
 draw_loading_apps_1([], Acc) -> Acc;

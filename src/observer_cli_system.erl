@@ -41,8 +41,8 @@ render_worker(Interval, LastTimeRef, TerminalRow0) ->
     NextTimeRef = observer_cli_lib:next_redraw(LastTimeRef, Interval),
     receive
         quit -> quit;
-        {new_interval, NewMs} -> render_worker(NewMs, NextTimeRef, TerminalRow);
-        _ -> render_worker(Interval, NextTimeRef, TerminalRow)
+        {new_interval, NewMs} -> render_worker(NewMs, NextTimeRef, TerminalRow0);
+        _ -> render_worker(Interval, NextTimeRef, TerminalRow0)
     end.
 
 render_sys_info() ->
@@ -57,7 +57,7 @@ render_sys_info() ->
     render_sys_info(System, CPU, Memory, Statistics).
 
 render_sys_info(System, CPU, Memory, Statistics) ->
-    Title = ?render([?BLUE_BG,
+    Title = ?render([?GRAY_BG,?UNDERLINE,
         ?W("System/Architecture", 22),
         ?W("State", 8),
         ?W("CPU's and Threads", 23),
@@ -66,7 +66,7 @@ render_sys_info(System, CPU, Memory, Statistics) ->
         ?W("State", 18),
         ?W("Statistics", 13),
         ?W("State", 11),
-        ?RESET_BG]),
+        ?RESET]),
     NewSystem = [begin {Key, Value} end || {Key, Value} <- System,
         Key =/= "Compiled for" andalso Key =/= "smp Support"],
     [{_, TotalMem} | _R] = Memory,
@@ -90,8 +90,8 @@ render_sys_info(System, CPU, Memory, Statistics) ->
 
 render_last_line(Interval) ->
     Text = io_lib:format("i~w(Interval ~wms must >=1000ms) ", [Interval, Interval]),
-    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?BLUE_BG, "q(quit) ",
-        ?W(Text, ?COLUMN - 11), ?RESET_BG]).
+    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?UNDERLINE, ?GRAY_BG, "q(quit) ",
+        ?W(Text, ?COLUMN - 11), ?RESET]).
 
 to_list(Val) when is_integer(Val) -> integer_to_list(Val);
 to_list(Val) when is_atom(Val) -> atom_to_list(Val);

@@ -13,11 +13,11 @@ render_ets_info(Rows) ->
     SorEtsInfo = lists:sort(fun({_, Ets1}, {_, Ets2}) ->
         proplists:get_value(memory, Ets1) > proplists:get_value(memory, Ets2)
                             end, AllEtsInfo),
-    Title = ?render([?BLUE_BG,
+    Title = ?render([?UNDERLINE, ?GRAY_BG,
         ?W("id or name", 24), ?W("memory", 12), ?W("size", 10),
         ?W("type", 11), ?W("protection", 10), ?W("keypos", 6),
         ?W("write/read concurrency", 22), ?W("owner", 9), ?W("namedtable", 10),
-        ?RESET_BG]),
+        ?RESET]),
     RowView =
         [begin
              Name = get_value(name, Ets), Memory = get_value(memory, Ets),

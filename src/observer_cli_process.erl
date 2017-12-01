@@ -90,7 +90,7 @@ render_line(RegisteredName, GroupLeader, Status, TrapExit, InitialCall,
     GroupLeaderStr = erlang:pid_to_list(GroupLeader),
     
     Format = "|~-15.15s|~52.52s|~17.17s|~12.12s|~18.18s|~12.12s|~n",
-    [io_lib:format("|\e[0m\e[44m~-15.15s|~-52.52s|~-17.17s|~-12.12s|~-18.18s|~-12.12s\e[49m|~n",
+    [io_lib:format("|\e[0m\e[7m~-15.15s|~-52.52s|~-17.17s|~-12.12s|~-18.18s|~-12.12s\e[0m|~n",
         ["Meta", "Value", "Memory Used", "Value", "Garbage Collection", "Value"]),
     io_lib:format(Format, ["registered_name", RegisteredName, "message_queue_len",
         MessageQueueLenStr, "min_bin_vheap_size", MinBinVHeapSize]),
@@ -132,8 +132,8 @@ render_reductions_memory(Reduction, Memory, Reductions, Memorys) ->
 render_last_line(Interval) ->
     Format =
         case Interval >= 10000 of
-            true -> "|\e[31;1mINPUT: \e[0m\e[44mq(quit)        b(back)      i~w(refresh every ~wms)  ~78.78s\e[49m~n";
-            false -> "|\e[31;1mINPUT: \e[0m\e[44mq(quit)        b(back)      i~w(refresh every ~wms)  ~80.80s\e[49m~n"
+            true -> "|\e[31;1mINPUT: \e[0m\e[7mq(quit)        b(back)      i~w(refresh every ~wms)  ~78.78s\e[0m~n";
+            false -> "|\e[31;1mINPUT: \e[0m\e[7mq(quit)        b(back)      i~w(refresh every ~wms)  ~80.80s\e[0m~n"
         end,
     io_lib:format(Format, [Interval, Interval, ?render(observer_cli_lib:uptime())]).
 
