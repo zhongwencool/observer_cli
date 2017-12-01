@@ -51,8 +51,8 @@ render_worker(Function, Type, Interval, LastTimeRef, Count, TerminalRow0) ->
         quit -> quit;
         {new_interval, NewInterval} ->
             ?output(?CLEAR),
-            render_worker(Function, Type, NewInterval, TimeRef, Count + 1, TerminalRow);
-        _ -> render_worker(Function, Type, Interval, TimeRef, Count + 1, TerminalRow)
+            render_worker(Function, Type, NewInterval, TimeRef, Count + 1, TerminalRow0);
+        _ -> render_worker(Function, Type, Interval, TimeRef, Count + 1, TerminalRow0)
     end.
 
 render_inet_rows([], Type, inet_count, _Interval, Rows) ->
@@ -65,10 +65,10 @@ render_inet_rows(Inets, Type, Function, _, _) ->
                   oct -> "oct(recv_oct+send_oct)";
                   _ -> atom_to_list(Type)
               end,
-    Title = ?render([?BLUE_BG,
+    Title = ?render([?UNDERLINE, ?GRAY_BG,
         ?W("Port", 12), ?W("Name", 12), ?W(NewType, 15), ?W("QueueSize", 23),
         ?W("Memory", 23), ?W("Input", 15), ?W("Output", 20),
-        ?RESET_BG]),
+        ?RESET]),
     View =
         [begin
              {meta, Meta} = recon:port_info(Port, meta),
@@ -96,8 +96,8 @@ render_inet_rows(Inets, Type, Function, _, _) ->
 render_last_line(Interval) ->
     Format = "i~w(Interval ~wms must>=1000) ic(inet_count) iw(inet_window) rc(recv_cnt) ro(recv_oct) sc(send_cnt) so(send_oct) cnt oct",
     Text = io_lib:format(Format, [Interval, Interval]),
-    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?BLUE_BG, "q(quit) ",
-        ?W(Text, ?COLUMN - 11), ?RESET_BG]).
+    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?UNDERLINE, ?GRAY_BG, "q(quit) ",
+        ?W(Text, ?COLUMN - 11), ?RESET]).
 
 get_refresh_str(inet_count, Type, Interval, Rows) ->
     io_lib:format("recon:inet_count(~p,~w) Interval:~wms", [Type, Rows, Interval]);

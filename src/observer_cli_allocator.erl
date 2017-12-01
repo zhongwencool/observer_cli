@@ -58,7 +58,7 @@ render_worker(Interval, LastTimeRef) ->
     end.
 
 render_cache_hit_rates(CacheHitInfo) ->
-    Title = ?render([?BLUE_BG, ?W("Instance", 8), ?W("Hits", 10), ?W("Calls", 11), ?W("Hit Rate", 100), ?RESET_BG]),
+    Title = ?render([?UNDERLINE, ?GRAY_BG, ?W("Instance", 8), ?W("Hits", 10), ?W("Calls", 11), ?W("Hit Rate", 100), ?RESET]),
     Len = erlang:length(CacheHitInfo),
     View = [begin
          [{hit_rate, HitRate}, {hits, Hit}, {calls, Call}] = proplists:get_value({instance, Seq}, CacheHitInfo),
@@ -75,11 +75,10 @@ render_cache_hit_rates(CacheHitInfo) ->
     [Title|View].
 
 render_average_block_size_info(AverageBlockCurs, AverageBlockMaxes) ->
-    Title = ?render([ ?BLUE_BG,
+    Title = ?render([ ?UNDERLINE, ?GRAY_BG,
         ?W("Allocator Type", 16), ?W("Current Multiblock Carriers", 28),
         ?W("Max Multiblock Carriers", 28), ?W("Current SingleBlock Carriers", 27),
-        ?W("Max Single Block Carriers", 27),
-        ?RESET_BG]),
+        ?W("Max Single Block Carriers", 27), ?RESET]),
     View =
         [begin
              [Type, CMC, MMC, CSC, MSBC] = get_alloc(AllocKey, AverageBlockCurs, AverageBlockMaxes),
@@ -89,8 +88,8 @@ render_average_block_size_info(AverageBlockCurs, AverageBlockMaxes) ->
 
 render_last_line(Interval) ->
     Text = io_lib:format("i~w(Interval ~wms must >=1000ms) ", [Interval, Interval]),
-    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?BLUE_BG, "q(quit) ",
-        ?W(Text, ?COLUMN - 11), ?RESET_BG]).
+    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?UNDERLINE, ?GRAY_BG, "q(quit) ",
+        ?W(Text, ?COLUMN - 11), ?RESET]).
 
 get_alloc(Key, Curs, Maxes) ->
     CurRes = proplists:get_value(Key, Curs),
