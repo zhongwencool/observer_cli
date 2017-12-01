@@ -78,7 +78,7 @@ get_menu_title2(app) ->
       unselect("c(CARRIER)"), unselect("db(MNESIA)"), unselect("d(DOC)")].
 
 select(Title) -> [?RED_BG, Title, ?RESET_BG].
-unselect(Title) -> [?GRAY_BG, Title, ?RESET_BG].
+unselect(Title) -> [?L_GRAY_BG, Title, ?RESET_BG].
 
 -spec green(list()) -> list().
 green(String) -> "\e[32;1m" ++ String ++ "\e[0m".

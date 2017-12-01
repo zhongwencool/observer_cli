@@ -130,11 +130,11 @@ render_system_line(StableInfo, UseMemInt, AllocatedMemInt, UnusedMemInt, ProcSum
     UnUsePercent = observer_cli_lib:float_to_percent_with_two_digit(UnusedMemInt / AllocatedMemInt),
     {PortWarning, ProcWarning, PortCount, ProcCount} = get_port_proc_count_info(PortLimit, ProcLimit, ProcSum),
     VersionLine = ?render([?W(Version -- "\n", 138)]),
-    Title = ?render([?BLUE_BG,
+    Title = ?render([?GRAY_BG,
         ?W("System", 10), ?W("Count/Limit", 21),
         ?W("System Switch", 20), ?W("State", 24),
         ?W("Memory Info", 20), ?W("Megabyte", 28),
-        ?RESET_BG]),
+        ?RESET]),
     Row1 = ?render([
         ?W("Proc Count", 10), ?W(ProcWarning, ProcCount, 21), ?W("Smp Support", 20),
         ?W(SmpSupport, 24), ?W("Allocted Mem", 20), ?W(AllocatedMem, 19), ?W("100.0%", 6)
@@ -174,8 +174,8 @@ render_memory_process_line(ProcSum, MemSum, Interval) ->
     GcWordsReclaimed = observer_cli_lib:to_list(proplists:get_value(gc_words_reclaimed, MemSum)),
     Reductions = integer_to_list(proplists:get_value(reductions, MemSum)),
     Row1 = ?render([
-        ?BLUE_BG, ?W("Memory", 10), ?W("State", 21), ?W("Memory", 20), ?W("State", 24),
-        ?W("Memory", 20), ?W("Interval: " ++ integer_to_list(Interval) ++ "ms", 28), ?RESET_BG]),
+        ?GRAY_BG, ?W("Memory", 10), ?W("State", 21), ?W("Memory", 20), ?W("State", 24),
+        ?W("Memory", 20), ?W("Interval: " ++ integer_to_list(Interval) ++ "ms", 28), ?RESET]),
     Row2 = ?render([
         ?W("Total", 10), ?W(TotalMem, 12), ?W("100%", 6), ?W("Binary", 20),
         ?W(BinMem, 15), ?W(BinMemPercent, 6), ?W("IO Output", 20), ?W(BytesOut, 28)]),
@@ -344,14 +344,14 @@ render_process_rank(message_queue_len, MQLenList, Num, RankPos) ->
 render_last_line() ->
     Text = "q(quit) p(pause) r/rr(reduction) " ++
         "m/mm(memory) b/bb(binary memory) t/tt(total heap size) mq/mmq(message queue) j9(jump to process 9)",
-    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?BLUE_BG,
-        ?W(Text, ?COLUMN - 3), ?RESET_BG]).
+    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?UNDERLINE, ?GRAY_BG,
+        ?W(Text, ?COLUMN - 3), ?RESET]).
 
 notify_pause_status() ->
     ?output("\e[31;1m PAUSE  INPUT (p, r/rr, b/bb, h/hh, m/mm) to resume or q to quit \e[0m~n").
 
 get_choose_format(Pos, Pos) ->
-    "|\e[33;1m~-3.3s|~-12.12s|~12.12s | ~-30.30s | ~11.11s| ~-11.11s| ~-47.47s\e[0m|~n";
+    "|\e[33m~-3.3s|~-12.12s|~12.12s | ~-30.30s | ~11.11s| ~-11.11s| ~-47.47s\e[0m|~n";
 get_choose_format(_Pos, _RankPos) ->
     "|~-3.3s|~-12.12s|~12.12s | ~-30.30s | ~11.11s| ~-11.11s| ~-47.47s|~n".
 

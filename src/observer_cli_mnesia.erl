@@ -60,11 +60,11 @@ render_mnesia(MnesiaList, Rows) ->
     SortMnesiaList = lists:sort(fun(Table1, Table2) ->
         proplists:get_value(memory, Table1) > proplists:get_value(memory, Table2)
                                 end, MnesiaList),
-    Title = ?render([?BLUE_BG,
+    Title = ?render([?UNDERLINE, ?GRAY_BG,
         ?W("name", 24), ?W("memory", 14), ?W("size", 14),
         ?W("type", 10), ?W("storage", 13), ?W("owner", 12),
         ?W("index", 9), ?W("reg_name", 21),
-        ?RESET_BG]),
+        ?RESET]),
     View =
         [begin
              Name = get_value(name, Mnesia), Memory = get_value(memory, Mnesia),
@@ -81,8 +81,8 @@ render_mnesia(MnesiaList, Rows) ->
 
 render_last_line(Interval) ->
     Text = io_lib:format("i~w(Interval ~wms must >=1000ms system:false/true) ", [Interval, Interval]),
-    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?BLUE_BG, "q(quit) ",
-        ?W(Text, ?COLUMN - 11), ?RESET_BG]).
+    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?UNDERLINE, ?GRAY_BG, "q(quit) ",
+        ?W(Text, ?COLUMN - 11), ?RESET]).
 
 get_value(Key, List) ->
     observer_cli_lib:to_list(proplists:get_value(Key, List)).

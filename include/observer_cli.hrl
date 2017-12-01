@@ -46,14 +46,14 @@
 
 -define(RESET_BG, <<"\e[49m">>).
 -define(RESET, <<"\e[0m">>).
--define(BLUE_BG, <<"\e[44m">>).
+-define(GRAY_BG, <<"\e[7m">>).
 -define(YELLOW, <<"\e[33m">>).
 -define(RED, <<"\e[31m">>).
 -define(L_RED, <<"\e[48m">>).
 -define(GREEN, <<"\e[32;1m">>).
 -define(L_GREEN, <<"\e[92m">>).
 -define(RED_BG, <<"\e[48;2;184;0;0m">>).
--define(GRAY_BG, <<"\e[48;2;80;80;80m">>).
+-define(L_GRAY_BG, <<"\e[48;2;80;80;80m">>).
 -define(UNDERLINE, <<"\e[4m">>).
 -define(I, <<" | ">>).
 -define(W(_C_, _A_, _W_), {extend_color, _C_, _A_, _W_}).
