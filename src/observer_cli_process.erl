@@ -9,7 +9,7 @@ start(ProcessPid, Opts) ->
     #view_opts{process = #process{interval = RefreshMillSecond}} = Opts,
     ChildPid = spawn(fun() ->
         ?output(?CLEAR),
-        InitQ = lists:foldl(fun(_X, Acc) -> queue:in(waiting, Acc) end, queue:new(), lists:seq(1, 5)),
+        InitQ = lists:foldl(fun(_X, Acc) -> queue:in('NaN', Acc) end, queue:new(), lists:seq(1, 5)),
         render_worker(RefreshMillSecond, ProcessPid, undefined, InitQ, InitQ)
                      end),
     manager(ChildPid, Opts).
