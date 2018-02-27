@@ -200,46 +200,50 @@ render_scheduler_usage(SchedulerUsage, SchedulerNum) when SchedulerNum =< 8 ->
     HalfSchedulerNum = SchedulerNum div 2,
     CPU =
         [begin
-             Percent1 = proplists:get_value(Seq, SchedulerUsage),
-             Percent2 = proplists:get_value(Seq + HalfSchedulerNum, SchedulerUsage),
+             Seq2 = Seq1 + HalfSchedulerNum,
+             Percent1 = proplists:get_value(Seq1, SchedulerUsage),
+             Percent2 = proplists:get_value(Seq2, SchedulerUsage),
              CPU1 = observer_cli_lib:float_to_percent_with_two_digit(Percent1),
              CPU2 = observer_cli_lib:float_to_percent_with_two_digit(Percent2),
-             CPUSeq1 = lists:flatten(io_lib:format("~2..0w", [Seq])),
-             CPUSeq2 = lists:flatten(io_lib:format("~2..0w", [Seq + HalfSchedulerNum])),
+             CPUSeq1 = lists:flatten(io_lib:format("~2..0w", [Seq1])),
+             CPUSeq2 = lists:flatten(io_lib:format("~2..0w", [Seq2])),
              Process1 = lists:duplicate(trunc(Percent1 * 57), "|"),
              Process2 = lists:duplicate(trunc(Percent2 * 57), "|"),
              Format = cpu_format_alarm_color(Percent1, Percent2),
-             case Seq =:= HalfSchedulerNum of
+             case Seq1 =:= HalfSchedulerNum of
                  false -> io_lib:format(Format, [CPUSeq1, Process1, CPU1, CPUSeq2, Process2, CPU2]);
                  true ->
                      io_lib:format(<<?UNDERLINE/binary, Format/binary, ?RESET/binary>>,
                          [CPUSeq1, Process1, CPU1, CPUSeq2, Process2, CPU2])
              end
-         end || Seq <- lists:seq(1, HalfSchedulerNum)],
+         end || Seq1 <- lists:seq(1, HalfSchedulerNum)],
     {HalfSchedulerNum, CPU};
 %% >= 8 will split 4 part
 render_scheduler_usage(SchedulerUsage, SchedulerNum) ->
-    PosSchedulerNum = SchedulerNum div 3,
+    PosSchedulerNum = SchedulerNum div 4,
     CPU =
         [begin
-             Percent1 = proplists:get_value(Seq, SchedulerUsage),
-             Percent2 = proplists:get_value(Seq + PosSchedulerNum, SchedulerUsage),
-             Percent3 = proplists:get_value(Seq + 2 * PosSchedulerNum, SchedulerUsage),
-             Percent4 = proplists:get_value(Seq + 3 * PosSchedulerNum, SchedulerUsage),
+             Seq2 = Seq1 + PosSchedulerNum,
+             Seq3 = Seq2 + PosSchedulerNum,
+             Seq4 = Seq3 + PosSchedulerNum,
+             Percent1 = proplists:get_value(Seq1, SchedulerUsage),
+             Percent2 = proplists:get_value(Seq2, SchedulerUsage),
+             Percent3 = proplists:get_value(Seq3, SchedulerUsage),
+             Percent4 = proplists:get_value(Seq4, SchedulerUsage),
              CPU1 = observer_cli_lib:float_to_percent_with_two_digit(Percent1),
              CPU2 = observer_cli_lib:float_to_percent_with_two_digit(Percent2),
              CPU3 = observer_cli_lib:float_to_percent_with_two_digit(Percent3),
              CPU4 = observer_cli_lib:float_to_percent_with_two_digit(Percent4),
-             CPUSeq1 = lists:flatten(io_lib:format("~2..0w", [Seq])),
-             CPUSeq2 = lists:flatten(io_lib:format("~2..0w", [Seq + PosSchedulerNum])),
-             CPUSeq3 = lists:flatten(io_lib:format("~2..0w", [Seq + 2 * PosSchedulerNum])),
-             CPUSeq4 = lists:flatten(io_lib:format("~2..0w", [Seq + 3 * PosSchedulerNum])),
+             CPUSeq1 = lists:flatten(io_lib:format("~2..0w", [Seq1])),
+             CPUSeq2 = lists:flatten(io_lib:format("~2..0w", [Seq2])),
+             CPUSeq3 = lists:flatten(io_lib:format("~2..0w", [Seq3])),
+             CPUSeq4 = lists:flatten(io_lib:format("~2..0w", [Seq4])),
              Process1 = lists:duplicate(trunc(Percent1 * 23), "|"),
              Process2 = lists:duplicate(trunc(Percent2 * 22), "|"),
              Process3 = lists:duplicate(trunc(Percent3 * 22), "|"),
              Process4 = lists:duplicate(trunc(Percent4 * 23), "|"),
              Format = cpu_format_alarm_color(Percent1, Percent2, Percent3, Percent4),
-             case Seq =:= PosSchedulerNum of
+             case Seq1 =:= PosSchedulerNum of
                  false ->
                      io_lib:format(Format, [CPUSeq1, Process1, CPU1, CPUSeq2, Process2, CPU2,
                          CPUSeq3,Process3, CPU3, CPUSeq4,Process4, CPU4]);
@@ -248,7 +252,7 @@ render_scheduler_usage(SchedulerUsage, SchedulerNum) ->
                          [CPUSeq1, Process1, CPU1, CPUSeq2, Process2, CPU2,
                              CPUSeq3, Process3, CPU3, CPUSeq4,Process4, CPU4])
              end
-         end || Seq <- lists:seq(1, PosSchedulerNum)],
+         end || Seq1 <- lists:seq(1, PosSchedulerNum)],
     {PosSchedulerNum, CPU}.
 
 render_process_rank(memory, MemoryList, Num, RankPos) ->

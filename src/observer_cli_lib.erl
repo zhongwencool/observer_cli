@@ -91,7 +91,6 @@ to_megabyte_str(M) ->
     lists:flatten(io_lib:format("~w.~4..0wM", [Integer, Decimal])).
 
 -spec mfa_to_list({atom(), atom(), integer()}) -> nonempty_string().
-
 mfa_to_list({Module, Fun, Arg}) ->
     atom_to_list(Module) ++ ":" ++
         atom_to_list(Fun) ++ "/" ++
