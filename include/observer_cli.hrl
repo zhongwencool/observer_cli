@@ -1,24 +1,25 @@
 -define(COLUMN, 135).
 
 -define(MIN_INTERVAL, 1000).
+-define(DEFAULT_INTERVAL, 1500).
 
 -record(home, {func = proc_count :: atom(),
     type = memory :: atom(),
     cur_pos = 1 :: integer(),
     tid = undefined :: reference(),
-    interval = ?MIN_INTERVAL :: integer()}).
+    interval = ?DEFAULT_INTERVAL :: integer()}).
 
--record(system, {interval = ?MIN_INTERVAL :: integer()}).
--record(allocate, {interval = ?MIN_INTERVAL :: integer()}).
+-record(system, {interval = ?DEFAULT_INTERVAL :: integer()}).
+-record(allocate, {interval = ?DEFAULT_INTERVAL :: integer()}).
 
--record(db, {interval = ?MIN_INTERVAL :: integer()}).
+-record(db, {interval = ?DEFAULT_INTERVAL :: integer()}).
 
--record(help, {interval = ?MIN_INTERVAL :: integer()}).
--record(inet, {interval = ?MIN_INTERVAL :: integer(),
+-record(help, {interval = ?DEFAULT_INTERVAL :: integer()}).
+-record(inet, {interval = ?DEFAULT_INTERVAL :: integer(),
     func = inet_count :: atom(),
     type = cnt :: atom()}).
 
--record(process, {interval = ?MIN_INTERVAL :: integer()}).
+-record(process, {interval = ?DEFAULT_INTERVAL :: integer()}).
 
 -record(view_opts, {home = #home{} :: home(),
     sys = #system{} :: system(),
