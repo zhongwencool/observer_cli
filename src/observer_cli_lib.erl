@@ -10,7 +10,7 @@
 -export([float_to_percent_with_two_digit/1]).
 -export([to_list/1]).
 -export([green/1]).
--export([to_megabyte_str/1]).
+-export([byte_to_str/1]).
 -export([mfa_to_list/1]).
 -export([render/1]).
 -export([next_redraw/2]).
@@ -83,12 +83,24 @@ unselect(Title) -> [?L_GRAY_BG, Title, ?RESET_BG].
 -spec green(list()) -> list().
 green(String) -> "\e[32;1m" ++ String ++ "\e[0m".
 
--spec to_megabyte_str(pos_integer()) -> list().
-to_megabyte_str(M) ->
-    Val = trunc(M/(1024*1024)*1000),
+-spec byte_to_str(pos_integer()) -> list().
+byte_to_str(Byte) when Byte < 1024 -> %% byte
+    io_lib:format("~wb", [Byte]);
+byte_to_str(Byte) when Byte < 1024*1024 ->  %% kilobyte
+    Val = trunc(Byte/1024*1000),
     Integer = Val div 1000,
     Decimal = Val - Integer * 1000,
-    lists:flatten(io_lib:format("~w.~4..0wM", [Integer, Decimal])).
+    io_lib:format("~w.~4..0wkb", [Integer, Decimal]);
+byte_to_str(Byte) when Byte < 1024*1024*1024 -> %% megabyte
+    Val = trunc(Byte /(1024*1024)*1000),
+    Integer = Val div 1000,
+    Decimal = Val - Integer * 1000,
+    io_lib:format("~w.~4..0wM", [Integer, Decimal]);
+byte_to_str(Byte) -> %% megabyte
+    Val = trunc(Byte /(1024*1024*1024)*1000),
+    Integer = Val div 1000,
+    Decimal = Val - Integer * 1000,
+    io_lib:format("~w.~4..0wG", [Integer, Decimal]).
 
 -spec mfa_to_list({atom(), atom(), integer()}) -> nonempty_string().
 mfa_to_list({Module, Fun, Arg}) ->
