@@ -99,7 +99,7 @@ get_alloc(Key, Curs, Maxes) ->
     MaxMbcs = proplists:get_value(mbcs, MaxRes),
     MaxSbcs = proplists:get_value(sbcs, MaxRes),
     [atom_to_list(Key),
-        observer_cli_lib:to_megabyte_str(CurMbcs),
-        observer_cli_lib:to_megabyte_str(MaxMbcs),
-        observer_cli_lib:to_megabyte_str(CurSbcs),
-        observer_cli_lib:to_megabyte_str(MaxSbcs)].
+        observer_cli_lib:byte_to_str(CurMbcs),
+        observer_cli_lib:byte_to_str(MaxMbcs),
+        observer_cli_lib:byte_to_str(CurSbcs),
+        observer_cli_lib:byte_to_str(MaxSbcs)].
