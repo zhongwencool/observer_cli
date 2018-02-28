@@ -101,7 +101,7 @@ redraw(running, StableInfo, LastTimeRef, NodeStatsCostTime, #home{tid = Tid,
     erlang:cancel_timer(LastTimeRef),
     [{ProcSum, MemSum}] = recon:node_stats_list(1, NodeStatsCostTime),
     {CPURow, CPULine} = render_scheduler_usage(MemSum),
-    Rows = TerminalRow - 14 - CPURow,
+    Rows = max(TerminalRow - 14 - CPURow, 0),
     {RankList, RankCostTime} = get_ranklist_and_cost_time(Func, Type, Interval, Rows, NodeStatsCostTime),
     [UseMemInt, AllocatedMemInt, UnusedMemInt] = get_change_system_info(),
     NewNodeStatsCostTime = Interval div 2,
@@ -195,54 +195,64 @@ render_scheduler_usage(MemSum) ->
     SchedulerNum = erlang:length(SchedulerUsage),
     render_scheduler_usage(SchedulerUsage, SchedulerNum).
 
-%% < 24 core will split 2 part
-render_scheduler_usage(SchedulerUsage, SchedulerNum) when SchedulerNum < 24 ->
+%% =< 8 core will split 2 part
+render_scheduler_usage(SchedulerUsage, SchedulerNum) when SchedulerNum =< 8 ->
     HalfSchedulerNum = SchedulerNum div 2,
     CPU =
         [begin
-             Percent1 = proplists:get_value(Seq, SchedulerUsage),
-             Percent2 = proplists:get_value(Seq + HalfSchedulerNum, SchedulerUsage),
+             Seq2 = Seq1 + HalfSchedulerNum,
+             Percent1 = proplists:get_value(Seq1, SchedulerUsage),
+             Percent2 = proplists:get_value(Seq2, SchedulerUsage),
              CPU1 = observer_cli_lib:float_to_percent_with_two_digit(Percent1),
              CPU2 = observer_cli_lib:float_to_percent_with_two_digit(Percent2),
-             CPUSeq1 = lists:flatten(io_lib:format("~2..0w", [Seq])),
-             CPUSeq2 = lists:flatten(io_lib:format("~2..0w", [Seq + HalfSchedulerNum])),
+             CPUSeq1 = lists:flatten(io_lib:format("~2..0w", [Seq1])),
+             CPUSeq2 = lists:flatten(io_lib:format("~2..0w", [Seq2])),
              Process1 = lists:duplicate(trunc(Percent1 * 57), "|"),
              Process2 = lists:duplicate(trunc(Percent2 * 57), "|"),
              Format = cpu_format_alarm_color(Percent1, Percent2),
-             case Seq =:= HalfSchedulerNum of
+             case Seq1 =:= HalfSchedulerNum of
                  false -> io_lib:format(Format, [CPUSeq1, Process1, CPU1, CPUSeq2, Process2, CPU2]);
                  true ->
                      io_lib:format(<<?UNDERLINE/binary, Format/binary, ?RESET/binary>>,
                          [CPUSeq1, Process1, CPU1, CPUSeq2, Process2, CPU2])
              end
-         end || Seq <- lists:seq(1, HalfSchedulerNum)],
+         end || Seq1 <- lists:seq(1, HalfSchedulerNum)],
     {HalfSchedulerNum, CPU};
-%% >= 24 will split 3 part
+%% >= 8 will split 4 part
 render_scheduler_usage(SchedulerUsage, SchedulerNum) ->
-    PosSchedulerNum = SchedulerNum div 3,
+    PosSchedulerNum = SchedulerNum div 4,
     CPU =
         [begin
-             Percent1 = proplists:get_value(Seq, SchedulerUsage),
-             Percent2 = proplists:get_value(Seq + PosSchedulerNum, SchedulerUsage),
-             Percent3 = proplists:get_value(Seq + 2 * PosSchedulerNum, SchedulerUsage),
+             Seq2 = Seq1 + PosSchedulerNum,
+             Seq3 = Seq2 + PosSchedulerNum,
+             Seq4 = Seq3 + PosSchedulerNum,
+             Percent1 = proplists:get_value(Seq1, SchedulerUsage),
+             Percent2 = proplists:get_value(Seq2, SchedulerUsage),
+             Percent3 = proplists:get_value(Seq3, SchedulerUsage),
+             Percent4 = proplists:get_value(Seq4, SchedulerUsage),
              CPU1 = observer_cli_lib:float_to_percent_with_two_digit(Percent1),
              CPU2 = observer_cli_lib:float_to_percent_with_two_digit(Percent2),
              CPU3 = observer_cli_lib:float_to_percent_with_two_digit(Percent3),
-             CPUSeq1 = lists:flatten(io_lib:format("~2..0w", [Seq])),
-             CPUSeq2 = lists:flatten(io_lib:format("~2..0w", [Seq + PosSchedulerNum])),
-             CPUSeq3 = lists:flatten(io_lib:format("~2..0w", [Seq + 2 * PosSchedulerNum])),
-             Process1 = lists:duplicate(trunc(Percent1 * 34), "|"),
-             Process2 = lists:duplicate(trunc(Percent2 * 34), "|"),
-             Process3 = lists:duplicate(trunc(Percent2 * 34), "|"),
-             Format = cpu_format_alarm_color(Percent1, Percent2, Percent3),
-             case Seq =:= PosSchedulerNum of
+             CPU4 = observer_cli_lib:float_to_percent_with_two_digit(Percent4),
+             CPUSeq1 = lists:flatten(io_lib:format("~2..0w", [Seq1])),
+             CPUSeq2 = lists:flatten(io_lib:format("~2..0w", [Seq2])),
+             CPUSeq3 = lists:flatten(io_lib:format("~2..0w", [Seq3])),
+             CPUSeq4 = lists:flatten(io_lib:format("~2..0w", [Seq4])),
+             Process1 = lists:duplicate(trunc(Percent1 * 23), "|"),
+             Process2 = lists:duplicate(trunc(Percent2 * 22), "|"),
+             Process3 = lists:duplicate(trunc(Percent3 * 22), "|"),
+             Process4 = lists:duplicate(trunc(Percent4 * 23), "|"),
+             Format = cpu_format_alarm_color(Percent1, Percent2, Percent3, Percent4),
+             case Seq1 =:= PosSchedulerNum of
                  false ->
-                     io_lib:format(Format, [CPUSeq1, Process1, CPU1, CPUSeq2, Process2, CPU2, CPUSeq3, Process3, CPU3]);
+                     io_lib:format(Format, [CPUSeq1, Process1, CPU1, CPUSeq2, Process2, CPU2,
+                         CPUSeq3,Process3, CPU3, CPUSeq4,Process4, CPU4]);
                  true ->
                      io_lib:format(<<?UNDERLINE/binary, Format/binary, ?RESET/binary>>,
-                         [CPUSeq1, Process1, CPU1, CPUSeq2, Process2, CPU2, CPUSeq3, Process3, CPU3])
+                         [CPUSeq1, Process1, CPU1, CPUSeq2, Process2, CPU2,
+                             CPUSeq3, Process3, CPU3, CPUSeq4,Process4, CPU4])
              end
-         end || Seq <- lists:seq(1, PosSchedulerNum)],
+         end || Seq1 <- lists:seq(1, PosSchedulerNum)],
     {PosSchedulerNum, CPU}.
 
 render_process_rank(memory, MemoryList, Num, RankPos) ->
@@ -399,7 +409,7 @@ cpu_format_alarm_color(Percent1, Percent2) ->
         end,
     <<"|", Warning1/binary, "|~-2.2s ~-57.57s", "~s", Warning2/binary, " |~-2.2s ~-57.57s", " ~s", "  |~n">>.
 
-cpu_format_alarm_color(Percent1, Percent2, Percent3) ->
+cpu_format_alarm_color(Percent1, Percent2, Percent3, Percent4) ->
     Warning1 =
         case Percent1 >= ?CPU_ALARM_THRESHOLD of
             true -> ?RED;
@@ -415,9 +425,16 @@ cpu_format_alarm_color(Percent1, Percent2, Percent3) ->
             true -> ?RED;
             false -> ?GREEN
         end,
-    <<"|", Warning1/binary, "|~-2.2s ~-34.34s", " ~s",
-        Warning2/binary, " |~-2.2s ~-34.34s", " ~s",
-        Warning3/binary, " |~-2.2s ~-34.34s", " ~s",
+    Warning4 =
+        case Percent4 >= ?CPU_ALARM_THRESHOLD of
+            true -> ?RED;
+            false -> ?GREEN
+        end,
+    <<"|",
+        Warning1/binary, "|~-2.2s ~-23.23s", " ~s",
+        Warning2/binary, " |~-2.2s ~-22.22s", " ~s",
+        Warning3/binary, " |~-2.2s ~-22.22s", " ~s",
+        Warning4/binary, " |~-2.2s ~-23.23s", " ~s",
         " |~n">>.
 
 display_name_or_initial_call(IsName, _Call) when is_atom(IsName) -> atom_to_list(IsName);
