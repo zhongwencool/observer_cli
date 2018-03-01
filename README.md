@@ -80,6 +80,9 @@ $ rebar3 shell --name 'observer_cli@127.0.0.1'
 
 ----------------
 ### Changelog
+- 1.2.2
+  - fix schedule number >= 32 display wrong.
+  - improve memory(byte/kilobyte/megabyte/gigabyte) unit.
 - 1.2.1
   - fixed autosize not work.
   - try best to make color adjust all platform.
