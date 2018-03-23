@@ -133,7 +133,7 @@ render_system_line(StableInfo, UseMemInt, AllocatedMemInt, UnusedMemInt, ProcSum
     Title = ?render([?GRAY_BG,
         ?W("System", 10), ?W("Count/Limit", 21),
         ?W("System Switch", 20), ?W("State", 24),
-        ?W("Memory Info", 20), ?W("Megabyte", 28),
+        ?W("Memory Info", 20), ?W("Size", 28),
         ?RESET]),
     Row1 = ?render([
         ?W("Proc Count", 10), ?W(ProcWarning, ProcCount, 21), ?W("Smp Support", 20),
@@ -174,8 +174,8 @@ render_memory_process_line(ProcSum, MemSum, Interval) ->
     GcWordsReclaimed = observer_cli_lib:to_list(proplists:get_value(gc_words_reclaimed, MemSum)),
     Reductions = integer_to_list(proplists:get_value(reductions, MemSum)),
     Row1 = ?render([
-        ?GRAY_BG, ?W("Memory", 10), ?W("State", 21), ?W("Memory", 20), ?W("State", 24),
-        ?W("Memory", 20), ?W("Interval: " ++ integer_to_list(Interval) ++ "ms", 28), ?RESET]),
+        ?GRAY_BG, ?W("Memory", 10), ?W("Size", 21), ?W("Memory", 20), ?W("Size", 24),
+        ?W("IO/GC", 20), ?W("Interval: " ++ integer_to_list(Interval) ++ "ms", 28), ?RESET]),
     Row2 = ?render([
         ?W("Total", 10), ?W(TotalMem, 12), ?W("100%", 6), ?W("Binary", 20),
         ?W(BinMem, 15), ?W(BinMemPercent, 6), ?W("IO Output", 20), ?W(BytesOut, 28)]),
