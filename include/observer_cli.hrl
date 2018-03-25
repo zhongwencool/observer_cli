@@ -9,8 +9,8 @@
     tid = undefined :: reference(),
     interval = ?DEFAULT_INTERVAL :: integer()}).
 
+-record(ets, {interval = 2000 :: integer()}).
 -record(system, {interval = ?DEFAULT_INTERVAL :: integer()}).
--record(allocate, {interval = ?DEFAULT_INTERVAL :: integer()}).
 
 -record(db, {interval = ?DEFAULT_INTERVAL :: integer()}).
 
@@ -22,8 +22,8 @@
 -record(process, {interval = ?DEFAULT_INTERVAL :: integer()}).
 
 -record(view_opts, {home = #home{} :: home(),
+    ets = #ets{} :: ets(),
     sys = #system{} :: system(),
-    allocate = #allocate{} :: allocate(),
     db = #db{} :: db(),
     help = #help{} :: help(),
     inet = #inet{} :: inet(),
@@ -36,7 +36,7 @@
 -type(view_opts() :: #view_opts{}).
 -type(home() :: #home{}).
 -type(system() :: #system{}).
--type(allocate() :: #allocate{}).
+-type(ets() :: #ets{}).
 -type(db() :: #db{}).
 -type(help() :: #help{}).
 -type(inet() :: #inet{}).
