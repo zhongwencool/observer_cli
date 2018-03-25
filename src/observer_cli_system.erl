@@ -10,10 +10,10 @@
 
 -spec start(ViewOpts) -> no_return() when
     ViewOpts :: view_opts().
-start(#view_opts{sys = #system{interval = Interval}, terminal_row = TerminalRow} = ViewOpts) ->
+start(#view_opts{sys = #system{interval = Interval}, auto_row = AutoRow} = ViewOpts) ->
     Pid = spawn(fun() ->
         ?output(?CLEAR),
-        render_worker(Interval, undefined, TerminalRow)
+        render_worker(Interval, undefined, AutoRow)
                 end),
     manager(Pid, ViewOpts).
 
@@ -30,8 +30,8 @@ manager(ChildPid, #view_opts{sys = SysOpts} = ViewOpts) ->
         _ -> manager(ChildPid, ViewOpts)
     end.
 
-render_worker(Interval, LastTimeRef, TerminalRow0) ->
-    TerminalRow = observer_cli_lib:to_row(TerminalRow0),
+render_worker(Interval, LastTimeRef, AutoRow) ->
+    TerminalRow = observer_cli_lib:get_terminal_rows(AutoRow),
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
     Menu = observer_cli_lib:render_menu(ets, Text, 133),
     Sys = render_sys_info(),
@@ -41,8 +41,8 @@ render_worker(Interval, LastTimeRef, TerminalRow0) ->
     NextTimeRef = observer_cli_lib:next_redraw(LastTimeRef, Interval),
     receive
         quit -> quit;
-        {new_interval, NewMs} -> render_worker(NewMs, NextTimeRef, TerminalRow0);
-        _ -> render_worker(Interval, NextTimeRef, TerminalRow0)
+        {new_interval, NewMs} -> render_worker(NewMs, NextTimeRef, AutoRow);
+        _ -> render_worker(Interval, NextTimeRef, AutoRow)
     end.
 
 render_sys_info() ->
@@ -57,19 +57,20 @@ render_sys_info() ->
     render_sys_info(System, CPU, Memory, Statistics).
 
 render_sys_info(System, CPU, Memory, Statistics) ->
-    Title = ?render([?GRAY_BG,?UNDERLINE,
+    Title = ?render([?GRAY_BG, ?UNDERLINE,
         ?W("System/Architecture", 22),
         ?W("State", 8),
         ?W("CPU's and Threads", 23),
         ?W("State", 7),
-        ?W("Memory Usage", 15),
-        ?W("State", 18),
-        ?W("Statistics", 13),
-        ?W("State", 11),
+        ?W("Memory Usage", 11),
+        ?W("State", 22),
+        ?W("Statistics", 11),
+        ?W("State", 13),
         ?RESET]),
     NewSystem = [begin {Key, Value} end || {Key, Value} <- System,
         Key =/= "Compiled for" andalso Key =/= "smp Support"],
     [{_, TotalMem} | _R] = Memory,
+    {bytes, TotalMemInt} = TotalMem,
     Row =
         [begin
              {SysKey, SysVal} = lists:nth(Pos, NewSystem),
@@ -80,12 +81,19 @@ render_sys_info(System, CPU, Memory, Statistics) ->
                      {"Up time", _} -> {"Smp Support", to_list(proplists:get_value("Smp Support", System))};
                      Value -> Value
                  end,
-             ?render([?W(SysKey, 22), ?W(to_list(SysVal), 8), ?W(CpuKey, 23), ?W(to_list(CpuVal), 7),
-                 ?W(MemKey, 15), ?W(byte_to_megabyte(MemVal, TotalMem), 18),
-                 ?W(StatisticsKey, 13), ?W(to_list(StatisticsVal), 11)])
+             {bytes, MemValInt} = MemVal,
+             Percent = observer_cli_lib:to_percent(MemValInt / TotalMemInt),
+             ?render([
+                 ?W(SysKey, 22), ?W(to_list(SysVal), 8),
+                 ?W(CpuKey, 23), ?W(to_list(CpuVal), 7),
+                 ?W(MemKey, 11), ?W(observer_cli_lib:to_byte(MemValInt), 13), ?W(Percent, 6),
+                 ?W(StatisticsKey, 11), ?W(to_list(StatisticsVal), 13)
+             ])
          end || Pos <- lists:seq(1, 6)],
-    Compile = ?render([?UNDERLINE, ?W("compiled for", 22),
-        ?W(to_list(proplists:get_value("Compiled for", System)), 113), ?RESET]),
+    Compile = ?render([
+        ?UNDERLINE,
+        ?W("compiled for", 22), ?W(to_list(proplists:get_value("Compiled for", System)), 113),
+        ?RESET]),
     [Title | (Row ++ [Compile])].
 
 render_last_line(Interval) ->
@@ -95,19 +103,8 @@ render_last_line(Interval) ->
 
 to_list(Val) when is_integer(Val) -> integer_to_list(Val);
 to_list(Val) when is_atom(Val) -> atom_to_list(Val);
-to_list({bytes, Val}) ->
-    M = trunc(Val / (1024 * 1024) * 1000),
-    Integer = M div 1000,
-    Decimal = M - Integer * 1000,
-    lists:flatten(io_lib:format("~w.~4..0wM", [Integer, Decimal]));
+to_list({bytes, Val}) -> observer_cli_lib:to_byte(Val);
 to_list(Val) -> Val.
-
-byte_to_megabyte({bytes, Val}, {bytes, Total}) when is_integer(Val) ->
-    M = trunc(Val / (1024 * 1024) * 1000),
-    Integer = M div 1000,
-    Decimal = M - Integer * 1000,
-    Percent = observer_cli_lib:float_to_percent_with_two_digit(Val / Total),
-    io_lib:format("~w.~4..0wM ~s", [Integer, Decimal, Percent]).
 
 info_fields() ->
     Info = [{"System and Architecture",
@@ -139,7 +136,7 @@ info_fields() ->
         ]},
         {"Statistics", right,
             [{"Up time", {time_ms, uptime}},
-                {"Max Processes", process_limit},
+                {"Max Process", process_limit},
                 {"Processes", process_count},
                 {"Run Queue", run_queue},
                 {"Total IO In", {bytes, io_input}},
