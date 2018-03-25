@@ -5,7 +5,6 @@ otp_release:
   - 18.3
   - 17.5
   - R16B03-1
-  - R15B03
 
 env:
   - PATH=$HOME/.cache/rebar3/bin/:$PATH

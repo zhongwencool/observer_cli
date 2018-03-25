@@ -9,10 +9,10 @@
 
 -spec start(view_opts()) -> no_return.
 start(#view_opts{inet = #inet{interval = Interval, func = Function, type = Type},
-    terminal_row = TerminalRow} = ViewOpts) ->
+    auto_row = AutoRow} = ViewOpts) ->
     Pid = spawn(fun() ->
         ?output(?CLEAR),
-        render_worker(Function, Type, Interval, undefined, 0, TerminalRow)
+        render_worker(Function, Type, Interval, undefined, 0, AutoRow)
                 end),
     manager(Pid, ViewOpts).
 
@@ -36,8 +36,8 @@ manager(ChildPid, ViewOpts = #view_opts{inet = InetOpts}) ->
         _ -> manager(ChildPid, ViewOpts)
     end.
 
-render_worker(Function, Type, Interval, LastTimeRef, Count, TerminalRow0) ->
-    TerminalRow = observer_cli_lib:to_row(TerminalRow0),
+render_worker(Function, Type, Interval, LastTimeRef, Count, AutoRow) ->
+    TerminalRow = observer_cli_lib:get_terminal_rows(AutoRow),
     Rows = TerminalRow - 4,
     Text = get_refresh_str(Function, Type, Interval, Rows),
     Menu = observer_cli_lib:render_menu(inet, Text, 133),
@@ -51,8 +51,8 @@ render_worker(Function, Type, Interval, LastTimeRef, Count, TerminalRow0) ->
         quit -> quit;
         {new_interval, NewInterval} ->
             ?output(?CLEAR),
-            render_worker(Function, Type, NewInterval, TimeRef, Count + 1, TerminalRow0);
-        _ -> render_worker(Function, Type, Interval, TimeRef, Count + 1, TerminalRow0)
+            render_worker(Function, Type, NewInterval, TimeRef, Count + 1, AutoRow);
+        _ -> render_worker(Function, Type, Interval, TimeRef, Count + 1, AutoRow)
     end.
 
 render_inet_rows([], Type, inet_count, _Interval, Rows) ->
@@ -100,9 +100,9 @@ render_last_line(Interval) ->
         ?W(Text, ?COLUMN - 11), ?RESET]).
 
 get_refresh_str(inet_count, Type, Interval, Rows) ->
-    io_lib:format("recon:inet_count(~p,~w) Interval:~wms", [Type, Rows, Interval]);
+    io_lib:format("recon:inet_count(~p, ~w) Interval:~wms", [Type, Rows, Interval]);
 get_refresh_str(inet_window, Type, Interval, Rows) ->
-    io_lib:format("recon:inet_window(~p,~w,~w) Interval:~wms", [Type, Rows, Interval, Interval]).
+    io_lib:format("recon:inet_window(~p, ~w, ~w) Interval:~wms", [Type, Rows, Interval, Interval]).
 
 inet_info(inet_count, Type, Num, _, _) -> recon:inet_count(Type, Num);
 inet_info(inet_window, Type, Num, _, 0) -> recon:inet_count(Type, Num);
