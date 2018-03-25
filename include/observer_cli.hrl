@@ -28,7 +28,7 @@
     help = #help{} :: help(),
     inet = #inet{} :: inet(),
     process = #process{} :: process(),
-    terminal_row :: integer()
+    auto_row = true :: boolean()
 }).
 
 -export_type([view_opts/0]).

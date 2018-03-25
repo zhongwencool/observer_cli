@@ -62,7 +62,7 @@ render_cache_hit_rates(CacheHitInfo) ->
     Len = erlang:length(CacheHitInfo),
     View = [begin
          [{hit_rate, HitRate}, {hits, Hit}, {calls, Call}] = proplists:get_value({instance, Seq}, CacheHitInfo),
-         HitRateStr = observer_cli_lib:float_to_percent_with_two_digit(HitRate),
+         HitRateStr = observer_cli_lib:to_percent(HitRate),
          SeqStr = lists:flatten(io_lib:format("~2..0w", [Seq])),
          TrueHitRate = case Hit == 0 andalso Call == 0 of true -> 0; false -> HitRate end,
          Process = lists:duplicate(trunc(TrueHitRate * 91), "|"),
@@ -99,7 +99,7 @@ get_alloc(Key, Curs, Maxes) ->
     MaxMbcs = proplists:get_value(mbcs, MaxRes),
     MaxSbcs = proplists:get_value(sbcs, MaxRes),
     [atom_to_list(Key),
-        observer_cli_lib:byte_to_str(CurMbcs),
-        observer_cli_lib:byte_to_str(MaxMbcs),
-        observer_cli_lib:byte_to_str(CurSbcs),
-        observer_cli_lib:byte_to_str(MaxSbcs)].
+        observer_cli_lib:to_byte(CurMbcs),
+        observer_cli_lib:to_byte(MaxMbcs),
+        observer_cli_lib:to_byte(CurSbcs),
+        observer_cli_lib:to_byte(MaxSbcs)].

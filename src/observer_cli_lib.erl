@@ -7,15 +7,17 @@
 %% API
 -export([parse_cmd/2]).
 -export([uptime/0]).
--export([float_to_percent_with_two_digit/1]).
+-export([to_percent/1]).
 -export([to_list/1]).
 -export([green/1]).
--export([byte_to_str/1]).
+-export([to_byte/1]).
 -export([mfa_to_list/1]).
 -export([render/1]).
 -export([next_redraw/2]).
 -export([render_menu/3]).
--export([to_row/1]).
+-export([get_terminal_rows/1]).
+
+-define(DEFAULT_ROW_SIZE, 46). %% the number from 13' mbp
 
 -spec uptime() -> list().
 uptime() ->
@@ -23,16 +25,11 @@ uptime() ->
     {D, {H, M, S}} = calendar:seconds_to_daystime(UpTime div 1000),
     [?GREEN, ?W(io_lib:format("~pDays ~p:~p:~p", [D, H, M, S]), 16), ?RESET].
 
-%% @doc 0.98.2342 -> 98.23%, 1 -> 100.0%
--spec float_to_percent_with_two_digit(float()) -> string().
-float_to_percent_with_two_digit(Float) ->
-    Val = trunc(Float*10000),
-    Integer = Val div 100,
-    Decimal = Val - Integer * 100,
-    case Integer of
-        100 -> "100.0%";
-        _ -> lists:flatten(io_lib:format("~2..0w.~2..0w%", [Integer, Decimal]))
-    end.
+%% @doc 0.982342 -> 98.23%, 1 -> 100.0%
+-spec to_percent(float()) -> string().
+to_percent(Float)when Float < 0.1 -> io_lib:format("0~.2..f%", [Float*100]);
+to_percent(Float)when Float < 1 -> io_lib:format("~.2..f%", [Float*100]);
+to_percent(_) -> "100.0%".
 
 -spec to_list(term()) -> list().
 to_list(Atom) when is_atom(Atom) -> atom_to_list(Atom);
@@ -83,24 +80,17 @@ unselect(Title) -> [?L_GRAY_BG, Title, ?RESET_BG].
 -spec green(list()) -> list().
 green(String) -> "\e[32;1m" ++ String ++ "\e[0m".
 
--spec byte_to_str(pos_integer()) -> list().
-byte_to_str(Byte) when Byte < 1024 -> %% byte
-    io_lib:format("~wb", [Byte]);
-byte_to_str(Byte) when Byte < 1024*1024 ->  %% kilobyte
-    Val = trunc(Byte/1024*1000),
-    Integer = Val div 1000,
-    Decimal = Val - Integer * 1000,
-    io_lib:format("~w.~4..0wkb", [Integer, Decimal]);
-byte_to_str(Byte) when Byte < 1024*1024*1024 -> %% megabyte
-    Val = trunc(Byte /(1024*1024)*1000),
-    Integer = Val div 1000,
-    Decimal = Val - Integer * 1000,
-    io_lib:format("~w.~4..0wM", [Integer, Decimal]);
-byte_to_str(Byte) -> %% megabyte
-    Val = trunc(Byte /(1024*1024*1024)*1000),
-    Integer = Val div 1000,
-    Decimal = Val - Integer * 1000,
-    io_lib:format("~w.~4..0wG", [Integer, Decimal]).
+-spec to_byte(pos_integer()) -> list().
+to_byte(Byte) when Byte < 1024 -> %% byte
+    io_lib:format("~w B", [Byte]);
+to_byte(Byte) when Byte < 1024*1024 ->  %% kilobyte
+    io_lib:format("~.4..f KB", [Byte/1024]);
+to_byte(Byte) when Byte < 1024*1024*1024 -> %% megabyte
+    io_lib:format("~.4..f MB", [Byte /(1024*1024)]);
+to_byte(Byte) when is_integer(Byte) -> %% megabyte
+    io_lib:format("~.4..f GB", [Byte /(1024*1024*1024)]);
+to_byte(Byte) -> %% process died
+    io_lib:format("~p", [Byte]).
 
 -spec mfa_to_list({atom(), atom(), integer()}) -> nonempty_string().
 mfa_to_list({Module, Fun, Arg}) ->
@@ -124,21 +114,25 @@ split_format_args([], _Flag, FAcc, AAcc) -> {FAcc, AAcc};
 split_format_args([{extend, A, W}|Rest], true, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
     F = <<"~-", WBin/binary, ".", WBin/binary, "ts">>,
-    split_format_args(Rest, false, [F|FAcc], [A|AAcc]);
+    split_format_args(Rest, false, [F|FAcc], [to_str(A)|AAcc]);
 split_format_args([{extend, A, W}|Rest], false, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
     F = <<"~-", WBin/binary, ".", WBin/binary, "ts", ?I/binary>>,
-    split_format_args(Rest, false, [F|FAcc], [A|AAcc]);
+    split_format_args(Rest, false, [F|FAcc], [to_str(A)|AAcc]);
 split_format_args([{extend_color, C, A, W}|Rest], true, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
     F = <<C/binary, "~-", WBin/binary, ".", WBin/binary, "ts", ?RESET/binary>>,
-    split_format_args(Rest, false, [F|FAcc], [A|AAcc]);
+    split_format_args(Rest, false, [F|FAcc], [to_str(A)|AAcc]);
 split_format_args([{extend_color, C, A, W}|Rest], false, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
     F = << C/binary, "~-", WBin/binary, ".", WBin/binary, "ts", ?RESET/binary, ?I/binary>>,
-    split_format_args(Rest, false, [F|FAcc], [A|AAcc]);
+    split_format_args(Rest, false, [F|FAcc], [to_str(A)|AAcc]);
 split_format_args([F|Rest], Flag, FAcc, AAcc) ->
     split_format_args(Rest, Flag, [F|FAcc], AAcc).
+
+to_str({byte, Bytes}) -> to_byte(Bytes);
+to_str(Int)when is_integer(Int) -> erlang:integer_to_list(Int);
+to_str(Str) -> Str.
 
 -spec parse_cmd(#view_opts{}, pid()) -> atom()|string().
 parse_cmd(ViewOpts, Pid) ->
@@ -257,9 +251,10 @@ next_redraw(LastTimeRef, Interval) ->
     LastTimeRef =/= undefined andalso erlang:cancel_timer(LastTimeRef),
     erlang:send_after(Interval, self(), redraw).
 
--spec to_row(undefined | integer()) -> integer().
-to_row(TerminalRow) when is_integer(TerminalRow) ->
-    TerminalRow;
-to_row(_) ->
-    {ok, TerminalRow} = io:rows(),
-    TerminalRow.
+-spec get_terminal_rows(boolean()) -> integer().
+get_terminal_rows(_AutoRow = false) -> ?DEFAULT_ROW_SIZE;
+get_terminal_rows(_AutoRow = true) ->
+    case io:rows() of
+        {error, _} -> ?DEFAULT_ROW_SIZE;
+        {ok, Rows} -> Rows
+    end.
