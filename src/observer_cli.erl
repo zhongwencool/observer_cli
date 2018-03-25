@@ -174,7 +174,7 @@ render_memory_process_line(ProcSum, MemSum, Interval) ->
     Row1 = ?render([
         ?GRAY_BG, ?W("Mem Type", 10), ?W("Size", 21),
         ?W("Mem Type", 25), ?W("Size", 21),
-        ?W("IO/GC", 20), ?W(["Interval: ", integer_to_binary(Interval), "ms"], 26),
+        ?W("IO/GC", 20), ?W(["Interval: ", erlang:integer_to_binary(Interval), "ms"], 26),
         ?RESET]),
     Row2 = ?render([
         ?W("Total", 10), ?W({byte, TotalMem}, 12), ?W("100.0%", 6),
