@@ -53,26 +53,26 @@ get_menu_title(Type) ->
     ["|", Home, "|", Ets, "|", App, "|", Inet, "|", Alloc, "|", Mnesia, "|", Help, "|"].
 
 get_menu_title2(home) ->
-    [select("h(HOME)"), unselect("e(ETS/SYS)"), unselect("a(APP)"), unselect("n(NET)"),
-     unselect("c(CARRIER)"), unselect("db(MNESIA)"), unselect("d(DOC)")];
+    [select("Home(H)"), unselect("Network(N)"), unselect("System(S)"), unselect("Ets(E)"),
+        unselect("Mnesia(M)"), unselect("App(A)"), unselect("Doc(D)")];
 get_menu_title2(ets) ->
-    [unselect("h(HOME)"), select("e(ETS/SYS)"), unselect("a(APP)"), unselect("n(NET)"),
-     unselect("c(CARRIER)"), unselect("db(MNESIA)"), unselect("d(DOC)")];
+    [unselect("Home(H)"), unselect("Network(N)"), unselect("System(S)"), select("Ets(E)"),
+        unselect("Mnesia(M)"), unselect("App(A)"), unselect("Doc(D)")];
 get_menu_title2(allocator) ->
-    [unselect("h(HOME)"), unselect("e(ETS/SYS)"), unselect("a(APP)"), unselect("n(NET)"),
-     select("c(CARRIER)"), unselect("db(MNESIA)"), unselect("d(DOC)")];
+    [unselect("Home(H)"), unselect("Network(N)"), select("System(S)"), unselect("Ets(E)"),
+        unselect("Mnesia(M)"), unselect("App(A)"), unselect("Doc(D)")];
 get_menu_title2(doc) ->
-    [unselect("h(HOME)"), unselect("e(ETS/SYS)"), unselect("a(APP)"), unselect("n(NET)"),
-     unselect("c(CARRIER)"), unselect("db(MNESIA)"), select("d(DOC)")];
+    [unselect("Home(H)"), unselect("Network(N)"), unselect("System(S)"), unselect("Ets(E)"),
+        unselect("Mnesia(M)"), unselect("App(A)"), select("Doc(D)")];
 get_menu_title2(inet) ->
-    [unselect("h(HOME)"), unselect("e(ETS/SYS)"), unselect("a(APP)"), select("n(NET)"),
-     unselect("c(CARRIER)"), unselect("db(MNESIA)"), unselect("d(DOC)")];
+    [unselect("Home(H)"), select("Network(N)"), unselect("System(S)"), unselect("Ets(E)"),
+         unselect("Mnesia(M)"), unselect("App(A)"), unselect("Doc(D)")];
 get_menu_title2(mnesia) ->
-    [unselect("h(HOME)"), unselect("e(ETS/SYS)"), unselect("a(APP)"), unselect("n(NET)"),
-     unselect("c(CARRIER)"), select("db(MNESIA)"), unselect("d(DOC)")];
+    [unselect("Home(H)"), unselect("Network(N)"), unselect("System(S)"), unselect("Ets(E)"),
+        select("Mnesia(M)"), unselect("App(A)"), unselect("Doc(D)")];
 get_menu_title2(app) ->
-    [unselect("h(HOME)"), unselect("e(ETS/SYS)"), select("a(APP)"), unselect("n(NET)"),
-      unselect("c(CARRIER)"), unselect("db(MNESIA)"), unselect("d(DOC)")].
+    [unselect("Home(H)"), unselect("Network(N)"), unselect("System(S)"), unselect("Ets(E)"),
+        unselect("Mnesia(M)"), select("App(A)"), unselect("Doc(D)")].
 
 select(Title) -> [?RED_BG, Title, ?RESET_BG].
 unselect(Title) -> [?L_GRAY_BG, Title, ?RESET_BG].
@@ -148,25 +148,26 @@ parse_cmd(ViewOpts, Pid) ->
         "oct\n" -> oct;
 
         "q\n" -> quit;
-        "h\n" ->
+        "Q\n" -> quit;
+        "H\n" ->
             erlang:exit(Pid, stop),
             observer_cli:start(ViewOpts);
-        "e\n" ->
+        "S\n" ->
             erlang:exit(Pid, stop),
             observer_cli_system:start(ViewOpts);
-        "a\n" ->
+        "A\n" ->
             erlang:exit(Pid, stop),
             observer_cli_application:start(ViewOpts);
-        "n\n" ->
+        "N\n" ->
             erlang:exit(Pid, stop),
             observer_cli_inet:start(ViewOpts);
-        "db\n" ->
+        "M\n" ->
             erlang:exit(Pid, stop),
             observer_cli_mnesia:start(ViewOpts);
-        "c\n" ->
+        "E\n" ->
             erlang:exit(Pid, stop),
-            observer_cli_allocator:start(ViewOpts);
-        "d\n" ->
+            observer_cli_ets:start(ViewOpts);
+        "D\n" ->
             erlang:exit(Pid, stop),
             observer_cli_help:start(ViewOpts);
         [$i | Interval] ->

@@ -55,13 +55,6 @@ render_help() ->
         "| \e[48;2;80;80;80mj13   \e[0m choose the 13th process(yellow line) recon process by recon:info/1         |\n",
         "| \e[48;2;80;80;80mp     \e[0m pause/unpause the view                                                     |\n",
         
-        "|\e[44m3. About h(HOME)'s Interval\e[49m                                                        |\n",
-        "| If \e[48;2;80;80;80mh(HOME)\e[0m's refreshtime is 2000ms, it will be divided into two sections          |\n",
-        "| 1. collect IO information:(2000 div 2) = 1000 ms by using recon:node_stats_list/2;|\n",
-        "| 2. the time of collecting process info deps on which mode you choose:             |\n",
-        "| |... using r mode's(recon:proc_count/2), the cost time is closed to 0             |\n",
-        "| |... using rr mode's(recon:proc_window/3), (2 * 1000 - 1000 div 2) = 3000 ms.     |\n",
-        
         "|\e[44m4. About h(HOME)'s IO Output/Input\e[49m                                                 |\n",
         "| Due to bytes in and out of the node, number of garbage collector runs, words of   |\n",
         "| memory that were garbage collected, and the global reductions count for the node  |\n",
