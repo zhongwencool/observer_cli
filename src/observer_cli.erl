@@ -252,8 +252,8 @@ render_scheduler_usage(SchedulerUsage, SchedulerNum) ->
 
 render_top_n_view(memory, MemoryList, Num, RankPos) ->
     Title = ?render([
-        ?W("Pid", 15), ?W(?RED, "Memory", 11), ?W("Name or Initial Call", 30),
-        ?W("Reductions", 10), ?W("Msg Queue", 10), ?W("Current Function", 47),
+        ?W("Pid", 15), ?W(?RED, "Memory", 12), ?W("Name or Initial Call", 38),
+        ?W("Reductions", 10), ?W("Msg Queue", 10), ?W("Current Function", 38),
         ?RESET]),
     {Rows, ProcList} =
         lists:foldr(fun(Pos, {Acc1, Acc2}) ->
@@ -272,8 +272,8 @@ render_top_n_view(memory, MemoryList, Num, RankPos) ->
     {ProcList, [Title | Rows]};
 render_top_n_view(binary_memory, MemoryList, Num, RankPos) ->
     Title = ?render([
-        ?W("Pid", 15), ?W(?RED, "BinMemory", 11), ?W("Name or Initial Call", 30),
-        ?W("Reductions", 10), ?W("Msg Queue", 10), ?W("Current Function", 47),
+        ?W("Pid", 15), ?W(?RED, "BinMemory", 12), ?W("Name or Initial Call", 38),
+        ?W("Reductions", 10), ?W("Msg Queue", 10), ?W("Current Function", 38),
         ?RESET]),
     {Rows, ProcList} =
         lists:foldr(fun(Pos, {Acc1, Acc2}) ->
@@ -292,8 +292,8 @@ render_top_n_view(binary_memory, MemoryList, Num, RankPos) ->
     {ProcList, [Title | Rows]};
 render_top_n_view(reductions, ReductionList, Num, RankPos) ->
     Title = ?render([
-        ?W("Pid", 15), ?W(?RED, "Reductions", 11), ?W("Name or Initial Call", 30),
-        ?W("Memory", 10), ?W("Msg Queue", 10), ?W("Current Function", 47),
+        ?W("Pid", 15), ?W(?RED, "Reductions", 12), ?W("Name or Initial Call", 38),
+        ?W("Memory", 10), ?W("Msg Queue", 10), ?W("Current Function", 38),
         ?RESET]),
     {Rows, ProcList} =
         lists:foldr(fun(Pos, {Acc1, Acc2}) ->
@@ -312,9 +312,8 @@ render_top_n_view(reductions, ReductionList, Num, RankPos) ->
     {ProcList, [Title | Rows]};
 render_top_n_view(total_heap_size, HeapList, Num, RankPos) ->
     Title = ?render([
-        ?W("Pid", 15), ?W(?RED, "TotalHeap", 11),
-        ?W("Name or Initial Call", 30),
-        ?W("Reductions", 10), ?W("Msg Queue", 10), ?W("Current Function", 47),
+        ?W("Pid", 15), ?W(?RED, "TotalHeap", 12), ?W("Name or Initial Call", 38),
+        ?W("Reductions", 10), ?W("Msg Queue", 10), ?W("Current Function", 38),
         ?RESET]),
     {Rows, ProcList} =
         lists:foldr(fun(Pos, {Acc1, Acc2}) ->
@@ -333,8 +332,8 @@ render_top_n_view(total_heap_size, HeapList, Num, RankPos) ->
     {ProcList, [Title | Rows]};
 render_top_n_view(message_queue_len, MQLenList, Num, RankPos) ->
     Title = ?render([
-        ?W("Pid", 15), ?W(?RED, "Msg Queue", 11), ?W("Name or Initial Call", 30),
-        ?W("Memory", 10), ?W("Reductions", 10), ?W("Current Function", 47),
+        ?W("Pid", 15), ?W(?RED, "Msg Queue", 12), ?W("Name or Initial Call", 38),
+        ?W("Memory", 10), ?W("Reductions", 10), ?W("Current Function", 38),
         ?RESET]),
     {Rows, ProcList} =
         lists:foldr(fun(Pos, {Acc1, Acc2}) ->
@@ -362,9 +361,9 @@ notify_pause_status() ->
     ?output("\e[31;1m PAUSE  INPUT (p, r/rr, b/bb, h/hh, m/mm) to resume or q to quit \e[0m~n").
 
 get_top_n_format(Pos, Pos) ->
-    "|\e[33m~-3.3w|~-12.12s|~12.12s | ~-30.30s | ~11.11s| ~-11.11s| ~-47.47s\e[0m|~n";
+    "|\e[33m~-3.3w|~-12.12s|~13.13s | ~-38.38s | ~11.11s| ~-11.11s| ~-38.38s\e[0m|~n";
 get_top_n_format(_Pos, _RankPos) ->
-    "|~-3.3w|~-12.12s|~12.12s | ~-30.30s | ~11.11s| ~-11.11s| ~-47.47s|~n".
+    "|~-3.3w|~-12.12s|~13.13s | ~-38.38s | ~11.11s| ~-11.11s| ~-38.38s|~n".
 
 refresh_next_time(proc_count, Type, Interval) ->
     erlang:send_after(Interval, self(), {proc_count, Type});
