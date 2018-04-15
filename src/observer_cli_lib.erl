@@ -14,8 +14,12 @@
 -export([mfa_to_list/1]).
 -export([render/1]).
 -export([next_redraw/2]).
--export([render_menu/3]).
+-export([render_menu/2]).
 -export([get_terminal_rows/1]).
+-export([select/1]).
+-export([unselect/1]).
+-export([parse_integer/2]).
+-export([quit/1]).
 
 -define(DEFAULT_ROW_SIZE, 46). %% the number from 13' mbp
 
@@ -23,12 +27,21 @@
 uptime() ->
     {UpTime, _} = erlang:statistics(wall_clock),
     {D, {H, M, S}} = calendar:seconds_to_daystime(UpTime div 1000),
-    [?GREEN, ?W(io_lib:format("~pDays ~p:~p:~p", [D, H, M, S]), 16), ?RESET].
+    Time = [
+        integer_to_list(D),
+        "Days ",
+        integer_to_list(H),
+        ":",
+        integer_to_list(M),
+        ":",
+        integer_to_list(S)
+    ],
+    [?GREEN, ?W(Time, 16), ?RESET].
 
 %% @doc 0.982342 -> 98.23%, 1 -> 100.0%
 -spec to_percent(float()) -> string().
-to_percent(Float)when Float < 0.1 -> io_lib:format("0~.2..f%", [Float*100]);
-to_percent(Float)when Float < 1 -> io_lib:format("~.2..f%", [Float*100]);
+to_percent(Float)when Float < 0.1 -> [$0, erlang:float_to_list(Float*100, [{decimals, 2}]), $%];
+to_percent(Float)when Float < 1 -> [erlang:float_to_list(Float*100, [{decimals, 2}]), $%];
 to_percent(_) -> "100.0%".
 
 -spec to_list(term()) -> list().
@@ -40,6 +53,7 @@ to_list(Port)when is_port(Port) -> erlang:port_to_list(Port);
 to_list(Ref) when is_reference(Ref) -> erlang:ref_to_list(Ref);
 to_list(Val) -> Val.
 
+-spec parse_integer(string(), pos_integer()) -> {ok, string()} |{error, term()}.
 parse_integer(Str, Min) ->
     case string:to_integer(Str) of
         {error, Reason} -> {error, Reason};
@@ -50,7 +64,7 @@ parse_integer(Str, Min) ->
 -spec get_menu_title('allocator'|'ets'|'doc'|'home'|'inet'|'mnesia'|'app') -> list().
 get_menu_title(Type) ->
     [Home, Ets, App, Inet, Alloc, Mnesia, Help] = get_menu_title2(Type),
-    ["|", Home, "|", Ets, "|", App, "|", Inet, "|", Alloc, "|", Mnesia, "|", Help, "|"].
+    [Home, "|", Ets, "|", App, "|", Inet, "|", Alloc, "|", Mnesia, "|", Help, "|"].
 
 get_menu_title2(home) ->
     [select("Home(H)"), unselect("Network(N)"), unselect("System(S)"), unselect("Ets(E)"),
@@ -74,61 +88,74 @@ get_menu_title2(app) ->
     [unselect("Home(H)"), unselect("Network(N)"), unselect("System(S)"), unselect("Ets(E)"),
         unselect("Mnesia(M)"), select("App(A)"), unselect("Doc(D)")].
 
+-spec select(string()) -> list().
 select(Title) -> [?RED_BG, Title, ?RESET_BG].
+
+-spec unselect(string()) -> list().
 unselect(Title) -> [?L_GRAY_BG, Title, ?RESET_BG].
 
 -spec green(list()) -> list().
 green(String) -> "\e[32;1m" ++ String ++ "\e[0m".
 
 -spec to_byte(pos_integer()) -> list().
-to_byte(Byte) when Byte < 1024 -> %% byte
-    io_lib:format("~w B", [Byte]);
+to_byte(Byte) when is_integer(Byte), Byte < 1024 -> %% byte
+    [erlang:integer_to_list(Byte), $ , $B];
 to_byte(Byte) when Byte < 1024*1024 ->  %% kilobyte
-    io_lib:format("~.4..f KB", [Byte/1024]);
+    [erlang:float_to_list(Byte/1024, [{decimals, 4}]), $ , $K, $B];
 to_byte(Byte) when Byte < 1024*1024*1024 -> %% megabyte
-    io_lib:format("~.4..f MB", [Byte /(1024*1024)]);
+    [erlang:float_to_list(Byte/(1024*1024), [{decimals, 4}]), $ , $M, $B];
 to_byte(Byte) when is_integer(Byte) -> %% megabyte
-    io_lib:format("~.4..f GB", [Byte /(1024*1024*1024)]);
+    [erlang:float_to_list(Byte/(1024*1024*1024), [{decimals, 4}]), $ , $G, $B];
 to_byte(Byte) -> %% process died
-    io_lib:format("~p", [Byte]).
+    [to_list(Byte)].
 
 -spec mfa_to_list({atom(), atom(), integer()}) -> nonempty_string().
 mfa_to_list({Module, Fun, Arg}) ->
-    atom_to_list(Module) ++ ":" ++
-        atom_to_list(Fun) ++ "/" ++
-        integer_to_list(Arg).
+    [atom_to_list(Module), ":", atom_to_list(Fun), "/", integer_to_list(Arg)].
 
 -spec render(list()) -> iolist().
 render(FA) ->
-    {F, A} = split_format_args(["|~n"|lists:reverse(["|"|FA])], true, [], []),
+    {F, A} = tidy_format_args(["|~n"|lists:reverse(["|"|FA])], true, [], []),
     io_lib:format(erlang:iolist_to_binary(F), A).
 
--spec render_menu(atom(), string(), integer()) -> iolist().
-render_menu(Type, Text, Extend) ->
+-spec render_menu(atom(), string()) -> iolist().
+render_menu(Type, Text) ->
     Title = get_menu_title(Type),
     UpTime = uptime(),
-    TitleWidth = ?COLUMN + Extend - erlang:length(UpTime),
+    TitleWidth = ?COLUMN + 133 - erlang:length(UpTime),
     ?render([?W([Title| Text], TitleWidth)|UpTime]).
 
-split_format_args([], _Flag, FAcc, AAcc) -> {FAcc, AAcc};
-split_format_args([{extend, A, W}|Rest], true, FAcc, AAcc) ->
+tidy_format_args([], _NeedLine, FAcc, AAcc) -> {FAcc, AAcc};
+
+tidy_format_args([{extend, A, W}|Rest], true, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
     F = <<"~-", WBin/binary, ".", WBin/binary, "ts">>,
-    split_format_args(Rest, false, [F|FAcc], [to_str(A)|AAcc]);
-split_format_args([{extend, A, W}|Rest], false, FAcc, AAcc) ->
+    tidy_format_args(Rest, false, [F|FAcc], [to_str(A)|AAcc]);
+tidy_format_args([{extend, A, W}|Rest], false, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
     F = <<"~-", WBin/binary, ".", WBin/binary, "ts", ?I/binary>>,
-    split_format_args(Rest, false, [F|FAcc], [to_str(A)|AAcc]);
-split_format_args([{extend_color, C, A, W}|Rest], true, FAcc, AAcc) ->
+    tidy_format_args(Rest, false, [F|FAcc], [to_str(A)|AAcc]);
+
+tidy_format_args([{extend_color, C, A, W}|Rest], true, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
     F = <<C/binary, "~-", WBin/binary, ".", WBin/binary, "ts", ?RESET/binary>>,
-    split_format_args(Rest, false, [F|FAcc], [to_str(A)|AAcc]);
-split_format_args([{extend_color, C, A, W}|Rest], false, FAcc, AAcc) ->
+    tidy_format_args(Rest, false, [F|FAcc], [to_str(A)|AAcc]);
+tidy_format_args([{extend_color, C, A, W}|Rest], false, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
-    F = << C/binary, "~-", WBin/binary, ".", WBin/binary, "ts", ?RESET/binary, ?I/binary>>,
-    split_format_args(Rest, false, [F|FAcc], [to_str(A)|AAcc]);
-split_format_args([F|Rest], Flag, FAcc, AAcc) ->
-    split_format_args(Rest, Flag, [F|FAcc], AAcc).
+    F = << C/binary, "~-", WBin/binary, ".", WBin/binary, "ts", ?I2/binary, ?RESET/binary>>,
+    tidy_format_args(Rest, false, [F|FAcc], [to_str(A)|AAcc]);
+
+tidy_format_args([{extend_color_2, C, A, W}|Rest], true, FAcc, AAcc) ->
+    WBin = erlang:integer_to_binary(W),
+    F = <<C/binary, "~-", WBin/binary, ".", WBin/binary, "ts", ?RESET/binary>>,
+    tidy_format_args(Rest, false, [F|FAcc], [to_str(A)|AAcc]);
+tidy_format_args([{extend_color_2, C, A, W}|Rest], false, FAcc, AAcc) ->
+    WBin = erlang:integer_to_binary(W),
+    F = << C/binary, "~-", WBin/binary, ".", WBin/binary, "ts", ?RESET/binary, ?I2/binary>>,
+    tidy_format_args(Rest, false, [F|FAcc], [to_str(A)|AAcc]);
+
+tidy_format_args([F|Rest], NeedLine, FAcc, AAcc) ->
+    tidy_format_args(Rest, NeedLine, [F|FAcc], AAcc).
 
 to_str({byte, Bytes}) -> to_byte(Bytes);
 to_str(Int)when is_integer(Int) -> erlang:integer_to_list(Int);
@@ -146,9 +173,8 @@ parse_cmd(ViewOpts, Pid) ->
         "so\n" -> send_oct;
         "cnt\n" -> cnt;
         "oct\n" -> oct;
-
-        "q\n" -> quit;
-        "Q\n" -> quit;
+        "q\n" -> quit(ViewOpts);
+        "Q\n" -> quit(ViewOpts);
         "H\n" ->
             erlang:exit(Pid, stop),
             observer_cli:start(ViewOpts);
@@ -244,12 +270,13 @@ parse_cmd(ViewOpts, Pid) ->
                 {error, _} -> error_input
             end;
         "\n" -> jump_to_process;
+        "d\n" -> dictionary;
         Input -> Input
     end.
 
 -spec next_redraw(reference(), pos_integer()) -> reference().
 next_redraw(LastTimeRef, Interval) ->
-    LastTimeRef =/= undefined andalso erlang:cancel_timer(LastTimeRef),
+    LastTimeRef =/= ?INIT_TIME_REF andalso erlang:cancel_timer(LastTimeRef),
     erlang:send_after(Interval, self(), redraw).
 
 -spec get_terminal_rows(boolean()) -> integer().
@@ -259,3 +286,7 @@ get_terminal_rows(_AutoRow = true) ->
         {error, _} -> ?DEFAULT_ROW_SIZE;
         {ok, Rows} -> Rows
     end.
+-spec quit(#view_opts{}) -> quit.
+quit(#view_opts{home = #home{tid = Tid}}) ->
+    catch ets:delete(Tid),
+    quit.

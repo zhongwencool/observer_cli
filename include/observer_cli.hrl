@@ -1,4 +1,5 @@
--define(COLUMN, 135).
+-define(COLUMN, 134).
+-define(INIT_TIME_REF, undefined).
 
 -define(MIN_INTERVAL, 1000).
 -define(DEFAULT_INTERVAL, 1500).
@@ -57,11 +58,16 @@
 -define(L_GRAY_BG, <<"\e[48;2;80;80;80m">>).
 -define(UNDERLINE, <<"\e[4m">>).
 -define(I, <<" | ">>).
+-define(I2, <<"|">>).
 -define(W(_C_, _A_, _W_), {extend_color, _C_, _A_, _W_}).
+-define(W2(_C_, _A_, _W_), {extend_color_2, _C_, _A_, _W_}).
 -define(W(_A_, _W_), {extend, _A_, _W_}).
+
+-define(SELECT(Text), observer_cli_lib:select(Text)).
+-define(UNSELECT(Text), observer_cli_lib:unselect(Text)).
 
 -define(render(_FA_), observer_cli_lib:render(_FA_)).
 -define(output(_F_, _A_), io:format(_F_, _A_)).
--define(output(_L_), io:format(_L_)).
+-define(output(_L_), ?output(_L_, [])).
 
 

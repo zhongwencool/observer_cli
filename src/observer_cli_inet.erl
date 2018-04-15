@@ -12,7 +12,7 @@ start(#view_opts{inet = #inet{interval = Interval, func = Function, type = Type}
     auto_row = AutoRow} = ViewOpts) ->
     Pid = spawn(fun() ->
         ?output(?CLEAR),
-        render_worker(Function, Type, Interval, undefined, 0, AutoRow)
+        render_worker(Function, Type, Interval, ?INIT_TIME_REF, 0, AutoRow)
                 end),
     manager(Pid, ViewOpts).
 
@@ -40,7 +40,7 @@ render_worker(Function, Type, Interval, LastTimeRef, Count, AutoRow) ->
     TerminalRow = observer_cli_lib:get_terminal_rows(AutoRow),
     Rows = TerminalRow - 4,
     Text = get_refresh_str(Function, Type, Interval, Rows),
-    Menu = observer_cli_lib:render_menu(inet, Text, 133),
+    Menu = observer_cli_lib:render_menu(inet, Text),
     InetInfo = inet_info(Function, Type, Rows, Interval, Count),
     InetView = render_inet_rows(InetInfo, Type, Function, Interval, Rows),
     LastLine = render_last_line(Interval),
@@ -67,7 +67,7 @@ render_inet_rows(Inets, Type, Function, _, _) ->
               end,
     Title = ?render([?UNDERLINE, ?GRAY_BG,
         ?W("Port", 12), ?W("Name", 12), ?W(NewType, 15), ?W("QueueSize", 23),
-        ?W("Memory", 23), ?W("Input", 15), ?W("Output", 20),
+        ?W("Memory", 23), ?W("Input", 15), ?W("Output", 19),
         ?RESET]),
     View =
         [begin
@@ -88,7 +88,7 @@ render_inet_rows(Inets, Type, Function, _, _) ->
              ?render([
                  ?W(observer_cli_lib:to_list(Port), 12), ?W(Name, 12),
                  ?W(NewValue, 15), ?W(QueueSize, 23),
-                 ?W(Memory, 23), ?W(Input, 15), ?W(Output, 20)
+                 ?W(Memory, 23), ?W(Input, 15), ?W(Output, 19)
              ])
          end || {Port, Value, Info} <- Inets],
     [Title | View].

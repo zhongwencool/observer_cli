@@ -11,7 +11,7 @@
 start(#view_opts{db = #db{interval = MillSecond}, auto_row = AutoRow} = HomeOpts) ->
     Pid = spawn(fun() ->
         ?output(?CLEAR),
-        render_worker(MillSecond, undefined, true, AutoRow)
+        render_worker(MillSecond, ?INIT_TIME_REF, true, AutoRow)
                 end),
     manager(Pid, HomeOpts).
 
@@ -23,7 +23,7 @@ render_worker(Interval, LastTimeRef, HideSystemTable, AutoRow) ->
     Rows = TerminalRow - 5,
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms"
         ++ " HideSystemTable:" ++ atom_to_list(HideSystemTable),
-    Menu = observer_cli_lib:render_menu(mnesia, Text, 133),
+    Menu = observer_cli_lib:render_menu(mnesia, Text),
     LastLine = render_last_line(Interval),
     case get_table_list(false) of
         {error, Reason} ->
@@ -63,7 +63,7 @@ render_mnesia(MnesiaList, Rows) ->
     Title = ?render([?UNDERLINE, ?GRAY_BG,
         ?W("name", 24), ?W("memory", 14), ?W("size", 14),
         ?W("type", 10), ?W("storage", 13), ?W("owner", 12),
-        ?W("index", 9), ?W("reg_name", 21),
+        ?W("index", 9), ?W("reg_name", 20),
         ?RESET]),
     View =
         [begin
@@ -74,7 +74,7 @@ render_mnesia(MnesiaList, Rows) ->
              ?render([
                  ?W(Name, 24), ?W(Memory, 14), ?W(Size, 14),
                  ?W(Type, 10), ?W(Storage, 13), ?W(Owner, 12),
-                 ?W(Index, 9), ?W(RegName, 21)
+                 ?W(Index, 9), ?W(RegName, 20)
              ])
          end || Mnesia <- lists:sublist(SortMnesiaList, Rows)],
     [Title | View].
@@ -133,5 +133,3 @@ get_table_list2(Owner, HideSys) ->
         end
                  end,
     lists:foldl(CollectFun, [], mnesia:system_info(tables)).
-
-

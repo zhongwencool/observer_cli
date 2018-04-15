@@ -6,7 +6,8 @@
 -export([start/1]).
 
 -define(UTIL_ALLOCATORS,
-    [binary_alloc,
+    [
+        binary_alloc,
         driver_alloc,
         eheap_alloc,
         ets_alloc,
@@ -24,7 +25,7 @@
 start(#view_opts{sys = #system{interval = Interval}} = ViewOpts) ->
     Pid = spawn(fun() ->
         ?output(?CLEAR),
-        render_worker(Interval, undefined)
+        render_worker(Interval, ?INIT_TIME_REF)
                 end),
     manager(Pid, ViewOpts).
 
@@ -47,7 +48,7 @@ render_worker(Interval, LastTimeRef) ->
     AverageBlockMaxes = recon_alloc:average_block_sizes(max),
     Sys = render_sys_info(),
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
-    Menu = observer_cli_lib:render_menu(allocator, Text, 133),
+    Menu = observer_cli_lib:render_menu(allocator, Text),
     BlockView = render_average_block_size_info(AverageBlockCurs, AverageBlockMaxes),
     HitView = render_cache_hit_rates(CacheHitInfo),
     LastLine = render_last_line(Interval),
@@ -60,7 +61,7 @@ render_worker(Interval, LastTimeRef) ->
     end.
 
 render_cache_hit_rates(CacheHitInfo) ->
-    Title = ?render([?UNDERLINE, ?GRAY_BG, ?W("Instance", 8), ?W("Hits", 10), ?W("Calls", 11), ?W("Hit Rate", 100), ?RESET]),
+    Title = ?render([?UNDERLINE, ?GRAY_BG, ?W("Instance", 8), ?W("Hits", 10), ?W("Calls", 11), ?W("Hit Rate", 99), ?RESET]),
     Len = erlang:length(CacheHitInfo),
     View = [begin
          [{hit_rate, HitRate}, {hits, Hit}, {calls, Call}] = proplists:get_value({instance, Seq}, CacheHitInfo),
@@ -71,7 +72,7 @@ render_cache_hit_rates(CacheHitInfo) ->
          ?render([?W(SeqStr, 8),
              ?W(observer_cli_lib:to_list(Hit), 10),
              ?W(observer_cli_lib:to_list(Call), 11),
-             ?W(Process, 91),
+             ?W(Process, 90),
              ?W(HitRateStr, 6)])
             end || Seq <- lists:seq(0, Len - 1)],
     [Title|View].
@@ -80,11 +81,11 @@ render_average_block_size_info(AverageBlockCurs, AverageBlockMaxes) ->
     Title = ?render([ ?UNDERLINE, ?GRAY_BG,
         ?W("Allocator Type", 16), ?W("Current Multiblock Carriers", 28),
         ?W("Max Multiblock Carriers", 28), ?W("Current SingleBlock Carriers", 27),
-        ?W("Max Single Block Carriers", 27), ?RESET]),
+        ?W("Max Single Block Carriers", 26), ?RESET]),
     View =
         [begin
              [Type, CMC, MMC, CSC, MSBC] = get_alloc(AllocKey, AverageBlockCurs, AverageBlockMaxes),
-             ?render([?W(Type, 16), ?W(CMC, 28), ?W(MMC, 28), ?W(CSC, 27), ?W(MSBC, 27)])
+             ?render([?W(Type, 16), ?W(CMC, 28), ?W(MMC, 28), ?W(CSC, 27), ?W(MSBC, 26)])
          end || AllocKey <- ?UTIL_ALLOCATORS],
     [Title|View].
 
@@ -126,7 +127,7 @@ render_sys_info(System, CPU, Memory, Statistics) ->
         ?W("Memory Usage", 11),
         ?W("State", 22),
         ?W("Statistics", 11),
-        ?W("State", 13),
+        ?W("State", 12),
         ?RESET]),
     NewSystem = [begin {Key, Value} end || {Key, Value} <- System,
         Key =/= "Compiled for" andalso Key =/= "smp Support"],
@@ -148,12 +149,12 @@ render_sys_info(System, CPU, Memory, Statistics) ->
                  ?W(SysKey, 22), ?W(to_list(SysVal), 8),
                  ?W(CpuKey, 23), ?W(to_list(CpuVal), 7),
                  ?W(MemKey, 11), ?W(observer_cli_lib:to_byte(MemValInt), 13), ?W(Percent, 6),
-                 ?W(StatisticsKey, 11), ?W(to_list(StatisticsVal), 13)
+                 ?W(StatisticsKey, 11), ?W(to_list(StatisticsVal), 12)
              ])
          end || Pos <- lists:seq(1, 6)],
     Compile = ?render([
         ?UNDERLINE,
-        ?W("compiled for", 22), ?W(to_list(proplists:get_value("Compiled for", System)), 113),
+        ?W("compiled for", 22), ?W(to_list(proplists:get_value("Compiled for", System)), 112),
         ?RESET]),
     [Title | (Row ++ [Compile])].
 

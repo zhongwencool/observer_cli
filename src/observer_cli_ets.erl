@@ -11,7 +11,7 @@
 start(#view_opts{ets = #ets{interval = Interval}, auto_row = AutoRow} = ViewOpts) ->
     Pid = spawn(fun() ->
         ?output(?CLEAR),
-        render_worker(Interval, undefined, AutoRow)
+        render_worker(Interval, ?INIT_TIME_REF, AutoRow)
                 end),
     manager(Pid, ViewOpts).
 
@@ -31,7 +31,7 @@ manager(ChildPid, #view_opts{ets = SysOpts} = ViewOpts) ->
 render_worker(Interval, LastTimeRef, AutoRow) ->
     TerminalRow = observer_cli_lib:get_terminal_rows(AutoRow),
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
-    Menu = observer_cli_lib:render_menu(ets, Text, 133),
+    Menu = observer_cli_lib:render_menu(ets, Text),
     Ets = render_ets_info(erlang:max(0, TerminalRow - 4)),
     LastLine = render_last_line(Interval),
     ?output([?CURSOR_TOP, Menu, Ets, LastLine]),
@@ -42,16 +42,15 @@ render_worker(Interval, LastTimeRef, AutoRow) ->
         _ -> render_worker(Interval, NextTimeRef, AutoRow)
     end.
 
-%% @doc List include all metrics in observer's Table Viewer.
 render_ets_info(Rows) ->
     AllEtsInfo = [begin get_ets_info(Tab) end || Tab <- ets:all()],
     SorEtsInfo = lists:sort(fun(Ets1, Ets2) ->
         proplists:get_value(memory, Ets1) > proplists:get_value(memory, Ets2)
                             end, AllEtsInfo),
     Title = ?render([?UNDERLINE, ?GRAY_BG,
-        ?W("Table Name", 36), ?W("Objects", 12), ?W("size", 10),
-        ?W("type", 11), ?W("protection", 10), ?W("keypos", 6),
-        ?W("write/read concurrency", 22), ?W("Owner Pid", 10),
+        ?W("Table Name", 36), ?W("Objects", 12), ?W("size", 12),
+        ?W("type", 13), ?W("protection", 10), ?W("keypos", 6),
+        ?W("write/read", 12), ?W("Owner Pid", 15),
         ?RESET]),
     RowView =
         [begin
@@ -61,9 +60,9 @@ render_ets_info(Rows) ->
              Write = get_value(write_concurrency, Ets), Read = get_value(read_concurrency, Ets),
              Owner = get_value(owner, Ets),
              ?render([
-                 ?W(Name, 36), ?W(Size, 10), ?W({byte, Memory}, 12),
-                 ?W(Type, 11), ?W(Protect, 10), ?W(KeyPos, 6),
-                 ?W(Write ++ "/" ++ Read, 22), ?W(Owner, 10)
+                 ?W(Name, 36), ?W(Size, 12), ?W({byte, Memory}, 12),
+                 ?W(Type, 13), ?W(Protect, 10), ?W(KeyPos, 6),
+                 ?W(Write ++ "/" ++ Read, 12), ?W(Owner, 15)
              ])
          end || Ets <- lists:sublist(SorEtsInfo, Rows)],
     [Title|RowView].

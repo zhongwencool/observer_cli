@@ -97,6 +97,11 @@ $ rebar3 shell --name 'observer_cli@127.0.0.1'
 - 1.0.9
   - Upgrade rebar3 to 3.3.3 for publish hex repo.
 
+----------------
+### Contributors
+| [<img src="https://avatars2.githubusercontent.com/u/3116225?v=4" width="50px;"/><br /><sub>zhongwencool</sub>](https://tried.cc)<br />[💻](https://github.com/zhongwencool/observer_cli/commits?author=zhongwencool) | [<img src="https://avatars2.githubusercontent.com/u/645514?v=4" width="50px;"/><br /><sub>Dimitrios Zorbas</sub>](https://github.com/Zorbash)<br />[💻](https://github.com/zhongwencool/observer_cli/commits?author=Zorbash) | [<img src="https://avatars1.githubusercontent.com/u/3191073?v=4" width="50px;"/><br /><sub>taotao</sub>](https://github.com/redink)<br />[💻](https://github.com/zhongwencool/observer_cli/commits?author=redink) | [<img src="https://avatars1.githubusercontent.com/u/1520926?v=4" width="50px;"/><br /><sub>Trevor Brown</sub>](https://github.com/Stratus3D)<br />[💻](https://github.com/zhongwencool/observer_cli/commits?author=Stratus3D) |
+| :---: | :---: | :---: | :---: |
+
 --------------------
 ### License
 See the [LICENSE](https://github.com/zhongwencool/observer_cli/blob/master/LICENSE) file for license rights and limitations (MIT).
