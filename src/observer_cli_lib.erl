@@ -173,7 +173,6 @@ parse_cmd(ViewOpts, Pid) ->
         "so\n" -> send_oct;
         "cnt\n" -> cnt;
         "oct\n" -> oct;
-        
         "q\n" -> quit(ViewOpts);
         "Q\n" -> quit(ViewOpts);
         "H\n" ->

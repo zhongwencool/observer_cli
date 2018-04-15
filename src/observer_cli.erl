@@ -251,8 +251,8 @@ render_scheduler_usage(SchedulerUsage, SchedulerNum) ->
 
 render_top_n_view(memory, MemoryList, Num, RankPos) ->
     Title = ?render([
-        ?W2(?GRAY_BG, "Pid", 16),?W2(?RED_BG, "Memory", 14), ?W(?GRAY_BG, "Name or Initial Call", 37),
-        ?W(?GRAY_BG, "Reductions", 21), ?W(?GRAY_BG, "MsgQueue", 10), ?W(?GRAY_BG, "Current Function", 34)
+        ?W2(?GRAY_BG, "Pid", 16),?W2(?RED_BG, "Memory", 14), ?W(?GRAY_BG, "Name or Initial Call", 38),
+        ?W(?GRAY_BG, "Reductions", 21), ?W(?GRAY_BG, "MsgQueue", 10), ?W(?GRAY_BG, "Current Function", 33)
     ]),
     {Rows, ProcList} =
         lists:foldr(fun(Pos, {Acc1, Acc2}) ->
@@ -271,8 +271,8 @@ render_top_n_view(memory, MemoryList, Num, RankPos) ->
     {ProcList, [Title | Rows]};
 render_top_n_view(binary_memory, MemoryList, Num, RankPos) ->
     Title = ?render([
-        ?W2(?GRAY_BG, "Pid", 16), ?W2(?RED_BG, "BinMemory", 14), ?W(?GRAY_BG, "Name or Initial Call", 37),
-        ?W(?GRAY_BG, "Reductions", 21), ?W(?GRAY_BG, "MsgQueue", 10), ?W(?GRAY_BG, "Current Function", 34)
+        ?W2(?GRAY_BG, "Pid", 16), ?W2(?RED_BG, "BinMemory", 14), ?W(?GRAY_BG, "Name or Initial Call", 38),
+        ?W(?GRAY_BG, "Reductions", 21), ?W(?GRAY_BG, "MsgQueue", 10), ?W(?GRAY_BG, "Current Function", 33)
     ]),
     {Rows, ProcList} =
         lists:foldr(fun(Pos, {Acc1, Acc2}) ->
@@ -311,8 +311,8 @@ render_top_n_view(reductions, ReductionList, Num, RankPos) ->
     {ProcList, [Title | Rows]};
 render_top_n_view(total_heap_size, HeapList, Num, RankPos) ->
     Title = ?render([
-        ?W2(?GRAY_BG, "Pid", 16), ?W2(?RED_BG, "TotalHeap", 14), ?W(?GRAY_BG, "Name or Initial Call", 37),
-        ?W(?GRAY_BG, "Reductions", 21), ?W(?GRAY_BG, "MsgQueue", 10), ?W(?GRAY_BG, "Current Function", 34)
+        ?W2(?GRAY_BG, "Pid", 16), ?W2(?RED_BG, "TotalHeap", 14), ?W(?GRAY_BG, "Name or Initial Call", 38),
+        ?W(?GRAY_BG, "Reductions", 21), ?W(?GRAY_BG, "MsgQueue", 10), ?W(?GRAY_BG, "Current Function", 33)
     ]),
     {Rows, ProcList} =
         lists:foldr(fun(Pos, {Acc1, Acc2}) ->
@@ -331,8 +331,8 @@ render_top_n_view(total_heap_size, HeapList, Num, RankPos) ->
     {ProcList, [Title | Rows]};
 render_top_n_view(message_queue_len, MQLenList, Num, RankPos) ->
     Title = ?render([
-        ?W2(?GRAY_BG, "Pid", 16), ?W2(?RED_BG, "MsgQueue", 11), ?W(?GRAY_BG, "Name or Initial Call", 37),
-        ?W(?GRAY_BG, "Memory", 13), ?W(?GRAY_BG, "Reductions", 21), ?W(?GRAY_BG, "Current Function", 34)
+        ?W2(?GRAY_BG, "Pid", 16), ?W2(?RED_BG, "MsgQueue", 11), ?W(?GRAY_BG, "Name or Initial Call", 38),
+        ?W(?GRAY_BG, "Memory", 13), ?W(?GRAY_BG, "Reductions", 21), ?W(?GRAY_BG, "Current Function", 33)
     ]),
     {Rows, ProcList} =
         lists:foldr(fun(Pos, {Acc1, Acc2}) ->
@@ -360,9 +360,9 @@ notify_pause_status() ->
     ?output("\e[31;1m PAUSE  INPUT (p, r/rr, b/bb, h/hh, m/mm) to resume or q to quit \e[0m~n").
 
 get_memory_format(Pos, Pos) ->
-    "|\e[33m~-3.3w|~-12.12s|~13.13s |~-37.37s|~21.21s| ~-9.9s|~-34.34s\e[0m|~n";
+    "|\e[33m~-3.3w|~-12.12s|~13.13s |~-38.38s|~21.21s| ~-9.9s|~-33.33s\e[0m|~n";
 get_memory_format(_Pos, _RankPos) ->
-    "|~-3.3w|~-12.12s|~13.13s |~-37.37s|~21.21s| ~-9.9s|~-34.34s|~n".
+    "|~-3.3w|~-12.12s|~13.13s |~-38.38s|~21.21s| ~-9.9s|~-33.33s|~n".
 
 get_reduction_format(Pos, Pos) ->
     "|\e[33m~-3.3w|~-12.12s|~21.21s|~-38.38s|~13.13s| ~-9.9s|~-34.34s\e[0m|~n";
