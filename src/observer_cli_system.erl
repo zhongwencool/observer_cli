@@ -51,7 +51,7 @@ render_worker(Interval, LastTimeRef) ->
     Menu = observer_cli_lib:render_menu(allocator, Text),
     BlockView = render_average_block_size_info(AverageBlockCurs, AverageBlockMaxes),
     HitView = render_cache_hit_rates(CacheHitInfo),
-    LastLine = render_last_line(Interval),
+    LastLine = observer_cli_lib:render_last_line("q(quit)"),
     ?output([?CURSOR_TOP, Menu, Sys, BlockView, HitView, LastLine]),
     NextTimeRef = observer_cli_lib:next_redraw(LastTimeRef, Interval),
     receive
@@ -88,11 +88,6 @@ render_average_block_size_info(AverageBlockCurs, AverageBlockMaxes) ->
              ?render([?W(Type, 16), ?W(CMC, 28), ?W(MMC, 28), ?W(CSC, 27), ?W(MSBC, 26)])
          end || AllocKey <- ?UTIL_ALLOCATORS],
     [Title|View].
-
-render_last_line(Interval) ->
-    Text = io_lib:format("i~w(Interval ~wms must >=1000ms) ", [Interval, Interval]),
-    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?UNDERLINE, ?GRAY_BG, "q(quit) ",
-        ?W(Text, ?COLUMN - 11), ?RESET]).
 
 get_alloc(Key, Curs, Maxes) ->
     CurRes = proplists:get_value(Key, Curs),

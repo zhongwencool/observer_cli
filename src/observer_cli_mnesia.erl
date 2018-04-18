@@ -24,7 +24,7 @@ render_worker(Interval, LastTimeRef, HideSystemTable, AutoRow) ->
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms"
         ++ " HideSystemTable:" ++ atom_to_list(HideSystemTable),
     Menu = observer_cli_lib:render_menu(mnesia, Text),
-    LastLine = render_last_line(Interval),
+    LastLine = observer_cli_lib:render_last_line("q(quit) system:false/true"),
     case get_table_list(false) of
         {error, Reason} ->
             ErrInfo = io_lib:format("Mnesia Error   ~p~n", [Reason]),
@@ -78,11 +78,6 @@ render_mnesia(MnesiaList, Rows) ->
              ])
          end || Mnesia <- lists:sublist(SortMnesiaList, Rows)],
     [Title | View].
-
-render_last_line(Interval) ->
-    Text = io_lib:format("i~w(Interval ~wms must >=1000ms system:false/true) ", [Interval, Interval]),
-    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?UNDERLINE, ?GRAY_BG, "q(quit) ",
-        ?W(Text, ?COLUMN - 11), ?RESET]).
 
 get_value(Key, List) ->
     observer_cli_lib:to_list(proplists:get_value(Key, List)).
