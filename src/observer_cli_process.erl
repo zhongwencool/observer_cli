@@ -305,15 +305,11 @@ parse_cmd(ViewOpts, Pid) ->
         "D\n" -> dict_view;
         "C\n" -> stack_view;
         "S\n" -> state_view;
-        [$i | Interval] ->
-            case observer_cli_lib:parse_integer(Interval, ?MIN_INTERVAL) of
-                {ok, NewInterval} -> {new_interval, NewInterval};
-                {error, _} -> error_input
-            end;
         "H\n" ->
             erlang:exit(Pid, stop),
             observer_cli:start(ViewOpts);
-        _ -> error_input
+        Number ->
+            observer_cli_lib:parse_integer(Number)
     end.
 
 render_state(Pid, Interval) ->

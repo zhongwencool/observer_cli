@@ -18,7 +18,7 @@
 -export([get_terminal_rows/1]).
 -export([select/1]).
 -export([unselect/1]).
--export([parse_integer/2]).
+-export([parse_integer/1]).
 -export([quit/1]).
 
 -define(DEFAULT_ROW_SIZE, 46). %% the number from 13' mbp
@@ -52,14 +52,6 @@ to_list(Binary) when is_binary(Binary) -> erlang:binary_to_list(Binary);
 to_list(Port)when is_port(Port) -> erlang:port_to_list(Port);
 to_list(Ref) when is_reference(Ref) -> erlang:ref_to_list(Ref);
 to_list(Val) -> Val.
-
--spec parse_integer(string(), pos_integer()) -> {ok, string()} |{error, term()}.
-parse_integer(Str, Min) ->
-    case string:to_integer(Str) of
-        {error, Reason} -> {error, Reason};
-        {Integer, _} when Integer >= Min -> {ok, Integer};
-        {_, _} -> {error, too_small}
-    end.
 
 -spec get_menu_title('allocator'|'ets'|'doc'|'home'|'inet'|'mnesia'|'app') -> list().
 get_menu_title(Type) ->
@@ -196,82 +188,22 @@ parse_cmd(ViewOpts, Pid) ->
         "D\n" ->
             erlang:exit(Pid, stop),
             observer_cli_help:start(ViewOpts);
-        [$i | Interval] ->
-            case parse_integer(Interval, ?MIN_INTERVAL) of
-                {ok, NewInterval} -> {new_interval, NewInterval};
-                {error, _} -> error_input
-            end;
 
         %% home
         "p\n" -> pause_or_resume;
-        "r\n" -> {proc_count, reductions, no_change};
-        "b\n" -> {proc_count, binary_memory, no_change};
-        "t\n" -> {proc_count, total_heap_size, no_change};
-        "m\n" -> {proc_count, memory, no_change};
-        "mq\n" -> {proc_count, message_queue_len, no_change};
-        "rr\n" -> {proc_window, reductions, no_change};
-        "bb\n" -> {proc_window, binary_memory, no_change};
-        "tt\n" -> {proc_window, total_heap_size, no_change};
-        "mm\n" -> {proc_window, memory, no_change};
-        "mmq\n" -> {proc_window, message_queue_len, no_change};
-        [$r, $r | Interval] ->
-            case parse_integer(Interval, ?MIN_INTERVAL) of
-                {ok, NewInterval} -> {proc_window, reductions, NewInterval};
-                {error, _} -> error_input
-            end;
-        [$b, $b | Interval] ->
-            case parse_integer(Interval, ?MIN_INTERVAL) of
-                {ok, NewInterval} -> {proc_window, binary_memory, NewInterval};
-                {error, _} -> error_input
-            end;
-        [$t, $t | Interval] ->
-            case parse_integer(Interval, ?MIN_INTERVAL) of
-                {ok, NewInterval} -> {proc_window, total_heap_size, NewInterval};
-                {error, _} -> error_input
-            end;
-        [$m, $m, $q | Interval] ->
-            case parse_integer(Interval, ?MIN_INTERVAL) of
-                {ok, NewInterval} -> {proc_window, message_queue_len, NewInterval};
-                {error, _} -> error_input
-            end;
-        [$m, $m | Interval] ->
-            case parse_integer(Interval, ?MIN_INTERVAL) of
-                {ok, NewInterval} -> {proc_window, memory, NewInterval};
-                {error, _} -> error_input
-            end;
-        [$r | Interval] ->
-            case parse_integer(Interval, ?MIN_INTERVAL) of
-                {ok, NewInterval} -> {proc_count, reductions, NewInterval};
-                {error, _} -> error_input
-            end;
-        [$b | Interval] ->
-            case parse_integer(Interval, ?MIN_INTERVAL) of
-                {ok, NewInterval} -> {proc_count, binary_memory, NewInterval};
-                {error, _} -> error_input
-            end;
-        [$t | Interval] ->
-            case parse_integer(Interval, ?MIN_INTERVAL) of
-                {ok, NewInterval} -> {proc_count, total_heap_size, NewInterval};
-                {error, _} -> error_input
-            end;
-        [$m, $q | Interval] ->
-            case parse_integer(Interval, ?MIN_INTERVAL) of
-                {ok, NewInterval} -> {proc_count, message_queue_len, NewInterval};
-                {error, _} -> error_input
-            end;
-        [$m | Interval] ->
-            case parse_integer(Interval, ?MIN_INTERVAL) of
-                {ok, NewInterval} -> {proc_count, memory, NewInterval};
-                {error, _} -> error_input
-            end;
-        [$j | Pos] ->
-            case parse_integer(Pos, 1) of
-                {ok, NewPos} -> {jump_to_process, NewPos};
-                {error, _} -> error_input
-            end;
+        "r\n" -> {func, proc_count, reductions};
+        "b\n" -> {func, proc_count, binary_memory};
+        "t\n" -> {func, proc_count, total_heap_size};
+        "m\n" -> {func, proc_count, memory};
+        "mq\n" -> {func, proc_count, message_queue_len};
+        "rr\n" -> {func, proc_window, reductions};
+        "bb\n" -> {func, proc_window, binary_memory};
+        "tt\n" -> {func, proc_window, total_heap_size};
+        "mm\n" -> {func, proc_window, memory};
+        "mmq\n" -> {func, proc_window, message_queue_len};
         "\n" -> jump_to_process;
-        "d\n" -> dictionary;
-        Input -> Input
+        Number ->
+            parse_integer(Number)
     end.
 
 -spec next_redraw(reference(), pos_integer()) -> reference().
@@ -290,3 +222,18 @@ get_terminal_rows(_AutoRow = true) ->
 quit(#view_opts{home = #home{tid = Tid}}) ->
     catch ets:delete(Tid),
     quit.
+
+-spec parse_integer(string()) -> {term(), term()}.
+parse_integer(Number) ->
+    case string:to_integer(Number) of
+        {error, _Reason} ->
+            {input_illegal, Number};
+        {Integer, _} ->
+            if Integer >= ?MIN_INTERVAL ->
+                {new_interval, Integer};
+                Integer > 0 ->
+                    {jump_to_process, Integer};
+                true ->
+                    {input_illegal, Number}
+            end
+    end.

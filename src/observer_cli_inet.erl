@@ -5,8 +5,6 @@
 %% API
 -export([start/1]).
 
--define(INET_COLUMN_WIDTH, 85).
-
 -spec start(view_opts()) -> no_return.
 start(#view_opts{inet = #inet{interval = Interval, func = Function, type = Type},
     auto_row = AutoRow} = ViewOpts) ->
@@ -38,20 +36,20 @@ manager(ChildPid, ViewOpts = #view_opts{inet = InetOpts}) ->
 
 render_worker(Function, Type, Interval, LastTimeRef, Count, AutoRow) ->
     TerminalRow = observer_cli_lib:get_terminal_rows(AutoRow),
-    Rows = TerminalRow - 4,
-    Text = get_refresh_str(Function, Type, Interval, Rows),
+    Row = TerminalRow - 4,
+    Text = get_menu_str(Function, Type, Interval, Row),
     Menu = observer_cli_lib:render_menu(inet, Text),
-    InetInfo = inet_info(Function, Type, Rows, Interval, Count),
-    InetView = render_inet_rows(InetInfo, Type, Function, Interval, Rows),
+    InetInfo = inet_info(Function, Type, Row, Interval, Count),
+    InetView = render_inet_rows(InetInfo, Type, Function, Interval, Row),
     LastLine = render_last_line(Interval),
     ?output([?CURSOR_TOP, Menu, InetView, LastLine]),
     NewInterval = case Function of inet_count -> Interval; inet_window -> 10 end,
     TimeRef = observer_cli_lib:next_redraw(LastTimeRef, NewInterval),
     receive
-        quit -> quit;
         {new_interval, NewInterval} ->
             ?output(?CLEAR),
             render_worker(Function, Type, NewInterval, TimeRef, Count + 1, AutoRow);
+        quit -> quit;
         _ -> render_worker(Function, Type, Interval, TimeRef, Count + 1, AutoRow)
     end.
 
@@ -59,12 +57,13 @@ render_inet_rows([], Type, inet_count, _Interval, Rows) ->
     io_lib:format("Get nothing for recon:inet_count(~p, ~p)~n", [Type, Rows]);
 render_inet_rows([], Type, inet_window, Interval, Rows) ->
     io_lib:format("Get nothing for recon:inet_window(~p, ~p, ~p)~n", [Type, Rows, Interval]);
-render_inet_rows(Inets, Type, Function, _, _) ->
-    NewType = case Type of
-                  cnt -> "cnt(recv_cnt+send_cnt)";
-                  oct -> "oct(recv_oct+send_oct)";
-                  _ -> atom_to_list(Type)
-              end,
+render_inet_rows(InetList, Type, Function, _, _) ->
+    NewType =
+        case Type of
+            cnt -> "cnt(recv_cnt+send_cnt)";
+            oct -> "oct(recv_oct+send_oct)";
+            _ -> erlang:atom_to_list(Type)
+        end,
     Title = ?render([?UNDERLINE, ?GRAY_BG,
         ?W("Port", 12), ?W("Name", 12), ?W(NewType, 15), ?W("QueueSize", 23),
         ?W("Memory", 23), ?W("Input", 15), ?W("Output", 19),
@@ -90,18 +89,18 @@ render_inet_rows(Inets, Type, Function, _, _) ->
                  ?W(NewValue, 15), ?W(QueueSize, 23),
                  ?W(Memory, 23), ?W(Input, 15), ?W(Output, 19)
              ])
-         end || {Port, Value, Info} <- Inets],
+         end || {Port, Value, Info} <- InetList],
     [Title | View].
 
 render_last_line(Interval) ->
-    Format = "i~w(Interval ~wms must>=1000) ic(inet_count) iw(inet_window) rc(recv_cnt) ro(recv_oct) sc(send_cnt) so(send_oct) cnt oct",
+    Format = "i~w(Interval ~wms must>=1500) ic(inet_count) iw(inet_window) rc(recv_cnt) ro(recv_oct) sc(send_cnt) so(send_oct) cnt oct",
     Text = io_lib:format(Format, [Interval, Interval]),
     ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?UNDERLINE, ?GRAY_BG, "q(quit) ",
         ?W(Text, ?COLUMN - 11), ?RESET]).
 
-get_refresh_str(inet_count, Type, Interval, Rows) ->
+get_menu_str(inet_count, Type, Interval, Rows) ->
     io_lib:format("recon:inet_count(~p, ~w) Interval:~wms", [Type, Rows, Interval]);
-get_refresh_str(inet_window, Type, Interval, Rows) ->
+get_menu_str(inet_window, Type, Interval, Rows) ->
     io_lib:format("recon:inet_window(~p, ~w, ~w) Interval:~wms", [Type, Rows, Interval, Interval]).
 
 inet_info(inet_count, Type, Num, _, _) -> recon:inet_count(Type, Num);
