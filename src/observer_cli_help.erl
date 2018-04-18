@@ -13,7 +13,7 @@ start(#view_opts{help = #help{interval = Interval}} = ViewOpts) ->
         Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
         Menu = observer_cli_lib:render_menu(doc, Text),
         Help = render_help(),
-        LastLine = render_last_line(),
+        LastLine = observer_cli_lib:render_last_line("q(quit)"),
         ?output([?CLEAR, Menu, Help, ?UNDERLINE, ?GRAY_BG, LastLine, ?RESET_BG, ?RESET]),
         render_worker(Interval)
                      end),
@@ -39,7 +39,7 @@ render_worker(Interval) ->
         quit ->
             MenuQ = observer_cli_lib:render_menu(doc, Text),
             HelpQ = render_help(),
-            LastLine = render_last_line(),
+            LastLine = observer_cli_lib:render_last_line("q(quit)"),
             ?output([?CURSOR_TOP, MenuQ, HelpQ, ?UNDERLINE, ?GRAY_BG, LastLine, ?RESET_BG, ?RESET])
     end.
 
@@ -71,6 +71,3 @@ render_help() ->
         "refer to https://github.com/ferd/recon/blob/master/src/recon.erl                   \n",
         "|Any issue please visit: https://github.com/zhongwencool/observer_cli/issues       \n"
     ].
-
-render_last_line() ->
-    io_lib:format("|~137.s|~n", [""]).

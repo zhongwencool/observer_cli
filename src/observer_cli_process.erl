@@ -254,8 +254,7 @@ render_reduction_memory(Reduction, Memory, ReductionQ, MemoryQ) ->
     {NewRed, NewMem, View}.
 
 render_last_line() ->
-    Format = "|\e[31;1mINPUT: \e[0m\e[7mq(quit) ~117.117s\e[0m|~n",
-    io_lib:format(Format, [" "]).
+    io_lib:format("|\e[7mq(quit) ~124.124s\e[0m|~n", [" "]).
 
 get_chart_format(Queue) ->
     List = queue:to_list(Queue),

@@ -10,6 +10,8 @@
 
 -define(CPU_ALARM_THRESHOLD, 0.8). %% cpu >= this value will be highlight
 -define(COUNT_ALARM_THRESHOLD, 0.85). %% port or process reach max_limit * 0.85 will be highlight
+-define(LAST_LINE, "q(quit) p(pause) r/rr(reduction) " ++
+    "m/mm(memory) b/bb(binary memory) t/tt(total heap size) mq/mmq(message queue) 9(process 9 detail)").
 
 -define(STABLE_SYSTEM_KEY, [system_version, process_limit, smp_support,
     port_limit, ets_limit, logical_processors, multi_scheduling]).
@@ -104,7 +106,7 @@ redraw_running(#home{tid = Tid, interval = Interval, func = Func, type = Type, c
     SystemLine = render_system_line(StableInfo, UseMemInt, AllocatedMemInt, UnusedMemInt, Processes),
     MemLine = render_memory_process_line(Processes, Schedulers, Interval),
     {PidList, RankLine} = render_top_n_view(Type, TopList, ProcessRows, RankPos),
-    LastLine = render_last_line(),
+    LastLine = observer_cli_lib:render_last_line(?LAST_LINE),
     ?output([?CURSOR_TOP, MenuLine, SystemLine, MemLine, CPULine, RankLine, LastLine]),
     
     catch ets:insert(Tid, PidList),
@@ -349,12 +351,6 @@ render_top_n_view(message_queue_len, MQLenList, Num, RankPos) ->
             {[R | Acc1], [{Pos, Pid} | Acc2]}
                     end, {[], []}, lists:seq(1, erlang:min(Num, erlang:length(MQLenList)))),
     {ProcList, [Title | Rows]}.
-
-render_last_line() ->
-    Text = "q(quit) p(pause) r/rr(reduction) " ++
-        "m/mm(memory) b/bb(binary memory) t/tt(total heap size) mq/mmq(message queue) 9(process 9 detail)",
-    ?render([?UNDERLINE, ?GRAY_BG,
-        ?W(Text, ?COLUMN + 3), ?RESET]).
 
 notify_pause_status() ->
     ?output("\e[31;1m PAUSE  INPUT (p, r/rr, b/bb, h/hh, m/mm) to resume or q to quit \e[0m~n").
