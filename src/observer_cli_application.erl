@@ -30,17 +30,13 @@ render_worker(Interval) ->
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
     Menu = observer_cli_lib:render_menu(app, Text),
     Info = render_application_info(),
-    LastLine = render_last_line(),
+    LastLine = observer_cli_lib:render_last_line("q(quit)"),
     ?output([?CURSOR_TOP, Menu, Info, LastLine]),
     erlang:send_after(Interval, self(), redraw),
     receive
         quit -> quit;
         redraw -> render_worker(Interval)
     end.
-
-render_last_line() ->
-    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?UNDERLINE, ?GRAY_BG, "q(quit)",
-        ?W(" ", ?COLUMN - 10), ?RESET]).
 
 render_application_info() ->
     [

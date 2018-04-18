@@ -5,6 +5,8 @@
 %% API
 -export([start/1]).
 
+-define(LAST_LINE, "q(quit) ic(inet_count) iw(inet_window) rc(recv_cnt) ro(recv_oct) sc(send_cnt) so(send_oct) cnt oct").
+
 -spec start(view_opts()) -> no_return.
 start(#view_opts{inet = #inet{interval = Interval, func = Function, type = Type},
     auto_row = AutoRow} = ViewOpts) ->
@@ -41,7 +43,7 @@ render_worker(Function, Type, Interval, LastTimeRef, Count, AutoRow) ->
     Menu = observer_cli_lib:render_menu(inet, Text),
     InetInfo = inet_info(Function, Type, Row, Interval, Count),
     InetView = render_inet_rows(InetInfo, Type, Function, Interval, Row),
-    LastLine = render_last_line(Interval),
+    LastLine = observer_cli_lib:render_last_line(?LAST_LINE),
     ?output([?CURSOR_TOP, Menu, InetView, LastLine]),
     NewInterval = case Function of inet_count -> Interval; inet_window -> 10 end,
     TimeRef = observer_cli_lib:next_redraw(LastTimeRef, NewInterval),
@@ -91,12 +93,6 @@ render_inet_rows(InetList, Type, Function, _, _) ->
              ])
          end || {Port, Value, Info} <- InetList],
     [Title | View].
-
-render_last_line(Interval) ->
-    Format = "i~w(Interval ~wms must>=1500) ic(inet_count) iw(inet_window) rc(recv_cnt) ro(recv_oct) sc(send_cnt) so(send_oct) cnt oct",
-    Text = io_lib:format(Format, [Interval, Interval]),
-    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?UNDERLINE, ?GRAY_BG, "q(quit) ",
-        ?W(Text, ?COLUMN - 11), ?RESET]).
 
 get_menu_str(inet_count, Type, Interval, Rows) ->
     io_lib:format("recon:inet_count(~p, ~w) Interval:~wms", [Type, Rows, Interval]);

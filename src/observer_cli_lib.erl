@@ -20,6 +20,7 @@
 -export([unselect/1]).
 -export([parse_integer/1]).
 -export([quit/1]).
+-export([render_last_line/1]).
 
 -define(DEFAULT_ROW_SIZE, 46). %% the number from 13' mbp
 
@@ -237,3 +238,7 @@ parse_integer(Number) ->
                     {input_illegal, Number}
             end
     end.
+
+-spec render_last_line(string()) -> list().
+render_last_line(Text) ->
+    ?render([?UNDERLINE, ?GRAY_BG, ?W(Text, ?COLUMN + 3), ?RESET]).

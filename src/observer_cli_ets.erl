@@ -33,7 +33,7 @@ render_worker(Interval, LastTimeRef, AutoRow) ->
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
     Menu = observer_cli_lib:render_menu(ets, Text),
     Ets = render_ets_info(erlang:max(0, TerminalRow - 4)),
-    LastLine = render_last_line(Interval),
+    LastLine = observer_cli_lib:render_last_line("q(quit)"),
     ?output([?CURSOR_TOP, Menu, Ets, LastLine]),
     NextTimeRef = observer_cli_lib:next_redraw(LastTimeRef, Interval),
     receive
@@ -66,11 +66,6 @@ render_ets_info(Rows) ->
              ])
          end || Ets <- lists:sublist(SorEtsInfo, Rows)],
     [Title|RowView].
-
-render_last_line(Interval) ->
-    Text = io_lib:format("i~w(Interval ~wms must >=1000ms) ", [Interval, Interval]),
-    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?UNDERLINE, ?GRAY_BG, "q(quit) ",
-        ?W(Text, ?COLUMN - 11), ?RESET]).
 
 get_ets_info(Tab) ->
     case catch ets:info(Tab) of
