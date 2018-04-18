@@ -60,15 +60,15 @@ manager(ChildPid, Opts) ->
         {new_interval, NewInterval} ->
             erlang:exit(ChildPid, stop),
             start(Opts#view_opts{home = Home#home{interval = NewInterval}});
-        {Func, Type, no_change} ->
+        {jump_to_process, Pos} ->
+            start_process_view(Tid, Pos, ChildPid, Opts);
+        jump_to_process ->
+            start_process_view(Tid, CurPos, ChildPid, Opts);
+        {func, Func, Type} ->
             erlang:exit(ChildPid, stop),
             start(Opts#view_opts{home = Home#home{func = Func, type = Type}});
-        {Func, Type, Interval} ->
-            erlang:exit(ChildPid, stop),
-            start(Opts#view_opts{home = Home#home{func = Func, type = Type, interval = Interval}});
-        {jump_to_process, Pos} -> start_process_view(Tid, Pos, ChildPid, Opts);
-        jump_to_process -> start_process_view(Tid, CurPos, ChildPid, Opts);
-        _ -> manager(ChildPid, Opts)
+        _ ->
+            manager(ChildPid, Opts)
     end.
 
 render_worker(#home{} = Home, AutoRow) ->
@@ -130,11 +130,11 @@ render_system_line(StableInfo, UseMem, AllocatedMem, UnusedMem, ProcSum) ->
         ?RESET]),
     Row = ?render([
         ?W("Proc Count", 10), ?W2(ProcWarning, ProcCount, 22),
-        ?W(" Smp Support", 25), ?W(SmpSupport, 22),
+        ?W(" Smp Support", 26), ?W(SmpSupport, 21),
         ?W("Allocted Mem", 20), ?W({byte, AllocatedMem}, 15), ?W("100.0%", 6),
         "\n|",
         ?W("Port Count", 10), ?W2(PortWarning, PortCount, 22),
-        ?W(" Multi Scheduling", 25), ?W(MultiScheduling, 22),
+        ?W(" Multi Scheduling", 26), ?W(MultiScheduling, 21),
         ?W("Use Mem", 20), ?W({byte, UseMem}, 15), ?W(UsePercent, 6),
         "\n|",
         ?UNDERLINE, ?W("Ets Limit", 10), ?W(EtsLimit, 21),
@@ -251,7 +251,7 @@ render_scheduler_usage(SchedulerUsage, SchedulerNum) ->
 
 render_top_n_view(memory, MemoryList, Num, RankPos) ->
     Title = ?render([
-        ?W2(?GRAY_BG, "Pid", 16),?W2(?RED_BG, "Memory", 14), ?W(?GRAY_BG, "Name or Initial Call", 38),
+        ?W2(?GRAY_BG, "No | Pid", 16), ?W2(?RED_BG, "Memory", 14), ?W(?GRAY_BG, "Name or Initial Call", 38),
         ?W(?GRAY_BG, "Reductions", 21), ?W(?GRAY_BG, "MsgQueue", 10), ?W(?GRAY_BG, "Current Function", 33)
     ]),
     {Rows, ProcList} =
@@ -271,7 +271,7 @@ render_top_n_view(memory, MemoryList, Num, RankPos) ->
     {ProcList, [Title | Rows]};
 render_top_n_view(binary_memory, MemoryList, Num, RankPos) ->
     Title = ?render([
-        ?W2(?GRAY_BG, "Pid", 16), ?W2(?RED_BG, "BinMemory", 14), ?W(?GRAY_BG, "Name or Initial Call", 38),
+        ?W2(?GRAY_BG, "No | Pid", 16), ?W2(?RED_BG, "BinMemory", 14), ?W(?GRAY_BG, "Name or Initial Call", 38),
         ?W(?GRAY_BG, "Reductions", 21), ?W(?GRAY_BG, "MsgQueue", 10), ?W(?GRAY_BG, "Current Function", 33)
     ]),
     {Rows, ProcList} =
@@ -291,7 +291,7 @@ render_top_n_view(binary_memory, MemoryList, Num, RankPos) ->
     {ProcList, [Title | Rows]};
 render_top_n_view(reductions, ReductionList, Num, RankPos) ->
     Title = ?render([
-        ?W2(?GRAY_BG, "Pid", 16), ?W2(?RED_BG, "Reductions", 21), ?W(?GRAY_BG, "Name or Initial Call", 38),
+        ?W2(?GRAY_BG, "No | Pid", 16), ?W2(?RED_BG, "Reductions", 21), ?W(?GRAY_BG, "Name or Initial Call", 38),
         ?W(?GRAY_BG, "Memory", 13), ?W(?GRAY_BG, "MsgQueue", 10), ?W(?GRAY_BG, "Current Function", 34)
     ]),
     {Rows, ProcList} =
@@ -311,7 +311,7 @@ render_top_n_view(reductions, ReductionList, Num, RankPos) ->
     {ProcList, [Title | Rows]};
 render_top_n_view(total_heap_size, HeapList, Num, RankPos) ->
     Title = ?render([
-        ?W2(?GRAY_BG, "Pid", 16), ?W2(?RED_BG, "TotalHeap", 14), ?W(?GRAY_BG, "Name or Initial Call", 38),
+        ?W2(?GRAY_BG, "No | Pid", 16), ?W2(?RED_BG, "TotalHeapSize", 14), ?W(?GRAY_BG, "Name or Initial Call", 38),
         ?W(?GRAY_BG, "Reductions", 21), ?W(?GRAY_BG, "MsgQueue", 10), ?W(?GRAY_BG, "Current Function", 33)
     ]),
     {Rows, ProcList} =
@@ -331,8 +331,8 @@ render_top_n_view(total_heap_size, HeapList, Num, RankPos) ->
     {ProcList, [Title | Rows]};
 render_top_n_view(message_queue_len, MQLenList, Num, RankPos) ->
     Title = ?render([
-        ?W2(?GRAY_BG, "Pid", 16), ?W2(?RED_BG, "MsgQueue", 11), ?W(?GRAY_BG, "Name or Initial Call", 38),
-        ?W(?GRAY_BG, "Memory", 13), ?W(?GRAY_BG, "Reductions", 21), ?W(?GRAY_BG, "Current Function", 33)
+        ?W2(?GRAY_BG, "No | Pid", 16), ?W2(?RED_BG, "MsgQueue", 11), ?W(?GRAY_BG, "Name or Initial Call", 37),
+        ?W(?GRAY_BG, "Memory", 13), ?W(?GRAY_BG, "Reductions", 21), ?W(?GRAY_BG, "Current Function", 34)
     ]),
     {Rows, ProcList} =
         lists:foldr(fun(Pos, {Acc1, Acc2}) ->
@@ -352,27 +352,27 @@ render_top_n_view(message_queue_len, MQLenList, Num, RankPos) ->
 
 render_last_line() ->
     Text = "q(quit) p(pause) r/rr(reduction) " ++
-        "m/mm(memory) b/bb(binary memory) t/tt(total heap size) mq/mmq(message queue) j9(jump to process 9)",
-    ?render([?UNDERLINE, ?RED, "INPUT:", ?RESET, ?UNDERLINE, ?GRAY_BG,
-        ?W(Text, ?COLUMN - 3), ?RESET]).
+        "m/mm(memory) b/bb(binary memory) t/tt(total heap size) mq/mmq(message queue) 9(process 9 detail)",
+    ?render([?UNDERLINE, ?GRAY_BG,
+        ?W(Text, ?COLUMN + 3), ?RESET]).
 
 notify_pause_status() ->
     ?output("\e[31;1m PAUSE  INPUT (p, r/rr, b/bb, h/hh, m/mm) to resume or q to quit \e[0m~n").
 
 get_memory_format(Pos, Pos) ->
-    "|\e[33m~-3.3w|~-12.12s|~13.13s |~-38.38s|~21.21s| ~-9.9s|~-33.33s\e[0m|~n";
+    "|\e[42m~-3.3w|~-12.12s|~13.13s |~-38.38s|~21.21s| ~-9.9s|~-33.33s\e[49m|~n";
 get_memory_format(_Pos, _RankPos) ->
     "|~-3.3w|~-12.12s|~13.13s |~-38.38s|~21.21s| ~-9.9s|~-33.33s|~n".
 
 get_reduction_format(Pos, Pos) ->
-    "|\e[33m~-3.3w|~-12.12s|~21.21s|~-38.38s|~13.13s| ~-9.9s|~-34.34s\e[0m|~n";
+    "|\e[42m~-3.3w|~-12.12s|~-21.21s|~-38.38s|~13.13s| ~-9.9s|~-34.34s\e[49m|~n";
 get_reduction_format(_Pos, _RankPos) ->
-    "|~-3.3w|~-12.12s|~21.21s|~-38.38s|~13.13s| ~-9.9s|~-34.34s|~n".
+    "|~-3.3w|~-12.12s|~-21.21s|~-38.38s|~13.13s| ~-9.9s|~-34.34s|~n".
 
 get_message_queue_format(Pos, Pos) ->
-    "|\e[33m~-3.3w|~-12.12s|~-11.11s|~-37.37s|~-13.13s|~-21.21s|~-34.34s\e[0m|~n";
+    "|\e[42m~-3.3w|~-12.12s|~-11.11s|~-37.37s|~13.13s|~-21.21s|~-34.34s\e[49m|~n";
 get_message_queue_format(_Pos, _RankPos) ->
-    "|~-3.3w|~-12.12s|~-11.11s|~-37.37s|~-13.13s|~-21.21s|~-34.34s|~n".
+    "|~-3.3w|~-12.12s|~-11.11s|~-37.37s|~13.13s|~-21.21s|~-34.34s|~n".
 
 refresh_next_time(proc_count, Type, Interval) ->
     erlang:send_after(Interval, self(), {proc_count, Type});
@@ -382,7 +382,7 @@ refresh_next_time(proc_window, Type, _Interval) ->
 get_current_initial_call(Call) ->
     {_, CurFun} = lists:keyfind(current_function, 1, Call),
     {_, InitialCall} = lists:keyfind(initial_call, 1, Call),
-    {observer_cli_lib:mfa_to_list(CurFun), observer_cli_lib:mfa_to_list(InitialCall)}.
+    {observer_cli_lib:mfa_to_list(CurFun), InitialCall}.
 
 get_port_proc_info(PortLimit, ProcLimit, ProcSum) ->
     ProcCountInt = proplists:get_value(process_count, ProcSum),
@@ -458,11 +458,15 @@ process_bar_format_style(Percent1, Percent2, Percent3, Percent4, IsLastLine) ->
 get_top_n_info(Pos, List) ->
     {Pid, Val, Call = [IsName | _]} = lists:nth(Pos, List),
     {CurFun, InitialCall} = get_current_initial_call(Call),
-    NameOrCall = display_name_or_initial_call(IsName, InitialCall),
+    NameOrCall = display_name_or_initial_call(IsName, InitialCall, Pid),
     {Pid, Val, CurFun, NameOrCall}.
 
-display_name_or_initial_call(IsName, _Call) when is_atom(IsName) -> atom_to_list(IsName);
-display_name_or_initial_call(_IsName, Call) -> Call.
+display_name_or_initial_call(IsName, _Call, _Pid) when is_atom(IsName) ->
+    atom_to_list(IsName);
+display_name_or_initial_call(_IsName, {proc_lib, init_p, 5}, Pid) ->
+    observer_cli_lib:mfa_to_list(proc_lib:translate_initial_call(Pid)); %% gen_xxx behavior
+display_name_or_initial_call(_IsName, Call, _Pid) ->
+    observer_cli_lib:mfa_to_list(Call).
 
 get_refresh_prompt(proc_count, Type, Interval, Rows) ->
     io_lib:format("recon:proc_count(~p, ~w) Interval:~wms", [Type, Rows, Interval]);
