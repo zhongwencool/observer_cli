@@ -22,16 +22,11 @@ start() -> start(#view_opts{}).
 -spec start(Node) -> no_return when Node :: atom().
 start(Node) when Node =:= node() -> start(#view_opts{});
 start(Node) when is_atom(Node) -> rpc_start(Node);
-start(#view_opts{home = #home{tid = undefined}} = Opts) ->
-    Tid = ets:new(observer_cli_top_n, [public, set]),
-    AutoRow = check_auto_row(),
-    NewHome = #home{tid = Tid},
-    ChildPid = spawn(fun() -> render_worker(NewHome, AutoRow) end),
-    manager(ChildPid, Opts#view_opts{home = NewHome, auto_row = AutoRow});
 start(#view_opts{home = Home} = Opts) ->
     AutoRow = check_auto_row(),
-    ChildPid = spawn(fun() -> render_worker(Home, AutoRow) end),
-    manager(ChildPid, Opts#view_opts{auto_row = AutoRow}).
+    StorePid = observer_cli_store:start(),
+    RenderPid = spawn(fun() -> render_worker(StorePid, Home, AutoRow) end),
+    manager(StorePid, RenderPid, Opts#view_opts{auto_row = AutoRow}).
 
 -spec start(Node, Cookies) -> no_return when
     Node :: atom(),
@@ -52,69 +47,81 @@ rpc_start(Node) ->
         ignored -> connect_error(<<"Ignored by node(~p), local node is not alive!~n">>, Node)
     end.
 
-manager(ChildPid, Opts) ->
-    #view_opts{home = Home = #home{cur_pos = CurPos, tid = Tid}} = Opts,
-    case observer_cli_lib:parse_cmd(Opts, ChildPid) of
-        quit -> erlang:send(ChildPid, quit);
+manager(StorePid, RenderPid, Opts) ->
+    #view_opts{home = Home = #home{cur_page = CurPage, pages = Pages}} = Opts,
+    case observer_cli_lib:parse_cmd(Opts, RenderPid) of
+        quit -> erlang:send(RenderPid, quit);
         pause_or_resume ->
-            erlang:send(ChildPid, pause_or_resume),
-            manager(ChildPid, Opts);
+            erlang:send(RenderPid, pause_or_resume),
+            manager(StorePid, RenderPid, Opts);
         {new_interval, NewInterval} ->
-            erlang:exit(ChildPid, stop),
+            stop_link_process([StorePid, RenderPid]),
             start(Opts#view_opts{home = Home#home{interval = NewInterval}});
-        {jump_to_process, Pos} ->
-            start_process_view(Tid, Pos, ChildPid, Opts);
+        {jump_to_process, NewPos} ->
+            NewPages = update_page_pos(CurPage, NewPos, Pages),
+            NewHome = Home#home{pages = NewPages},
+            start_process_view(StorePid, RenderPid, Opts#view_opts{home = NewHome}, false);
         jump_to_process ->
-            start_process_view(Tid, CurPos, ChildPid, Opts);
+            start_process_view(StorePid, RenderPid, Opts, true);
         {func, Func, Type} ->
-            erlang:exit(ChildPid, stop),
+            stop_link_process([StorePid, RenderPid]),
             start(Opts#view_opts{home = Home#home{func = Func, type = Type}});
+        page_down_top_n ->
+            NewPage = max(CurPage + 1, 1),
+            NewPages = update_page_pos(StorePid, NewPage, Pages),
+            stop_link_process([StorePid, RenderPid]),
+            start(Opts#view_opts{home = Home#home{cur_page = NewPage, pages = NewPages}});
+        page_up_top_n ->
+            NewPage = max(CurPage - 1, 1),
+            NewPages = update_page_pos(StorePid, NewPage, Pages),
+            stop_link_process([StorePid, RenderPid]),
+            start(Opts#view_opts{home = Home#home{cur_page = NewPage, pages = NewPages}});
         _ ->
-            manager(ChildPid, Opts)
+            manager(StorePid, RenderPid, Opts)
     end.
 
-render_worker(#home{} = Home, AutoRow) ->
+render_worker(Manager, #home{} = Home, AutoRow) ->
     ?output(?CLEAR),
     StableInfo = get_stable_system_info(),
-    redraw_running(Home, StableInfo, erlang:make_ref(), AutoRow, true).
+    redraw_running(Manager, Home, StableInfo, erlang:make_ref(), AutoRow, true).
 
 %% pause status waiting to be resume
-redraw_pause(#home{func = Func, type = Type} = Home, StableInfo, LastTimeRef, AutoRow) ->
+redraw_pause(StorePid, #home{func = Func, type = Type} = Home, StableInfo, LastTimeRef, AutoRow) ->
     notify_pause_status(),
     erlang:cancel_timer(LastTimeRef),
     receive
         quit -> quit;
+        {Func, Type} -> redraw_running(StorePid, Home, StableInfo, LastTimeRef, AutoRow, false);
         pause_or_resume ->
             ?output(?CLEAR),
-            redraw_running(Home, StableInfo, LastTimeRef, AutoRow, true);
-        {Func, Type} ->
-            redraw_running(Home, StableInfo, LastTimeRef, AutoRow, false)
+            redraw_running(StorePid, Home, StableInfo, LastTimeRef, AutoRow, true)
     end.
 
 %% running status
-redraw_running(#home{tid = Tid, interval = Interval, func = Func, type = Type, cur_pos = RankPos} = Home,
+redraw_running(StorePid, #home{interval = Interval, func = Func,
+    type = Type, pages = RankPos, cur_page = CurPage} = Home,
     StableInfo, LastTimeRef, AutoRow, IsFirstTime) ->
     erlang:cancel_timer(LastTimeRef),
     TerminalRow = observer_cli_lib:get_terminal_rows(AutoRow),
     [{Processes, Schedulers}] = recon:node_stats(1, 0, fun(X, Acc) -> [X|Acc] end, []),
     {CPURow, CPULine} = render_scheduler_usage(Schedulers),
     ProcessRows = max(TerminalRow - 14 - CPURow, 0),
-    TopList = get_top_n(Func, Type, Interval, ProcessRows, IsFirstTime),
+    TopList = get_top_n(Func, Type, Interval, ProcessRows * CurPage, IsFirstTime),
     {UseMemInt, AllocatedMemInt, UnusedMemInt} = get_change_system_info(),
     Text = get_refresh_prompt(Func, Type, Interval, ProcessRows),
     MenuLine = observer_cli_lib:render_menu(home, Text),
     SystemLine = render_system_line(StableInfo, UseMemInt, AllocatedMemInt, UnusedMemInt, Processes),
     MemLine = render_memory_process_line(Processes, Schedulers, Interval),
-    {PidList, RankLine} = render_top_n_view(Type, TopList, ProcessRows, RankPos),
+    {TopNList, RankLine} = render_top_n_view(Type, TopList, ProcessRows, RankPos, CurPage),
     LastLine = observer_cli_lib:render_last_line(?LAST_LINE),
     ?output([?CURSOR_TOP, MenuLine, SystemLine, MemLine, CPULine, RankLine, LastLine]),
     
-    catch ets:insert(Tid, PidList),
+    observer_cli_store:update(StorePid, ProcessRows, TopNList),
     TimeRef = refresh_next_time(Func, Type, Interval),
     receive
         quit -> quit;
-        pause_or_resume -> redraw_pause(Home, StableInfo, TimeRef, AutoRow);
-        {Func, Type} -> redraw_running(Home, StableInfo, TimeRef, AutoRow, false)
+        pause_or_resume -> redraw_pause(StorePid, Home, StableInfo, TimeRef, AutoRow);
+        {Func, Type} -> redraw_running(StorePid, Home, StableInfo, TimeRef, AutoRow, false)
     end.
 
 render_system_line(StableInfo, UseMem, AllocatedMem, UnusedMem, ProcSum) ->
@@ -251,16 +258,17 @@ render_scheduler_usage(SchedulerUsage, SchedulerNum) ->
          end || Seq1 <- lists:seq(1, PosSchedulerNum)],
     {PosSchedulerNum, CPU}.
 
-render_top_n_view(memory, MemoryList, Num, RankPos) ->
+render_top_n_view(memory, MemoryList, Num, Pages, Page) ->
     Title = ?render([
         ?W2(?GRAY_BG, "No | Pid", 16), ?W2(?RED_BG, "Memory", 14), ?W(?GRAY_BG, "Name or Initial Call", 38),
         ?W(?GRAY_BG, "Reductions", 21), ?W(?GRAY_BG, "MsgQueue", 10), ?W(?GRAY_BG, "Current Function", 33)
     ]),
-    {Rows, ProcList} =
-        lists:foldr(fun(Pos, {Acc1, Acc2}) ->
-            {Pid, MemVal, CurFun, NameOrCall} = get_top_n_info(Pos, MemoryList),
+    {Start, ChoosePos} = get_pos(Page, Num, Pages, erlang:length(MemoryList)),
+    FormatFunc =
+        fun(Item, {Acc, Acc1, Pos}) ->
+            {Pid, MemVal, CurFun, NameOrCall} = get_top_n_info(Item),
             {Reductions, MsgQueueLen} = get_pid_info(Pid, [reductions, message_queue_len]),
-            Format = get_memory_format(RankPos, Pos),
+            Format = get_memory_format(ChoosePos, Pos),
             R = io_lib:format(Format,
                 [
                     Pos, erlang:pid_to_list(Pid),
@@ -268,19 +276,21 @@ render_top_n_view(memory, MemoryList, Num, RankPos) ->
                     observer_cli_lib:to_list(Reductions),
                     observer_cli_lib:to_list(MsgQueueLen), CurFun
                 ]),
-            {[R | Acc1], [{Pos, Pid} | Acc2]}
-                    end, {[], []}, lists:seq(1, erlang:min(Num, erlang:length(MemoryList)))),
-    {ProcList, [Title | Rows]};
-render_top_n_view(binary_memory, MemoryList, Num, RankPos) ->
+            {[R|Acc], [{Pos, Pid}|Acc1], Pos + 1}
+        end,
+    {Rows, PidList} = top_n_rows(FormatFunc, Start, lists:sublist(MemoryList, Start, Num)),
+    {PidList, [Title | lists:reverse(Rows)]};
+render_top_n_view(binary_memory, MemoryList, Num, Pages, Page) ->
     Title = ?render([
         ?W2(?GRAY_BG, "No | Pid", 16), ?W2(?RED_BG, "BinMemory", 14), ?W(?GRAY_BG, "Name or Initial Call", 38),
         ?W(?GRAY_BG, "Reductions", 21), ?W(?GRAY_BG, "MsgQueue", 10), ?W(?GRAY_BG, "Current Function", 33)
     ]),
-    {Rows, ProcList} =
-        lists:foldr(fun(Pos, {Acc1, Acc2}) ->
-            {Pid, MemVal, CurFun, NameOrCall} = get_top_n_info(Pos, MemoryList),
+    {Start, ChoosePos} = get_pos(Page, Num, Pages, erlang:length(MemoryList)),
+    FormatFunc =
+        fun(Item, {Acc, Acc1, Pos}) ->
+            {Pid, MemVal, CurFun, NameOrCall} = get_top_n_info(Item),
             {Reductions, MsgQueueLen} = get_pid_info(Pid, [reductions, message_queue_len]),
-            Format = get_memory_format(RankPos, Pos),
+            Format = get_memory_format(ChoosePos, Pos),
             R = io_lib:format(Format,
                 [
                     Pos, pid_to_list(Pid),
@@ -288,19 +298,21 @@ render_top_n_view(binary_memory, MemoryList, Num, RankPos) ->
                     observer_cli_lib:to_list(Reductions),
                     observer_cli_lib:to_list(MsgQueueLen), CurFun
                 ]),
-            {[R | Acc1], [{Pos, Pid} | Acc2]}
-                    end, {[], []}, lists:seq(1, erlang:min(Num, erlang:length(MemoryList)))),
-    {ProcList, [Title | Rows]};
-render_top_n_view(reductions, ReductionList, Num, RankPos) ->
+            {[R | Acc], [{Pos, Pid} | Acc1], Pos + 1}
+        end,
+    {Rows, PidList} = top_n_rows(FormatFunc, Start, lists:sublist(MemoryList, Start, Num)),
+    {PidList, [Title | lists:reverse(Rows)]};
+render_top_n_view(reductions, ReductionList, Num, Pages, Page) ->
     Title = ?render([
         ?W2(?GRAY_BG, "No | Pid", 16), ?W2(?RED_BG, "Reductions", 21), ?W(?GRAY_BG, "Name or Initial Call", 38),
         ?W(?GRAY_BG, "Memory", 13), ?W(?GRAY_BG, "MsgQueue", 10), ?W(?GRAY_BG, "Current Function", 34)
     ]),
-    {Rows, ProcList} =
-        lists:foldr(fun(Pos, {Acc1, Acc2}) ->
-            {Pid, Reductions, CurFun, NameOrCall} = get_top_n_info(Pos, ReductionList),
+    {Start, ChoosePos} = get_pos(Page, Num, Pages, erlang:length(ReductionList)),
+    FormatFunc =
+        fun(Item, {Acc, Acc1, Pos}) ->
+            {Pid, Reductions, CurFun, NameOrCall} = get_top_n_info(Item),
             {Memory, MsgQueueLen} = get_pid_info(Pid, [memory, message_queue_len]),
-            Format = get_reduction_format(RankPos, Pos),
+            Format = get_reduction_format(ChoosePos, Pos),
             R = io_lib:format(Format,
                 [
                     Pos, pid_to_list(Pid),
@@ -308,19 +320,21 @@ render_top_n_view(reductions, ReductionList, Num, RankPos) ->
                     observer_cli_lib:to_byte(Memory),
                     observer_cli_lib:to_list(MsgQueueLen), CurFun
                 ]),
-            {[R | Acc1], [{Pos, Pid} | Acc2]}
-                    end, {[], []}, lists:seq(1, erlang:min(Num, erlang:length(ReductionList)))),
-    {ProcList, [Title | Rows]};
-render_top_n_view(total_heap_size, HeapList, Num, RankPos) ->
+            {[R|Acc], [{Pos, Pid}|Acc1], Pos + 1}
+        end,
+    {Rows, PidList} = top_n_rows(FormatFunc, Start, lists:sublist(ReductionList, Start, Num)),
+    {PidList, [Title | lists:reverse(Rows)]};
+render_top_n_view(total_heap_size, HeapList, Num, Pages, Page) ->
     Title = ?render([
         ?W2(?GRAY_BG, "No | Pid", 16), ?W2(?RED_BG, "TotalHeapSize", 14), ?W(?GRAY_BG, "Name or Initial Call", 38),
         ?W(?GRAY_BG, "Reductions", 21), ?W(?GRAY_BG, "MsgQueue", 10), ?W(?GRAY_BG, "Current Function", 33)
     ]),
-    {Rows, ProcList} =
-        lists:foldr(fun(Pos, {Acc1, Acc2}) ->
-            {Pid, HeapSize, CurFun, NameOrCall} = get_top_n_info(Pos, HeapList),
+    {Start, ChoosePos} = get_pos(Page, Num, Pages, erlang:length(HeapList)),
+    FormatFunc =
+        fun(Item, {Acc, Acc1, Pos}) ->
+            {Pid, HeapSize, CurFun, NameOrCall} = get_top_n_info(Item),
             {Reductions, MsgQueueLen} = get_pid_info(Pid, [reductions, message_queue_len]),
-            Format = get_memory_format(RankPos, Pos),
+            Format = get_memory_format(ChoosePos, Pos),
             R = io_lib:format(Format,
                 [
                     Pos, pid_to_list(Pid),
@@ -328,19 +342,21 @@ render_top_n_view(total_heap_size, HeapList, Num, RankPos) ->
                     observer_cli_lib:to_list(Reductions),
                     observer_cli_lib:to_list(MsgQueueLen), CurFun
                 ]),
-            {[R | Acc1], [{Pos, Pid} | Acc2]}
-                    end, {[], []}, lists:seq(1, erlang:min(Num, erlang:length(HeapList)))),
-    {ProcList, [Title | Rows]};
-render_top_n_view(message_queue_len, MQLenList, Num, RankPos) ->
+            {[R|Acc], [{Pos, Pid}|Acc1], Pos + 1}
+        end,
+    {Rows, PidList} = top_n_rows(FormatFunc, Start, lists:sublist(HeapList, Start, Num)),
+    {PidList, [Title | lists:reverse(Rows)]};
+render_top_n_view(message_queue_len, MQLenList, Num, Pages, Page) ->
     Title = ?render([
         ?W2(?GRAY_BG, "No | Pid", 16), ?W2(?RED_BG, "MsgQueue", 11), ?W(?GRAY_BG, "Name or Initial Call", 37),
         ?W(?GRAY_BG, "Memory", 13), ?W(?GRAY_BG, "Reductions", 21), ?W(?GRAY_BG, "Current Function", 34)
     ]),
-    {Rows, ProcList} =
-        lists:foldr(fun(Pos, {Acc1, Acc2}) ->
-            {Pid, MQLen, CurFun, NameOrCall} = get_top_n_info(Pos, MQLenList),
+    {Start, ChoosePos} = get_pos(Page, Num, Pages, erlang:length(MQLenList)),
+    FormatFunc =
+        fun(Item, {Acc, Acc1, Pos}) ->
+            {Pid, MQLen, CurFun, NameOrCall} = get_top_n_info(Item),
             {Reductions, Memory} = get_pid_info(Pid, [reductions, memory]),
-            Format = get_message_queue_format(RankPos, Pos),
+            Format = get_message_queue_format(ChoosePos, Pos),
             R = io_lib:format(Format,
                 [
                     Pos, pid_to_list(Pid),
@@ -348,9 +364,14 @@ render_top_n_view(message_queue_len, MQLenList, Num, RankPos) ->
                     observer_cli_lib:to_byte(Memory),
                     observer_cli_lib:to_list(Reductions), CurFun
                 ]),
-            {[R | Acc1], [{Pos, Pid} | Acc2]}
-                    end, {[], []}, lists:seq(1, erlang:min(Num, erlang:length(MQLenList)))),
-    {ProcList, [Title | Rows]}.
+            {[R|Acc], [{Pos, Pid}|Acc1], Pos + 1}
+        end,
+    {Rows, PidList} = top_n_rows(FormatFunc, Start, lists:sublist(MQLenList, Start, Num)),
+    {PidList, [Title | lists:reverse(Rows)]}.
+
+top_n_rows(FormatFunc, Start, List) ->
+    {Row, PidList, _} = lists:foldl(FormatFunc, {[], [], Start}, List),
+    {Row, PidList}.
 
 notify_pause_status() ->
     ?output("\e[31;1m PAUSE  INPUT (p, r/rr, b/bb, h/hh, m/mm) to resume or q to quit \e[0m~n").
@@ -373,7 +394,7 @@ get_message_queue_format(_Pos, _RankPos) ->
 refresh_next_time(proc_count, Type, Interval) ->
     erlang:send_after(Interval, self(), {proc_count, Type});
 refresh_next_time(proc_window, Type, _Interval) ->
-    erlang:send_after(100, self(), {proc_window, Type}).
+    erlang:send_after(10, self(), {proc_window, Type}).
 
 get_current_initial_call(Call) ->
     {_, CurFun} = lists:keyfind(current_function, 1, Call),
@@ -451,8 +472,8 @@ process_bar_format_style(Percent1, Percent2, Percent3, Percent4, IsLastLine) ->
         false -> Format
     end.
 
-get_top_n_info(Pos, List) ->
-    {Pid, Val, Call = [IsName | _]} = lists:nth(Pos, List),
+get_top_n_info(Item) ->
+    {Pid, Val, Call = [IsName | _]} = Item,
     {CurFun, InitialCall} = get_current_initial_call(Call),
     NameOrCall = display_name_or_initial_call(IsName, InitialCall, Pid),
     {Pid, Val, CurFun, NameOrCall}.
@@ -460,7 +481,7 @@ get_top_n_info(Pos, List) ->
 display_name_or_initial_call(IsName, _Call, _Pid) when is_atom(IsName) ->
     atom_to_list(IsName);
 display_name_or_initial_call(_IsName, {proc_lib, init_p, 5}, Pid) ->
-    observer_cli_lib:mfa_to_list(proc_lib:translate_initial_call(Pid)); %% gen_xxx behavior
+    observer_cli_lib:mfa_to_list(proc_lib:translate_initial_call(Pid)); %% translate gen_xxx behavior
 display_name_or_initial_call(_IsName, Call, _Pid) ->
     observer_cli_lib:mfa_to_list(Call).
 
@@ -493,17 +514,43 @@ connect_error(Prompt, Node) ->
     Prop = <<?RED/binary, Prompt/binary, ?RESET/binary>>,
     ?output(Prop, [Node]).
 
-start_process_view(Tid, Pos, ChildPid, Opts) ->
-    case ets:lookup(Tid, Pos) of
-        [] -> manager(ChildPid, Opts);
-        [{_, ChoosePid}] ->
-            erlang:exit(ChildPid, stop),
-            NewHomeOpt = Opts#view_opts.home#home{cur_pos = Pos},
-            observer_cli_process:start(ChoosePid, Opts#view_opts{home = NewHomeOpt})
+start_process_view(StorePid, ChildPid, Opts = #view_opts{home = Home}, AutoJump) ->
+    #home{cur_page = CurPage, pages = Pages} = Home,
+    {_, CurPos} = lists:keyfind(CurPage, 1, Pages),
+    case observer_cli_store:lookup_pos(StorePid, CurPos) of
+        {CurPos, ChoosePid} ->
+            stop_link_process([StorePid, ChildPid]),
+            observer_cli_process:start(ChoosePid, Opts);
+        {_, ChoosePid} when AutoJump ->
+            stop_link_process([StorePid, ChildPid]),
+            observer_cli_process:start(ChoosePid, Opts);
+        _ -> manager(StorePid, ChildPid, Opts)
     end.
 
 check_auto_row() ->
     case io:rows() of
         {ok, _} -> true;
         {error, _} -> false
+    end.
+
+update_page_pos(StorePid, Page, Pages)when is_pid(StorePid)  ->
+    Pos =
+        case lists:keyfind(Page, 1, Pages) of
+            false ->
+                Row = observer_cli_store:lookup_row(StorePid),
+                (Page - 1) * Row + 1;
+            {_, P} -> P
+        end,
+    update_page_pos(Page, Pos, Pages);
+update_page_pos(Page, Pos, Pages)  ->
+    [{Page, Pos} | lists:keydelete(Page, 1, Pages)].
+
+stop_link_process(List) ->
+    [erlang:exit(Pid, stop) ||Pid <- List].
+
+get_pos(Page, PageRow, Pages, TopLen) ->
+    Start = erlang:min((Page - 1)*PageRow + 1, TopLen),
+    case lists:keyfind(Page, 1, Pages) of
+        {_, P} when P >= Start andalso P =< Start + PageRow -> {Start, P};
+        _ -> {Start, Start}
     end.

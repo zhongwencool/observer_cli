@@ -226,7 +226,12 @@ render_process_info(Pid, RegisteredName, GroupLeader, Status, TrapExit, InitialC
 
 render_link_monitor(Link, Monitors, MonitoredBy) ->
     LinkStr = [begin observer_cli_lib:to_list(P) end||P<-lists:sublist(Link, 30)],
-    MonitorsStr = [begin observer_cli_lib:to_list(P) end||P<-lists:sublist(Monitors, 30)],
+    MonitorsStr = [begin
+                       case P of
+                           {process, Pid} -> observer_cli_lib:to_list(Pid);
+                           {RegName, Node} -> observer_cli_lib:to_list(RegName) ++ "/" ++ observer_cli_lib:to_list(Node)
+                       end
+                   end||P<-lists:sublist(Monitors, 30)],
     MonitoredByStr = [begin observer_cli_lib:to_list(P) end||P<-lists:sublist(MonitoredBy, 30)],
     LinkInfo =  "Links(" ++ erlang:integer_to_list(erlang:length(Link)) ++ ")",
     MonitorInfo =  "Monitors(" ++ erlang:integer_to_list(erlang:length(Monitors)) ++ ")",
@@ -297,8 +302,8 @@ get_menu_title2(state) ->
 
 parse_cmd(ViewOpts, Pid) ->
     case observer_cli_lib:to_list(io:get_line("")) of
-        "q\n" -> observer_cli_lib:quit(ViewOpts);
-        "Q\n" -> observer_cli_lib:quit(ViewOpts);
+        "q\n" -> quit;
+        "Q\n" -> quit;
         "P\n" -> info_view;
         "M\n" -> message_view;
         "D\n" -> dict_view;

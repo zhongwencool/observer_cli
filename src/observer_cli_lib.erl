@@ -19,7 +19,6 @@
 -export([select/1]).
 -export([unselect/1]).
 -export([parse_integer/1]).
--export([quit/1]).
 -export([render_last_line/1]).
 
 -define(DEFAULT_ROW_SIZE, 46). %% the number from 13' mbp
@@ -166,8 +165,8 @@ parse_cmd(ViewOpts, Pid) ->
         "so\n" -> send_oct;
         "cnt\n" -> cnt;
         "oct\n" -> oct;
-        "q\n" -> quit(ViewOpts);
-        "Q\n" -> quit(ViewOpts);
+        
+        %% menu view
         "H\n" ->
             erlang:exit(Pid, stop),
             observer_cli:start(ViewOpts);
@@ -189,7 +188,11 @@ parse_cmd(ViewOpts, Pid) ->
         "D\n" ->
             erlang:exit(Pid, stop),
             observer_cli_help:start(ViewOpts);
-
+        "q\n" -> quit;
+        "Q\n" -> quit;
+        "u\n" -> page_up_top_n;     %% backward
+        "d\n" -> page_down_top_n;   %% forward
+    
         %% home
         "p\n" -> pause_or_resume;
         "r\n" -> {func, proc_count, reductions};
@@ -219,10 +222,6 @@ get_terminal_rows(_AutoRow = true) ->
         {error, _} -> ?DEFAULT_ROW_SIZE;
         {ok, Rows} -> Rows
     end.
--spec quit(#view_opts{}) -> quit.
-quit(#view_opts{home = #home{tid = Tid}}) ->
-    catch ets:delete(Tid),
-    quit.
 
 -spec parse_integer(string()) -> {term(), term()}.
 parse_integer(Number) ->
