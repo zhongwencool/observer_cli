@@ -6,9 +6,9 @@
 
 -record(home, {func = proc_count :: atom(),
     type = memory :: atom(),
-    cur_pos = 1 :: integer(),
-    tid = undefined :: reference(),
-    interval = ?DEFAULT_INTERVAL :: integer()}).
+    cur_page = 1 :: pos_integer(),
+    pages = [] :: list(),
+    interval = ?DEFAULT_INTERVAL :: pos_integer()}).
 
 -record(ets, {interval = 2000 :: integer()}).
 -record(system, {interval = ?DEFAULT_INTERVAL :: integer()}).
