@@ -20,7 +20,7 @@ start(#view_opts{db = #db{interval = MillSecond}, auto_row = AutoRow} = HomeOpts
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 render_worker(Interval, LastTimeRef, HideSystemTable, AutoRow) ->
     TerminalRow = observer_cli_lib:get_terminal_rows(AutoRow),
-    Rows = TerminalRow - 5,
+    Rows = erlang:max(TerminalRow - 5, 0),
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms"
         ++ " HideSystemTable:" ++ atom_to_list(HideSystemTable),
     Menu = observer_cli_lib:render_menu(mnesia, Text),
@@ -63,24 +63,21 @@ render_mnesia(MnesiaList, Rows) ->
     Title = ?render([?UNDERLINE, ?GRAY_BG,
         ?W("name", 24), ?W("memory", 14), ?W("size", 14),
         ?W("type", 10), ?W("storage", 13), ?W("owner", 12),
-        ?W("index", 9), ?W("reg_name", 20),
-        ?RESET]),
+        ?W("index", 9), ?W("reg_name", 19)
+        ]),
     View =
         [begin
-             Name = get_value(name, Mnesia), Memory = get_value(memory, Mnesia),
-             Size = get_value(size, Mnesia), Type = get_value(type, Mnesia),
-             RegName = get_value(reg_name, Mnesia), Index = get_value(index, Mnesia),
-             Owner = get_value(owner, Mnesia), Storage = get_value(storage, Mnesia),
+             Name = proplists:get_value(name, Mnesia), Memory = proplists:get_value(memory, Mnesia),
+             Size = proplists:get_value(size, Mnesia), Type = proplists:get_value(type, Mnesia),
+             RegName = proplists:get_value(reg_name, Mnesia), Index = proplists:get_value(index, Mnesia),
+             Owner = proplists:get_value(owner, Mnesia), Storage = proplists:get_value(storage, Mnesia),
              ?render([
                  ?W(Name, 24), ?W(Memory, 14), ?W(Size, 14),
                  ?W(Type, 10), ?W(Storage, 13), ?W(Owner, 12),
-                 ?W(Index, 9), ?W(RegName, 20)
+                 ?W(Index, 9), ?W(RegName, 19)
              ])
          end || Mnesia <- lists:sublist(SortMnesiaList, Rows)],
     [Title | View].
-
-get_value(Key, List) ->
-    observer_cli_lib:to_list(proplists:get_value(Key, List)).
 
 mnesia_tables() ->
     [ir_AliasDef, ir_ArrayDef, ir_AttributeDef, ir_ConstantDef,

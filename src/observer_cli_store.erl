@@ -40,9 +40,13 @@ loop({Row, PidList} = TopList) ->
                 {NewRow, NewPidList};
             {?LOOKUP_PID, Pos, From} ->
                 Res =
-                    case lists:keyfind(Pos, 1, PidList) of
-                        false -> lists:last(PidList);
-                        Item -> Item
+                    case PidList of
+                        [] -> {error, undefined};
+                        _ ->
+                            case lists:keyfind(Pos, 1, PidList) of
+                                false -> lists:last(PidList);
+                                Item -> Item
+                            end
                     end,
                 erlang:send(From, {?LOOKUP_PID_RES, Res}),
                 TopList;

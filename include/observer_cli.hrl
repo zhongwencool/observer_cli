@@ -7,7 +7,7 @@
 -record(home, {func = proc_count :: atom(),
     type = memory :: atom(),
     cur_page = 1 :: pos_integer(),
-    pages = [] :: list(),
+    pages = [{1,1}] :: list(),
     interval = ?DEFAULT_INTERVAL :: pos_integer()}).
 
 -record(ets, {interval = 2000 :: integer()}).
@@ -16,9 +16,12 @@
 -record(db, {interval = ?DEFAULT_INTERVAL :: integer()}).
 
 -record(help, {interval = ?DEFAULT_INTERVAL :: integer()}).
--record(inet, {interval = ?DEFAULT_INTERVAL :: integer(),
+-record(inet, {
+    interval = ?DEFAULT_INTERVAL :: integer(),
     func = inet_count :: atom(),
-    type = cnt :: atom()}).
+    type = cnt :: atom(),
+    cur_page = 1 :: pos_integer(),
+    pages = [{1,1}] :: list()}).
 
 -record(process, {interval = ?DEFAULT_INTERVAL :: integer()}).
 
@@ -29,6 +32,7 @@
     help = #help{} :: help(),
     inet = #inet{} :: inet(),
     process = #process{} :: process(),
+    port = 2000 :: pos_integer(),
     auto_row = true :: boolean()
 }).
 
@@ -54,9 +58,12 @@
 -define(L_RED, <<"\e[48m">>).
 -define(GREEN, <<"\e[32;1m">>).
 -define(L_GREEN, <<"\e[92m">>).
+-define(CHOOSE_BG, <<"\e[42m">>).
 -define(RED_BG, <<"\e[48;2;184;0;0m">>).
 -define(L_GRAY_BG, <<"\e[48;2;80;80;80m">>).
 -define(UNDERLINE, <<"\e[4m">>).
+
+-define(NEW_LINE, "\e[0m\n|").
 -define(I, <<" | ">>).
 -define(I2, <<"|">>).
 -define(W(_C_, _A_, _W_), {extend_color, _C_, _A_, _W_}).
