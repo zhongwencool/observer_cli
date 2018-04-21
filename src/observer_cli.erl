@@ -50,31 +50,33 @@ rpc_start(Node) ->
 manager(StorePid, RenderPid, Opts) ->
     #view_opts{home = Home = #home{cur_page = CurPage, pages = Pages}} = Opts,
     case observer_cli_lib:parse_cmd(Opts, RenderPid) of
-        quit -> erlang:send(RenderPid, quit);
+        quit ->
+            observer_cli_lib:exit_processes([StorePid]),
+            erlang:send(RenderPid, quit);
         pause_or_resume ->
             erlang:send(RenderPid, pause_or_resume),
             manager(StorePid, RenderPid, Opts);
         {new_interval, NewInterval} ->
-            stop_link_process([StorePid, RenderPid]),
+            observer_cli_lib:exit_processes([StorePid, RenderPid]),
             start(Opts#view_opts{home = Home#home{interval = NewInterval}});
-        {jump_to_process, NewPos} ->
-            NewPages = update_page_pos(CurPage, NewPos, Pages),
+        {jump, NewPos} ->
+            NewPages = observer_cli_lib:update_page_pos(CurPage, NewPos, Pages),
             NewHome = Home#home{pages = NewPages},
             start_process_view(StorePid, RenderPid, Opts#view_opts{home = NewHome}, false);
-        jump_to_process ->
+        jump ->
             start_process_view(StorePid, RenderPid, Opts, true);
         {func, Func, Type} ->
-            stop_link_process([StorePid, RenderPid]),
+            observer_cli_lib:exit_processes([StorePid, RenderPid]),
             start(Opts#view_opts{home = Home#home{func = Func, type = Type}});
         page_down_top_n ->
             NewPage = max(CurPage + 1, 1),
-            NewPages = update_page_pos(StorePid, NewPage, Pages),
-            stop_link_process([StorePid, RenderPid]),
+            NewPages = observer_cli_lib:update_page_pos(StorePid, NewPage, Pages),
+            observer_cli_lib:exit_processes([StorePid, RenderPid]),
             start(Opts#view_opts{home = Home#home{cur_page = NewPage, pages = NewPages}});
         page_up_top_n ->
             NewPage = max(CurPage - 1, 1),
-            NewPages = update_page_pos(StorePid, NewPage, Pages),
-            stop_link_process([StorePid, RenderPid]),
+            NewPages = observer_cli_lib:update_page_pos(StorePid, NewPage, Pages),
+            observer_cli_lib:exit_processes([StorePid, RenderPid]),
             start(Opts#view_opts{home = Home#home{cur_page = NewPage, pages = NewPages}});
         _ ->
             manager(StorePid, RenderPid, Opts)
@@ -131,25 +133,24 @@ render_system_line(StableInfo, UseMem, AllocatedMem, UnusedMem, ProcSum) ->
     {PortWarning, ProcWarning, PortCount, ProcCount} = get_port_proc_info(PortLimit, ProcLimit, ProcSum),
     Title = ?render([
         ?W(Version -- "\n", 136),
-        "\n|",
+        ?NEW_LINE,
         ?GRAY_BG,
         ?W("System", 10), ?W("Count/Limit", 21),
         ?W("System Switch", 25), ?W("Status", 21),
-        ?W("Memory Info", 20), ?W("Size", 25),
-        ?RESET]),
+        ?W("Memory Info", 20), ?W("Size", 24)]),
     Row = ?render([
         ?W("Proc Count", 10), ?W2(ProcWarning, ProcCount, 22),
         ?W(" Smp Support", 26), ?W(SmpSupport, 21),
         ?W("Allocted Mem", 20), ?W({byte, AllocatedMem}, 15), ?W("100.0%", 6),
-        "\n|",
+        ?NEW_LINE,
         ?W("Port Count", 10), ?W2(PortWarning, PortCount, 22),
         ?W(" Multi Scheduling", 26), ?W(MultiScheduling, 21),
         ?W("Use Mem", 20), ?W({byte, UseMem}, 15), ?W(UsePercent, 6),
-        "\n|",
+        ?NEW_LINE,
         ?UNDERLINE, ?W("Ets Limit", 10), ?W(EtsLimit, 21),
         ?W("Logical Processors", 25), ?W(LogicalProc, 21),
-        ?W("Unuse Mem", 20), ?W({byte, UnusedMem}, 15), ?W(UnUsePercent, 7),
-        ?RESET]),
+        ?W("Unuse Mem", 20), ?W({byte, UnusedMem}, 15), ?W(UnUsePercent, 6)
+    ]),
     [Title, Row].
 
 render_memory_process_line(ProcSum, MemSum, Interval) ->
@@ -182,24 +183,24 @@ render_memory_process_line(ProcSum, MemSum, Interval) ->
     Title = ?render([
         ?GRAY_BG, ?W("Mem Type", 10), ?W("Size", 21),
         ?W("Mem Type", 25), ?W("Size", 21),
-        ?W("IO/GC", 20), ?W(["Interval: ", erlang:integer_to_binary(Interval), "ms"], 25),
-        ?RESET]),
+        ?W("IO/GC", 20), ?W(["Interval: ", erlang:integer_to_binary(Interval), "ms"], 24)
+        ]),
     Row = ?render([
         ?W("Total", 10), ?W({byte, TotalMem}, 12), ?W("100.0%", 6),
         ?W("Binary", 25), ?W({byte, BinMem}, 12), ?W(BinMemPercent, 6),
         ?W("IO Output", 20), ?W({byte, BytesOut}, 24),
-        "\n|",
+        ?NEW_LINE,
         ?W("Process", 10), ?W({byte, ProcMem}, 12), ?W(ProcMemPercent, 6),
         ?W("Code", 25), ?W({byte, CodeMem}, 12), ?W(CodeMemPercent, 6),
         ?W("IO Input", 20), ?W({byte, BytesIn}, 24),
-        "\n|",
+        ?NEW_LINE,
         ?W("Atom", 10), ?W({byte, AtomMem}, 12), ?W(AtomMemPercent, 6),
         ?W("Reductions", 25), ?W(Reductions, 21),
         ?W("Gc Count", 20), ?W(GcCount, 24),
-        "\n|",
+        ?NEW_LINE,
         ?W("Ets", 10), ?W({byte, EtsMem}, 12), ?W(EtsMemPercent, 6),
         ?W("RunQueue/ErrorLoggerQueue", 25), ?W(Queue, 21),
-        ?W("Gc Words Reclaimed", 20), ?W(GcWordsReclaimed, 25)]),
+        ?W("Gc Words Reclaimed", 20), ?W(GcWordsReclaimed, 24)]),
     [Title, Row].
 
 render_scheduler_usage(MemSum) ->
@@ -207,8 +208,8 @@ render_scheduler_usage(MemSum) ->
     SchedulerNum = erlang:length(SchedulerUsage),
     render_scheduler_usage(SchedulerUsage, SchedulerNum).
 
-%% =< 8 core will split 2 part
-render_scheduler_usage(SchedulerUsage, SchedulerNum) when SchedulerNum =< 8 ->
+%% < 8 core will split 2 part
+render_scheduler_usage(SchedulerUsage, SchedulerNum) when SchedulerNum < 8 ->
     HalfSchedulerNum = SchedulerNum div 2,
     CPU =
         [begin
@@ -260,10 +261,10 @@ render_scheduler_usage(SchedulerUsage, SchedulerNum) ->
 
 render_top_n_view(memory, MemoryList, Num, Pages, Page) ->
     Title = ?render([
-        ?W2(?GRAY_BG, "No | Pid", 16), ?W2(?RED_BG, "Memory", 14), ?W(?GRAY_BG, "Name or Initial Call", 38),
-        ?W(?GRAY_BG, "Reductions", 21), ?W(?GRAY_BG, "MsgQueue", 10), ?W(?GRAY_BG, "Current Function", 33)
+        ?W2(?GRAY_BG, "No | Pid", 16), ?W2(?RED_BG, "     Memory", 14), ?W(?GRAY_BG, "Name or Initial Call", 38),
+        ?W(?GRAY_BG, "           Reductions", 21), ?W(?GRAY_BG, " MsgQueue", 10), ?W(?GRAY_BG, "Current Function", 32)
     ]),
-    {Start, ChoosePos} = get_pos(Page, Num, Pages, erlang:length(MemoryList)),
+    {Start, ChoosePos} = observer_cli_lib:get_pos(Page, Num, Pages, erlang:length(MemoryList)),
     FormatFunc =
         fun(Item, {Acc, Acc1, Pos}) ->
             {Pid, MemVal, CurFun, NameOrCall} = get_top_n_info(Item),
@@ -282,10 +283,10 @@ render_top_n_view(memory, MemoryList, Num, Pages, Page) ->
     {PidList, [Title | lists:reverse(Rows)]};
 render_top_n_view(binary_memory, MemoryList, Num, Pages, Page) ->
     Title = ?render([
-        ?W2(?GRAY_BG, "No | Pid", 16), ?W2(?RED_BG, "BinMemory", 14), ?W(?GRAY_BG, "Name or Initial Call", 38),
-        ?W(?GRAY_BG, "Reductions", 21), ?W(?GRAY_BG, "MsgQueue", 10), ?W(?GRAY_BG, "Current Function", 33)
+        ?W2(?GRAY_BG, "No | Pid", 16), ?W2(?RED_BG, "  BinMemory", 14), ?W(?GRAY_BG, "Name or Initial Call", 38),
+        ?W(?GRAY_BG, "           Reductions", 21), ?W(?GRAY_BG, " MsgQueue", 10), ?W(?GRAY_BG, "Current Function", 32)
     ]),
-    {Start, ChoosePos} = get_pos(Page, Num, Pages, erlang:length(MemoryList)),
+    {Start, ChoosePos} = observer_cli_lib:get_pos(Page, Num, Pages, erlang:length(MemoryList)),
     FormatFunc =
         fun(Item, {Acc, Acc1, Pos}) ->
             {Pid, MemVal, CurFun, NameOrCall} = get_top_n_info(Item),
@@ -304,10 +305,10 @@ render_top_n_view(binary_memory, MemoryList, Num, Pages, Page) ->
     {PidList, [Title | lists:reverse(Rows)]};
 render_top_n_view(reductions, ReductionList, Num, Pages, Page) ->
     Title = ?render([
-        ?W2(?GRAY_BG, "No | Pid", 16), ?W2(?RED_BG, "Reductions", 21), ?W(?GRAY_BG, "Name or Initial Call", 38),
-        ?W(?GRAY_BG, "Memory", 13), ?W(?GRAY_BG, "MsgQueue", 10), ?W(?GRAY_BG, "Current Function", 34)
+        ?W2(?GRAY_BG, "No | Pid", 16), ?W2(?RED_BG, "     Reductions", 21), ?W(?GRAY_BG, "Name or Initial Call", 38),
+        ?W(?GRAY_BG, "      Memory", 13), ?W(?GRAY_BG, " MsgQueue", 10), ?W(?GRAY_BG, "Current Function", 33)
     ]),
-    {Start, ChoosePos} = get_pos(Page, Num, Pages, erlang:length(ReductionList)),
+    {Start, ChoosePos} = observer_cli_lib:get_pos(Page, Num, Pages, erlang:length(ReductionList)),
     FormatFunc =
         fun(Item, {Acc, Acc1, Pos}) ->
             {Pid, Reductions, CurFun, NameOrCall} = get_top_n_info(Item),
@@ -326,10 +327,10 @@ render_top_n_view(reductions, ReductionList, Num, Pages, Page) ->
     {PidList, [Title | lists:reverse(Rows)]};
 render_top_n_view(total_heap_size, HeapList, Num, Pages, Page) ->
     Title = ?render([
-        ?W2(?GRAY_BG, "No | Pid", 16), ?W2(?RED_BG, "TotalHeapSize", 14), ?W(?GRAY_BG, "Name or Initial Call", 38),
-        ?W(?GRAY_BG, "Reductions", 21), ?W(?GRAY_BG, "MsgQueue", 10), ?W(?GRAY_BG, "Current Function", 33)
+        ?W2(?GRAY_BG, "No | Pid", 16), ?W2(?RED_BG, " TotalHeapSize", 14), ?W(?GRAY_BG, "Name or Initial Call", 38),
+        ?W(?GRAY_BG, "           Reductions", 21), ?W(?GRAY_BG, " MsgQueue", 10), ?W(?GRAY_BG, "Current Function", 32)
     ]),
-    {Start, ChoosePos} = get_pos(Page, Num, Pages, erlang:length(HeapList)),
+    {Start, ChoosePos} = observer_cli_lib:get_pos(Page, Num, Pages, erlang:length(HeapList)),
     FormatFunc =
         fun(Item, {Acc, Acc1, Pos}) ->
             {Pid, HeapSize, CurFun, NameOrCall} = get_top_n_info(Item),
@@ -348,10 +349,10 @@ render_top_n_view(total_heap_size, HeapList, Num, Pages, Page) ->
     {PidList, [Title | lists:reverse(Rows)]};
 render_top_n_view(message_queue_len, MQLenList, Num, Pages, Page) ->
     Title = ?render([
-        ?W2(?GRAY_BG, "No | Pid", 16), ?W2(?RED_BG, "MsgQueue", 11), ?W(?GRAY_BG, "Name or Initial Call", 37),
-        ?W(?GRAY_BG, "Memory", 13), ?W(?GRAY_BG, "Reductions", 21), ?W(?GRAY_BG, "Current Function", 34)
+        ?W2(?GRAY_BG, "No | Pid", 16), ?W2(?RED_BG, " MsgQueue", 11), ?W(?GRAY_BG, "Name or Initial Call", 37),
+        ?W(?GRAY_BG, "      Memory", 13), ?W(?GRAY_BG, " Reductions", 21), ?W(?GRAY_BG, "Current Function", 33)
     ]),
-    {Start, ChoosePos} = get_pos(Page, Num, Pages, erlang:length(MQLenList)),
+    {Start, ChoosePos} = observer_cli_lib:get_pos(Page, Num, Pages, erlang:length(MQLenList)),
     FormatFunc =
         fun(Item, {Acc, Acc1, Pos}) ->
             {Pid, MQLen, CurFun, NameOrCall} = get_top_n_info(Item),
@@ -387,9 +388,9 @@ get_reduction_format(_Pos, _RankPos) ->
     "|~-3.3w|~-12.12s|~-21.21s|~-38.38s|~13.13s| ~-9.9s|~-34.34s|~n".
 
 get_message_queue_format(Pos, Pos) ->
-    "|\e[42m~-3.3w|~-12.12s|~-11.11s|~-37.37s|~13.13s|~-21.21s|~-34.34s\e[49m|~n";
+    "|\e[42m~-3.3w|~-12.12s|~-11.11s|~-37.37s|~13.13s| ~-20.20s|~-34.34s\e[49m|~n";
 get_message_queue_format(_Pos, _RankPos) ->
-    "|~-3.3w|~-12.12s|~-11.11s|~-37.37s|~13.13s|~-21.21s|~-34.34s|~n".
+    "|~-3.3w|~-12.12s|~-11.11s|~-37.37s|~13.13s| ~-20.20s|~-34.34s|~n".
 
 refresh_next_time(proc_count, Type, Interval) ->
     erlang:send_after(Interval, self(), {proc_count, Type});
@@ -514,43 +515,21 @@ connect_error(Prompt, Node) ->
     Prop = <<?RED/binary, Prompt/binary, ?RESET/binary>>,
     ?output(Prop, [Node]).
 
-start_process_view(StorePid, ChildPid, Opts = #view_opts{home = Home}, AutoJump) ->
+start_process_view(StorePid, RenderPid, Opts = #view_opts{home = Home}, AutoJump) ->
     #home{cur_page = CurPage, pages = Pages} = Home,
     {_, CurPos} = lists:keyfind(CurPage, 1, Pages),
     case observer_cli_store:lookup_pos(StorePid, CurPos) of
         {CurPos, ChoosePid} ->
-            stop_link_process([StorePid, ChildPid]),
+            observer_cli_lib:exit_processes([StorePid, RenderPid]),
             observer_cli_process:start(ChoosePid, Opts);
         {_, ChoosePid} when AutoJump ->
-            stop_link_process([StorePid, ChildPid]),
+            observer_cli_lib:exit_processes([StorePid, RenderPid]),
             observer_cli_process:start(ChoosePid, Opts);
-        _ -> manager(StorePid, ChildPid, Opts)
+        _ -> manager(StorePid, RenderPid, Opts)
     end.
 
 check_auto_row() ->
     case io:rows() of
         {ok, _} -> true;
         {error, _} -> false
-    end.
-
-update_page_pos(StorePid, Page, Pages)when is_pid(StorePid)  ->
-    Pos =
-        case lists:keyfind(Page, 1, Pages) of
-            false ->
-                Row = observer_cli_store:lookup_row(StorePid),
-                (Page - 1) * Row + 1;
-            {_, P} -> P
-        end,
-    update_page_pos(Page, Pos, Pages);
-update_page_pos(Page, Pos, Pages)  ->
-    [{Page, Pos} | lists:keydelete(Page, 1, Pages)].
-
-stop_link_process(List) ->
-    [erlang:exit(Pid, stop) ||Pid <- List].
-
-get_pos(Page, PageRow, Pages, TopLen) ->
-    Start = erlang:min((Page - 1)*PageRow + 1, TopLen),
-    case lists:keyfind(Page, 1, Pages) of
-        {_, P} when P >= Start andalso P =< Start + PageRow -> {Start, P};
-        _ -> {Start, Start}
     end.

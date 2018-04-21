@@ -50,19 +50,20 @@ render_ets_info(Rows) ->
     Title = ?render([?UNDERLINE, ?GRAY_BG,
         ?W("Table Name", 36), ?W("Objects", 12), ?W("size", 12),
         ?W("type", 13), ?W("protection", 10), ?W("keypos", 6),
-        ?W("write/read", 12), ?W("Owner Pid", 15),
-        ?RESET]),
+        ?W("write/read", 12), ?W("Owner Pid", 14)
+        ]),
     RowView =
         [begin
-             Name = get_value(name, Ets), Memory = proplists:get_value(memory, Ets),
-             Size = get_value(size, Ets), Type = get_value(type, Ets),
-             Protect = get_value(protection, Ets), KeyPos = get_value(keypos, Ets),
-             Write = get_value(write_concurrency, Ets), Read = get_value(read_concurrency, Ets),
-             Owner = get_value(owner, Ets),
+             Name = proplists:get_value(name, Ets), Memory = proplists:get_value(memory, Ets),
+             Size = proplists:get_value(size, Ets), Type = proplists:get_value(type, Ets),
+             Protect = proplists:get_value(protection, Ets), KeyPos = proplists:get_value(keypos, Ets),
+             Write = observer_cli_lib:to_list(proplists:get_value(write_concurrency, Ets)),
+             Read = observer_cli_lib:to_list(proplists:get_value(read_concurrency, Ets)),
+             Owner = proplists:get_value(owner, Ets),
              ?render([
                  ?W(Name, 36), ?W(Size, 12), ?W({byte, Memory}, 12),
                  ?W(Type, 13), ?W(Protect, 10), ?W(KeyPos, 6),
-                 ?W(Write ++ "/" ++ Read, 12), ?W(Owner, 15)
+                 ?W(Write ++ "/" ++ Read, 12), ?W(Owner, 14)
              ])
          end || Ets <- lists:sublist(SorEtsInfo, Rows)],
     [Title|RowView].
@@ -96,6 +97,3 @@ is_reg(Owner) ->
         {registered_name, Name} -> Name;
         _ -> Owner
     end.
-
-get_value(Key, List) ->
-    observer_cli_lib:to_list(proplists:get_value(Key, List)).

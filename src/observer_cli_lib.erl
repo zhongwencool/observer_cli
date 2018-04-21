@@ -20,7 +20,10 @@
 -export([unselect/1]).
 -export([parse_integer/1]).
 -export([render_last_line/1]).
-
+-export([exit_processes/1]).
+-export([update_page_pos/3]).
+-export([get_pos/4]).
+-export([test/0]).
 -define(DEFAULT_ROW_SIZE, 46). %% the number from 13' mbp
 
 -spec uptime() -> list().
@@ -36,7 +39,7 @@ uptime() ->
         ":",
         integer_to_list(S)
     ],
-    [?GREEN, ?W(Time, 16), ?RESET].
+    [?W(?GREEN, Time, 16)].
 
 %% @doc 0.982342 -> 98.23%, 1 -> 100.0%
 -spec to_percent(float()) -> string().
@@ -105,16 +108,24 @@ to_byte(Byte) -> %% process died
 mfa_to_list({Module, Fun, Arg}) ->
     [atom_to_list(Module), ":", atom_to_list(Fun), "/", integer_to_list(Arg)].
 
+test() ->
+    ?render([
+        ?W(?RED_BG, "1234567890", 10), ?W(?GRAY_BG, "12345", 5),
+        ?NEW_LINE,
+        ?W2(?RED_BG, "0987654321", 10), ?W2(?GRAY_BG, "54321", 5),
+        ?NEW_LINE
+    ]).
 -spec render(list()) -> iolist().
 render(FA) ->
-    {F, A} = tidy_format_args(["|~n"|lists:reverse(["|"|FA])], true, [], []),
+    {F, A} = tidy_format_args([" \e[0m|~n"|lists:reverse(["|"|FA])], true, [], []),
     io_lib:format(erlang:iolist_to_binary(F), A).
+    %{erlang:iolist_to_binary(F), A}.
 
 -spec render_menu(atom(), string()) -> iolist().
 render_menu(Type, Text) ->
     Title = get_menu_title(Type),
     UpTime = uptime(),
-    TitleWidth = ?COLUMN + 133 - erlang:length(UpTime),
+    TitleWidth = ?COLUMN + 130 - erlang:length(UpTime),
     ?render([?W([Title| Text], TitleWidth)|UpTime]).
 
 tidy_format_args([], _NeedLine, FAcc, AAcc) -> {FAcc, AAcc};
@@ -130,16 +141,16 @@ tidy_format_args([{extend, A, W}|Rest], false, FAcc, AAcc) ->
 
 tidy_format_args([{extend_color, C, A, W}|Rest], true, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
-    F = <<C/binary, "~-", WBin/binary, ".", WBin/binary, "ts", ?RESET/binary>>,
+    F = <<C/binary, "~-", WBin/binary, ".", WBin/binary, "ts">>,
     tidy_format_args(Rest, false, [F|FAcc], [to_str(A)|AAcc]);
 tidy_format_args([{extend_color, C, A, W}|Rest], false, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
-    F = << C/binary, "~-", WBin/binary, ".", WBin/binary, "ts", ?I2/binary, ?RESET/binary>>,
+    F = << C/binary, "~-", WBin/binary, ".", WBin/binary, "ts", ?I2/binary>>,
     tidy_format_args(Rest, false, [F|FAcc], [to_str(A)|AAcc]);
 
 tidy_format_args([{extend_color_2, C, A, W}|Rest], true, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
-    F = <<C/binary, "~-", WBin/binary, ".", WBin/binary, "ts", ?RESET/binary>>,
+    F = <<C/binary, "~-", WBin/binary, ".", WBin/binary, "ts">>,
     tidy_format_args(Rest, false, [F|FAcc], [to_str(A)|AAcc]);
 tidy_format_args([{extend_color_2, C, A, W}|Rest], false, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
@@ -150,8 +161,7 @@ tidy_format_args([F|Rest], NeedLine, FAcc, AAcc) ->
     tidy_format_args(Rest, NeedLine, [F|FAcc], AAcc).
 
 to_str({byte, Bytes}) -> to_byte(Bytes);
-to_str(Int)when is_integer(Int) -> erlang:integer_to_list(Int);
-to_str(Str) -> Str.
+to_str(Term) -> to_list(Term).
 
 -spec parse_cmd(#view_opts{}, pid()) -> atom()|string().
 parse_cmd(ViewOpts, Pid) ->
@@ -190,8 +200,12 @@ parse_cmd(ViewOpts, Pid) ->
             observer_cli_help:start(ViewOpts);
         "q\n" -> quit;
         "Q\n" -> quit;
-        "u\n" -> page_up_top_n;     %% backward
-        "d\n" -> page_down_top_n;   %% forward
+        "pu\n" -> page_up_top_n;     %% backward
+        "pd\n" -> page_down_top_n;   %% forward
+        "PU\n" -> page_up_top_n;     %% backward
+        "PD\n" -> page_down_top_n;   %% forward
+        "B\n" -> page_up_top_n;     %% backward
+        "F\n" -> page_down_top_n;   %% forward
     
         %% home
         "p\n" -> pause_or_resume;
@@ -205,7 +219,7 @@ parse_cmd(ViewOpts, Pid) ->
         "tt\n" -> {func, proc_window, total_heap_size};
         "mm\n" -> {func, proc_window, memory};
         "mmq\n" -> {func, proc_window, message_queue_len};
-        "\n" -> jump_to_process;
+        "\n" -> jump;
         Number ->
             parse_integer(Number)
     end.
@@ -232,7 +246,7 @@ parse_integer(Number) ->
             if Integer >= ?MIN_INTERVAL ->
                 {new_interval, Integer};
                 Integer > 0 ->
-                    {jump_to_process, Integer};
+                    {jump, Integer};
                 true ->
                     {input_illegal, Number}
             end
@@ -240,4 +254,31 @@ parse_integer(Number) ->
 
 -spec render_last_line(string()) -> list().
 render_last_line(Text) ->
-    ?render([?UNDERLINE, ?GRAY_BG, ?W(Text, ?COLUMN + 3), ?RESET]).
+    ?render([?UNDERLINE, ?GRAY_BG, ?W(Text, ?COLUMN + 2)]).
+
+-spec exit_processes(list()) -> ok.
+exit_processes(List) ->
+    [erlang:exit(Pid, stop) ||Pid <- List],
+    ok.
+
+-spec update_page_pos(pid() | pos_integer(), pos_integer(), list()) -> list().
+update_page_pos(StorePid, Page, Pages)when is_pid(StorePid)  ->
+    Pos =
+        case lists:keyfind(Page, 1, Pages) of
+            false ->
+                Row = observer_cli_store:lookup_row(StorePid),
+                (Page - 1) * Row + 1;
+            {_, P} -> P
+        end,
+    update_page_pos(Page, Pos, Pages);
+update_page_pos(Page, Pos, Pages)  ->
+    [{Page, Pos} | lists:keydelete(Page, 1, Pages)].
+
+-spec get_pos(pos_integer(), pos_integer(), list(), pos_integer()) ->
+    {pos_integer(), pos_integer()}.
+get_pos(Page, PageRow, Pages, TopLen) ->
+    Start = erlang:min((Page - 1)*PageRow + 1, TopLen),
+    case lists:keyfind(Page, 1, Pages) of
+        {_, P} when P >= Start andalso P =< Start + PageRow -> {Start, P};
+        _ -> {Start, Start}
+    end.

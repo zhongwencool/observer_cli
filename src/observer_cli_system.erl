@@ -50,7 +50,7 @@ render_worker(Interval, LastTimeRef) ->
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
     Menu = observer_cli_lib:render_menu(allocator, Text),
     BlockView = render_average_block_size_info(AverageBlockCurs, AverageBlockMaxes),
-    HitView = render_cache_hit_rates(CacheHitInfo),
+    HitView = render_cache_hit_rates(CacheHitInfo, erlang:length(CacheHitInfo)),
     LastLine = observer_cli_lib:render_last_line("q(quit)"),
     ?output([?CURSOR_TOP, Menu, Sys, BlockView, HitView, LastLine]),
     NextTimeRef = observer_cli_lib:next_redraw(LastTimeRef, Interval),
@@ -60,9 +60,8 @@ render_worker(Interval, LastTimeRef) ->
         redraw -> render_worker(Interval, NextTimeRef)
     end.
 
-render_cache_hit_rates(CacheHitInfo) ->
-    Title = ?render([?UNDERLINE, ?GRAY_BG, ?W("Instance", 8), ?W("Hits", 10), ?W("Calls", 11), ?W("Hit Rate", 99), ?RESET]),
-    Len = erlang:length(CacheHitInfo),
+render_cache_hit_rates(CacheHitInfo, Len) when Len =< 8 ->
+    Title = ?render([?UNDERLINE, ?GRAY_BG, ?W("Instance", 8), ?W("Hits", 10), ?W("Calls", 11), ?W("Hit Rate", 98)]),
     View = [begin
          [{hit_rate, HitRate}, {hits, Hit}, {calls, Call}] = proplists:get_value({instance, Seq}, CacheHitInfo),
          HitRateStr = observer_cli_lib:to_percent(HitRate),
@@ -70,22 +69,47 @@ render_cache_hit_rates(CacheHitInfo) ->
          TrueHitRate = case Hit == 0 andalso Call == 0 of true -> 0; false -> HitRate end,
          Process = lists:duplicate(trunc(TrueHitRate * 91), "|"),
          ?render([?W(SeqStr, 8),
-             ?W(observer_cli_lib:to_list(Hit), 10),
-             ?W(observer_cli_lib:to_list(Call), 11),
-             ?W(Process, 90),
+             ?W(Hit, 10),
+             ?W(Call, 11),
+             ?W(Process, 89),
              ?W(HitRateStr, 6)])
             end || Seq <- lists:seq(0, Len - 1)],
-    [Title|View].
+    [Title|View];
+render_cache_hit_rates(CacheHitInfo, Len) ->
+    Title = ?render([
+        ?UNDERLINE, ?GRAY_BG,
+        "IN|", ?W(" Hits/Calls", 20), ?W("HitRate", 6),
+        "IN|", ?W(" Hits/Calls", 20), ?W("HitRate", 6),
+        "IN|", ?W(" Hits/Calls", 20), ?W("HitRate", 6),
+        "IN|", ?W(" Hits/Calls", 19), ?W("HitRate", 6)
+    ]),
+    Num = Len div 4,
+    Rows =
+        [begin
+             Seq2 = Seq1 + Num,
+             Seq3 = Seq2 + Num,
+             Seq4 = Seq3 + Num,
+             {SeqStr1, Hit1, Call1, HitRateStr1} = get_cachehit_info(Seq1, CacheHitInfo),
+             {SeqStr2, Hit2, Call2, HitRateStr2} = get_cachehit_info(Seq2, CacheHitInfo),
+             {SeqStr3, Hit3, Call3, HitRateStr3} = get_cachehit_info(Seq3, CacheHitInfo),
+             {SeqStr4, Hit4, Call4, HitRateStr4} = get_cachehit_info(Seq4, CacheHitInfo),
+             ?render([
+                 SeqStr1, ?W(Hit1 ++ "/" ++ Call1, 19), ?W(HitRateStr1, 6),
+                 SeqStr2, ?W(Hit2 ++ "/" ++ Call2, 19), ?W(HitRateStr2, 6),
+                 SeqStr3, ?W(Hit3 ++ "/" ++ Call3, 19), ?W(HitRateStr3, 6),
+                 SeqStr4, ?W(Hit4 ++ "/" ++ Call4, 18), ?W(HitRateStr4, 6)])
+         end || Seq1 <- lists:seq(1, Num)],
+    [Title|Rows].
 
 render_average_block_size_info(AverageBlockCurs, AverageBlockMaxes) ->
     Title = ?render([ ?UNDERLINE, ?GRAY_BG,
         ?W("Allocator Type", 16), ?W("Current Multiblock Carriers", 28),
-        ?W("Max Multiblock Carriers", 28), ?W("Current SingleBlock Carriers", 27),
-        ?W("Max Single Block Carriers", 26), ?RESET]),
+        ?W("Max Multiblock Carriers", 28), ?W("Current SingleBlock Carriers", 26),
+        ?W("Max Single Block Carriers", 26)]),
     View =
         [begin
              [Type, CMC, MMC, CSC, MSBC] = get_alloc(AllocKey, AverageBlockCurs, AverageBlockMaxes),
-             ?render([?W(Type, 16), ?W(CMC, 28), ?W(MMC, 28), ?W(CSC, 27), ?W(MSBC, 26)])
+             ?render([?W(Type, 16), ?W(CMC, 28), ?W(MMC, 28), ?W(CSC, 27), ?W(MSBC, 25)])
          end || AllocKey <- ?UTIL_ALLOCATORS],
     [Title|View].
 
@@ -122,8 +146,8 @@ render_sys_info(System, CPU, Memory, Statistics) ->
         ?W("Memory Usage", 11),
         ?W("State", 22),
         ?W("Statistics", 11),
-        ?W("State", 12),
-        ?RESET]),
+        ?W("State", 11)
+        ]),
     NewSystem = [begin {Key, Value} end || {Key, Value} <- System,
         Key =/= "Compiled for" andalso Key =/= "smp Support"],
     [{_, TotalMem} | _R] = Memory,
@@ -144,13 +168,13 @@ render_sys_info(System, CPU, Memory, Statistics) ->
                  ?W(SysKey, 22), ?W(to_list(SysVal), 8),
                  ?W(CpuKey, 23), ?W(to_list(CpuVal), 7),
                  ?W(MemKey, 11), ?W(observer_cli_lib:to_byte(MemValInt), 13), ?W(Percent, 6),
-                 ?W(StatisticsKey, 11), ?W(to_list(StatisticsVal), 12)
+                 ?W(StatisticsKey, 11), ?W(to_list(StatisticsVal), 11)
              ])
          end || Pos <- lists:seq(1, 6)],
     Compile = ?render([
         ?UNDERLINE,
-        ?W("compiled for", 22), ?W(to_list(proplists:get_value("Compiled for", System)), 112),
-        ?RESET]),
+        ?W("compiled for", 22), ?W(to_list(proplists:get_value("Compiled for", System)), 111)
+        ]),
     [Title | (Row ++ [Compile])].
 
 sys_info() ->
@@ -275,3 +299,9 @@ info_fields() ->
             ]}
     ],
     {Info, Stat}.
+
+get_cachehit_info(Seq, CacheHitInfo) ->
+    [{hit_rate, HitRate}, {hits, Hit}, {calls, Call}] = proplists:get_value({instance, Seq}, CacheHitInfo),
+    SeqStr = lists:flatten(io_lib:format("\e[92m~2..0w| \e[0m", [Seq])),
+    HitRateStr = observer_cli_lib:to_percent(HitRate),
+    {SeqStr, integer_to_list(Hit), integer_to_list(Call), HitRateStr}.
