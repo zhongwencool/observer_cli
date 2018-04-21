@@ -163,14 +163,14 @@ render_stats(Stats) ->
     SendAvg = proplists:get_value(send_avg, Stats),
     SendPend = proplists:get_value(send_pend, Stats),
     ?render([
-        ?W("recv_oct", 8), ?W(RecvOct, 12),
         ?W("recv_cnt", 9), ?W(RecvCnt, 12),
+        ?W("recv_oct", 8), ?W({byte, RecvOct}, 12),
         ?W("recv_max", 9), ?W({byte, RecvMax}, 12),
         ?W("recv_avg", 9), ?W({byte, RecvAvg}, 12),
         ?W("recv_dvi", 9), ?W({byte, RecvDvi}, 12),
         ?NEW_LINE,
-        ?W("send_oct", 8), ?W(SendOct, 12),
         ?W("send_cnt", 9), ?W(SendCnt, 12),
+        ?W("send_oct", 8), ?W({byte, SendOct}, 12),
         ?W("send_max", 9), ?W({byte, SendMax}, 12),
         ?W("send_avg", 9), ?W({byte, SendAvg}, 12),
         ?W("send_pend", 9), ?W(SendPend, 12)
