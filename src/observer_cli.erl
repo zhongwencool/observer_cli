@@ -25,8 +25,9 @@ start(Node) when is_atom(Node) -> rpc_start(Node);
 start(#view_opts{home = Home} = Opts) ->
     AutoRow = check_auto_row(),
     StorePid = observer_cli_store:start(),
+    LastSchWallFlag = erlang:system_flag(scheduler_wall_time, true),
     RenderPid = spawn(fun() -> render_worker(StorePid, Home, AutoRow) end),
-    manager(StorePid, RenderPid, Opts#view_opts{auto_row = AutoRow}).
+    manager(StorePid, RenderPid, Opts#view_opts{auto_row = AutoRow}, LastSchWallFlag).
 
 -spec start(Node, Cookies) -> no_return when
     Node :: atom(),
@@ -47,65 +48,72 @@ rpc_start(Node) ->
         ignored -> connect_error(<<"Ignored by node(~p), local node is not alive!~n">>, Node)
     end.
 
-manager(StorePid, RenderPid, Opts) ->
+manager(StorePid, RenderPid, Opts, LastSchWallFlag) ->
     #view_opts{home = Home = #home{cur_page = CurPage, pages = Pages}} = Opts,
     case observer_cli_lib:parse_cmd(Opts, RenderPid) of
         quit ->
             observer_cli_lib:exit_processes([StorePid]),
-            erlang:send(RenderPid, quit);
+            erlang:send(RenderPid, quit),
+            erlang:system_flag(scheduler_wall_time, LastSchWallFlag),
+            quit;
         pause_or_resume ->
             erlang:send(RenderPid, pause_or_resume),
-            manager(StorePid, RenderPid, Opts);
+            manager(StorePid, RenderPid, Opts, LastSchWallFlag);
         {new_interval, NewInterval} ->
             observer_cli_lib:exit_processes([StorePid, RenderPid]),
+            erlang:system_flag(scheduler_wall_time, LastSchWallFlag),
             start(Opts#view_opts{home = Home#home{interval = NewInterval}});
         {jump, NewPos} ->
             NewPages = observer_cli_lib:update_page_pos(CurPage, NewPos, Pages),
             NewHome = Home#home{pages = NewPages},
-            start_process_view(StorePid, RenderPid, Opts#view_opts{home = NewHome}, false);
+            start_process_view(StorePid, RenderPid, Opts#view_opts{home = NewHome}, LastSchWallFlag, false);
         jump ->
-            start_process_view(StorePid, RenderPid, Opts, true);
+            start_process_view(StorePid, RenderPid, Opts, LastSchWallFlag, true);
         {func, Func, Type} ->
             observer_cli_lib:exit_processes([StorePid, RenderPid]),
+            erlang:system_flag(scheduler_wall_time, LastSchWallFlag),
             start(Opts#view_opts{home = Home#home{func = Func, type = Type}});
         page_down_top_n ->
             NewPage = max(CurPage + 1, 1),
             NewPages = observer_cli_lib:update_page_pos(StorePid, NewPage, Pages),
             observer_cli_lib:exit_processes([StorePid, RenderPid]),
+            erlang:system_flag(scheduler_wall_time, LastSchWallFlag),
             start(Opts#view_opts{home = Home#home{cur_page = NewPage, pages = NewPages}});
         page_up_top_n ->
             NewPage = max(CurPage - 1, 1),
             NewPages = observer_cli_lib:update_page_pos(StorePid, NewPage, Pages),
             observer_cli_lib:exit_processes([StorePid, RenderPid]),
+            erlang:system_flag(scheduler_wall_time, LastSchWallFlag),
             start(Opts#view_opts{home = Home#home{cur_page = NewPage, pages = NewPages}});
         _ ->
-            manager(StorePid, RenderPid, Opts)
+            manager(StorePid, RenderPid, Opts, LastSchWallFlag)
     end.
 
 render_worker(Manager, #home{} = Home, AutoRow) ->
     ?output(?CLEAR),
     StableInfo = get_stable_system_info(),
-    redraw_running(Manager, Home, StableInfo, erlang:make_ref(), AutoRow, true).
+    LastStats = get_incremental_stats(),
+    redraw_running(Manager, Home, StableInfo, LastStats, erlang:make_ref(), AutoRow, true).
 
 %% pause status waiting to be resume
-redraw_pause(StorePid, #home{func = Func, type = Type} = Home, StableInfo, LastTimeRef, AutoRow) ->
+redraw_pause(StorePid, #home{func = Func, type = Type} = Home, StableInfo, LastStats, LastTimeRef, AutoRow) ->
     notify_pause_status(),
     erlang:cancel_timer(LastTimeRef),
     receive
         quit -> quit;
-        {Func, Type} -> redraw_running(StorePid, Home, StableInfo, LastTimeRef, AutoRow, false);
+        {Func, Type} -> redraw_running(StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRow, false);
         pause_or_resume ->
             ?output(?CLEAR),
-            redraw_running(StorePid, Home, StableInfo, LastTimeRef, AutoRow, true)
+            redraw_running(StorePid, Home, StableInfo, LastTimeRef, LastTimeRef, AutoRow, true)
     end.
 
 %% running status
 redraw_running(StorePid, #home{interval = Interval, func = Func,
     type = Type, pages = RankPos, cur_page = CurPage} = Home,
-    StableInfo, LastTimeRef, AutoRow, IsFirstTime) ->
+    StableInfo, LastStats, LastTimeRef, AutoRow, IsFirstTime) ->
     erlang:cancel_timer(LastTimeRef),
     TerminalRow = observer_cli_lib:get_terminal_rows(AutoRow),
-    [{Processes, Schedulers}] = recon:node_stats(1, 0, fun(X, Acc) -> [X|Acc] end, []),
+    {{Processes, Schedulers}, NewStats} = node_stats(LastStats),
     {CPURow, CPULine} = render_scheduler_usage(Schedulers),
     ProcessRows = max(TerminalRow - 14 - CPURow, 0),
     TopList = get_top_n(Func, Type, Interval, ProcessRows * CurPage, IsFirstTime),
@@ -122,8 +130,8 @@ redraw_running(StorePid, #home{interval = Interval, func = Func,
     TimeRef = refresh_next_time(Func, Type, Interval),
     receive
         quit -> quit;
-        pause_or_resume -> redraw_pause(StorePid, Home, StableInfo, TimeRef, AutoRow);
-        {Func, Type} -> redraw_running(StorePid, Home, StableInfo, TimeRef, AutoRow, false)
+        pause_or_resume -> redraw_pause(StorePid, Home, StableInfo, NewStats, TimeRef, AutoRow);
+        {Func, Type} -> redraw_running(StorePid, Home, StableInfo, NewStats, TimeRef, AutoRow, false)
     end.
 
 render_system_line(StableInfo, UseMem, AllocatedMem, UnusedMem, ProcSum) ->
@@ -491,7 +499,6 @@ get_refresh_prompt(proc_count, Type, Interval, Rows) ->
 get_refresh_prompt(proc_window, Type, Interval, Rows) ->
     io_lib:format("recon:proc_window(~p, ~w, ~w) Interval:~wms", [Type, Rows, Interval, Interval]).
 
-
 get_stable_system_info() ->
     [begin observer_cli_lib:to_list(erlang:system_info(Item)) end || Item <- ?STABLE_SYSTEM_KEY].
 
@@ -515,17 +522,19 @@ connect_error(Prompt, Node) ->
     Prop = <<?RED/binary, Prompt/binary, ?RESET/binary>>,
     ?output(Prop, [Node]).
 
-start_process_view(StorePid, RenderPid, Opts = #view_opts{home = Home}, AutoJump) ->
+start_process_view(StorePid, RenderPid, Opts = #view_opts{home = Home}, LastSchWallFlag, AutoJump) ->
     #home{cur_page = CurPage, pages = Pages} = Home,
     {_, CurPos} = lists:keyfind(CurPage, 1, Pages),
     case observer_cli_store:lookup_pos(StorePid, CurPos) of
         {CurPos, ChoosePid} ->
             observer_cli_lib:exit_processes([StorePid, RenderPid]),
+            erlang:system_flag(scheduler_wall_time, LastSchWallFlag),
             observer_cli_process:start(ChoosePid, Opts);
         {_, ChoosePid} when AutoJump ->
             observer_cli_lib:exit_processes([StorePid, RenderPid]),
+            erlang:system_flag(scheduler_wall_time, LastSchWallFlag),
             observer_cli_process:start(ChoosePid, Opts);
-        _ -> manager(StorePid, RenderPid, Opts)
+        _ -> manager(StorePid, RenderPid, Opts, LastSchWallFlag)
     end.
 
 check_auto_row() ->
@@ -533,3 +542,43 @@ check_auto_row() ->
         {ok, _} -> true;
         {error, _} -> false
     end.
+
+node_stats({LastIn, LastOut, LastGCs, LastWords, LastScheduleWall}) ->
+    ProcC = erlang:system_info(process_count),
+    RunQ = erlang:statistics(run_queue),
+    {_, LogQ} = process_info(whereis(error_logger), message_queue_len),
+    %% Mem (Absolutes)
+    Mem = erlang:memory(),
+    Tot = proplists:get_value(total, Mem),
+    ProcM = proplists:get_value(processes_used, Mem),
+    Atom = proplists:get_value(atom_used, Mem),
+    Bin = proplists:get_value(binary, Mem),
+    Ets = proplists:get_value(ets, Mem),
+    %% Incremental
+    New = {In, Out, GCs, Words, ScheduleWall} = get_incremental_stats(),
+    BytesIn = In-LastIn,
+    BytesOut = Out-LastOut,
+    GCCount = GCs-LastGCs,
+    GCWords = Words-LastWords,
+    {_, Reds} = erlang:statistics(reductions),
+    ScheduleUsage = recon_lib:scheduler_usage_diff(LastScheduleWall, ScheduleWall),
+    {
+        {[
+            {process_count, ProcC}, {run_queue, RunQ},
+            {error_logger_queue_len, LogQ}, {memory_total, Tot},
+            {memory_procs, ProcM}, {memory_atoms, Atom},
+            {memory_bin, Bin}, {memory_ets, Ets}],
+            [
+                {bytes_in, BytesIn}, {bytes_out, BytesOut},
+                {gc_count, GCCount}, {gc_words_reclaimed, GCWords},
+                {reductions, Reds}, {scheduler_usage, ScheduleUsage}
+            ]
+        },
+        New
+    }.
+
+get_incremental_stats() ->
+    {{input, In}, {output, Out}} = erlang:statistics(io),
+    {GCs, Words, _} = erlang:statistics(garbage_collection),
+    ScheduleWall = erlang:statistics(scheduler_wall_time),
+    {In, Out, GCs, Words, ScheduleWall}.
