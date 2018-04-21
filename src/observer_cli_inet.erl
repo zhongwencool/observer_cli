@@ -98,7 +98,7 @@ render_inet_rows([], Rows, #inet{func = inet_window, type = Type, interval = Int
     {[], io_lib:format("\e[32;1mGet nothing for recon:inet_window(~p, ~p, ~p)\e[0m~n", [Type, Rows, Interval])};
 render_inet_rows(InetList, Num, #inet{type = Type, pages = Pages,
     cur_page = Page})when Type =:= cnt orelse Type =:= oct ->
-    {RecvType, SendType} = trans_type(Type),
+    {Unit, RecvType, SendType} = trans_type(Type),
     Title = title(Type, RecvType, SendType),
     {Start, ChoosePos} = observer_cli_lib:get_pos(Page, Num, Pages, erlang:length(InetList)),
     FormatFunc =
@@ -111,12 +111,13 @@ render_inet_rows(InetList, Num, #inet{type = Type, pages = Pages,
             QueueSize = proplists:get_value(queue_size, MemoryUsed),
             Memory = proplists:get_value(memory, MemoryUsed),
             IP = get_remote_ip(Port),
+            {ValueFormat, RecvFormat, SendFormat} =  trans_format(Unit, Value, Recv, Send),
             R = [
                 ?W(Pos, 2),
                 ?W(Port, 16),
-                ?W(Value, 10),
-                ?W(Recv, 10),
-                ?W(Send, 10),
+                ValueFormat,
+                RecvFormat,
+                SendFormat,
                 ?W({byte, Output}, 12),
                 ?W({byte, Input}, 12),
                 ?W(QueueSize, 6),
@@ -130,7 +131,7 @@ render_inet_rows(InetList, Num, #inet{type = Type, pages = Pages,
         lists:sublist(InetList, Start, Num)),
     {PortList, [Title | lists:reverse(Rows)]};
 render_inet_rows(InetList, Num, #inet{type = Type, pages = Pages, cur_page = Page}) ->
-    {Type1, Type2} = trans_type(Type),
+    {Unit, Type1, Type2} = trans_type(Type),
     Title = title(Type, Type1, Type2),
     {Start, ChoosePos} = observer_cli_lib:get_pos(Page, Num, Pages, erlang:length(InetList)),
     FormatFunc =
@@ -145,12 +146,13 @@ render_inet_rows(InetList, Num, #inet{type = Type, pages = Pages, cur_page = Pag
             IP = get_remote_ip(Port),
             Packet1 = getstat(Port, erlang:list_to_existing_atom(Type1)),
             AllPacket = case is_integer(Packet1) of true -> Value + Packet1; false -> Value end,
+            {ValueFormat, Packet1Format, AllFormat} =  trans_format(Unit, Value, Packet1, AllPacket),
             R = [
                 ?W(Pos, 2),
                 ?W(Port, 16),
-                ?W(Value, 10),
-                ?W(Packet1, 10),
-                ?W(AllPacket, 10),
+                ValueFormat,
+                Packet1Format,
+                AllFormat,
                 ?W({byte, Input}, 12),
                 ?W({byte, Output}, 12),
                 ?W(QueueSize, 6),
@@ -194,17 +196,30 @@ start_port_view(StorePid, RenderPid, Opts = #view_opts{inet = InetOpt}, AutoJump
     end.
 
 trans_type(cnt) ->
-    {"recv_cnt", "send_cnt"};
+    {number, "recv_cnt", "send_cnt"};
 trans_type(oct) ->
-    {"recv_oct", "send_oct"};
+    {byte, "recv_oct", "send_oct"};
 trans_type(send_cnt) ->
-    {"recv_cnt", "cnt"};
+    {number, "recv_cnt", "cnt"};
 trans_type(recv_cnt) ->
-    {"send_cnt", "cnt"};
+    {number, "send_cnt", "cnt"};
 trans_type(send_oct) ->
-    {"recv_oct", "oct"};
+    {byte, "recv_oct", "oct"};
 trans_type(recv_oct) ->
-    {"send_oct", "oct"}.
+    {byte, "send_oct", "oct"}.
+
+trans_format(byte, Val, Val1, Val2) ->
+    {
+        ?W({byte, Val}, 10),
+        ?W({byte, Val1}, 10),
+        ?W({byte, Val2}, 10)
+    };
+trans_format(number, Val, Val1, Val2) ->
+    {
+        ?W(Val, 10),
+        ?W(Val1, 10),
+        ?W(Val2, 10)
+    }.
 
 title(Type, Type1, Type2) ->
     ?render([?UNDERLINE, ?GRAY_BG,
@@ -217,7 +232,7 @@ title(Type, Type1, Type2) ->
         ?W("input", 12),
         ?W("queuesize", 6),
         ?W("memory", 12),
-        ?W("IP", 19)
+        ?W("Peername(ip:port)", 19)
         ]).
 
 get_remote_ip(P) ->
