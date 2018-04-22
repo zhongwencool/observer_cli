@@ -11,7 +11,7 @@
 -define(CPU_ALARM_THRESHOLD, 0.8). %% cpu >= this value will be highlight
 -define(COUNT_ALARM_THRESHOLD, 0.85). %% port or process reach max_limit * 0.85 will be highlight
 -define(LAST_LINE, "q(quit) p(pause) r/rr(reduction) " ++
-    "m/mm(memory) b/bb(binary memory) t/tt(total heap size) mq/mmq(message queue) 9(process 9 detail)").
+    "m/mm(mem) b/bb(binary mem) t/tt(total heap size) mq/mmq(msg queue) 9(proc 9 info) pd/pu(page:down/up)").
 
 -define(STABLE_SYSTEM_KEY, [system_version, process_limit, smp_support,
     port_limit, ets_limit, logical_processors, multi_scheduling]).

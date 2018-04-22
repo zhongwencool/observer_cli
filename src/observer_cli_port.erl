@@ -138,7 +138,7 @@ render_type_line(List) ->
         ?render([
             ?UNDERLINE,
             ?W("            " ++ SockName ++ "(sockname)", 55),
-            ?W("==============>", 15),
+            ?W("<=============>", 15),
             ?W("            " ++ PeerName ++ "(peername)", 55)
         ]),
     Line2 =
