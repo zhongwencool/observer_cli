@@ -39,22 +39,20 @@ dep_observer_cli = hex 1.3.0
 #### Try in local shell.
 
 ```erlang
-$ rebar3 shell
+rebar3 shell
 1> observer_cli:start().
 ```
 ####  Monitor remote node
 ```erlang
-$ rebar3 shell --name 'observer_cli@127.0.0.1'
+rebar3 shell --name 'observer_cli@127.0.0.1'
 1> observer_cli:start('target@host', 'magic_cookie').
 ```
+:exclamation: **ensure observer_cli application start on target node.**
+
 #### Escriptize
 1. `rebar3 escriptize` to generate an escript executable containing the project's and its dependencies' BEAM files.
-
     Place script(`_build/default/bin/observer_cli`) anywhere in your path and use `observer_cli` command.
-
 2. `observer_cli <TARGETNODE> <TARGETCOOKIE>` to monitor remote node.
-
-   :exclamation: **ensure observer_cli application start on target node.**
 
 ----------------
 ### GUI
@@ -85,6 +83,7 @@ $ rebar3 shell --name 'observer_cli@127.0.0.1'
 - 1.3.0
   - Rewrite Network/Process view.
   - Support PageDown/PageUp for top n list.
+  - Escript auto load observer_cli when it's not load on target node.
 - 1.2.2
   - fix schedule number >= 32 display wrong.
   - improve memory(byte/kilobyte/megabyte/gigabyte) unit.
