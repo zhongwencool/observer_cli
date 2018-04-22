@@ -23,8 +23,7 @@
 -export([exit_processes/1]).
 -export([update_page_pos/3]).
 -export([get_pos/4]).
--export([test/0]).
--define(DEFAULT_ROW_SIZE, 46). %% the number from 13' mbp
+-define(DEFAULT_ROW_SIZE, 35). %% the number from 13' mbp
 
 -spec uptime() -> list().
 uptime() ->
@@ -108,13 +107,6 @@ to_byte(Byte) -> %% process died
 mfa_to_list({Module, Fun, Arg}) ->
     [atom_to_list(Module), ":", atom_to_list(Fun), "/", integer_to_list(Arg)].
 
-test() ->
-    ?render([
-        ?W(?RED_BG, "1234567890", 10), ?W(?GRAY_BG, "12345", 5),
-        ?NEW_LINE,
-        ?W2(?RED_BG, "0987654321", 10), ?W2(?GRAY_BG, "54321", 5),
-        ?NEW_LINE
-    ]).
 -spec render(list()) -> iolist().
 render(FA) ->
     {F, A} = tidy_format_args([" \e[0m|~n"|lists:reverse(["|"|FA])], true, [], []),
