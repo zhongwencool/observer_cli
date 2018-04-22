@@ -22,13 +22,13 @@ Visualize Erlang/Elixir Nodes On The Command Line base on [recon](https://github
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.2.0
+dep_observer_cli = hex 1.3.0
 ```
 **Elixir**
 ```elixir
 # mix.exs                                                                                                   
    def deps do                                                          
-     [{:observer_cli, "~> 1.2"}]                                    
+     [{:observer_cli, "~> 1.3"}]
    end
    def application do
      [applications: [:observer_cli]]
@@ -58,13 +58,15 @@ $ rebar3 shell --name 'observer_cli@127.0.0.1'
 
 ----------------
 ### GUI
-<img src="https://user-images.githubusercontent.com/3116225/33328258-78ec3fa4-d494-11e7-9309-40aa8f252463.jpg" width="90%"></img>
-<img src="https://user-images.githubusercontent.com/3116225/33328260-792c1b38-d494-11e7-8b2f-02428ac97820.jpg" width="90%"></img>
-<img src="https://user-images.githubusercontent.com/3116225/33328263-799b1b14-d494-11e7-85de-1919bfd3ea3d.jpg" width="90%"></img>
-<img src="https://user-images.githubusercontent.com/3116225/33328264-79e4f374-d494-11e7-9f18-5d83f7171ff2.jpg" width="90%"></img>
-<img src="https://user-images.githubusercontent.com/3116225/33328265-7a37144c-d494-11e7-8f25-d0b85f843047.jpg" width="90%"></img> 
-<img src="https://user-images.githubusercontent.com/3116225/33328266-7a6dc064-d494-11e7-962d-add9359cc4e9.jpg" width="90%"></img>
-<img src="https://user-images.githubusercontent.com/3116225/33328267-7aa6a398-d494-11e7-8057-d307b1afcdce.jpg" width="90%"></img> 
+<img src="https://user-images.githubusercontent.com/3116225/39091211-55554414-4622-11e8-8b28-bd3b5c7e17a6.jpg" width="90%" alt="Home"></img>
+<img src="https://user-images.githubusercontent.com/3116225/39091212-55870e22-4622-11e8-99e7-8e8c56223765.jpg" width="90%" alt="Network"></img>
+<img src="https://user-images.githubusercontent.com/3116225/39091213-55b9aaf8-4622-11e8-91ed-b37c04e20173.jpg" width="90%" alt="System"></img>
+<img src="https://user-images.githubusercontent.com/3116225/39091214-55eae91a-4622-11e8-95c2-bc514219b5d9.jpg" width="90%" alt="Ets"></img>
+<img src="https://user-images.githubusercontent.com/3116225/39091215-5637b4fc-4622-11e8-9639-99405318fc09.jpg" width="90%" alt="Mnesia"></img>
+<img src="https://user-images.githubusercontent.com/3116225/39091216-567ddab8-4622-11e8-8b32-db0f621d6b90.jpg" width="90%" alt="Application"></img>
+<img src="https://user-images.githubusercontent.com/3116225/39091217-57258844-4622-11e8-9b21-2a7d661bc623.jpg" width="90%" alt="Document"></img>
+<img src="https://user-images.githubusercontent.com/3116225/39091219-66ba0398-4622-11e8-81b1-f489251f111a.jpg" width="90%" alt="Process"></img>
+<img src="https://user-images.githubusercontent.com/3116225/39091218-6687caf4-4622-11e8-86c7-190c2106d41e.jpg" width="90%" alt="Port"></img>
 
 -------------------
 ### TODO
@@ -80,6 +82,9 @@ $ rebar3 shell --name 'observer_cli@127.0.0.1'
 
 ----------------
 ### Changelog
+- 1.3.0
+  - Rewrite Network/Process view.
+  - Support PageDown/PageUp for top n list.
 - 1.2.2
   - fix schedule number >= 32 display wrong.
   - improve memory(byte/kilobyte/megabyte/gigabyte) unit.
