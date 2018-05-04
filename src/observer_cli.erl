@@ -29,19 +29,26 @@ start(#view_opts{home = Home} = Opts) ->
     RenderPid = spawn(fun() -> render_worker(StorePid, Home, AutoRow) end),
     manager(StorePid, RenderPid, Opts#view_opts{auto_row = AutoRow}, LastSchWallFlag).
 
--spec start(Node, Cookies) -> no_return when
+-spec start(Node, Cookies | Options) -> no_return when
     Node :: atom(),
-    Cookies :: atom().
+    Cookies :: atom(),
+    Options :: proplists:proplist().
 start(Node, _Cookie) when Node =:= node() -> start(#view_opts{});
 start(Node, Cookie) when is_atom(Node) andalso is_atom(Cookie) ->
-    erlang:set_cookie(Node, Cookie),
+    start(Node, [{cookie, Cookie}]);
+start(Node, Options) when is_atom(Node) andalso is_list(Options) ->
+    case proplists:get_value(cookie, Options) of
+        undefined -> ok;
+        Cookie -> erlang:set_cookie(Node, Cookie)
+    end,
     rpc_start(Node).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 rpc_start(Node) ->
-    case net_kernel:connect_node(Node) of
+    case net_kernel:hidden_connect_node(Node) of
         true ->
             rpc:call(Node, ?MODULE, start, [#view_opts{}]);
         false -> connect_error(<<"Node(~p) refuse to be connected, make sure cookie is valid~n">>, Node);
