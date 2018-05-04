@@ -31,7 +31,7 @@ dep_observer_cli = hex 1.3.0
      [{:observer_cli, "~> 1.3"}]
    end
    def application do
-     [applications: [:observer_cli]]
+     [extra_applications: [:observer_cli]]
   end
 ```  
 ------------------
@@ -39,20 +39,29 @@ dep_observer_cli = hex 1.3.0
 #### Try in local shell.
 
 ```erlang
+%% rebar3 project
 rebar3 shell
 1> observer_cli:start().
+%% mix project
+iex -S mix
+iex(1)> :observer_cli.start
 ```
 ####  Monitor remote node
 ```erlang
+%% rebar3 project
 rebar3 shell --name 'observer_cli@127.0.0.1'
 1> observer_cli:start('target@host', 'magic_cookie').
+%% mix project
+iex --name "observer_cli@127.0.0.1" -S mix
+iex(1)> :observer_cli.start(:'target@host', :'magic_cookie')
 ```
-:exclamation: **ensure observer_cli application start on target node.**
+:exclamation: **ensure observer_cli application been loaded on target node.**
 
 #### Escriptize
-1. `rebar3 escriptize` to generate an escript executable containing the project's and its dependencies' BEAM files.
+1. cd xxx/observer_cli/
+2. `rebar3 escriptize` to generate an escript executable containing the project's and its dependencies' BEAM files.
     Place script(`_build/default/bin/observer_cli`) anywhere in your path and use `observer_cli` command.
-2. `observer_cli <TARGETNODE> <TARGETCOOKIE>` to monitor remote node.
+3. `observer_cli <TARGETNODE> <TARGETCOOKIE>` to monitor remote node.
 
 ----------------
 ### GUI
