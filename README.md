@@ -61,7 +61,7 @@ iex(1)> :observer_cli.start(:'target@host', :'magic_cookie')
 1. cd xxx/observer_cli/
 2. `rebar3 escriptize` to generate an escript executable containing the project's and its dependencies' BEAM files.
     Place script(`_build/default/bin/observer_cli`) anywhere in your path and use `observer_cli` command.
-3. `observer_cli <TARGETNODE> <TARGETCOOKIE>` to monitor remote node.
+3. `observer_cli TARGETNODE [TARGETCOOKIE]` to monitor remote node.
 
 ----------------
 ### GUI
