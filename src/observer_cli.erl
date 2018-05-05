@@ -49,8 +49,7 @@ start(Node, Options) when is_atom(Node) andalso is_list(Options) ->
 
 rpc_start(Node) ->
     case net_kernel:hidden_connect_node(Node) of
-        true ->
-            rpc:call(Node, ?MODULE, start, [#view_opts{}]);
+        true -> rpc:call(Node, ?MODULE, start, [#view_opts{}]);
         false -> connect_error(<<"Node(~p) refuse to be connected, make sure cookie is valid~n">>, Node);
         ignored -> connect_error(<<"Ignored by node(~p), local node is not alive!~n">>, Node)
     end.
@@ -125,9 +124,10 @@ redraw_running(StorePid, #home{interval = Interval, func = Func,
     ProcessRows = max(TerminalRow - 14 - CPURow, 0),
     TopList = get_top_n(Func, Type, Interval, ProcessRows * CurPage, IsFirstTime),
     {UseMemInt, AllocatedMemInt, UnusedMemInt} = get_change_system_info(),
+    AtomStatus = get_atom_status(),
     Text = get_refresh_prompt(Func, Type, Interval, ProcessRows),
     MenuLine = observer_cli_lib:render_menu(home, Text),
-    SystemLine = render_system_line(StableInfo, UseMemInt, AllocatedMemInt, UnusedMemInt, Processes),
+    SystemLine = render_system_line(StableInfo, AtomStatus, UseMemInt, AllocatedMemInt, UnusedMemInt, Processes),
     MemLine = render_memory_process_line(Processes, Schedulers, Interval),
     {TopNList, RankLine} = render_top_n_view(Type, TopList, ProcessRows, RankPos, CurPage),
     LastLine = observer_cli_lib:render_last_line(?LAST_LINE),
@@ -141,7 +141,7 @@ redraw_running(StorePid, #home{interval = Interval, func = Func,
         {Func, Type} -> redraw_running(StorePid, Home, StableInfo, NewStats, TimeRef, AutoRow, false)
     end.
 
-render_system_line(StableInfo, UseMem, AllocatedMem, UnusedMem, ProcSum) ->
+render_system_line(StableInfo, AtomStatus, UseMem, AllocatedMem, UnusedMem, ProcSum) ->
     [Version, ProcLimit, SmpSupport, PortLimit, EtsLimit, LogicalProc, MultiScheduling] = StableInfo,
     UsePercent = observer_cli_lib:to_percent(UseMem / AllocatedMem),
     UnUsePercent = observer_cli_lib:to_percent(UnusedMem / AllocatedMem),
@@ -153,20 +153,31 @@ render_system_line(StableInfo, UseMem, AllocatedMem, UnusedMem, ProcSum) ->
         ?W("System", 10), ?W("Count/Limit", 21),
         ?W("System Switch", 25), ?W("Status", 21),
         ?W("Memory Info", 20), ?W("Size", 24)]),
-    Row = ?render([
+    Row1 = ?render([
         ?W("Proc Count", 10), ?W2(ProcWarning, ProcCount, 22),
         ?W(" Smp Support", 26), ?W(SmpSupport, 21),
         ?W("Allocted Mem", 20), ?W({byte, AllocatedMem}, 15), ?W("100.0%", 6),
         ?NEW_LINE,
         ?W("Port Count", 10), ?W2(PortWarning, PortCount, 22),
         ?W(" Multi Scheduling", 26), ?W(MultiScheduling, 21),
-        ?W("Use Mem", 20), ?W({byte, UseMem}, 15), ?W(UsePercent, 6),
-        ?NEW_LINE,
-        ?UNDERLINE, ?W("Ets Limit", 10), ?W(EtsLimit, 21),
-        ?W("Logical Processors", 25), ?W(LogicalProc, 21),
-        ?W("Unuse Mem", 20), ?W({byte, UnusedMem}, 15), ?W(UnUsePercent, 6)
-    ]),
-    [Title, Row].
+        ?W("Use Mem", 20), ?W({byte, UseMem}, 15), ?W(UsePercent, 6)]),
+    Row2 =
+        case AtomStatus of
+            {ok, AtomLimit, AtomCount} ->
+                {AtomWarning, Atom} = format_atom_info(AtomLimit, AtomCount),
+                ?render([
+                    ?UNDERLINE, ?W("Atom Count", 10), ?W2(AtomWarning, Atom, 22),
+                    ?W(" Logical Processors", 26), ?W(LogicalProc, 21),
+                    ?W("Unuse Mem", 20), ?W({byte, UnusedMem}, 15), ?W(UnUsePercent, 6)
+                ]);
+            {error, unsupported} ->
+                ?render([
+                    ?UNDERLINE, ?W("Ets Limit", 10), ?W(EtsLimit, 21),
+                    ?W("Logical Processors", 25), ?W(LogicalProc, 21),
+                    ?W("Unuse Mem", 20), ?W({byte, UnusedMem}, 15), ?W(UnUsePercent, 6)
+                ])
+        end,
+    [Title, Row1, Row2].
 
 render_memory_process_line(ProcSum, MemSum, Interval) ->
     CodeMem = erlang:memory(code),
@@ -418,25 +429,28 @@ get_current_initial_call(Call) ->
     {observer_cli_lib:mfa_to_list(CurFun), InitialCall}.
 
 get_port_proc_info(PortLimit, ProcLimit, ProcSum) ->
-    ProcCountInt = proplists:get_value(process_count, ProcSum),
-    PortLimitInt = list_to_integer(PortLimit),
-    ProcLimitInt = list_to_integer(ProcLimit),
-    PortCountInt = erlang:system_info(port_count),
-    PortCount = integer_to_list(PortCountInt) ++ "/" ++ PortLimit,
-    ProcCount = integer_to_list(ProcCountInt) ++ "/" ++ ProcLimit,
-    PortThreshold = PortLimitInt * ?COUNT_ALARM_THRESHOLD,
-    ProcThreshold = ProcLimitInt * ?COUNT_ALARM_THRESHOLD,
+    ProcCount = proplists:get_value(process_count, ProcSum),
+    PortCount = erlang:system_info(port_count),
+    PortCountStr = integer_to_list(PortCount) ++ "/" ++ integer_to_list(PortLimit),
+    ProcCountStr = integer_to_list(ProcCount) ++ "/" ++ integer_to_list(ProcLimit),
     PortWarning =
-        case PortCountInt > PortThreshold of
+        case PortCount > PortLimit * ?COUNT_ALARM_THRESHOLD of
             true -> ?RED;
             false -> <<"">>
         end,
     ProcWarning =
-        case ProcCountInt > ProcThreshold of
+        case ProcCount > ProcLimit * ?COUNT_ALARM_THRESHOLD of
             true -> ?RED;
             false -> <<"">>
         end,
-    {PortWarning, ProcWarning, PortCount, ProcCount}.
+    {PortWarning, ProcWarning, PortCountStr, ProcCountStr}.
+
+format_atom_info(AtomLimit, AtomCount) ->
+    Atom = integer_to_list(AtomCount) ++ "/" ++ integer_to_list(AtomLimit),
+    case AtomCount > AtomLimit * ?COUNT_ALARM_THRESHOLD of
+        true -> {?RED, Atom};
+        false -> {<<"">>, Atom}
+    end.
 
 process_bar_format_style(Percent1, Percent2, IsLastLine) ->
     Warning1 =
@@ -507,12 +521,21 @@ get_refresh_prompt(proc_window, Type, Interval, Rows) ->
     io_lib:format("recon:proc_window(~p, ~w, ~w) Interval:~wms", [Type, Rows, Interval, Interval]).
 
 get_stable_system_info() ->
-    [begin observer_cli_lib:to_list(erlang:system_info(Item)) end || Item <- ?STABLE_SYSTEM_KEY].
+    [begin erlang:system_info(Item) end || Item <- ?STABLE_SYSTEM_KEY].
 
 get_change_system_info() ->
     UsedMem = recon_alloc:memory(used),
     AllocatedMem = recon_alloc:memory(allocated),
     {UsedMem, AllocatedMem, AllocatedMem - UsedMem}.
+
+get_atom_status() ->
+    try erlang:system_info(atom_limit) of
+        Limit ->
+            Count = erlang:system_info(atom_count),
+            {ok, Limit, Count}
+    catch
+        _:badarg -> {error, unsupported}
+    end.
 
 get_pid_info(Pid, Keys) ->
     case recon:info(Pid, Keys) of
