@@ -23,7 +23,7 @@ start(#view_opts{help = #help{interval = Interval}} = ViewOpts) ->
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 manager(ChildPid, ViewOpts) ->
-    case observer_cli_lib:parse_cmd(ViewOpts, ChildPid) of
+    case observer_cli_lib:parse_cmd(ViewOpts, [ChildPid]) of
         quit -> erlang:send(ChildPid, quit);
         _ -> manager(ChildPid, ViewOpts)
     end.

@@ -155,8 +155,8 @@ tidy_format_args([F|Rest], NeedLine, FAcc, AAcc) ->
 to_str({byte, Bytes}) -> to_byte(Bytes);
 to_str(Term) -> to_list(Term).
 
--spec parse_cmd(#view_opts{}, pid()) -> atom()|string().
-parse_cmd(ViewOpts, Pid) ->
+-spec parse_cmd(#view_opts{}, [pid()]) -> atom()|string().
+parse_cmd(ViewOpts, Pids) ->
     case to_list(io:get_line("")) of
         %% inet
         "ic\n" -> inet_count;
@@ -170,25 +170,25 @@ parse_cmd(ViewOpts, Pid) ->
         
         %% menu view
         "H\n" ->
-            erlang:exit(Pid, stop),
+            exit_processes(Pids),
             observer_cli:start(ViewOpts);
         "S\n" ->
-            erlang:exit(Pid, stop),
+            exit_processes(Pids),
             observer_cli_system:start(ViewOpts);
         "A\n" ->
-            erlang:exit(Pid, stop),
+            exit_processes(Pids),
             observer_cli_application:start(ViewOpts);
         "N\n" ->
-            erlang:exit(Pid, stop),
+            exit_processes(Pids),
             observer_cli_inet:start(ViewOpts);
         "M\n" ->
-            erlang:exit(Pid, stop),
+            exit_processes(Pids),
             observer_cli_mnesia:start(ViewOpts);
         "E\n" ->
-            erlang:exit(Pid, stop),
+            exit_processes(Pids),
             observer_cli_ets:start(ViewOpts);
         "D\n" ->
-            erlang:exit(Pid, stop),
+            exit_processes(Pids),
             observer_cli_help:start(ViewOpts);
         "q\n" -> quit;
         "Q\n" -> quit;

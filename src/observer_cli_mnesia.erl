@@ -42,7 +42,7 @@ render_worker(Interval, LastTimeRef, HideSystemTable, AutoRow) ->
     end.
 
 manager(ChildPid, #view_opts{db = DBOpts} = HomeOpts) ->
-    case observer_cli_lib:parse_cmd(HomeOpts, ChildPid) of
+    case observer_cli_lib:parse_cmd(HomeOpts, [ChildPid]) of
         quit -> erlang:send(ChildPid, quit);
         {new_interval, NewMs} = Msg ->
             erlang:send(ChildPid, Msg),
