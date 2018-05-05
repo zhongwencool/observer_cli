@@ -56,7 +56,7 @@ rpc_start(Node) ->
 
 manager(StorePid, RenderPid, Opts, LastSchWallFlag) ->
     #view_opts{home = Home = #home{cur_page = CurPage, pages = Pages}} = Opts,
-    case observer_cli_lib:parse_cmd(Opts, RenderPid) of
+    case observer_cli_lib:parse_cmd(Opts, [RenderPid, StorePid]) of
         quit ->
             observer_cli_lib:exit_processes([StorePid]),
             erlang:send(RenderPid, quit),
