@@ -22,13 +22,13 @@ Visualize Erlang/Elixir Nodes On The Command Line base on [recon](https://github
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.3.0
+dep_observer_cli = hex 1.3.1
 ```
 **Elixir**
 ```elixir
 # mix.exs                                                                                                   
    def deps do                                                          
-     [{:observer_cli, "~> 1.3"}]
+     [{:observer_cli, "~> 1.3.1"}]
    end
    def application do
      [extra_applications: [:observer_cli]]
@@ -58,7 +58,7 @@ iex(1)> :observer_cli.start(:'target@host', :'magic_cookie')
 :exclamation: **ensure observer_cli application been loaded on target node.**
 
 #### Escriptize
-1. cd xxx/observer_cli/
+1. cd path/to/observer_cli/
 2. `rebar3 escriptize` to generate an escript executable containing the project's and its dependencies' BEAM files.
     Place script(`_build/default/bin/observer_cli`) anywhere in your path and use `observer_cli` command.
 3. `observer_cli TARGETNODE [TARGETCOOKIE]` to monitor remote node.
@@ -89,6 +89,10 @@ iex(1)> :observer_cli.start(:'target@host', :'magic_cookie')
 
 ----------------
 ### Changelog
+- 1.3.1
+  - Add atom limit/count in home.
+  - Escript support short name and long name.
+  - Fixed store process not exit.
 - 1.3.0
   - Rewrite Network/Process view.
   - Support PageDown/PageUp for top n list.
@@ -112,8 +116,8 @@ iex(1)> :observer_cli.start(:'target@host', :'magic_cookie')
 
 ----------------
 ### Contributors
-| [<img src="https://avatars2.githubusercontent.com/u/3116225?v=4" width="50px;"/><br /><sub>zhongwencool</sub>](https://tried.cc)<br />[💻](https://github.com/zhongwencool/observer_cli/commits?author=zhongwencool) | [<img src="https://avatars2.githubusercontent.com/u/645514?v=4" width="50px;"/><br /><sub>Dimitrios Zorbas</sub>](https://github.com/Zorbash)<br />[💻](https://github.com/zhongwencool/observer_cli/commits?author=Zorbash) | [<img src="https://avatars1.githubusercontent.com/u/3191073?v=4" width="50px;"/><br /><sub>taotao</sub>](https://github.com/redink)<br />[💻](https://github.com/zhongwencool/observer_cli/commits?author=redink) | [<img src="https://avatars1.githubusercontent.com/u/1520926?v=4" width="50px;"/><br /><sub>Trevor Brown</sub>](https://github.com/Stratus3D)<br />[💻](https://github.com/zhongwencool/observer_cli/commits?author=Stratus3D) |
-| :---: | :---: | :---: | :---: |
+| [<img src="https://avatars2.githubusercontent.com/u/3116225?v=4" width="50px;"/><br /><sub>zhongwencool</sub>](https://tried.cc)<br />[💻](https://github.com/zhongwencool/observer_cli/commits?author=zhongwencool) | [<img src="https://avatars2.githubusercontent.com/u/645514?v=4" width="50px;"/><br /><sub>Dimitrios Zorbas</sub>](https://github.com/Zorbash)<br />[💻](https://github.com/zhongwencool/observer_cli/commits?author=Zorbash) | [<img src="https://avatars1.githubusercontent.com/u/3191073?v=4" width="50px;"/><br /><sub>taotao</sub>](https://github.com/redink)<br />[💻](https://github.com/zhongwencool/observer_cli/commits?author=redink) | [<img src="https://avatars1.githubusercontent.com/u/1520926?v=4" width="50px;"/><br /><sub>Trevor Brown</sub>](https://github.com/Stratus3D)<br />[💻](https://github.com/zhongwencool/observer_cli/commits?author=Stratus3D) [<img src="https://avatars3.githubusercontent.com/u/164324?s=400&v=4" width="50px;"/><br /><sub>Zaiming Shi</sub>](https://github.com/zmstone)<br />[💻](https://github.com/zhongwencool/observer_cli/commits?author=zmstone) |
+| :---: | :---: | :---: | :---: | :---: |
 
 --------------------
 ### License
