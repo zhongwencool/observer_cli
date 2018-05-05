@@ -19,7 +19,7 @@ start(#view_opts{ets = #ets{interval = Interval}, auto_row = AutoRow} = ViewOpts
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 manager(ChildPid, #view_opts{ets = SysOpts} = ViewOpts) ->
-    case observer_cli_lib:parse_cmd(ViewOpts, ChildPid) of
+    case observer_cli_lib:parse_cmd(ViewOpts, [ChildPid]) of
         quit -> erlang:send(ChildPid, quit);
         {new_interval, NewMs} = Msg ->
             erlang:send(ChildPid, Msg),

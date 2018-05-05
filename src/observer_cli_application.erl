@@ -21,7 +21,7 @@ start(#view_opts{} = ViewOpts) ->
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 manager(Pid, ViewOpts) ->
-    case observer_cli_lib:parse_cmd(ViewOpts, Pid) of
+    case observer_cli_lib:parse_cmd(ViewOpts, [Pid]) of
         quit -> erlang:send(Pid, quit);
         _ -> manager(Pid, ViewOpts)
     end.

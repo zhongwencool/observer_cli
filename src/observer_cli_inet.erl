@@ -24,7 +24,7 @@ start(#view_opts{inet = InetOpt, auto_row = AutoRow} = ViewOpts) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 manager(StorePid, RenderPid, ViewOpts = #view_opts{inet = InetOpts}) ->
      #inet{cur_page = CurPage, pages = Pages} = InetOpts,
-    case observer_cli_lib:parse_cmd(ViewOpts, RenderPid) of
+    case observer_cli_lib:parse_cmd(ViewOpts, [RenderPid, StorePid]) of
         quit ->
             observer_cli_lib:exit_processes([StorePid]),
             erlang:send(RenderPid, quit);

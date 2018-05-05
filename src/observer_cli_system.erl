@@ -33,7 +33,7 @@ start(#view_opts{sys = #system{interval = Interval}} = ViewOpts) ->
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 manager(Pid, #view_opts{sys = AllocatorOpts} = ViewOpts) ->
-    case observer_cli_lib:parse_cmd(ViewOpts, Pid) of
+    case observer_cli_lib:parse_cmd(ViewOpts, [Pid]) of
         quit -> erlang:send(Pid, quit);
         {new_interval, NewInterval} ->
             erlang:send(Pid, {new_interval, NewInterval}),

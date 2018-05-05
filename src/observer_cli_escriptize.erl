@@ -22,9 +22,10 @@ main(_Options) ->
 
 run(TargetNode, Cookie) ->
     {TargetNodeAtom, NameOpt} = resolve_target_name(TargetNode),
+    LocalNode = random_local_node_name(),
     MyName = case NameOpt of
-                 shortnames -> observer_cli;
-                 longnames -> 'observer_cli@127.0.0.1'
+                 shortnames -> list_to_atom(LocalNode);
+                 longnames -> list_to_atom(LocalNode ++ "@127.0.0.1")
              end,
     {ok, _} = net_kernel:start([MyName, NameOpt]),
     Start = fun() -> observer_cli:start(TargetNodeAtom, [{cookie, Cookie}]) end,
@@ -37,6 +38,10 @@ run(TargetNode, Cookie) ->
 
 remote_load(Node) ->
     [begin recon:remote_load([Node], Mod) end|| Mod <- ?BEAM_MODS].
+
+random_local_node_name() ->
+    {_, {H, M, S}} = calendar:local_time(),
+    lists:flatten(io_lib:format("observer_cli_~2.2.0p_~2.2.0p_~2.2.0p", [H, M, S])).
 
 resolve_target_name(TargetNode) ->
     case string:tokens(TargetNode, "@") of
