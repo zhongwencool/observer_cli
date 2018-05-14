@@ -1,0 +1,142 @@
+html {
+    background: #373f52;
+}
+
+body {
+    background: #fff;
+    color: #444;
+    font-family: Merriweather,'Book Antiqua',Georgia,'Century Schoolbook',serif;
+    margin: 0 auto;
+    width: 68%;
+    padding: 1em;
+    font-size: 1em;
+    line-height: 1.6875em;
+}
+
+header {
+    border-bottom: 1px solid #2fafa8;
+    margin-bottom: 3em;
+}
+
+h1 {
+    font-size: 1.8em;
+    margin: 0.5em 0.5em;
+    color: #2fafa8;
+    color: #c39900;
+}
+
+h2 {
+    font-size: 1.6em;
+    font-weight: 600;
+    color: #003946;
+}
+
+h3 {
+    color: #003946;
+}
+
+h4 {
+    font-family: Lato,sans-serif;
+    font-weight: 700;
+    line-height: 1.5em;
+    word-wrap: break-word;
+    margin-bottom: -1em;
+}
+
+code {
+    font-family: "consolas",monospace;
+    font-size: 0.85em;
+
+}
+article div p code {
+    background: inherit;
+    border: inherit;
+    color: inherit;
+}
+
+nav {
+    float: right;
+    margin-top: -3.7em;
+    margin-right: 0em;
+    margin-left: 0em;
+}
+nav ul li {
+    float: left;
+    list-style-type: square;
+    width: 7em;
+    text-align: left;
+}
+
+.index {text-align:left;}
+
+.index li {
+         padding-left: 0em;
+         margin:1em 1em -1em 1em;
+         display:inline-block;
+         list-style:none;
+         float:center;
+}
+
+
+ul.definitions {
+    list-style-type: none;
+    margin-top: -0.8em;
+    background: #f7f9fc;
+}
+
+.spec {
+    margin-left: 1em;
+    padding-left: 1em;
+    background: #f7f9fc;
+    border-left: 3px solid #9768d1;
+}
+h4 a{
+
+    font-size: 1em;
+    font-family: Inconsolata,Menlo,Courier,monospace;
+    position: relative;
+}
+
+dl dt {
+    font-weight: bold;
+}
+
+table {
+  width: 100%;
+  margin: 15px 0px;
+  border-collapse: collapse;
+}
+
+th, td {
+  border-right: 1px solid #E7E9ED;
+  border-bottom: 1px solid #E7E9ED;
+  padding: 5px;
+}
+
+th {
+  text-align: left;
+  font-weight: 600;
+  background: rgba(231, 233, 237, 0.4);
+  border-bottom: 0px;
+}
+
+td {
+  text-align: left;
+}
+
+table tr td:first-child {
+  border-left: 1px solid #E7E9ED;
+}
+
+table tr:hover td {
+  background: #f7f7f7;
+}
+
+.text-left {
+  text-align: left;
+}
+
+ a:link {color:#308050;}      /* unvisited link */
+ a:visited {color:#268bd2;}   /* visited link */
+ a:hover {color:#859900;}     /* mouse over link */
+ a:active {color:#6c71c4;}    /* selected link */
