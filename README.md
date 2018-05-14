@@ -8,6 +8,7 @@
 [![Hex.pm Downloads](https://img.shields.io/hexpm/dt/observer_cli.svg?style=flat-square)](https://hex.pm/packages/observer_cli)
 
 Visualize Erlang/Elixir Nodes On The Command Line base on [recon](https://github.com/ferd/recon).
+[Document in detail](https://hexdocs.pm/observer_cli/).
 
 ## Goal
 - Provide a high-performance tool usable both in development and production settings.
@@ -93,7 +94,7 @@ iex(1)> :observer_cli.start(:'target@host', :'magic_cookie')
   - Add atom limit/count in home.
   - Escript support short name and long name.
   - Fixed store process not exit.
-  - Upgrade recon to 2.3.5(https://github.com/ferd/recon/commit/e0c3614334589e375f8b1492f404e4b764fe35e7)
+  - [Upgrade recon to 2.3.5](https://github.com/ferd/recon/commit/e0c3614334589e375f8b1492f404e4b764fe35e7)
 - 1.3.0
   - Rewrite Network/Process view.
   - Support PageDown/PageUp for top n list.

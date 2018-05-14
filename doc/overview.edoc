@@ -1,0 +1,296 @@
+@title observer_cli
+@author zhongwencool <zhongwencool@gmail.com>
+
+@doc Observer CLI is a library to be dropped into any beam nodes,
+to be used to assist DevOps people diagnose problems in production
+nodes, included panels are:
+
+== Home ==
+<img src="https://user-images.githubusercontent.com/3116225/39091211-55554414-4622-11e8-8b28-bd3b5c7e17a6.jpg" width="100%" alt="Home"></img>
+
+<a href="http://erlang.org/doc/man/erlang.html#system_info-1" target="_blank" >erlang:system_info/1</a> returns specified information about the current system by below item. When the ratio is greater than 85%, it becomes red.
+<table border="2">
+<tr>
+<td> Proc Count </td> <td> process_count/process_limit</td>
+<td> Smp Support </td> <td> smp_support </td>
+</tr>
+<tr>
+<td> Port Count </td> <td> port_count/port_limit</td>
+<td> Multi Scheduling </td> <td> multi_scheduling </td>
+</tr>
+<tr>
+<td> Atom Count </td> <td> atom_count/atom_limit</td>
+<td> Logical Processors </td> <td> logical_processors </td>
+</tr>
+</table>
+<ul>
+  <li>
+  <b>process_limit</b>: `erl +P Number' sets the maximum number of simultaneously existing processes for this system if a Number is passed as value. Valid range for Number is [1024-134217727]. The default value is 262144.</li>
+  <li><b>port_limit</b>: `erl +Q Number' sets the maximum number of simultaneously existing ports for this system if a Number is passed as value. Valid range for Number is [1024-134217727]. The default value used is normally 65536. However, if the runtime system is able to determine maximum amount of file descriptors that it is allowed to open and this value is larger than 65536, the chosen value will increased to a value larger or equal to the maximum amount of file descriptors that can be opened.</li>
+  <li><b>atom_limit</b>: `erl +t size' sets the maximum number of atoms the virtual machine can handle. Defaults to 1,048,576.</li>
+</ul>
+
+<a href="https://github.com/ferd/recon/blob/master/src/recon_alloc.erl#L162" target="_blank" >recon:memory/1</a> reports memory values for the entire node depending on what is to be reported.
+<table border="2">
+<tr>
+<td> allocated </td> <td>the memory that is reserved by the VM,includes the memory used, but also the memory yet-to-be-used but still given by the OS.</td>
+</tr>
+<tr>
+<td> used </td> <td>the memory that is actively used for allocated Erlang data.</td>
+</tr>
+<tr>
+<td> unused </td> <td>the amount of memory reserved by the VM that is not being allocated. Equivalent to `allocated - used'.</td>
+</tr>
+</table>
+
+<a href="http://erlang.org/doc/man/erlang.html#memory-0" target="_blank" >erlang:memory/0</a> Returns a list with information about memory dynamically allocated by the Erlang emulator.
+<table border="2">
+<tr>
+<td> Total </td> <td>The total amount of memory currently allocated.</td>
+</tr>
+<tr>
+<td> Process </td> <td>The total amount of memory currently used by the Erlang processes.</td>
+</tr>
+<tr>
+<td> Atom </td> <td>The total amount of memory currently used for atoms.</td>
+</tr>
+<tr>
+<td> ETS </td> <td>The total amount of memory currently allocated for ETS tables.</td>
+</tr>
+<tr>
+<td> Binary </td> <td>The total amount of memory currently allocated for binaries.</td>
+</tr>
+<tr>
+<td> Code </td> <td>The total amount of memory currently allocated for Erlang code.</td>
+</tr>
+</table>
+
+<a href="http://erlang.org/doc/man/erlang.html#statistics-1" target="_blank" >erlang:statistics/1</a>
+<table border="2">
+<tr>
+<td> reductions </td> <td>Reductions Since Last Call, The reductions of growth during the refresh interval.</td>
+</tr>
+<tr>
+<td> run_queue </td> <td>The total length of all normal run-queues. That is, the number of processes and ports that are ready to run on all available normal run-queues. Dirty run queues are not part of the result.</td>
+</tr>
+<tr>
+<td> io </td> <td>The receive/send bytes through ports of growth during the refresh interval. It's different from `erlang:statistcs(io)' which is the total number of bytes received/send through ports.</td>
+</tr>
+<tr>
+<td> garbage_collection </td> <td>The `{Number_of_GCs, Words_Reclaimed}' of growth during the refresh interval. It's different from `erlang:statistcs(garbage_collection)' which is return total value.</td>
+</tr>
+<tr>
+<td> ErrorLoggerQueue </td> <td>The `error_logger' process message queue length. it will take its sweet time to log things to disk or over the network, and will do so much more slowly than errors can be generated.</td>
+</tr>
+</table>
+Increments are values that are mostly useful when compared to a previous
+one to have an idea what they're doing, because otherwise they'd never
+stop increasing: bytes in and out of the node, number of garbage colelctor
+runs, words of memory that were garbage collected, and the global reductions
+count for the node.
+
+Scheduler utilization by <a href="http://erlang.org/doc/man/erlang.html#statistics_scheduler_wall_time" target="_blank" > erlang:statistics(scheduler_wall_time)</a>:
+<ul>
+  <li>
+  Total scheduler utilization will equal 1.0 when all schedulers have been active all the time between the two refresh interval.
+  </li>
+  <li>
+The result being that there is a decent chunk of CPU usage that would be mostly free
+for scheduling actual Erlang work (assuming the schedulers are busy waiting more than
+trying to select tasks to run), but is being reported as busy by the OS.
+  </li>
+  <li>
+the scheduler usage may show a higher rate (1.0) than what the OS will report. Schedulers waiting for os resources are considered
+utilized as they cannot handle more work. If the OS itself is holding up on non-CPU tasks
+it is still possible for Erlang’s schedulers not to be able to do more work and report a full
+ratio.
+</li>
+</ul>
+
+== Process ==
+When looking for high memory usage, for example it's interesting to be able to list all
+of a node's processes and find the top N consumers. Enter `m' then press `Enter' will use the
+`recon:proc_count(memory, N)' function, we can get:
+<img src="https://user-images.githubusercontent.com/3116225/39963461-0e3e0dfe-569e-11e8-879a-5d652a79df54.jpg" width="100%" alt="Top"> </img>
+<a href="http://ferd.github.io/recon/recon.html#proc_count-2" target="_blank" >recon:proc_count/2</a>
+and <a href="http://ferd.github.io/recon/recon.html#proc_window-3" target="_blank" >recon:proc_window/3</a>
+are to be used when you require information about processes in a larger sense:
+biggest consumers of given process `memory', `reductions', `binary', `total_heap_size', `message_queue_len',
+either absolutely or over a sliding time window, respectively.
+
+More detail about sliding time windows see <a href="http://ferd.github.io/recon/recon.html#proc_window-3" target="_blank" >recon:proc_window/3</a>
+
+When an abnormal process is found, enter the suspected process sequence(Integer) then press `Enter' will use
+<a href="http://erlang.org/doc/man/erlang.html#process_info-2" target="_blank" > erlang:process_info/2</a> to show
+a lot of information available(which is safe to use in production) about processes.
+<img src="https://user-images.githubusercontent.com/3116225/39091219-66ba0398-4622-11e8-81b1-f489251f111a.jpg" width="100%" alt="Process"></img>
+<ul>
+  <li>
+  <b>registered_name</b>: if the process has a name (as registered with `erlang:register/2'), it is given here.
+  </li><li>
+    <b>trap_exit</b>: set `trap_exit' to true, exit signals arriving to a process are converted to
+     `{EXIT,From,Reason}' messages, which can be received as ordinary messages.
+     If `trap_exit' is set to false, the process exits if it receives an exit signal other than normal
+     and the exit signal is propagated to its linked processes. Application processes are normally not to trap exits.
+  </li><li>
+  <b>group_leader</b>: the group leader of a process defines where IO (files, output of `io:format/1-3') goes.
+  </li><li>
+  <b>initial_call</b>: is the initial function call with which the process was spawned.
+  </li><li>
+  <b>links</b>: is a list of process identifiers and port identifiers, with processes or ports to which the process has a link.
+  </li><li>
+  <b>monitored_by</b>: A list of process identifiers monitoring the process (with `monitor/2').
+  </li><li>
+  <b>monitors</b>: A list of monitors (started by `monitor/2') that are active for the process.
+  For a local process monitor or a remote process monitor by a process identifier.
+  </li><li>
+  <b>status</b>: the nature of the process as seen by the scheduler. The possible values are:
+    <ul>
+    <li>
+    `exiting' the process is done, but not fully cleared yet;
+    </li><li>
+    `waiting' the process is waiting in a `receive ... end';
+    </li><li>
+    `running' self-descriptive;
+    </li><li>
+    `runnable' ready to run, but not scheduled yet because another process is running;
+    </li><li>
+    `garbage_collecting' self-descriptive;
+    </li><li>
+    `suspended' whenever it is suspended by a BIF, or as a back-pressure mechanism
+    because a socket or port buffer is full. The process only becomes runnable again once the port is no longer busy
+    </li>
+    </ul>
+   </li><li>
+   <b>reductions</b>: The VM does scheduling based on reductions, an arbitrary unit
+   of work that allows rather portable implementations of scheduling (time-based
+   scheduling is usually hard to make work efficiently on as many OSes as Erlang
+   runs on). The higher the reductions, the more work, in terms of CPU and function calls, a process is doing.
+   </li><li>
+   <b>memorys</b>: Includes call stack, heap, and internal structures.
+   `total_heap_size, min_bin_vheap_size, min_heap_size, fullsweep_after, heap_size'.
+   </li><li>
+   <b>messages</b>: A list of the messages to the process, which have not yet been processed,
+                   it is truncated when the term is too big.
+   </li><li>
+   <b>dictionary</b>: Dictionary is the process dictionary, it is truncated when the term is too big.
+   </li><li>
+   <b>current stack</b>: The current call stack back-trace (<b>stacktrace</b>) of the process.
+   The stack has the same format as returned by `erlang:get_stacktrace/0'.
+   The depth of the stacktrace is truncated according to `backtrace_depth' system flag setting.
+   </li><li>
+   <b>state</b>: Using <a href="http://erlang.org/doc/man/sys.html#get_state-2" target="_blank" > sys:get_state(Pid, 2500)</a>
+   Gets the state of the process.
+   </li>
+</ul>
+
+== Network ==
+
+<img src="https://user-images.githubusercontent.com/3116225/39091212-55870e22-4622-11e8-99e7-8e8c56223765.jpg" width="100%" alt="Network"></img>
+<ul>
+ <li>
+<b>Byte input/output</b>: The byte of growth input/output during the refresh interval.
+ </li><li>
+ <b>Total input/output</b>: <a href="http://erlang.org/doc/man/erlang.html#statistics-1" target="_blank" >erlang:statistics(io)</a>
+ returns `Input', which is the total number of bytes received through ports, and `Output', which is the total number of bytes output to ports.
+</li>
+</ul>
+Fetches a given attribute from all inet ports (`TCP, UDP, SCTP') and returns the biggest Num consumers by
+<a href="http://ferd.github.io/recon/recon.html#inet_count-2" target="_blank"> recon:inet_count/2 </a> and
+<a href="http://ferd.github.io/recon/recon.html#inet_window-3" target="_blank"> recon:inet_windows/3 </a>.
+Attribute name refer to <a href="http://erlang.org/doc/man/inet.html#getstat-1" target="_blank"> inet:getstat/1</a>.
+<ul>
+<li>
+<b>recv_oct</b>: Number of bytes received by the socket.
+</li><li>
+<b>recv_cnt</b>: Number of packets received by the socket.
+</li><li>
+<b>send_cnt</b>: Number of packets sent from the socket.
+</li><li>
+<b>send_oct</b>: Number of bytes sent from the socket.
+</li><li>
+<b>cnt</b>: `recv_cnt' + `send_cnt'.
+</li><li>
+<b>oct</b>: `recv_oct' + `send_oct'.
+</li>
+</ul>
+When find out who is slowly but surely eating up all your bandwidth,
+enter the suspected port sequence(Integer) then press `Enter' will use
+<a href="http://ferd.github.io/recon/recon.html#port_info-2" target="_blank"> recon:port_info/2</a>
+to show a lot of information available about port.
+<img src="https://user-images.githubusercontent.com/3116225/39091218-6687caf4-4622-11e8-86c7-190c2106d41e.jpg" width="100%" alt="Port"></img>
+<ul>
+<li>
+<b>id</b>: internal index of a port. Of no particular use except to differentiate ports.
+</li><li>
+<b>name</b>: type of the port — with names such as "tcp_inet", "udp_inet", or "efile".
+</li><li>
+
+<b>os_pid</b>: If the port is not an inet socket, but rather represents an external process or
+         program, this value contains the os pid related to the said external program.
+</li><li>
+<b>connected</b>: Each port has a controlling process in charge of it, and this process’ pid is the connected one.
+</li><li>
+<b>links</b>: Ports can be linked with processes, much like other processes can be. The list
+         of linked processes is contained here. Unless the process has been owned by or
+         manually linked to a lot of processes, this should be safe to use.
+</li><li>
+<b>monitors</b>: Ports that represent external programs can have these programs end up
+         monitoring Erlang processes. These processes are listed here
+</li><li>
+<b>IO</b>: `input' the number of bytes read from the port. `output' the number of bytes written to the port.
+</li><li>
+<b>queue_size</b>: Port programs have a specific queue, called the driver queue24. This return the size of this queue.
+</li><li>
+<b>memory</b>: this is the memory allocated by the runtime system for the port.
+               This number tends to be small-ish and excludes space allocated by the port itself.
+</li><li>
+<b>sockname/peername</b>: <a href="http://erlang.org/doc/man/inet.html#sockname-1" target="_blank"> inet:sockname/1</a>
+a list of all local address/port number pairs for a socket.
+</li><li>
+<b>statistics</b>: show port statistics by <a href="http://erlang.org/doc/man/inet.html#getstat-2"> inet:getstat/2</a>.
+</li><li>
+<b>options</b>: show port options by <a href="http://erlang.org/doc/man/inet.html#getopts-2"> inet:getopts/2</a>.
+</li>
+</ul>
+
+== System ==
+
+<img src="https://user-images.githubusercontent.com/3116225/39091213-55b9aaf8-4622-11e8-91ed-b37c04e20173.jpg" width="100%" alt="System"></img>
+
+<ul>
+<li>
+<b>System Info</b>: <a href="http://erlang.org/doc/man/erlang.html#system_info-1" target="_blank" >erlang:system_info/1</a>
+returns various information about the allocators of the current system (emulator).
+</li><li>
+<b> Allocator Info</b>: <a href="https://ferd.github.io/recon/recon_alloc.html#average_block_sizes-1" target="_blank">recon_alloc:average_block_sizes(current|max)</a>
+check all all allocators in `allocator' and returns the average block sizes being used for mbcs and sbcs. This value is interesting to use because it will tell us how large most blocks are. This can be related to the VM's largest multiblock carrier size (lmbcs) and smallest multiblock carrier size (smbcs) to specify allocation strategies regarding the carrier sizes to be used.
+</li><li>
+<b>Cache Hit Rate</b>: <a href="https://ferd.github.io/recon/recon_alloc.html#cache_hit_rates-0" target="_blank">recon_alloc:cache_hit_rates()</a>
+Cache can be tweaked using three VM flags: `+MMmcs', `+MMrmcbf', and `+MMamcbf'.
+</li>
+</ul>
+
+== ETS ==
+
+<img src="https://user-images.githubusercontent.com/3116225/39091214-55eae91a-4622-11e8-95c2-bc514219b5d9.jpg" width="100%" alt="Ets"></img>
+ETS tables are never garbage collected, and will maintain their memory usage as long as
+records will be left undeleted in a table. Only removing records manually (or deleting the
+table) will reclaim memory.
+
+Top N list sort by memory size, all items defined in <a href="http://erlang.org/doc/man/ets.html#info-2" target="_blank">ets:info/2</a>
+
+== Mnesia ==
+
+<img src="https://user-images.githubusercontent.com/3116225/39091215-5637b4fc-4622-11e8-9639-99405318fc09.jpg" width="100%" alt="Mnesia"></img>
+
+Top N list sort by memory size, all items defined in <a href="http://erlang.org/doc/man/mnesia.html#table_info-2" target="_blank">mnesia:table_info/2</a>
+
+== Application ==
+
+<img src="https://user-images.githubusercontent.com/3116225/39091216-567ddab8-4622-11e8-8b32-db0f621d6b90.jpg" width="100%" alt="Application"></img>
+
+Find application debug information by
+<a href="https://github.com/erlang/otp/blob/master/lib/kernel/src/application_controller.erl#L280" target="_blank"> application_controller:info()</a>.
+
+@end
