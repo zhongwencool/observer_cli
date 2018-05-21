@@ -29,11 +29,8 @@ dep_observer_cli = hex 1.3.1
 ```elixir
 # mix.exs                                                                                                   
    def deps do                                                          
-     [{:observer_cli, "~> 1.3.1"}]
+     [{:observer_cli, "~> 1.3"}]
    end
-   def application do
-     [extra_applications: [:observer_cli]]
-  end
 ```  
 ------------------
 ### How-To
