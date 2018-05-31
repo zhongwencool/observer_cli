@@ -103,9 +103,11 @@ to_byte(Byte) when is_integer(Byte) -> %% megabyte
 to_byte(Byte) -> %% process died
     [to_list(Byte)].
 
--spec mfa_to_list({atom(), atom(), integer()}) -> nonempty_string().
+-spec mfa_to_list({atom(), atom(), integer()}|term()) -> nonempty_string().
 mfa_to_list({Module, Fun, Arg}) ->
-    [atom_to_list(Module), ":", atom_to_list(Fun), "/", integer_to_list(Arg)].
+    [atom_to_list(Module), ":", atom_to_list(Fun), "/", integer_to_list(Arg)];
+mfa_to_list(Function) ->
+    io_lib:format("~p", [Function]).
 
 -spec render(list()) -> iolist().
 render(FA) ->
