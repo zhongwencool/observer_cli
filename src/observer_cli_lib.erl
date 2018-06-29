@@ -253,6 +253,7 @@ render_last_line(Text) ->
 -spec exit_processes(list()) -> ok.
 exit_processes(List) ->
     [erlang:exit(Pid, stop) ||Pid <- List],
+    flush(),
     ok.
 
 -spec update_page_pos(pid() | pos_integer(), pos_integer(), list()) -> list().
@@ -277,3 +278,9 @@ get_pos(Page, PageRow, Pages, TopLen) ->
         {_, P} when P >= Start andalso P =< Start + PageRow -> {Start, P};
         _ -> {Start, Start}
     end.
+
+flush() ->
+ receive _ ->
+     flush()
+ after 0 -> ok
+ end.

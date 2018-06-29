@@ -11,7 +11,7 @@
 -spec start(view_opts()) -> no_return.
 start(#view_opts{inet = InetOpt, auto_row = AutoRow} = ViewOpts) ->
     StorePid = observer_cli_store:start(),
-    RenderPid = spawn(
+    RenderPid = spawn_link(
         fun() ->
             ?output(?CLEAR),
             {{input, In}, {output, Out}} = erlang:statistics(io),
