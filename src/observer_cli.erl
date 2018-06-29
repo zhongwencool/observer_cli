@@ -297,6 +297,7 @@ render_top_n_view(memory, MemoryList, Num, Pages, Page) ->
         ?W2(?GRAY_BG, "No | Pid", 16), ?W2(?RED_BG, "     Memory", 14), ?W(?GRAY_BG, "Name or Initial Call", 38),
         ?W(?GRAY_BG, "           Reductions", 21), ?W(?GRAY_BG, " MsgQueue", 10), ?W(?GRAY_BG, "Current Function", 32)
     ]),
+    io:format("~p~n", [{Page, Num, Pages, erlang:length(MemoryList)}]),
     {Start, ChoosePos} = observer_cli_lib:get_pos(Page, Num, Pages, erlang:length(MemoryList)),
     FormatFunc =
         fun(Item, {Acc, Acc1, Pos}) ->
