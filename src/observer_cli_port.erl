@@ -7,7 +7,7 @@
 -spec start(pid(), view_opts()) -> no_return.
 start(Port, Opts) ->
     #view_opts{port = RefreshMs} = Opts,
-    RenderPid = spawn(fun() ->
+    RenderPid = spawn_link(fun() ->
         ?output(?CLEAR),
         render_worker(Port, RefreshMs, ?INIT_TIME_REF)
                      end),

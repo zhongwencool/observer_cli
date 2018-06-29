@@ -16,7 +16,7 @@
 
 -spec start() -> pid().
 start() ->
-    spawn(fun() -> loop({1, []}) end).
+    spawn_link(fun() -> loop({1, []}) end).
 
 -spec update(pid(), pos_integer(), list()) -> ok.
 update(StorePid, Row, TopNList) ->

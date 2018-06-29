@@ -23,10 +23,11 @@ start() -> start(#view_opts{}).
 start(Node) when Node =:= node() -> start(#view_opts{});
 start(Node) when is_atom(Node) -> rpc_start(Node);
 start(#view_opts{home = Home} = Opts) ->
+    erlang:process_flag(trap_exit, true),
     AutoRow = check_auto_row(),
     StorePid = observer_cli_store:start(),
     LastSchWallFlag = erlang:system_flag(scheduler_wall_time, true),
-    RenderPid = spawn(fun() -> render_worker(StorePid, Home, AutoRow) end),
+    RenderPid = spawn_link(fun() -> render_worker(StorePid, Home, AutoRow) end),
     manager(StorePid, RenderPid, Opts#view_opts{auto_row = AutoRow}, LastSchWallFlag).
 
 -spec start(Node, Cookies | Options) -> no_return when
@@ -58,9 +59,9 @@ manager(StorePid, RenderPid, Opts, LastSchWallFlag) ->
     #view_opts{home = Home = #home{cur_page = CurPage, pages = Pages}} = Opts,
     case observer_cli_lib:parse_cmd(Opts, [RenderPid, StorePid]) of
         quit ->
-            observer_cli_lib:exit_processes([StorePid]),
             erlang:send(RenderPid, quit),
             erlang:system_flag(scheduler_wall_time, LastSchWallFlag),
+            observer_cli_lib:exit_processes([StorePid]),
             quit;
         pause_or_resume ->
             erlang:send(RenderPid, pause_or_resume),

@@ -9,7 +9,7 @@
 
 -spec start(view_opts()) -> no_return.
 start(#view_opts{help = #help{interval = Interval}} = ViewOpts) ->
-    ChildPid = spawn(fun() ->
+    ChildPid = spawn_link(fun() ->
         Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
         Menu = observer_cli_lib:render_menu(doc, Text),
         Help = render_help(),
