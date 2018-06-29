@@ -184,7 +184,6 @@ render_memory_process_line(ProcSum, MemSum, Interval) ->
     [
         {process_count, _ProcC},
         {run_queue, RunQ},
-        {error_logger_queue_len, LogQInt},
         {memory_total, TotalMem},
         {memory_procs, ProcMem},
         {memory_atoms, AtomMem},
@@ -199,13 +198,21 @@ render_memory_process_line(ProcSum, MemSum, Interval) ->
         {reductions, Reductions}|_
     ] = MemSum,
     
+    {Queue, LogKey} =
+        case whereis(error_logger) of
+            undefined ->
+                {erlang:integer_to_list(RunQ), "RunQueue"};
+            Pid ->
+                {_, Q} = process_info(Pid, message_queue_len),
+                {erlang:integer_to_list(RunQ) ++ "/" ++ erlang:integer_to_list(Q),
+                    "RunQueue/ErrorLoggerQueue"}
+        end,
     ProcMemPercent = observer_cli_lib:to_percent(ProcMem / TotalMem),
     AtomMemPercent = observer_cli_lib:to_percent(AtomMem / TotalMem),
     BinMemPercent = observer_cli_lib:to_percent(BinMem / TotalMem),
     CodeMemPercent = observer_cli_lib:to_percent(CodeMem / TotalMem),
     EtsMemPercent = observer_cli_lib:to_percent(EtsMem / TotalMem),
     
-    Queue = erlang:integer_to_list(RunQ) ++ "/" ++ erlang:integer_to_list(LogQInt),
     Title = ?render([
         ?GRAY_BG, ?W("Mem Type", 10), ?W("Size", 21),
         ?W("Mem Type", 25), ?W("Size", 21),
@@ -225,7 +232,7 @@ render_memory_process_line(ProcSum, MemSum, Interval) ->
         ?W("Gc Count", 20), ?W(GcCount, 24),
         ?NEW_LINE,
         ?W("Ets", 10), ?W({byte, EtsMem}, 12), ?W(EtsMemPercent, 6),
-        ?W("RunQueue/ErrorLoggerQueue", 25), ?W(Queue, 21),
+        ?W(LogKey, 25), ?W(Queue, 21),
         ?W("Gc Words Reclaimed", 20), ?W(GcWordsReclaimed, 24)]),
     [Title, Row].
 
@@ -576,7 +583,6 @@ check_auto_row() ->
 node_stats({LastIn, LastOut, LastGCs, LastWords, LastScheduleWall}) ->
     ProcC = erlang:system_info(process_count),
     RunQ = erlang:statistics(run_queue),
-    {_, LogQ} = process_info(whereis(error_logger), message_queue_len),
     %% Mem (Absolutes)
     Mem = erlang:memory(),
     Tot = proplists:get_value(total, Mem),
@@ -595,7 +601,7 @@ node_stats({LastIn, LastOut, LastGCs, LastWords, LastScheduleWall}) ->
     {
         {[
             {process_count, ProcC}, {run_queue, RunQ},
-            {error_logger_queue_len, LogQ}, {memory_total, Tot},
+            {memory_total, Tot},
             {memory_procs, ProcM}, {memory_atoms, Atom},
             {memory_bin, Bin}, {memory_ets, Ets}],
             [
