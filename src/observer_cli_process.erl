@@ -10,7 +10,7 @@
 -spec start(pid(), view_opts()) -> no_return.
 start(Pid, Opts) ->
     #view_opts{process = #process{interval = RefreshMs}} = Opts,
-    RenderPid = spawn(fun() ->
+    RenderPid = spawn_link(fun() ->
         ?output(?CLEAR),
         render_worker(info, RefreshMs, Pid, ?INIT_TIME_REF, ?INIT_QUEUE, ?INIT_QUEUE)
                      end),

@@ -253,6 +253,7 @@ render_last_line(Text) ->
 -spec exit_processes(list()) -> ok.
 exit_processes(List) ->
     [erlang:exit(Pid, stop) ||Pid <- List],
+    flush(),
     ok.
 
 -spec update_page_pos(pid() | pos_integer(), pos_integer(), list()) -> list().
@@ -270,9 +271,16 @@ update_page_pos(Page, Pos, Pages)  ->
 
 -spec get_pos(pos_integer(), pos_integer(), list(), pos_integer()) ->
     {pos_integer(), pos_integer()}.
+get_pos(_Page, _PageRow, _Pages, 0) -> {1, 1};
 get_pos(Page, PageRow, Pages, TopLen) ->
     Start = erlang:min((Page - 1)*PageRow + 1, TopLen),
     case lists:keyfind(Page, 1, Pages) of
         {_, P} when P >= Start andalso P =< Start + PageRow -> {Start, P};
         _ -> {Start, Start}
     end.
+
+flush() ->
+ receive _ ->
+     flush()
+ after 0 -> ok
+ end.

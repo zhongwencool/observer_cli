@@ -9,7 +9,7 @@
 -spec start(#view_opts{}) -> any().
 
 start(#view_opts{db = #db{interval = MillSecond}, auto_row = AutoRow} = HomeOpts) ->
-    Pid = spawn(fun() ->
+    Pid = spawn_link(fun() ->
         ?output(?CLEAR),
         render_worker(MillSecond, ?INIT_TIME_REF, true, AutoRow)
                 end),
