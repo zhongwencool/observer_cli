@@ -87,6 +87,9 @@ iex(1)> :observer_cli.start(:'target@host', :'magic_cookie')
 
 ----------------
 ### Changelog
+- 1.3.2
+  - Make sure all observer_cli process exit when quit.    
+  - Upgrade recon to 2.3.6
 - 1.3.1
   - Add atom limit/count in home.
   - Escript support short name and long name.
