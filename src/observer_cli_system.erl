@@ -23,10 +23,10 @@
 -spec start(ViewOpts) -> no_return when
     ViewOpts :: view_opts().
 start(#view_opts{sys = #system{interval = Interval}} = ViewOpts) ->
-    Pid = spawn(fun() ->
+    Pid = spawn_link(fun() ->
         ?output(?CLEAR),
         render_worker(Interval, ?INIT_TIME_REF)
-                end),
+                     end),
     manager(Pid, ViewOpts).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

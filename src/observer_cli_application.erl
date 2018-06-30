@@ -11,7 +11,7 @@
 
 -spec start(ViewOpts) -> no_return when ViewOpts :: view_opts().
 start(#view_opts{} = ViewOpts) ->
-    Pid = spawn(fun() ->
+    Pid = spawn_link(fun() ->
         ?output(?CLEAR),
         render_worker(?INTERVAL)
                 end),
