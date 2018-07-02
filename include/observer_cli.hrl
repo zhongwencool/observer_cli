@@ -74,7 +74,7 @@
 -define(UNSELECT(Text), observer_cli_lib:unselect(Text)).
 
 -define(render(_FA_), observer_cli_lib:render(_FA_)).
--define(output(_F_, _A_), io:format(_F_, _A_)).
+-define(output(_F_, _A_), io:format(iolist_to_binary(_F_), _A_)).
 -define(output(_L_), ?output(_L_, [])).
 
 

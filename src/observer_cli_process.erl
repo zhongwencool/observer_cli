@@ -267,11 +267,11 @@ get_chart_format(Queue) ->
 
 chart_format([_R], Lines) -> Lines;
 chart_format([R, R | RestRed], Lines) ->
-    chart_format([R | RestRed], Lines ++ observer_cli_lib:to_list(R) ++ "~>");
+    chart_format([R | RestRed], Lines ++ observer_cli_lib:to_list(R) ++ "->");
 chart_format([R1, R2 | RestRed], Lines) when R1 > R2 ->
-    chart_format([R2 | RestRed], Lines ++ observer_cli_lib:to_list(R1) ++ "~>");
+    chart_format([R2 | RestRed], Lines ++ observer_cli_lib:to_list(R1) ++ "->");
 chart_format([R1, R2 | RestRed], Lines) when R1 < R2 ->
-    chart_format([R2 | RestRed], Lines ++ observer_cli_lib:to_list(R1) ++ "~>").
+    chart_format([R2 | RestRed], Lines ++ observer_cli_lib:to_list(R1) ++ "->").
 
 render_menu(Type, Interval) ->
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
