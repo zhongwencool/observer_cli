@@ -87,6 +87,8 @@ iex(1)> :observer_cli.start(:'target@host', :'magic_cookie')
 
 ----------------
 ### Changelog
+- 1.3.3
+  - fixed io:format(Format,Args) Format not support iolist OTP R21
 - 1.3.2
   - Make sure all observer_cli process exit when quit.    
   - Upgrade recon to 2.3.6
