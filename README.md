@@ -1,11 +1,11 @@
 
 -----------------
 # observer_cli
-[![Github Tag](https://img.shields.io/github/tag/zhongwencool/observer_cli.svg)](https://github.com/zhongwencool/observer_cli)
+[![GitHub tag](https://img.shields.io/github/tag/zhongwencool/observer_cli.svg)](https://github.com/zhongwencool/observer_cli)
 [![Build Status](https://travis-ci.org/zhongwencool/observer_cli.svg?branch=master)](https://travis-ci.org/zhongwencool/observer_cli)
-[![license](https://img.shields.io/github/license/mashape/apistatus.svg?style=flat-square)](https://github.com/zhongwencool/observer_cli)
-[![Hex.pm](https://img.shields.io/hexpm/v/observer_cli.svg)](http://hex.pm/packages/observer_cli)
-[![Hex.pm Downloads](https://img.shields.io/hexpm/dt/observer_cli.svg?style=flat-square)](https://hex.pm/packages/observer_cli)
+[![Hex.pm](https://img.shields.io/hexpm/l/observer_cli.svg)](https://hex.pm/packages/observer_cli)
+[![Hex.pm](https://img.shields.io/hexpm/v/observer_cli.svg)](https://hex.pm/packages/observer_cli)
+[![Hex.pm Downloads](https://img.shields.io/hexpm/dt/plug.svg)](https://hex.pm/packages/observer_cli)
 
 Visualize Erlang/Elixir Nodes On The Command Line base on [recon](https://github.com/ferd/recon).
 [Document in detail](https://hexdocs.pm/observer_cli/).
