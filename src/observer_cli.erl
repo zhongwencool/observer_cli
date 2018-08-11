@@ -111,7 +111,7 @@ redraw_pause(StorePid, #home{func = Func, type = Type} = Home, StableInfo, LastS
         {Func, Type} -> redraw_running(StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRow, false);
         pause_or_resume ->
             ?output(?CLEAR),
-            redraw_running(StorePid, Home, StableInfo, LastTimeRef, LastTimeRef, AutoRow, true)
+            redraw_running(StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRow, true)
     end.
 
 %% running status
