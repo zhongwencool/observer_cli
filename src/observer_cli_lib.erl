@@ -23,6 +23,7 @@
 -export([exit_processes/1]).
 -export([update_page_pos/3]).
 -export([get_pos/4]).
+-export([sublist/3]).
 -define(DEFAULT_ROW_SIZE, 35). %% the number from 13' mbp
 
 -spec uptime() -> list().
@@ -214,6 +215,8 @@ parse_cmd(ViewOpts, Pids) ->
         "mm\n" -> {func, proc_window, memory};
         "mmq\n" -> {func, proc_window, message_queue_len};
         "\n" -> jump;
+        "s\n" -> size;
+        "hide\n" -> hide;
         Number ->
             parse_integer(Number)
     end.
@@ -284,3 +287,13 @@ flush() ->
      flush()
  after 0 -> ok
  end.
+
+-spec sublist(list(), integer(), integer()) -> list().
+sublist(AllEts, Rows, CurPage) ->
+    SortEts = recon_lib:sublist_top_n_attrs(AllEts, Rows*CurPage),
+    Start = Rows*(CurPage - 1) + 1,
+    case erlang:length(SortEts) >= Start of
+        true ->
+            lists:sublist(SortEts, Start, Rows);
+        false -> []
+    end.
