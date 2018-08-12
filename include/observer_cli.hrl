@@ -10,10 +10,18 @@
     pages = [{1,1}] :: list(),
     interval = ?DEFAULT_INTERVAL :: pos_integer()}).
 
--record(ets, {interval = 2000 :: integer()}).
+-record(ets, {
+    interval = 2000 :: integer(),
+    attr = memory :: atom(),
+    cur_page = 1 :: integer()}).
 -record(system, {interval = ?DEFAULT_INTERVAL :: integer()}).
 
--record(db, {interval = ?DEFAULT_INTERVAL :: integer()}).
+-record(db, {
+    interval = ?DEFAULT_INTERVAL :: integer(),
+    hide_sys = true :: boolean(),
+    cur_page = 1 :: integer(),
+    attr = memory :: atom()
+    }).
 
 -record(help, {interval = ?DEFAULT_INTERVAL :: integer()}).
 -record(inet, {
