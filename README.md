@@ -23,7 +23,7 @@ Visualize Erlang/Elixir Nodes On The Command Line base on [recon](https://github
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.3.1
+dep_observer_cli = hex 1.3.4
 ```
 **Elixir**
 ```elixir
@@ -59,7 +59,7 @@ iex(1)> :observer_cli.start(:'target@host', :'magic_cookie')
 1. cd path/to/observer_cli/
 2. `rebar3 escriptize` to generate an escript executable containing the project's and its dependencies' BEAM files.
     Place script(`_build/default/bin/observer_cli`) anywhere in your path and use `observer_cli` command.
-3. `observer_cli TARGETNODE [TARGETCOOKIE]` to monitor remote node.
+3. `observer_cli TARGETNODE [TARGETCOOKIE REFRESHMS]` to monitor remote node.
 
 ----------------
 ### GUI
@@ -87,6 +87,10 @@ iex(1)> :observer_cli.start(:'target@host', :'magic_cookie')
 
 ----------------
 ### Changelog
+- 1.3.4
+  - View(ets mnesia) support page down/up; support sort by memory or size.
+  - Fixed pause crash.
+  - Make refresh interval configurable.
 - 1.3.3
   - fixed io:format(Format,Args) Format not support iolist OTP R21
 - 1.3.2

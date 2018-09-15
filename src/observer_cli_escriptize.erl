@@ -19,7 +19,7 @@ main([TargetNode, Cookie, Interval]) ->
     IntervalInt = list_to_integer(Interval),
     run(TargetNode, CookieAtom, IntervalInt);
 main(_Options) ->
-    io:format("Usage: observer_cli TARGETNODE [TARGETCOOKIE RefreshMs]~n").
+    io:format("Usage: observer_cli TARGETNODE [TARGETCOOKIE REFRESHMS]~n").
 
 run(TargetNode, Cookie, Interval) ->
     {TargetNodeAtom, NameOpt} = resolve_target_name(TargetNode),
