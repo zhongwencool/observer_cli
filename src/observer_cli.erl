@@ -19,16 +19,27 @@
 -spec start() -> no_return.
 start() -> start(#view_opts{}).
 
--spec start(Node) -> no_return when Node :: atom().
+-spec start(Node) -> no_return when Node :: atom() | non_neg_integer().
 start(Node) when Node =:= node() -> start(#view_opts{});
-start(Node) when is_atom(Node) -> rpc_start(Node);
+start(Node) when is_atom(Node) -> rpc_start(Node, ?DEFAULT_INTERVAL);
 start(#view_opts{home = Home} = Opts) ->
     erlang:process_flag(trap_exit, true),
     AutoRow = check_auto_row(),
     StorePid = observer_cli_store:start(),
     LastSchWallFlag = erlang:system_flag(scheduler_wall_time, true),
     RenderPid = spawn_link(fun() -> render_worker(StorePid, Home, AutoRow) end),
-    manager(StorePid, RenderPid, Opts#view_opts{auto_row = AutoRow}, LastSchWallFlag).
+    manager(StorePid, RenderPid, Opts#view_opts{auto_row = AutoRow}, LastSchWallFlag);
+start(Interval)when is_integer(Interval), Interval >= ?MIN_INTERVAL ->
+    start(#view_opts{
+        home = #home{interval = Interval},
+        ets = #ets{interval = Interval},
+        sys = #system{interval = Interval},
+        db = #db{interval = Interval},
+        help = #help{interval = Interval},
+        inet = #inet{interval = Interval},
+        process = #process{interval = Interval},
+        port = Interval
+    }).
 
 -spec start(Node, Cookies | Options) -> no_return when
     Node :: atom(),
@@ -42,15 +53,16 @@ start(Node, Options) when is_atom(Node) andalso is_list(Options) ->
         undefined -> ok;
         Cookie -> erlang:set_cookie(Node, Cookie)
     end,
-    rpc_start(Node).
+    Interval = proplists:get_value(interval, Options, ?DEFAULT_INTERVAL),
+    rpc_start(Node, Interval).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-rpc_start(Node) ->
+rpc_start(Node, Interval) ->
     case net_kernel:hidden_connect_node(Node) of
-        true -> rpc:call(Node, ?MODULE, start, [#view_opts{}]);
+        true -> rpc:call(Node, ?MODULE, start, [Interval]);
         false -> connect_error(<<"Node(~p) refuse to be connected, make sure cookie is valid~n">>, Node);
         ignored -> connect_error(<<"Ignored by node(~p), local node is not alive!~n">>, Node)
     end.
