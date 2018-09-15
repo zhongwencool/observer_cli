@@ -13,14 +13,15 @@
     ]).
 
 main([TargetNode]) ->
-    run(TargetNode, undefined);
-main([TargetNode, Cookie]) ->
+    run(TargetNode, undefined, 1500);
+main([TargetNode, Cookie, Interval]) ->
     CookieAtom = list_to_atom(Cookie),
-    run(TargetNode, CookieAtom);
+    IntervalInt = list_to_integer(Interval),
+    run(TargetNode, CookieAtom, IntervalInt);
 main(_Options) ->
-    io:format("Usage: observer_cli TARGETNODE [TARGETCOOKIE]~n").
+    io:format("Usage: observer_cli TARGETNODE [TARGETCOOKIE REFRESHMS]~n").
 
-run(TargetNode, Cookie) ->
+run(TargetNode, Cookie, Interval) ->
     {TargetNodeAtom, NameOpt} = resolve_target_name(TargetNode),
     LocalNode = random_local_node_name(),
     MyName = case NameOpt of
@@ -28,7 +29,10 @@ run(TargetNode, Cookie) ->
                  longnames -> list_to_atom(LocalNode ++ "@127.0.0.1")
              end,
     {ok, _} = net_kernel:start([MyName, NameOpt]),
-    Start = fun() -> observer_cli:start(TargetNodeAtom, [{cookie, Cookie}]) end,
+    Start = fun() ->
+        Options = [{cookie, Cookie}, {interval, Interval}],
+        observer_cli:start(TargetNodeAtom, Options)
+            end,
     case Start() of
         {badrpc, _} ->
             remote_load(TargetNodeAtom),
