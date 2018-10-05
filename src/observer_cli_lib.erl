@@ -28,6 +28,7 @@
 
 -spec uptime() -> list().
 uptime() ->
+    
     {UpTime, _} = erlang:statistics(wall_clock),
     {D, {H, M, S}} = calendar:seconds_to_daystime(UpTime div 1000),
     Time = [
@@ -58,30 +59,30 @@ to_list(Val) -> Val.
 
 -spec get_menu_title('allocator'|'ets'|'doc'|'home'|'inet'|'mnesia'|'app') -> list().
 get_menu_title(Type) ->
-    [Home, Ets, App, Inet, Alloc, Mnesia, Help] = get_menu_title2(Type),
-    [Home, "|", Ets, "|", App, "|", Inet, "|", Alloc, "|", Mnesia, "|", Help, "|"].
+    [Home, Ets, App, Inet, Alloc, Mnesia, Help, Plugin] = get_menu_title2(Type),
+    [Home, "|", Ets, "|", App, "|", Inet, "|", Alloc, "|", Mnesia, "|", Help, "|", Plugin, "|"].
 
 get_menu_title2(home) ->
     [select("Home(H)"), unselect("Network(N)"), unselect("System(S)"), unselect("Ets(E)"),
-        unselect("Mnesia(M)"), unselect("App(A)"), unselect("Doc(D)")];
+        unselect("Mnesia(M)"), unselect("App(A)"), unselect("Doc(D)"), unselect("Plugin(P)")];
 get_menu_title2(ets) ->
     [unselect("Home(H)"), unselect("Network(N)"), unselect("System(S)"), select("Ets(E)"),
-        unselect("Mnesia(M)"), unselect("App(A)"), unselect("Doc(D)")];
+        unselect("Mnesia(M)"), unselect("App(A)"), unselect("Doc(D)"), unselect("Plugin(P)")];
 get_menu_title2(allocator) ->
     [unselect("Home(H)"), unselect("Network(N)"), select("System(S)"), unselect("Ets(E)"),
-        unselect("Mnesia(M)"), unselect("App(A)"), unselect("Doc(D)")];
+        unselect("Mnesia(M)"), unselect("App(A)"), unselect("Doc(D)"), unselect("Plugin(P)")];
 get_menu_title2(doc) ->
     [unselect("Home(H)"), unselect("Network(N)"), unselect("System(S)"), unselect("Ets(E)"),
-        unselect("Mnesia(M)"), unselect("App(A)"), select("Doc(D)")];
+        unselect("Mnesia(M)"), unselect("App(A)"), select("Doc(D)"), unselect("Plugin(P)")];
 get_menu_title2(inet) ->
     [unselect("Home(H)"), select("Network(N)"), unselect("System(S)"), unselect("Ets(E)"),
-         unselect("Mnesia(M)"), unselect("App(A)"), unselect("Doc(D)")];
+         unselect("Mnesia(M)"), unselect("App(A)"), unselect("Doc(D)"), unselect("Plugin(P)")];
 get_menu_title2(mnesia) ->
     [unselect("Home(H)"), unselect("Network(N)"), unselect("System(S)"), unselect("Ets(E)"),
-        select("Mnesia(M)"), unselect("App(A)"), unselect("Doc(D)")];
+        select("Mnesia(M)"), unselect("App(A)"), unselect("Doc(D)"), unselect("Plugin(P)")];
 get_menu_title2(app) ->
     [unselect("Home(H)"), unselect("Network(N)"), unselect("System(S)"), unselect("Ets(E)"),
-        unselect("Mnesia(M)"), select("App(A)"), unselect("Doc(D)")].
+        unselect("Mnesia(M)"), select("App(A)"), unselect("Doc(D)"), unselect("Plugin(P)")].
 
 -spec select(string()) -> list().
 select(Title) -> [?RED_BG, Title, ?RESET_BG].
@@ -120,7 +121,7 @@ render(FA) ->
 render_menu(Type, Text) ->
     Title = get_menu_title(Type),
     UpTime = uptime(),
-    TitleWidth = ?COLUMN + 130 - erlang:length(UpTime),
+    TitleWidth = ?COLUMN + 151 - erlang:length(UpTime),
     ?render([?W([Title| Text], TitleWidth)|UpTime]).
 
 tidy_format_args([], _NeedLine, FAcc, AAcc) -> {FAcc, AAcc};
@@ -193,6 +194,9 @@ parse_cmd(ViewOpts, Pids) ->
         "D\n" ->
             exit_processes(Pids),
             observer_cli_help:start(ViewOpts);
+        "P\n" ->
+            exit_processes(Pids),
+            observer_cli_plugin:start(ViewOpts);
         "q\n" -> quit;
         "Q\n" -> quit;
         "pu\n" -> page_up_top_n;     %% backward
@@ -238,14 +242,14 @@ get_terminal_rows(_AutoRow = true) ->
 parse_integer(Number) ->
     case string:to_integer(Number) of
         {error, _Reason} ->
-            {input_illegal, Number};
+            {input_str, Number -- "\n"};
         {Integer, _} ->
             if Integer >= ?MIN_INTERVAL ->
                 {new_interval, Integer};
                 Integer > 0 ->
                     {jump, Integer};
                 true ->
-                    {input_illegal, Number}
+                    {input_str, Number -- "\n"}
             end
     end.
 

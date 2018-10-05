@@ -23,13 +23,13 @@ Visualize Erlang/Elixir Nodes On The Command Line base on [recon](https://github
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.3.4
+dep_observer_cli = hex 1.4.0
 ```
 **Elixir**
 ```elixir
 # mix.exs                                                                                                   
    def deps do                                                          
-     [{:observer_cli, "~> 1.3"}]
+     [{:observer_cli, "~> 1.4"}]
    end
 ```  
 ------------------
@@ -62,31 +62,127 @@ iex(1)> :observer_cli.start(:'target@host', :'magic_cookie')
 3. `observer_cli TARGETNODE [TARGETCOOKIE REFRESHMS]` to monitor remote node.
 
 ----------------
-### GUI
-<img src="https://user-images.githubusercontent.com/3116225/39091211-55554414-4622-11e8-8b28-bd3b5c7e17a6.jpg" width="90%" alt="Home"></img>
-<img src="https://user-images.githubusercontent.com/3116225/39091212-55870e22-4622-11e8-99e7-8e8c56223765.jpg" width="90%" alt="Network"></img>
-<img src="https://user-images.githubusercontent.com/3116225/39091213-55b9aaf8-4622-11e8-91ed-b37c04e20173.jpg" width="90%" alt="System"></img>
-<img src="https://user-images.githubusercontent.com/3116225/39091214-55eae91a-4622-11e8-95c2-bc514219b5d9.jpg" width="90%" alt="Ets"></img>
-<img src="https://user-images.githubusercontent.com/3116225/39091215-5637b4fc-4622-11e8-9639-99405318fc09.jpg" width="90%" alt="Mnesia"></img>
-<img src="https://user-images.githubusercontent.com/3116225/39091216-567ddab8-4622-11e8-8b32-db0f621d6b90.jpg" width="90%" alt="Application"></img>
-<img src="https://user-images.githubusercontent.com/3116225/39091217-57258844-4622-11e8-9b21-2a7d661bc623.jpg" width="90%" alt="Document"></img>
-<img src="https://user-images.githubusercontent.com/3116225/39091219-66ba0398-4622-11e8-81b1-f489251f111a.jpg" width="90%" alt="Process"></img>
-<img src="https://user-images.githubusercontent.com/3116225/39091218-6687caf4-4622-11e8-86c7-190c2106d41e.jpg" width="90%" alt="Port"></img>
+### DEMO
+<img src="https://user-images.githubusercontent.com/3116225/39091211-55554414-4622-11e8-8b28-bd3b5c7e17a6.jpg" width="100%" alt="Home"> </img>
+<img src="https://user-images.githubusercontent.com/3116225/39091212-55870e22-4622-11e8-99e7-8e8c56223765.jpg" width="100%" alt="Network"></img>
+<img src="https://user-images.githubusercontent.com/3116225/39091213-55b9aaf8-4622-11e8-91ed-b37c04e20173.jpg" width="100%" alt="System"></img>
+<img src="https://user-images.githubusercontent.com/3116225/39091214-55eae91a-4622-11e8-95c2-bc514219b5d9.jpg" width="100%" alt="Ets"></img>
+<img src="https://user-images.githubusercontent.com/3116225/39091215-5637b4fc-4622-11e8-9639-99405318fc09.jpg" width="100%" alt="Mnesia"></img>
+<img src="https://user-images.githubusercontent.com/3116225/39091216-567ddab8-4622-11e8-8b32-db0f621d6b90.jpg" width="100%" alt="Application"></img>
+<img src="https://user-images.githubusercontent.com/3116225/39091217-57258844-4622-11e8-9b21-2a7d661bc623.jpg" width="100%" alt="Document"></img>
+<img src="https://user-images.githubusercontent.com/3116225/39091219-66ba0398-4622-11e8-81b1-f489251f111a.jpg" width="100%" alt="Process"></img>
+<img src="https://user-images.githubusercontent.com/3116225/39091218-6687caf4-4622-11e8-86c7-190c2106d41e.jpg" width="100%" alt="Port"></img>
 
--------------------
-### TODO
-- [x] Processes Memory, Binary, Total Heap Size, Reductions Top.
-- [x] include System and Architecture, CPU's and Threads metrics  in observer's system
-- [x] Memory Allocators: std, ll, eheap, ets,fix, binary, driver.
-- [x] ets include all metrics ets in observer's Table Viewer.
-- [x] doc (keep simple)
-- [x] remote node support
-- [x] mneisa: table info by using mnesia:info, mnesia:system_info/1,
-- [ ] ~~Draw all application’s relations.~~
-- [ ] ~~Trace Overview.~~ You should use recon_trace.
+### How to write your own plugin?
+If you need to customize some of your internal metrics and integrate it into observer_ci,
+you only need to write a `observer_cli_plugin` behaviour in a few simple steps to get a nice presentation.
+1. Configure observer_cli，tell observer_cli how to find your plugin.
+```erlang
+%% module       - Specific module implements plugin behavior. It's mandatory.
+%% title        - Menu title. It's mandatory.
+%% shortcut     - Switch plugin by shortcut. It's mandatory.
+%% interval     - Refresh interval ms. It's optional. default is 1500ms.
+%% sort_column  - Sort the sheet by this index. It's optional default is 2.
+
+{plugins,
+  [
+    #{module => observer_cli_plug_behaviour1, title => "XPlug",
+      interval => 1500, shortcut => "X", sort_column => 3},
+    #{module => observer_cli_plug_behaviour2, title => "YPlug",
+      interval => 1600, shortcut => "Y", sort_column => 3}
+  ]
+}
+
+```
+<img src="https://user-images.githubusercontent.com/3116225/46514684-ebff7280-c891-11e8-820e-90c3302f9108.jpg" width="90%"></img>
+
+2. Write observer_cli_plugin behaviour.
+observer_cli_plugin has 3 callbacks.
+
+2.1 key value labels.
+```erlang
+-callback kv_label() -> [Rows] when
+    Rows :: #{
+    name => string(), name_width => pos_integer(),
+    value => string()|integer()|{byte, pos_integer()}, value_width => pos_integer()
+    }.
+```
+for example:
+```erlang
+kv_label() ->
+    [
+        [
+            #{key => "XXX Ets Size", key_width => 20,
+              value => ets:info(xxx,size), value_width => 10},
+            #{key => "Pool1 Size", key_width => 15,
+              value => application:get_env(app,pool1_size), value_width => 30},
+            #{key => "XYZ1 Process Mem", key_width => 18,
+              value => {byte, element(2, erlang:process_info(xyz1, memory))}, value_width => 16}
+        ],
+        [
+            #{key => "YYY Ets Size", key_width => 20,
+              value => ets:info(yyy,size), value_width => 10},
+            #{key => "Pool2 Size", key_width => 15,
+              value => application:get_env(app,pool2_size), value_width => 30},
+            #{key => "XYZ2 Process Mem", key_width => 18,
+              value => {byte, element(2, erlang:process_info(xyz2, memory))}, value_width => 16}
+        ],
+        [
+            #{key => "ZZZ Ets Size", key_width => 20,
+              value => ets:info(zzz,size), value_width => 10},
+            #{key => "Pool3 Size", key_width => 15,
+              value => application:get_env(app,pool3_size), value_width => 30},
+            #{key => "XYZ3 Process Mem", key_width => 18,
+              value => {byte, element(2, erlang:process_info(xyz3, memory))}, value_width => 16}
+        ]
+    ].
+```
+<img src="https://user-images.githubusercontent.com/3116225/46514685-ebff7280-c891-11e8-915e-67f558694328.jpg" width="90%"></img>
+
+```erlang
+-callback sheet_header() -> [SheetHeader] when
+    SheetHeader :: #{title => string(), width => pos_integer(), shortcut => string()}.
+```
+for example:
+```erlang
+sheet_header() ->
+    [
+        #{title => "Pid", width => 25},
+        #{title => "Status", width => 25},
+        #{title => "Memory", width => 24, shortcut => "S"},
+        #{title => "Reductions", width => 24, shortcut => "R"},
+        #{title => "Message Queue Len", width => 25, shortcut => "Q"}
+    ].
+```
+
+```erlang
+-callback sheet_body() -> [SheetBody] when
+    SheetBody :: list().
+```
+for example:
+```erlang
+sheet_body() ->
+    [begin
+         [
+             Pid,
+             element(2, erlang:process_info(Pid, status)),
+             element(2, erlang:process_info(Pid, memory)),
+             element(2, erlang:process_info(Pid, reductions)),
+             element(2, erlang:process_info(Pid, message_queue_len))
+         ]
+     end||Pid <- erlang:processes()
+    ].
+```
+Support F/B to page up/down.
+
+<img src="https://user-images.githubusercontent.com/3116225/46514686-ec980900-c891-11e8-8232-f6ad98fd2e5c.jpg" width="90%"></img>
+
+<img src="https://user-images.githubusercontent.com/3116225/46514783-96779580-c892-11e8-872a-1a44e4d92b76.jpg" width="90%"></img>
 
 ----------------
 ### Changelog
+- 1.4.0
+  - Support write your own plugin.
 - 1.3.4
   - View(ets mnesia) support page down/up; support sort by memory or size.
   - Fixed pause crash.

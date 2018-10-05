@@ -1,7 +1,7 @@
 {application, observer_cli,
  [
   {description, "Visualize Erlang Nodes On The Command Line"},
-  {vsn, "1.3.4"},
+  {vsn, "1.4.0"},
   {modules, [
              observer_cli
             ]},
@@ -11,9 +11,19 @@
                   stdlib,
                   recon
                  ]},
-  {env, []},
+  {env, [{plugins,
+      [
+          %% module       - Specific module implements plugin behavior. It's mandatory.
+          %% title        - Menu title. It's mandatory.
+          %% shortcut     - Switch plugin by shortcut. It's mandatory.
+          %% interval     - Refresh interval ms. It's options. default is 1500ms.
+          %% sort_column  - Sort the sheet by this index. It's options default is 2.
+          
+          %% #{module => observer_cli_plug_1, title => "Example-1", interval => 1500, shortcut => "S", sort_column => 3},
+          %% #{module => observer_cli_plug_2, title => "Example-2", interval => 1600, shortcut => "D", sort_column => 2}
+      ]}
+  ]},
    {maintainers, ["zhongwencool"]},
    {licenses, ["MIT"]},
    {links, [{"Github", "https://github.com/zhongwencool/observer_cli"}]}
  ]}.
-

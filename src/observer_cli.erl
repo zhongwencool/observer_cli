@@ -7,11 +7,12 @@
 -export([start/0]).
 -export([start/1]).
 -export([start/2]).
+-export([start_plugin/0]).
 
 -define(CPU_ALARM_THRESHOLD, 0.8). %% cpu >= this value will be highlight
 -define(COUNT_ALARM_THRESHOLD, 0.85). %% port or process reach max_limit * 0.85 will be highlight
 -define(LAST_LINE, "q(quit) p(pause) r/rr(reduction) " ++
-    "m/mm(mem) b/bb(binary mem) t/tt(total heap size) mq/mmq(msg queue) 9(proc 9 info) pd/pu(page:down/up)").
+    "m/mm(mem) b/bb(binary mem) t/tt(total heap size) mq/mmq(msg queue) 9(proc 9 info) F/B(page forward/back)").
 
 -define(STABLE_SYSTEM_KEY, [system_version, process_limit, smp_support,
     port_limit, ets_limit, logical_processors, multi_scheduling]).
@@ -55,6 +56,12 @@ start(Node, Options) when is_atom(Node) andalso is_list(Options) ->
     end,
     Interval = proplists:get_value(interval, Options, ?DEFAULT_INTERVAL),
     rpc_start(Node, Interval).
+
+-spec start_plugin() -> no_return.
+start_plugin() ->
+    erlang:process_flag(trap_exit, true),
+    application:ensure_all_started(observer_cli),
+    observer_cli_plugin:start(#view_opts{}).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
@@ -135,10 +142,11 @@ redraw_running(StorePid, #home{interval = Interval, func = Func,
     {{Processes, Schedulers}, NewStats} = node_stats(LastStats),
     {CPURow, CPULine} = render_scheduler_usage(Schedulers),
     ProcessRows = max(TerminalRow - 14 - CPURow, 0),
-    TopList = get_top_n(Func, Type, Interval, ProcessRows * CurPage, IsFirstTime),
+    TopLen = ProcessRows * CurPage,
+    TopList = get_top_n(Func, Type, Interval, TopLen, IsFirstTime),
     {UseMemInt, AllocatedMemInt, UnusedMemInt} = get_change_system_info(),
     AtomStatus = get_atom_status(),
-    Text = get_refresh_prompt(Func, Type, Interval, ProcessRows),
+    Text = get_refresh_prompt(Func, Type, Interval, TopLen),
     MenuLine = observer_cli_lib:render_menu(home, Text),
     SystemLine = render_system_line(StableInfo, AtomStatus, UseMemInt, AllocatedMemInt, UnusedMemInt, Processes),
     MemLine = render_memory_process_line(Processes, Schedulers, Interval),
