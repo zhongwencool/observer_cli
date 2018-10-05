@@ -33,6 +33,17 @@
 
 -record(process, {interval = ?DEFAULT_INTERVAL :: integer()}).
 
+%%   [%{
+%%      module  =>  atom(),
+%%      title =>  string(),
+%%      width => pos_integer(),
+%%      shortcut => string(),
+%%      interval => pos_integer(),
+%%      cur_page => pos_integer(),
+%%      sort_row => pos_integer()
+%%     }]
+-record(plug, {cur_index = 1 ::pos_integer(), plugs = [] ::map()|[]}).
+
 -record(view_opts, {home = #home{} :: home(),
     ets = #ets{} :: ets(),
     sys = #system{} :: system(),
@@ -40,7 +51,8 @@
     help = #help{} :: help(),
     inet = #inet{} :: inet(),
     process = #process{} :: process(),
-    port = 2000 :: pos_integer(),
+    port = ?DEFAULT_INTERVAL :: pos_integer(),
+    plug = #plug{} ::plug(),
     auto_row = true :: boolean()
 }).
 
@@ -54,6 +66,7 @@
 -type(help() :: #help{}).
 -type(inet() :: #inet{}).
 -type(process() :: #process{}).
+-type(plug() :: #plug{}).
 
 -define(CURSOR_TOP, <<"\e[H">>).
 -define(CLEAR, <<"\e[H\e[J">>).
