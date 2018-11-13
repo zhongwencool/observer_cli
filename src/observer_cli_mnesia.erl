@@ -103,7 +103,7 @@ render_mnesia(MnesiaList, Attr, Rows, CurPage) ->
              RegName = proplists:get_value(reg_name, Mnesia), Index = proplists:get_value(index, Mnesia),
              Owner = proplists:get_value(owner, Mnesia), Storage = proplists:get_value(storage, Mnesia),
              ?render([
-                 ?W(Name, 24), ?W(Memory, 14), ?W(Size, 14),
+                 ?W(Name, 24), ?W({byte, Memory}, 14), ?W(Size, 14),
                  ?W(Type, 10), ?W(Storage, 13), ?W(Owner, 12),
                  ?W(Index, 9), ?W(RegName, 19)
              ])

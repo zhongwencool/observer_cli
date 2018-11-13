@@ -59,6 +59,7 @@ render_worker(Interval, LastTimeRef, Attr, CurPage, AutoRow) ->
 
 render_ets_info(Rows, CurPage, Attr) ->
     AllEts = [begin get_ets_info(Tab, Attr) end || Tab <- ets:all()],
+    WordSize = erlang:system_info(wordsize),
     SortEts = observer_cli_lib:sublist(AllEts, Rows, CurPage),
     {MemColor, SizeColor} =
         case Attr of
@@ -84,7 +85,7 @@ render_ets_info(Rows, CurPage, Attr) ->
              Read = observer_cli_lib:to_list(proplists:get_value(read_concurrency, Ets)),
              Owner = proplists:get_value(owner, Ets),
              ?render([
-                 ?W(Name, 36), ?W(Size, 12), ?W({byte, Memory}, 12),
+                 ?W(Name, 36), ?W(Size, 12), ?W({byte, Memory * WordSize}, 12),
                  ?W(Type, 13), ?W(Protect, 10), ?W(KeyPos, 6),
                  ?W(Write ++ "/" ++ Read, 12), ?W(Owner, 14)
              ])
