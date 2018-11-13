@@ -23,7 +23,7 @@ Visualize Erlang/Elixir Nodes On The Command Line base on [recon](https://github
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.4.0
+dep_observer_cli = hex 1.4.1
 ```
 **Elixir**
 ```elixir
@@ -181,6 +181,9 @@ Support F/B to page up/down.
 
 ----------------
 ### Changelog
+- 1.4.1
+  - Fixed ets view memory usage wrong.
+  - mnesia view memory usage According to bytes.
 - 1.4.0
   - Support write your own plugin.
 - 1.3.4
