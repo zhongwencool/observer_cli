@@ -1,4 +1,5 @@
 
+
 -----------------
 # observer_cli
 [![Build Status](https://travis-ci.org/zhongwencool/observer_cli.svg?branch=master)](https://travis-ci.org/zhongwencool/observer_cli)
@@ -103,7 +104,7 @@ observer_cli_plugin has 3 callbacks.
 ```erlang
 -callback kv_label() -> [Rows] when
     Rows :: #{
-    name => string(), name_width => pos_integer(),
+    key => string(), key_width => pos_integer(),
     value => string()|integer()|{byte, pos_integer()}, value_width => pos_integer()
     }.
 ```
