@@ -262,38 +262,46 @@ render_scheduler_usage(MemSum) ->
     SchedulerNum = erlang:length(SchedulerUsage),
     render_scheduler_usage(SchedulerUsage, SchedulerNum).
 
-%% < 8 core will split 2 part
+%% < 8 core split 2 part
 render_scheduler_usage(SchedulerUsage, SchedulerNum) when SchedulerNum < 8 ->
-    HalfSchedulerNum = SchedulerNum div 2,
+    Column =
+        case SchedulerNum rem 2 =:= 0 of
+            true -> SchedulerNum div 2;
+            false -> (SchedulerNum div 2) + 1
+        end,
     CPU =
         [begin
-             Seq2 = Seq1 + HalfSchedulerNum,
-             Percent1 = proplists:get_value(Seq1, SchedulerUsage),
-             Percent2 = proplists:get_value(Seq2, SchedulerUsage),
+             Seq2 = transform_seq(Seq1, Column, SchedulerNum),
+             Percent1 = proplists:get_value(Seq1, SchedulerUsage, 0.0),
+             Percent2 = proplists:get_value(Seq2, SchedulerUsage, 0.0),
              CPU1 = observer_cli_lib:to_percent(Percent1),
              CPU2 = observer_cli_lib:to_percent(Percent2),
              Process1 = lists:duplicate(trunc(Percent1 * 57), "|"),
              Process2 = lists:duplicate(trunc(Percent2 * 57), "|"),
-             IsLastLine = Seq1 =:= HalfSchedulerNum,
-             Format = process_bar_format_style(Percent1, Percent2, IsLastLine),
+             IsLastLine = Seq1 =:= Column,
+             Format = process_bar_format_style([Percent1, Percent2], IsLastLine),
              io_lib:format(Format, [
                  Seq1, Process1, CPU1,
                  Seq2, Process2, CPU2
              ])
-         end || Seq1 <- lists:seq(1, HalfSchedulerNum)],
-    {HalfSchedulerNum, CPU};
-%% >= 8 will split 4 part
-render_scheduler_usage(SchedulerUsage, SchedulerNum) ->
-    PosSchedulerNum = SchedulerNum div 4,
+         end || Seq1 <- lists:seq(1, Column)],
+    {Column, CPU};
+%% 100 >= scheduler >= 8 split 4 part
+render_scheduler_usage(SchedulerUsage, SchedulerNum) when SchedulerNum =< 100 ->
+    Column =
+        case SchedulerNum rem 4 =:= 0 of
+            true -> SchedulerNum div 4;
+            false -> (SchedulerNum div 4) + 1
+        end,
     CPU =
         [begin
-             Seq2 = Seq1 + PosSchedulerNum,
-             Seq3 = Seq2 + PosSchedulerNum,
-             Seq4 = Seq3 + PosSchedulerNum,
-             Percent1 = proplists:get_value(Seq1, SchedulerUsage),
-             Percent2 = proplists:get_value(Seq2, SchedulerUsage),
-             Percent3 = proplists:get_value(Seq3, SchedulerUsage),
-             Percent4 = proplists:get_value(Seq4, SchedulerUsage),
+             Seq2 = transform_seq(Seq1, Column, SchedulerNum),
+             Seq3 = transform_seq(Seq2, Column, SchedulerNum),
+             Seq4 = transform_seq(Seq3, Column, SchedulerNum),
+             Percent1 = proplists:get_value(Seq1, SchedulerUsage, 0.0),
+             Percent2 = proplists:get_value(Seq2, SchedulerUsage, 0.0),
+             Percent3 = proplists:get_value(Seq3, SchedulerUsage, 0.0),
+             Percent4 = proplists:get_value(Seq4, SchedulerUsage, 0.0),
              CPU1 = observer_cli_lib:to_percent(Percent1),
              CPU2 = observer_cli_lib:to_percent(Percent2),
              CPU3 = observer_cli_lib:to_percent(Percent3),
@@ -302,16 +310,71 @@ render_scheduler_usage(SchedulerUsage, SchedulerNum) ->
              Process2 = lists:duplicate(trunc(Percent2 * 22), "|"),
              Process3 = lists:duplicate(trunc(Percent3 * 22), "|"),
              Process4 = lists:duplicate(trunc(Percent4 * 23), "|"),
-             IsLastLine = Seq1 =:= PosSchedulerNum,
-             Format = process_bar_format_style(Percent1, Percent2, Percent3, Percent4, IsLastLine),
+             IsLastLine = Seq1 =:= Column,
+             Format = process_bar_format_style([Percent1, Percent2, Percent3, Percent4], IsLastLine),
              io_lib:format(Format, [
                  Seq1, Process1, CPU1,
                  Seq2, Process2, CPU2,
                  Seq3, Process3, CPU3,
                  Seq4, Process4, CPU4
              ])
-         end || Seq1 <- lists:seq(1, PosSchedulerNum)],
-    {PosSchedulerNum, CPU}.
+         end || Seq1 <- lists:seq(1, Column)],
+    {Column, CPU};
+%% scheduler > 100 don't show process bar.
+render_scheduler_usage(SchedulerUsage, SchedulerNum) ->
+    Column =
+        case SchedulerNum rem 10 =:= 0 of
+            true -> SchedulerNum div 10;
+            false -> (SchedulerNum div 10) + 1
+        end,
+    CPU =
+        [begin
+             Seq2 = transform_seq(Seq1, Column, SchedulerNum),
+             Seq3 = transform_seq(Seq2, Column, SchedulerNum),
+             Seq4 = transform_seq(Seq3, Column, SchedulerNum),
+             Seq5 = transform_seq(Seq4, Column, SchedulerNum),
+             Seq6 = transform_seq(Seq5, Column, SchedulerNum),
+             Seq7 = transform_seq(Seq6, Column, SchedulerNum),
+             Seq8 = transform_seq(Seq7, Column, SchedulerNum),
+             Seq9 = transform_seq(Seq8, Column, SchedulerNum),
+             Seq10 = transform_seq(Seq9, Column, SchedulerNum),
+             Percent1 = proplists:get_value(Seq1, SchedulerUsage),
+             Percent2 = proplists:get_value(Seq2, SchedulerUsage),
+             Percent3 = proplists:get_value(Seq3, SchedulerUsage),
+             Percent4 = proplists:get_value(Seq4, SchedulerUsage),
+             Percent5 = proplists:get_value(Seq5, SchedulerUsage),
+             Percent6 = proplists:get_value(Seq6, SchedulerUsage),
+             Percent7 = proplists:get_value(Seq7, SchedulerUsage),
+             Percent8 = proplists:get_value(Seq8, SchedulerUsage),
+             Percent9 = proplists:get_value(Seq9, SchedulerUsage),
+             Percent10 = proplists:get_value(Seq10, SchedulerUsage),
+             CPU1 = observer_cli_lib:to_percent(Percent1),
+             CPU2 = observer_cli_lib:to_percent(Percent2),
+             CPU3 = observer_cli_lib:to_percent(Percent3),
+             CPU4 = observer_cli_lib:to_percent(Percent4),
+             CPU5 = observer_cli_lib:to_percent(Percent5),
+             CPU6 = observer_cli_lib:to_percent(Percent6),
+             CPU7 = observer_cli_lib:to_percent(Percent7),
+             CPU8 = observer_cli_lib:to_percent(Percent8),
+             CPU9 = observer_cli_lib:to_percent(Percent9),
+             CPU10 = observer_cli_lib:to_percent(Percent10),
+             IsLastLine = Seq1 =:= Column,
+             Percents = [Percent1, Percent2, Percent3, Percent4, Percent5, Percent6,
+                 Percent7, Percent8, Percent9, Percent10],
+             Format = process_bar_format_style(Percents, IsLastLine),
+             io_lib:format(Format, [
+                 Seq1, CPU1, Seq2, CPU2, Seq3, CPU3, Seq4, CPU4, Seq5, CPU5,
+                 Seq6, CPU6, Seq7, CPU7, Seq8, CPU8, Seq9, CPU9, Seq10, CPU10
+                 ])
+         end || Seq1 <- lists:seq(1, Column)],
+    {Column, CPU}.
+
+transform_seq(Seq, Column, Total) ->
+    Num = Seq + Column,
+    case Num > Total of
+        true -> 1000;
+        false -> Num
+    end.
 
 render_top_n_view(memory, MemoryList, Num, Pages, Page) ->
     Title = ?render([
@@ -480,51 +543,38 @@ format_atom_info(AtomLimit, AtomCount) ->
         false -> {<<"">>, Atom}
     end.
 
-process_bar_format_style(Percent1, Percent2, IsLastLine) ->
-    Warning1 =
-        case Percent1 >= ?CPU_ALARM_THRESHOLD of
-            true -> ?RED;
-            false -> ?GREEN
-        end,
-    Warning2 =
-        case Percent2 >= ?CPU_ALARM_THRESHOLD of
-            true -> ?RED;
-            false -> ?GREEN
-        end,
-    Format = <<"|", Warning1/binary, "|~2..0w ~-57.57s", "~s", Warning2/binary, " |~2..0w ~-57.57s", " ~s", " \e[0m|~n">>,
-    case IsLastLine of
-        true -> <<?UNDERLINE/binary, Format/binary>>;
-        false -> Format
-    end.
+warning_color(Percent)when is_integer(Percent), Percent >= ?CPU_ALARM_THRESHOLD -> ?RED;
+warning_color(_Percent) -> ?GREEN.
 
-process_bar_format_style(Percent1, Percent2, Percent3, Percent4, IsLastLine) ->
-    Warning1 =
-        case Percent1 >= ?CPU_ALARM_THRESHOLD of
-            true -> ?RED;
-            false -> ?GREEN
-        end,
-    Warning2 =
-        case Percent2 >= ?CPU_ALARM_THRESHOLD of
-            true -> ?RED;
-            false -> ?GREEN
-        end,
-    Warning3 =
-        case Percent3 >= ?CPU_ALARM_THRESHOLD of
-            true -> ?RED;
-            false -> ?GREEN
-        end,
-    Warning4 =
-        case Percent4 >= ?CPU_ALARM_THRESHOLD of
-            true -> ?RED;
-            false -> ?GREEN
-        end,
+process_bar_format_style(Percents, IsLastLine) ->
     Format =
-        <<"|",
-            Warning1/binary, "|~-2.2w ~-22.22s", " ~s",
-            Warning2/binary, " |~-2.2w ~-22.22s", " ~s",
-            Warning3/binary, " |~-2.2w ~-22.22s", " ~s",
-            Warning4/binary, " |~-2.2w ~-23.23s", " ~s",
-            " \e[0m|~n">>,
+        case [begin warning_color(P) end||P <- Percents] of
+            [W1, W2] ->
+                <<"|",
+                    W1/binary, "|~2..0w ~-57.57s~s",
+                    W2/binary, " |~2..0w ~-57.57s ~s \e[0m|~n"
+                >>;
+            [W1, W2, W3, W4] ->
+                <<"|",
+                    W1/binary, "|~-2.2w ~-22.22s ~s",
+                    W2/binary, " |~-2.2w ~-22.22s ~s",
+                    W3/binary, " |~-2.2w ~-22.22s ~s",
+                    W4/binary, " |~-2.2w ~-23.23s ~s \e[0m|~n"
+                >>;
+            [W1, W2, W3, W4, W5, W6, W7, W8, W9, W10] ->
+                <<"|",
+                    W1/binary, " | ~-3.3w ~s",
+                    W2/binary, " | ~-3.3w ~s",
+                    W3/binary, " | ~-3.3w ~s",
+                    W4/binary, " | ~-3.3w ~s",
+                    W5/binary, " | ~-3.3w ~s",
+                    W6/binary, " |=====| ~-3.3w ~s",
+                    W7/binary, " | ~-3.3w ~s",
+                    W8/binary, " | ~-3.3w ~s",
+                    W9/binary, " | ~-3.3w ~s",
+                    W10/binary, " | ~-3.3w ~s \e[0m|~n"
+                >>
+        end,
     case IsLastLine of
         true -> <<?UNDERLINE/binary, Format/binary>>;
         false -> Format

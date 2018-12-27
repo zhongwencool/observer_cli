@@ -46,6 +46,7 @@ uptime() ->
 -spec to_percent(float()) -> string().
 to_percent(Float)when Float < 0.1 -> [$0, erlang:float_to_list(Float*100, [{decimals, 2}]), $%];
 to_percent(Float)when Float < 1 -> [erlang:float_to_list(Float*100, [{decimals, 2}]), $%];
+to_percent(undefined) -> "******";
 to_percent(_) -> "100.0%".
 
 -spec to_list(term()) -> list().
