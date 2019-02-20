@@ -100,43 +100,44 @@ you only need to write a `observer_cli_plugin` behaviour in a few simple steps t
 2. Write observer_cli_plugin behaviour.
 observer_cli_plugin has 3 callbacks.
 
-2.1 key value labels.
+2.1 attributes.
 ```erlang
--callback kv_label() -> [Rows] when
-    Rows :: #{
-    key => string(), key_width => pos_integer(),
-    value => string()|integer()|{byte, pos_integer()}, value_width => pos_integer()
-    }.
+-callback atributes(PrevState) -> {[Rows], NewState} when
+    Rows :: #{content => string()|integer()|{byte, pos_integer()},
+              width => pos_integer(), color => binary()}.
 ```
 for example:
 ```erlang
-kv_label() ->
+attributes(PrevState) ->
+    Attrs =
     [
         [
-            #{key => "XXX Ets Size", key_width => 20,
-              value => ets:info(xxx,size), value_width => 10},
-            #{key => "Pool1 Size", key_width => 15,
-              value => application:get_env(app,pool1_size), value_width => 30},
-            #{key => "XYZ1 Process Mem", key_width => 18,
-              value => {byte, element(2, erlang:process_info(xyz1, memory))}, value_width => 16}
+            #{content => "XXX Ets Size", width => 20},
+            #{content => ets:info(xxx,size), width => 10},
+            #{content => "Pool1 Size", width => 15},
+            #{content => application:get_env(app,pool1_size), width => 30},
+            #{content => "XYZ1 Process Mem", width => 18,
+            #{content => {byte, element(2, erlang:process_info(xyz1, memory))}, width => 16}
         ],
         [
-            #{key => "YYY Ets Size", key_width => 20,
-              value => ets:info(yyy,size), value_width => 10},
-            #{key => "Pool2 Size", key_width => 15,
-              value => application:get_env(app,pool2_size), value_width => 30},
-            #{key => "XYZ2 Process Mem", key_width => 18,
-              value => {byte, element(2, erlang:process_info(xyz2, memory))}, value_width => 16}
+            #{content => "YYY Ets Size", width =>20},
+            #{content => ets:info(yyy,size), width => 10},
+            #{content => "Pool2 Size", width =>15},
+            #{content => application:get_env(app,pool2_size), width => 30},
+            #{content =>"XYZ2 Process Mem", width =>18},
+            #{content => {byte, element(2, erlang:process_info(xyz2, memory))}, width => 16}
         ],
         [
-            #{key => "ZZZ Ets Size", key_width => 20,
-              value => ets:info(zzz,size), value_width => 10},
-            #{key => "Pool3 Size", key_width => 15,
-              value => application:get_env(app,pool3_size), value_width => 30},
-            #{key => "XYZ3 Process Mem", key_width => 18,
-              value => {byte, element(2, erlang:process_info(xyz3, memory))}, value_width => 16}
+            #{content => "ZZZ Ets Size", width =>20},
+            #{content => ets:info(zzz,size), width => 10},
+            #{content => "Pool3 Size", width =>15},
+            #{content => application:get_env(app,pool3_size), width => 30},
+            #{content => "XYZ3 Process Mem", width =>18},
+            #{content => {byte, element(2, erlang:process_info(xyz3, memory))}, width => 16}
         ]
-    ].
+    ],
+    NewState = PrevState,
+    {Attrs, NewState}.
 ```
 <img src="https://user-images.githubusercontent.com/3116225/46514685-ebff7280-c891-11e8-915e-67f558694328.jpg" width="90%"></img>
 
@@ -157,7 +158,7 @@ sheet_header() ->
 ```
 
 ```erlang
--callback sheet_body() -> [SheetBody] when
+-callback sheet_body(PrevState) -> [SheetBody] when
     SheetBody :: list().
 ```
 for example:
@@ -184,6 +185,7 @@ Support F/B to page up/down.
 ### Changelog
 - 1.4.2
   - hidden schedule process bar when core > 100.
+  - rewrite plugin callback.
 - 1.4.1
   - Fixed ets view memory usage wrong.
   - mnesia view memory usage According to bytes.
