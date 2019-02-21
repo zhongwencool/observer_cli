@@ -158,13 +158,19 @@ sheet_header() ->
 ```
 
 ```erlang
--callback sheet_body(PrevState) -> [SheetBody] when
-    SheetBody :: list().
+-callback sheet_body(PrevState) -> {[SheetBody], NewState} when
+    PrevState :: any(),
+    SheetBody :: list(),
+    NewState :: any().
+
 ```
+
 for example:
+
 ```erlang
-sheet_body() ->
-    [begin
+sheet_body(PrevState) ->
+    Body =
+      [begin
          [
              Pid,
              element(2, erlang:process_info(Pid, status)),
@@ -173,19 +179,24 @@ sheet_body() ->
              element(2, erlang:process_info(Pid, message_queue_len))
          ]
      end||Pid <- erlang:processes()
-    ].
+    ],
+    NewState = PrevState,
+    {Body, NewState}.
 ```
+
 Support F/B to page up/down.
 
 <img src="https://user-images.githubusercontent.com/3116225/46514686-ec980900-c891-11e8-8232-f6ad98fd2e5c.jpg" width="90%"></img>
 
 <img src="https://user-images.githubusercontent.com/3116225/46514783-96779580-c892-11e8-872a-1a44e4d92b76.jpg" width="90%"></img>
 
+[A more specific plugin](https://github.com/zhongwencool/os_stats) can collect linux system information such as kernel vsn, loadavg, disk, memory usage, cpu utilization, IO statistics.
+
 ----------------
 ### Changelog
 - 1.4.2
   - hidden schedule process bar when core > 100.
-  - rewrite plugin callback.
+  - rewrite plugin callback, rename kv_label/0 to attributes/1.
 - 1.4.1
   - Fixed ets view memory usage wrong.
   - mnesia view memory usage According to bytes.
