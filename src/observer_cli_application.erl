@@ -103,7 +103,7 @@ draw_loaded_apps(Apps) ->
 draw_loaded_apps_1([], Acc) -> Acc;
 draw_loaded_apps_1([{App, _Desc, Vsn}], Acc) ->
     Acc ++ [?render([?W("Loaded", 7),
-        ?W2(?YELLOW, App, 17), ?W(Vsn, 10), ?W("******", 96)])];
+        ?W2(?YELLOW, App, 17), ?W(Vsn, 10), ?W("******", 95)])];
 draw_loaded_apps_1([{App1, _Desc1, Vsn1}, {App2, _Desc2, Vsn2}], Acc) ->
     Acc ++ [?render([?W("Loaded", 7),
         ?W2(?YELLOW, App1, 17), ?W(Vsn1, 9), ?W("******", 10),
