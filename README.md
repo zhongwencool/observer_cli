@@ -195,8 +195,9 @@ Support F/B to page up/down.
 ----------------
 ### Changelog
 - 1.4.2
-  - hidden schedule process bar when core > 100.
-  - rewrite plugin callback, rename kv_label/0 to attributes/1.
+  - Hidden schedule process bar when core > 100.
+  - Allow to compile escript w/ inet6 based distribution.
+  - Rewrite plugin callback, rename kv_label/0 to attributes/1.
 - 1.4.1
   - Fixed ets view memory usage wrong.
   - mnesia view memory usage According to bytes.
