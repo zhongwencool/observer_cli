@@ -4,17 +4,18 @@
 %% API
 -export([start/1]).
 
--callback kv_label() -> [Rows] when
-    Rows :: #{
-    key => string(), key_width => pos_integer(),
-    value => string()|integer()|{byte, pos_integer()}, value_width => pos_integer()
-    }.
+-callback attributes(PreState) -> {[Rows], NewState} when
+    PreState :: any(),
+    Rows :: #{content => string()|integer()|{byte, pos_integer()}, width => pos_integer(), color => binary()},
+    NewState :: any().
 
 -callback sheet_header() -> [SheetHeader] when
     SheetHeader :: #{title => string(), width => pos_integer(), shortcut => string()}.
 
--callback sheet_body() -> [SheetBody] when
-    SheetBody :: list().
+-callback sheet_body(PreState) -> {SheetBody, NewState} when
+    PreState :: any(),
+    SheetBody :: list(),
+    NewState :: any().
 
 -define(LAST_LINE, "refresh: ~wms q(quit) Positive Number(set refresh interval time ms) F/B(forward/back) Current pages is ~w").
 -include("observer_cli.hrl").
@@ -25,7 +26,7 @@ start(#view_opts{plug = Plugs, auto_row = AutoRow} = ViewOpts) ->
     NewPlugs = init_config(Plugs),
     Pid = spawn_link(fun() ->
         ?output(?CLEAR),
-        render_worker(?INIT_TIME_REF, NewPlugs, AutoRow)
+        render_worker(?INIT_TIME_REF, NewPlugs, AutoRow, undefined, undefined)
                      end),
     manager(Pid, ViewOpts#view_opts{plug = NewPlugs}).
 
@@ -97,9 +98,13 @@ maybe_shortcut(Cmd, ViewOpts) ->
         {error, not_found} ->
             case maps:find(CurIndex, Plugs) of
                 {ok, #{module := CurMod}} ->
-                    case match_sheet_shortcut(Cmd, CurMod:sheet_header(), 1) of
-                        {ok, Index} -> {ok, sheet, Index};
-                        {error, _Reason} = Err -> Err
+                    try
+                        case match_sheet_shortcut(Cmd, CurMod:sheet_header(), 1) of
+                            {ok, Index} -> {ok, sheet, Index};
+                            {error, _Reason} = Err -> Err
+                        end
+                    catch error:undef ->
+                        {error, not_found}
                     end;
                 _ -> {error, not_found}
             end
@@ -116,20 +121,20 @@ match_sheet_shortcut(_Cmd, [], _Index) -> {error, not_found};
 match_sheet_shortcut(Shortcut, [#{shortcut := Shortcut} | _], Index) -> {ok, Index};
 match_sheet_shortcut(Cmd, [_ | T], Index) -> match_sheet_shortcut(Cmd, T, Index + 1).
 
-render_worker(LastTimeRef, #plug{cur_index = CurIndex, plugs = Plugs} = PlugInfo, AutoRow) ->
+render_worker(LastTimeRef, #plug{cur_index = CurIndex, plugs = Plugs} = PlugInfo, AutoRow, PrevAttrs, PrevSheet) ->
     TerminalRow = observer_cli_lib:get_terminal_rows(AutoRow),
     case maps:find(CurIndex, Plugs) of
         {ok, #{interval := Interval, cur_page := CurPage, sheet_width := SheetWidth} = CurPlug} ->
             Menu = render_menu(PlugInfo, SheetWidth),
-            {Labels, LabelLine} = render_kv_label(CurPlug),
-            Sheet = render_sheet(erlang:max(0, TerminalRow - LabelLine - 4), CurPlug),
+            {Labels, LabelLine, NewAttrs} = render_attributes(CurPlug, PrevAttrs),
+            {SheetLine, NewSheet} = render_sheet(erlang:max(0, TerminalRow - LabelLine - 4), CurPlug, PrevSheet),
             LastText = io_lib:format(?LAST_LINE, [Interval, CurPage]),
             LastLine = ?render([?UNDERLINE, ?GRAY_BG, ?W(LastText, SheetWidth)]),
-            ?output([?CURSOR_TOP, Menu, Labels, Sheet, LastLine]),
+            ?output([?CURSOR_TOP, Menu, Labels, SheetLine, LastLine]),
             NextTimeRef = observer_cli_lib:next_redraw(LastTimeRef, Interval),
             receive
                 quit -> quit;
-                _ -> render_worker(NextTimeRef, PlugInfo, AutoRow)
+                _ -> render_worker(NextTimeRef, PlugInfo, AutoRow, NewAttrs, NewSheet)
             end;
         error ->
             Menu = ?render([?UNDERLINE, ?W(?UNSELECT("Home(H)"), 30), ?W(?SELECT("EmptyPlugin"), 144)]),
@@ -155,7 +160,7 @@ render_menu(#plug{cur_index = CurIndex, plugs = Plugs}, SheetWidth) ->
             ?UNSELECT("Home(H)"), "|",
             Title
         ],
-        SheetWidth + Num * 21 + 20 - 19), Time]).
+        SheetWidth + Num * 21 + 1), Time]).
 
 get_menu_title(CurIndex, Plugs, CurIndex, Acc) ->
     {ok, #{title := Title, shortcut := Shortcut}} = maps:find(CurIndex, Plugs),
@@ -171,19 +176,33 @@ get_menu_title(CurIndex, Plugs, Pos, Acc) ->
             get_menu_title(CurIndex, Plugs, Pos - 1, NewAcc)
     end.
 
-render_kv_label(#{module := Module}) ->
-    RenderLabel =
-        [begin
-             L = [begin [?W(Name, NWidth), ?W(Value, VWidth)] end ||
-                 #{key := Name, key_width := NWidth, value := Value, value_width := VWidth} <- Label],
-             ?render(lists:flatten(L))
-         end || Label <- Module:kv_label()],
-    {RenderLabel, length(RenderLabel)}.
+render_attributes(#{module := Module}, PrevAttrs) ->
+    try
+        {DiffAttrs, NewAttrs} = Module:attributes(PrevAttrs),
+        Render =
+            [begin
+                 L = [begin
+                          #{content := Content, width := Width} = Item,
+                          case maps:find(color, Item) of
+                              {ok, Color} -> ?W2(Color, Content, Width);
+                              error -> ?W(Content, Width)
+                          end
+                      end || Item <- Label],
+                 ?render(L)
+             end || Label <- DiffAttrs],
+        {Render, length(Render), NewAttrs}
+    catch error:undef ->
+        {[], 0, PrevAttrs}
+    end.
 
-render_sheet(Rows, #{sort_column := SortColumn, cur_page := CurPage, module := Module}) ->
-    {Headers, Widths} = render_sheet_header(Module, SortColumn),
-    Body = render_sheet_body(Module, CurPage, Rows, SortColumn, Widths),
-    [Headers | Body].
+render_sheet(Rows, #{sort_column := SortColumn, cur_page := CurPage, module := Module}, PrevSheet) ->
+    try
+        {Headers, Widths} = render_sheet_header(Module, SortColumn),
+        {Body, NewSheet} = render_sheet_body(Module, CurPage, Rows, SortColumn, Widths, PrevSheet),
+        {[Headers | Body], NewSheet}
+    catch error:undef ->
+        []
+    end.
 
 render_sheet_header(Module, SortRow) ->
     SheetHeader = Module:sheet_header(),
@@ -212,28 +231,37 @@ render_sheet_header(Module, SortRow) ->
         lists:reverse(SheetHeader)),
     {?render(Headers), Widths}.
 
-render_sheet_body(Module, CurPage, Rows, SortRow, Widths) ->
+render_sheet_body(Module, CurPage, Rows, SortRow, Widths, PrevSheet) ->
+    {Diff, NewSheet} = Module:sheet_body(PrevSheet),
     DataSet = lists:map(fun(I) ->
         {0, lists:nth(SortRow, I), I} end,
-        Module:sheet_body()),
+        Diff),
     SortData = observer_cli_lib:sublist(DataSet, Rows, CurPage),
-    [begin
-         List = mix_value_width(Item, Widths, []),
-         ?render(List)
-     end || {_, _, Item} <- SortData].
+    Line =
+        [begin
+             List = mix_content_width(Item, Widths, []),
+             ?render(List)
+         end || {_, _, Item} <- SortData],
+    {Line, NewSheet}.
 
-
-mix_value_width([], _, Acc) -> lists:reverse(Acc);
-mix_value_width([I | IRest], [W | WRest], []) -> %% first
-    mix_value_width(IRest, WRest, [?W(I, W - 1)]);
-mix_value_width([I], [W], Acc) -> %% last
-    mix_value_width([], [], [?W(I, W - 1) | Acc]);
-mix_value_width([I | IRest], [W | WRest], Acc) -> %% middle
-    mix_value_width(IRest, WRest, [?W(I, W - 2) | Acc]).
+mix_content_width([], _, Acc) -> lists:reverse(Acc);
+mix_content_width([I | IRest], [W | WRest], []) -> %% first
+    IList = observer_cli_lib:to_list(I),
+    mix_content_width(IRest, WRest, [?W(IList, W - 1)]);
+mix_content_width([I], [W], Acc) -> %% last
+    IList = observer_cli_lib:to_list(I),
+    mix_content_width([], [], [?W(IList, W - 1) | Acc]);
+mix_content_width([I | IRest], [W | WRest], Acc) -> %% middle
+    IList = observer_cli_lib:to_list(I),
+    mix_content_width(IRest, WRest, [?W(IList, W - 2) | Acc]).
 
 get_sheet_width(Mod) ->
-    Width = lists:foldl(fun(#{width := W}, Acc) -> Acc + W + 1 end, 1, Mod:sheet_header()),
-    case Width > 1 of
-        true -> Width - 2;
-        false -> ?COLUMN + 5
+    try
+        Width = lists:foldl(fun(#{width := W}, Acc) -> Acc + W + 1 end, 1, Mod:sheet_header()),
+        case Width > 1 of
+            true -> Width - 2;
+            false -> ?COLUMN + 5
+        end
+    catch error:undef ->
+        ?COLUMN + 5
     end.

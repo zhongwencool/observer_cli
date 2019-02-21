@@ -56,6 +56,7 @@ to_list(Pid) when is_pid(Pid) -> erlang:pid_to_list(Pid);
 to_list(Binary) when is_binary(Binary) -> erlang:binary_to_list(Binary);
 to_list(Port)when is_port(Port) -> erlang:port_to_list(Port);
 to_list(Ref) when is_reference(Ref) -> erlang:ref_to_list(Ref);
+to_list(Float) when is_float(Float) -> erlang:float_to_list(Float, [{decimals, 4}]);
 to_list(Val) -> Val.
 
 -spec get_menu_title('allocator'|'ets'|'doc'|'home'|'inet'|'mnesia'|'app') -> list().
