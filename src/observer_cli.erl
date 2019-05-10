@@ -70,8 +70,8 @@ start_plugin() ->
 rpc_start(Node, Interval) ->
     case net_kernel:hidden_connect_node(Node) of
         true -> rpc:call(Node, ?MODULE, start, [Interval]);
-        false -> connect_error(nodedown, <<"Node(~p) refuse to be connected, make sure cookie is valid~n">>, Node);
-        ignored -> connect_error(nodedown, <<"Ignored by node(~p), local node is not alive!~n">>, Node)
+        false -> connect_error({badrpc, nodedown}, <<"Node(~p) refuse to be connected, make sure cookie is valid~n">>, Node);
+        ignored -> connect_error({badrpc, nodedown}, <<"Ignored by node(~p), local node is not alive!~n">>, Node)
     end.
 
 manager(StorePid, RenderPid, Opts, LastSchWallFlag) ->
@@ -629,7 +629,7 @@ get_top_n(_Func, Type, _Interval, Rows, _FirstTime) ->
 connect_error(Reason, Prompt, Node) ->
     Prop = <<?RED/binary, Prompt/binary, ?RESET/binary>>,
     ?output(Prop, [Node]),
-    {error, Reason}.
+    Reason.
 
 start_process_view(StorePid, RenderPid, Opts = #view_opts{home = Home}, LastSchWallFlag, AutoJump) ->
     #home{cur_page = CurPage, pages = Pages} = Home,
