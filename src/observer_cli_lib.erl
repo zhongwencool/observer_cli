@@ -289,10 +289,10 @@ get_pos(Page, PageRow, Pages, TopLen) ->
     end.
 
 flush() ->
- receive _ ->
-     flush()
- after 0 -> ok
- end.
+    receive _Msg ->
+        flush()
+    after 100 -> ok
+    end.
 
 -spec sublist(list(), integer(), integer()) -> list().
 sublist(AllEts, Rows, CurPage) ->
