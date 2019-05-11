@@ -24,7 +24,7 @@ Visualize Erlang/Elixir Nodes On The Command Line base on [recon](https://github
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.4.3
+dep_observer_cli = hex 1.4.4
 ```
 **Elixir**
 ```elixir
@@ -194,6 +194,8 @@ Support F/B to page up/down.
 
 ----------------
 ### Changelog
+- 1.4.4
+  - Make sure connection errors can be handled
 - 1.4.3
   - Bump Recon to 2.4.0
 - 1.4.2
