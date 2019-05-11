@@ -78,6 +78,7 @@ manager(StorePid, RenderPid, Opts, LastSchWallFlag) ->
     #view_opts{home = Home = #home{cur_page = CurPage, pages = Pages}} = Opts,
     case observer_cli_lib:parse_cmd(Opts, [RenderPid, StorePid]) of
         quit ->
+            erlang:unlink(RenderPid),
             erlang:send(RenderPid, quit),
             erlang:system_flag(scheduler_wall_time, LastSchWallFlag),
             observer_cli_lib:exit_processes([StorePid]),
