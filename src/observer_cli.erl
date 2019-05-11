@@ -70,8 +70,8 @@ start_plugin() ->
 rpc_start(Node, Interval) ->
     case net_kernel:hidden_connect_node(Node) of
         true -> rpc:call(Node, ?MODULE, start, [Interval]);
-        false -> connect_error(<<"Node(~p) refuse to be connected, make sure cookie is valid~n">>, Node);
-        ignored -> connect_error(<<"Ignored by node(~p), local node is not alive!~n">>, Node)
+        false -> connect_error({badrpc, nodedown}, <<"Node(~p) refuse to be connected, make sure cookie is valid~n">>, Node);
+        ignored -> connect_error({badrpc, nodedown}, <<"Ignored by node(~p), local node is not alive!~n">>, Node)
     end.
 
 manager(StorePid, RenderPid, Opts, LastSchWallFlag) ->
@@ -153,7 +153,7 @@ redraw_running(StorePid, #home{interval = Interval, func = Func,
     {TopNList, RankLine} = render_top_n_view(Type, TopList, ProcessRows, RankPos, CurPage),
     LastLine = observer_cli_lib:render_last_line(?LAST_LINE),
     ?output([?CURSOR_TOP, MenuLine, SystemLine, MemLine, CPULine, RankLine, LastLine]),
-    
+
     observer_cli_store:update(StorePid, ProcessRows, TopNList),
     TimeRef = refresh_next_time(Func, Type, Interval),
     receive
@@ -218,7 +218,7 @@ render_memory_process_line(ProcSum, MemSum, Interval) ->
         {gc_words_reclaimed, GcWordsReclaimed},
         {reductions, Reductions}|_
     ] = MemSum,
-    
+
     {Queue, LogKey} =
         case whereis(error_logger) of
             undefined ->
@@ -233,7 +233,7 @@ render_memory_process_line(ProcSum, MemSum, Interval) ->
     BinMemPercent = observer_cli_lib:to_percent(BinMem / TotalMem),
     CodeMemPercent = observer_cli_lib:to_percent(CodeMem / TotalMem),
     EtsMemPercent = observer_cli_lib:to_percent(EtsMem / TotalMem),
-    
+
     Title = ?render([
         ?GRAY_BG, ?W("Mem Type", 10), ?W("Size", 21),
         ?W("Mem Type", 25), ?W("Size", 21),
@@ -626,9 +626,10 @@ get_top_n(proc_window, Type, Interval, Rows, IsFirstTime)when not IsFirstTime ->
 get_top_n(_Func, Type, _Interval, Rows, _FirstTime) ->
     recon:proc_count(Type, Rows).
 
-connect_error(Prompt, Node) ->
+connect_error(Reason, Prompt, Node) ->
     Prop = <<?RED/binary, Prompt/binary, ?RESET/binary>>,
-    ?output(Prop, [Node]).
+    ?output(Prop, [Node]),
+    Reason.
 
 start_process_view(StorePid, RenderPid, Opts = #view_opts{home = Home}, LastSchWallFlag, AutoJump) ->
     #home{cur_page = CurPage, pages = Pages} = Home,
