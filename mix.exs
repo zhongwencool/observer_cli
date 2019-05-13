@@ -5,7 +5,7 @@ defmodule ObserverCli.MixProject do
     [
       app: :observer_cli,
       version: "0.4.4",
-      elixir: ">= 1.6.6 and < 1.9.0",
+      language: :erlang,
       start_permanent: Mix.env == :prod,
       deps: []
     ]
