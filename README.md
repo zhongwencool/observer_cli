@@ -24,13 +24,13 @@ Visualize Erlang/Elixir Nodes On The Command Line base on [recon](https://github
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.4.5
+dep_observer_cli = hex 1.5.0
 ```
 **Elixir**
 ```elixir
 # mix.exs                                                                                                   
    def deps do                                                          
-     [{:observer_cli, "~> 1.4"}]
+     [{:observer_cli, "~> 1.5"}]
    end
 ```  
 ------------------
@@ -194,7 +194,9 @@ Support F/B to page up/down.
 
 ----------------
 ### Changelog
--1.4.5
+- 1.5.0
+  - Bump Recon to 2.5.0
+- 1.4.5
   - Include a minimal mix.exs build file
   - Make sure EXIT message has been clear
 - 1.4.4
