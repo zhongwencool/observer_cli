@@ -7,7 +7,9 @@ defmodule ObserverCli.MixProject do
       version: "1.4.5",
       language: :erlang,
       start_permanent: Mix.env == :prod,
-      deps: []
+      deps: [
+        {:recon, "~> 2.5.0"},
+      ]
     ]
   end
 

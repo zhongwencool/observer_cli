@@ -1,6 +1,6 @@
 {"1.1.0",
-[{<<"recon">>,{pkg,<<"recon">>,<<"2.4.0">>},0}]}.
+[{<<"recon">>,{pkg,<<"recon">>,<<"2.5.0">>},0}]}.
 [
 {pkg_hash,[
- {<<"recon">>, <<"901FF78B39C754FB4D6FD72DCF0DBD398967BBD2E4D59C08D4D7AA44A73DE91D">>}]}
+ {<<"recon">>, <<"2F7FCBEC2C35034BADE2F9717F77059DC54EB4E929A3049CA7BA6775C0BD66CD">>}]}
 ].
