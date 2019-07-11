@@ -1,9 +1,9 @@
 language: erlang
 otp_release:
+  - 22.0
   - 20.1
   - 19.3
   - 18.3
-  - 17.5
 
 env:
   - PATH=$HOME/.cache/rebar3/bin/:$PATH
