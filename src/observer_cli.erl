@@ -14,8 +14,7 @@
 -define(LAST_LINE, "q(quit) p(pause) r/rr(reduction) " ++
     "m/mm(mem) b/bb(binary mem) t/tt(total heap size) mq/mmq(msg queue) 9(proc 9 info) F/B(page forward/back)").
 
--define(STABLE_SYSTEM_KEY, [system_version, process_limit, smp_support,
-    port_limit, ets_limit, logical_processors, multi_scheduling]).
+-define(STABLE_SYSTEM_KEY, [process_limit, port_limit, ets_limit, logical_processors, multi_scheduling]).
 
 -spec start() -> no_return.
 start() -> start(#view_opts{}).
@@ -30,7 +29,7 @@ start(#view_opts{home = Home} = Opts) ->
     LastSchWallFlag = erlang:system_flag(scheduler_wall_time, true),
     RenderPid = spawn_link(fun() -> render_worker(StorePid, Home, AutoRow) end),
     manager(StorePid, RenderPid, Opts#view_opts{auto_row = AutoRow}, LastSchWallFlag);
-start(Interval)when is_integer(Interval), Interval >= ?MIN_INTERVAL ->
+start(Interval) when is_integer(Interval), Interval >= ?MIN_INTERVAL ->
     start(#view_opts{
         home = #home{interval = Interval},
         ets = #ets{interval = Interval},
@@ -69,9 +68,12 @@ start_plugin() ->
 
 rpc_start(Node, Interval) ->
     case net_kernel:hidden_connect_node(Node) of
-        true -> rpc:call(Node, ?MODULE, start, [Interval]);
-        false -> connect_error({badrpc, nodedown}, <<"Node(~p) refuse to be connected, make sure cookie is valid~n">>, Node);
-        ignored -> connect_error({badrpc, nodedown}, <<"Ignored by node(~p), local node is not alive!~n">>, Node)
+        true ->
+            rpc:call(Node, ?MODULE, start, [Interval]);
+        false ->
+            connect_error({badrpc, nodedown}, <<"Node(~p) refuse to be connected, make sure cookie is valid~n">>, Node);
+        ignored ->
+            connect_error({badrpc, nodedown}, <<"Ignored by node(~p), local node is not alive!~n">>, Node)
     end.
 
 manager(StorePid, RenderPid, Opts, LastSchWallFlag) ->
@@ -154,7 +156,7 @@ redraw_running(StorePid, #home{interval = Interval, func = Func,
     {TopNList, RankLine} = render_top_n_view(Type, TopList, ProcessRows, RankPos, CurPage),
     LastLine = observer_cli_lib:render_last_line(?LAST_LINE),
     ?output([?CURSOR_TOP, MenuLine, SystemLine, MemLine, CPULine, RankLine, LastLine]),
-
+    
     observer_cli_store:update(StorePid, ProcessRows, TopNList),
     TimeRef = refresh_next_time(Func, Type, Interval),
     receive
@@ -164,12 +166,12 @@ redraw_running(StorePid, #home{interval = Interval, func = Func,
     end.
 
 render_system_line(StableInfo, AtomStatus, UseMem, AllocatedMem, UnusedMem, ProcSum) ->
-    [Version, ProcLimit, SmpSupport, PortLimit, EtsLimit, LogicalProc, MultiScheduling] = StableInfo,
+    [Version, SysVersion, ProcLimit, PortLimit, EtsLimit, LogicalProc, MultiScheduling] = StableInfo,
     UsePercent = observer_cli_lib:to_percent(UseMem / AllocatedMem),
     UnUsePercent = observer_cli_lib:to_percent(UnusedMem / AllocatedMem),
     {PortWarning, ProcWarning, PortCount, ProcCount} = get_port_proc_info(PortLimit, ProcLimit, ProcSum),
     Title = ?render([
-        ?W(Version -- "\n", 136),
+        ?W(SysVersion, 136),
         ?NEW_LINE,
         ?GRAY_BG,
         ?W("System", 10), ?W("Count/Limit", 21),
@@ -177,7 +179,7 @@ render_system_line(StableInfo, AtomStatus, UseMem, AllocatedMem, UnusedMem, Proc
         ?W("Memory Info", 20), ?W("Size", 24)]),
     Row1 = ?render([
         ?W("Proc Count", 10), ?W2(ProcWarning, ProcCount, 22),
-        ?W(" Smp Support", 26), ?W(SmpSupport, 21),
+        ?W(" Version", 26), ?W(Version, 21),
         ?W("Allocted Mem", 20), ?W({byte, AllocatedMem}, 15), ?W("100.0%", 6),
         ?NEW_LINE,
         ?W("Port Count", 10), ?W2(PortWarning, PortCount, 22),
@@ -210,16 +212,16 @@ render_memory_process_line(ProcSum, MemSum, Interval) ->
         {memory_procs, ProcMem},
         {memory_atoms, AtomMem},
         {memory_bin, BinMem},
-        {memory_ets, EtsMem}|_
+        {memory_ets, EtsMem} | _
     ] = ProcSum,
     [
         {bytes_in, BytesIn},
         {bytes_out, BytesOut},
         {gc_count, GcCount},
         {gc_words_reclaimed, GcWordsReclaimed},
-        {reductions, Reductions}|_
+        {reductions, Reductions} | _
     ] = MemSum,
-
+    
     {Queue, LogKey} =
         case whereis(error_logger) of
             undefined ->
@@ -234,12 +236,12 @@ render_memory_process_line(ProcSum, MemSum, Interval) ->
     BinMemPercent = observer_cli_lib:to_percent(BinMem / TotalMem),
     CodeMemPercent = observer_cli_lib:to_percent(CodeMem / TotalMem),
     EtsMemPercent = observer_cli_lib:to_percent(EtsMem / TotalMem),
-
+    
     Title = ?render([
         ?GRAY_BG, ?W("Mem Type", 10), ?W("Size", 21),
         ?W("Mem Type", 25), ?W("Size", 21),
         ?W("IO/GC", 20), ?W(["Interval: ", erlang:integer_to_binary(Interval), "ms"], 24)
-        ]),
+    ]),
     Row = ?render([
         ?W("Total", 10), ?W({byte, TotalMem}, 12), ?W("100.0%", 6),
         ?W("Binary", 25), ?W({byte, BinMem}, 12), ?W(BinMemPercent, 6),
@@ -366,7 +368,7 @@ render_scheduler_usage(SchedulerUsage, SchedulerNum) ->
              io_lib:format(Format, [
                  Seq1, CPU1, Seq2, CPU2, Seq3, CPU3, Seq4, CPU4, Seq5, CPU5,
                  Seq6, CPU6, Seq7, CPU7, Seq8, CPU8, Seq9, CPU9, Seq10, CPU10
-                 ])
+             ])
          end || Seq1 <- lists:seq(1, Column)],
     {Column, CPU}.
 
@@ -395,7 +397,7 @@ render_top_n_view(memory, MemoryList, Num, Pages, Page) ->
                     observer_cli_lib:to_list(Reductions),
                     observer_cli_lib:to_list(MsgQueueLen), CurFun
                 ]),
-            {[R|Acc], [{Pos, Pid}|Acc1], Pos + 1}
+            {[R | Acc], [{Pos, Pid} | Acc1], Pos + 1}
         end,
     {Rows, PidList} = top_n_rows(FormatFunc, Start, lists:sublist(MemoryList, Start, Num)),
     {PidList, [Title | lists:reverse(Rows)]};
@@ -439,7 +441,7 @@ render_top_n_view(reductions, ReductionList, Num, Pages, Page) ->
                     observer_cli_lib:to_byte(Memory),
                     observer_cli_lib:to_list(MsgQueueLen), CurFun
                 ]),
-            {[R|Acc], [{Pos, Pid}|Acc1], Pos + 1}
+            {[R | Acc], [{Pos, Pid} | Acc1], Pos + 1}
         end,
     {Rows, PidList} = top_n_rows(FormatFunc, Start, lists:sublist(ReductionList, Start, Num)),
     {PidList, [Title | lists:reverse(Rows)]};
@@ -461,7 +463,7 @@ render_top_n_view(total_heap_size, HeapList, Num, Pages, Page) ->
                     observer_cli_lib:to_list(Reductions),
                     observer_cli_lib:to_list(MsgQueueLen), CurFun
                 ]),
-            {[R|Acc], [{Pos, Pid}|Acc1], Pos + 1}
+            {[R | Acc], [{Pos, Pid} | Acc1], Pos + 1}
         end,
     {Rows, PidList} = top_n_rows(FormatFunc, Start, lists:sublist(HeapList, Start, Num)),
     {PidList, [Title | lists:reverse(Rows)]};
@@ -483,7 +485,7 @@ render_top_n_view(message_queue_len, MQLenList, Num, Pages, Page) ->
                     observer_cli_lib:to_byte(Memory),
                     observer_cli_lib:to_list(Reductions), CurFun
                 ]),
-            {[R|Acc], [{Pos, Pid}|Acc1], Pos + 1}
+            {[R | Acc], [{Pos, Pid} | Acc1], Pos + 1}
         end,
     {Rows, PidList} = top_n_rows(FormatFunc, Start, lists:sublist(MQLenList, Start, Num)),
     {PidList, [Title | lists:reverse(Rows)]}.
@@ -544,12 +546,12 @@ format_atom_info(AtomLimit, AtomCount) ->
         false -> {<<"">>, Atom}
     end.
 
-warning_color(Percent)when is_integer(Percent), Percent >= ?CPU_ALARM_THRESHOLD -> ?RED;
+warning_color(Percent) when is_integer(Percent), Percent >= ?CPU_ALARM_THRESHOLD -> ?RED;
 warning_color(_Percent) -> ?GREEN.
 
 process_bar_format_style(Percents, IsLastLine) ->
     Format =
-        case [begin warning_color(P) end||P <- Percents] of
+        case [begin warning_color(P) end || P <- Percents] of
             [W1, W2] ->
                 <<"|",
                     W1/binary, "|~2..0w ~-57.57s~s",
@@ -600,7 +602,12 @@ get_refresh_prompt(proc_window, Type, Interval, Rows) ->
     io_lib:format("recon:proc_window(~p, ~w, ~w) Interval:~wms", [Type, Rows, Interval, Interval]).
 
 get_stable_system_info() ->
-    [begin erlang:system_info(Item) end || Item <- ?STABLE_SYSTEM_KEY].
+    OtpRelease = erlang:system_info(otp_release),
+    Path = filename:join([code:root_dir(), "releases", OtpRelease, "OTP_VERSION"]),
+    {ok, VersionBin} = file:read_file(Path),
+    Version = erlang:binary_to_list(VersionBin) -- "\n",
+    SysVersion = erlang:system_info(system_version) -- "\n",
+    [Version, SysVersion -- "/n" | [begin erlang:system_info(Item) end || Item <- ?STABLE_SYSTEM_KEY]].
 
 get_change_system_info() ->
     UsedMem = recon_alloc:memory(used),
@@ -622,7 +629,7 @@ get_pid_info(Pid, Keys) ->
         [{_, Val1}, {_, Val2}] -> {Val1, Val2}
     end.
 
-get_top_n(proc_window, Type, Interval, Rows, IsFirstTime)when not IsFirstTime ->
+get_top_n(proc_window, Type, Interval, Rows, IsFirstTime) when not IsFirstTime ->
     recon:proc_window(Type, Rows, Interval);
 get_top_n(_Func, Type, _Interval, Rows, _FirstTime) ->
     recon:proc_count(Type, Rows).
