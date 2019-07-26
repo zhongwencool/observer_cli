@@ -73,7 +73,6 @@ render_worker(Interval, LastTimeRef, HideSystemTable, AutoRow, Attr, CurPage) ->
         {new_interval, NewInterval} ->
             render_worker(NewInterval, TimeRef, HideSystemTable, AutoRow, Attr, CurPage);
         {system_table, NewHideSystemTable} ->
-            io:format("xxxx~p~n", [NewHideSystemTable]),
             render_worker(Interval, TimeRef, NewHideSystemTable, AutoRow, Attr, CurPage);
         _ ->
             render_worker(Interval, TimeRef, HideSystemTable, AutoRow, Attr, CurPage)
