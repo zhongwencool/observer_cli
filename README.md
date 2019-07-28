@@ -24,7 +24,7 @@ Visualize Erlang/Elixir Nodes On The Command Line base on [recon](https://github
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.5.0
+dep_observer_cli = hex 1.5.1
 ```
 **Elixir**
 ```elixir
@@ -194,6 +194,9 @@ Support F/B to page up/down.
 
 ----------------
 ### Changelog
+- 1.5.1
+  - Hide mnesia tab when it's not started
+  - Show specific erl version such as '22.0.5'
 - 1.5.0
   - Bump Recon to 2.5.0
 - 1.4.5
