@@ -194,6 +194,8 @@ Support F/B to page up/down.
 
 ----------------
 ### Changelog
+- 1.5.2  
+  - Use erlang:system_info(otp_release) when can't find `OTP_VERSION` file for the full version.
 - 1.5.1
   - Hide mnesia tab when it's not started
   - Show specific erl version such as '22.0.5'

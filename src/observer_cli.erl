@@ -603,11 +603,14 @@ get_refresh_prompt(proc_window, Type, Interval, Rows) ->
 
 get_stable_system_info() ->
     OtpRelease = erlang:system_info(otp_release),
-    Path = filename:join([code:root_dir(), "releases", OtpRelease, "OTP_VERSION"]),
-    {ok, VersionBin} = file:read_file(Path),
-    Version = erlang:binary_to_list(VersionBin) -- "\n",
     SysVersion = erlang:system_info(system_version) -- "\n",
-    [Version, SysVersion -- "/n" | [begin erlang:system_info(Item) end || Item <- ?STABLE_SYSTEM_KEY]].
+    Path = filename:join([code:root_dir(), "releases", OtpRelease, "OTP_VERSION"]),
+    Version =
+        case file:read_file(Path) of
+            {ok, VersionBin} -> erlang:binary_to_list(VersionBin) -- "\n";
+            _ -> OtpRelease
+        end,
+    [Version, SysVersion | [begin erlang:system_info(Item) end || Item <- ?STABLE_SYSTEM_KEY]].
 
 get_change_system_info() ->
     UsedMem = recon_alloc:memory(used),
