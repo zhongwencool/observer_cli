@@ -13,7 +13,7 @@ Visualize Erlang/Elixir Nodes On The Command Line base on [recon](https://github
 
 ## Goal
 - Provide a high-performance tool usable both in development and production settings.
-- Focus on important and detailed information about real-time running system.  
+- Focus on important and detailed information about real-time running system.
 - Keep minimal consumption.
 
 ------------------
@@ -28,11 +28,11 @@ dep_observer_cli = hex 1.5.1
 ```
 **Elixir**
 ```elixir
-# mix.exs                                                                                                   
-   def deps do                                                          
+# mix.exs
+   def deps do
      [{:observer_cli, "~> 1.5"}]
    end
-```  
+```
 ------------------
 ### How-To
 #### Try in local shell.
@@ -55,6 +55,15 @@ iex --name "observer_cli@127.0.0.1" -S mix
 iex(1)> :observer_cli.start(:'target@host', :'magic_cookie')
 ```
 :exclamation: **ensure observer_cli application been loaded on target node.**
+
+#### Try in Elixir 1.9.x release
+```erlang
+%% create elixir release
+mix release
+%% rpc current node
+_build/dev/rel/example/bin/example rpc ":observer_cli.start"
+```
+:exclamation: **ensure observer_cli application been loaded on current node.**
 
 #### Escriptize
 1. cd path/to/observer_cli/
@@ -194,7 +203,7 @@ Support F/B to page up/down.
 
 ----------------
 ### Changelog
-- 1.5.2  
+- 1.5.2
   - Use erlang:system_info(otp_release) when can't find `OTP_VERSION` file for the full version.
 - 1.5.1
   - Hide mnesia tab when it's not started
@@ -224,7 +233,7 @@ Support F/B to page up/down.
 - 1.3.3
   - fixed io:format(Format,Args) Format not support iolist OTP R21
 - 1.3.2
-  - Make sure all observer_cli process exit when quit.    
+  - Make sure all observer_cli process exit when quit.
   - Upgrade recon to 2.3.6
 - 1.3.1
   - Add atom limit/count in home.
@@ -243,9 +252,9 @@ Support F/B to page up/down.
   - try best to make color adjust all platform.
 - 1.2.0
   - add application GUI.
-  - Rearrange GUI and optimize render. 
+  - Rearrange GUI and optimize render.
   - Always automatically adapt to the window size.
-  
+
 - 1.1.0
   - Support escript, `observer_cli <TARGETNODE> <COOKIE>`
 
