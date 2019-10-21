@@ -46,10 +46,12 @@ render_worker(Interval, LastTimeRef) ->
     CacheHitInfo = recon_alloc:cache_hit_rates(),
     AverageBlockCurs = recon_alloc:average_block_sizes(current),
     AverageBlockMaxes = recon_alloc:average_block_sizes(max),
+    SbcsToMbcsCurs = observer_cli_lib:sbcs_to_mbcs_by_type(?UTIL_ALLOCATORS, recon_alloc:sbcs_to_mbcs(current)),
+    SbcsToMbcsMaxs = observer_cli_lib:sbcs_to_mbcs_by_type(?UTIL_ALLOCATORS, recon_alloc:sbcs_to_mbcs(max)),
     Sys = render_sys_info(),
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
     Menu = observer_cli_lib:render_menu(allocator, Text),
-    BlockView = render_average_block_size_info(AverageBlockCurs, AverageBlockMaxes),
+    BlockView = render_block_size_info(AverageBlockCurs, AverageBlockMaxes, SbcsToMbcsCurs, SbcsToMbcsMaxs),
     HitView = render_cache_hit_rates(CacheHitInfo, erlang:length(CacheHitInfo)),
     LastLine = observer_cli_lib:render_last_line("q(quit)"),
     ?output([?CURSOR_TOP, Menu, Sys, BlockView, HitView, LastLine]),
@@ -101,19 +103,22 @@ render_cache_hit_rates(CacheHitInfo, Len) ->
          end || Seq1 <- lists:seq(1, Num)],
     [Title|Rows].
 
-render_average_block_size_info(AverageBlockCurs, AverageBlockMaxes) ->
+render_block_size_info(AverageBlockCurs, AverageBlockMaxes, SbcsToMbcsCurs, SbcsToMbcsMaxs) ->
     Title = ?render([ ?UNDERLINE, ?GRAY_BG,
-        ?W("Allocator Type", 16), ?W("Current Multiblock Carriers", 28),
-        ?W("Max Multiblock Carriers", 28), ?W("Current SingleBlock Carriers", 26),
-        ?W("Max Single Block Carriers", 26)]),
+        ?W("Allocator Type", 16), ?W("Current Mbcs", 16),
+        ?W("Max Mbcs", 16), ?W("Current Sbcs", 16),
+        ?W("Max Sbcs", 16), ?W("Current SbcsToMbcs", 19),
+        ?W("Max SbcsToMbcs", 19)]),
     View =
         [begin
-             [Type, CMC, MMC, CSC, MSBC] = get_alloc(AllocKey, AverageBlockCurs, AverageBlockMaxes),
-             ?render([?W(Type, 16), ?W(CMC, 28), ?W(MMC, 28), ?W(CSC, 27), ?W(MSBC, 25)])
+             [Type, CMC, MMC, CSC, MSBC, CSTM, MSTM] =
+                get_alloc(AllocKey, AverageBlockCurs, AverageBlockMaxes, SbcsToMbcsCurs, SbcsToMbcsMaxs),
+             ?render([?W(Type, 16), ?W(CMC, 16), ?W(MMC, 16),
+                      ?W(CSC, 16), ?W(MSBC, 16), ?W(CSTM, 19), ?W(MSTM, 19)])
          end || AllocKey <- ?UTIL_ALLOCATORS],
     [Title|View].
 
-get_alloc(Key, Curs, Maxes) ->
+get_alloc(Key, Curs, Maxes, STMCurs, STMMaxes) ->
     CurRes = proplists:get_value(Key, Curs),
     MaxRes = proplists:get_value(Key, Maxes),
     CurMbcs = proplists:get_value(mbcs, CurRes),
@@ -124,7 +129,9 @@ get_alloc(Key, Curs, Maxes) ->
         observer_cli_lib:to_byte(CurMbcs),
         observer_cli_lib:to_byte(MaxMbcs),
         observer_cli_lib:to_byte(CurSbcs),
-        observer_cli_lib:to_byte(MaxSbcs)].
+        observer_cli_lib:to_byte(MaxSbcs),
+        proplists:get_value(Key, STMCurs),
+        proplists:get_value(Key, STMMaxes)].
 
 render_sys_info() ->
     SysInfo = sys_info(),
@@ -182,13 +189,13 @@ sys_info() ->
                   Mem -> Mem
               catch _:_ -> []
               end,
-    
+
     SchedulersOnline = erlang:system_info(schedulers_online),
     SchedulersAvailable = case erlang:system_info(multi_scheduling) of
                               enabled -> SchedulersOnline;
                               _ -> 1
                           end,
-    
+
     {{_, Input}, {_, Output}} = erlang:statistics(io),
     [{process_count, erlang:system_info(process_count)},
         {process_limit, erlang:system_info(process_limit)},
@@ -196,14 +203,14 @@ sys_info() ->
         {run_queue, erlang:statistics(run_queue)},
         {io_input, Input},
         {io_output, Output},
-        
+
         {logical_processors, erlang:system_info(logical_processors)},
         {logical_processors_online, erlang:system_info(logical_processors_online)},
         {logical_processors_available, erlang:system_info(logical_processors_available)},
         {schedulers, erlang:system_info(schedulers)},
         {schedulers_online, SchedulersOnline},
         {schedulers_available, SchedulersAvailable},
-        
+
         {otp_release, erlang:system_info(otp_release)},
         {version, erlang:system_info(version)},
         {system_architecture, erlang:system_info(system_architecture)},

@@ -24,6 +24,7 @@
 -export([update_page_pos/3]).
 -export([get_pos/4]).
 -export([sublist/3]).
+-export([sbcs_to_mbcs_by_type/2]).
 -define(DEFAULT_ROW_SIZE, 35). %% the number from 13' mbp
 
 -define(select(Title), ?RED_BG, Title, ?RESET_BG).
@@ -31,7 +32,7 @@
 
 -spec uptime() -> list().
 uptime() ->
-    
+
     {UpTime, _} = erlang:statistics(wall_clock),
     {D, {H, M, S}} = calendar:seconds_to_daystime(UpTime div 1000),
     Time = [
@@ -172,7 +173,7 @@ parse_cmd(ViewOpts, Pids) ->
         "so\n" -> send_oct;
         "cnt\n" -> cnt;
         "oct\n" -> oct;
-        
+
         %% menu view
         "H\n" ->
             exit_processes(Pids),
@@ -206,7 +207,7 @@ parse_cmd(ViewOpts, Pids) ->
         "PD\n" -> page_down_top_n;   %% forward
         "B\n" -> page_up_top_n;     %% backward
         "F\n" -> page_down_top_n;   %% forward
-        
+
         %% home
         "p\n" -> pause_or_resume;
         "r\n" -> {func, proc_count, reductions};
@@ -302,3 +303,19 @@ sublist(AllEts, Rows, CurPage) ->
             lists:sublist(SortEts, Start, Rows);
         false -> []
     end.
+
+-spec sbcs_to_mbcs_by_type(list(), list()) -> list().
+sbcs_to_mbcs_by_type(TypeList0, STMList) ->
+    TypeList = [{Type, 0} || Type <- TypeList0],
+    FoldlFun = fun({{Type, _}, Value}, Acc) ->
+        case lists:keyfind(Type, 1, Acc) of
+            false ->
+                Acc;
+            {Type, OldValue} ->
+                lists:keyreplace(Type, 1, Acc, {Type, OldValue + parse_sbcs_to_mbcs_value(Value)})
+        end
+    end,
+    lists:foldl(FoldlFun, TypeList, STMList).
+
+parse_sbcs_to_mbcs_value(Number) when is_number(Number) -> Number;
+parse_sbcs_to_mbcs_value(_) -> 0.
