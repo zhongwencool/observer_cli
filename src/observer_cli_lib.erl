@@ -24,6 +24,7 @@
 -export([update_page_pos/3]).
 -export([get_pos/4]).
 -export([sublist/3]).
+-export([sbcs_to_mbcs_by_type/2]).
 %% the number 35 from 13' mbp
 -define(DEFAULT_ROW_SIZE, application:get_env(observer_cli, default_row_size, 35)).
 
@@ -303,3 +304,19 @@ sublist(AllEts, Rows, CurPage) ->
             lists:sublist(SortEts, Start, Rows);
         false -> []
     end.
+
+-spec sbcs_to_mbcs_by_type(list(), list()) -> list().
+sbcs_to_mbcs_by_type(TypeList0, STMList) ->
+    TypeList = [{Type, 0} || Type <- TypeList0],
+    FoldlFun = fun({{Type, _}, Value}, Acc) ->
+        case lists:keyfind(Type, 1, Acc) of
+            false ->
+                Acc;
+            {Type, OldValue} ->
+                lists:keyreplace(Type, 1, Acc, {Type, OldValue + parse_sbcs_to_mbcs_value(Value)})
+        end
+    end,
+    lists:foldl(FoldlFun, TypeList, STMList).
+
+parse_sbcs_to_mbcs_value(Number) when is_number(Number) -> Number;
+parse_sbcs_to_mbcs_value(_) -> 0.
