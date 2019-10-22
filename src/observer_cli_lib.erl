@@ -24,14 +24,15 @@
 -export([update_page_pos/3]).
 -export([get_pos/4]).
 -export([sublist/3]).
--define(DEFAULT_ROW_SIZE, 35). %% the number from 13' mbp
+%% the number 35 from 13' mbp
+-define(DEFAULT_ROW_SIZE, application:get_env(observer_cli, default_row_size, 35)).
 
 -define(select(Title), ?RED_BG, Title, ?RESET_BG).
 -define(unselect(Title), ?L_GRAY_BG, Title, ?RESET_BG).
 
 -spec uptime() -> list().
 uptime() ->
-    
+
     {UpTime, _} = erlang:statistics(wall_clock),
     {D, {H, M, S}} = calendar:seconds_to_daystime(UpTime div 1000),
     Time = [
@@ -172,7 +173,7 @@ parse_cmd(ViewOpts, Pids) ->
         "so\n" -> send_oct;
         "cnt\n" -> cnt;
         "oct\n" -> oct;
-        
+
         %% menu view
         "H\n" ->
             exit_processes(Pids),
@@ -206,7 +207,7 @@ parse_cmd(ViewOpts, Pids) ->
         "PD\n" -> page_down_top_n;   %% forward
         "B\n" -> page_up_top_n;     %% backward
         "F\n" -> page_down_top_n;   %% forward
-        
+
         %% home
         "p\n" -> pause_or_resume;
         "r\n" -> {func, proc_count, reductions};
