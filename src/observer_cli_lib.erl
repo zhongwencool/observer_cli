@@ -24,7 +24,7 @@
 -export([update_page_pos/3]).
 -export([get_pos/4]).
 -export([sublist/3]).
--export([sbcs_to_mbcs_by_type/2]).
+-export([sbcs_to_mbcs/2]).
 %% the number 35 from 13' mbp
 -define(DEFAULT_ROW_SIZE, application:get_env(observer_cli, default_row_size, 35)).
 
@@ -33,7 +33,7 @@
 
 -spec uptime() -> list().
 uptime() ->
-
+    
     {UpTime, _} = erlang:statistics(wall_clock),
     {D, {H, M, S}} = calendar:seconds_to_daystime(UpTime div 1000),
     Time = [
@@ -174,7 +174,7 @@ parse_cmd(ViewOpts, Pids) ->
         "so\n" -> send_oct;
         "cnt\n" -> cnt;
         "oct\n" -> oct;
-
+        
         %% menu view
         "H\n" ->
             exit_processes(Pids),
@@ -208,7 +208,7 @@ parse_cmd(ViewOpts, Pids) ->
         "PD\n" -> page_down_top_n;   %% forward
         "B\n" -> page_up_top_n;     %% backward
         "F\n" -> page_down_top_n;   %% forward
-
+        
         %% home
         "p\n" -> pause_or_resume;
         "r\n" -> {func, proc_count, reductions};
@@ -305,18 +305,14 @@ sublist(AllEts, Rows, CurPage) ->
         false -> []
     end.
 
--spec sbcs_to_mbcs_by_type(list(), list()) -> list().
-sbcs_to_mbcs_by_type(TypeList0, STMList) ->
-    TypeList = [{Type, 0} || Type <- TypeList0],
-    FoldlFun = fun({{Type, _}, Value}, Acc) ->
-        case lists:keyfind(Type, 1, Acc) of
-            false ->
-                Acc;
-            {Type, OldValue} ->
-                lists:keyreplace(Type, 1, Acc, {Type, OldValue + parse_sbcs_to_mbcs_value(Value)})
-        end
-    end,
-    lists:foldl(FoldlFun, TypeList, STMList).
-
-parse_sbcs_to_mbcs_value(Number) when is_number(Number) -> Number;
-parse_sbcs_to_mbcs_value(_) -> 0.
+-spec sbcs_to_mbcs(list(), list()) -> list().
+sbcs_to_mbcs(TypeList, STMList) ->
+    FoldlFun =
+        fun({{Type, _}, New}, Acc) when is_number(New) ->
+            case lists:member(Type, TypeList) of
+                true -> maps:update_with(Type, fun(V) -> V + New end, 0, Acc);
+                false -> Acc
+            end;
+            (_, Acc) -> Acc
+        end,
+    maps:to_list(lists:foldl(FoldlFun, #{}, STMList)).

@@ -24,7 +24,7 @@ Visualize Erlang/Elixir Nodes On The Command Line base on [recon](https://github
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.5.1
+dep_observer_cli = hex 1.5.3
 ```
 **Elixir**
 ```elixir
