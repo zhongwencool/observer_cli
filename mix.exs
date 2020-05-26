@@ -4,11 +4,11 @@ defmodule ObserverCli.MixProject do
   def project do
     [
       app: :observer_cli,
-      version: "1.5.3",
+      version: "1.5.4",
       language: :erlang,
       description: "observer in shell",
       deps: [
-        {:recon, "~> 2.5.0"},
+        {:recon, "~> 2.5.1"},
       ]
     ]
   end

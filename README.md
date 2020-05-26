@@ -24,7 +24,7 @@ Visualize Erlang/Elixir Nodes On The Command Line base on [recon](https://github
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.5.3
+dep_observer_cli = hex 1.5.4
 ```
 **Elixir**
 ```elixir
@@ -203,6 +203,8 @@ Support F/B to page up/down.
 
 ----------------
 ### Changelog
+- 1.5.4
+  - Bump Recon to 2.5.1 for otp23 alloc compat.
 - 1.5.2
   - Use erlang:system_info(otp_release) when can't find `OTP_VERSION` file for the full version.
 - 1.5.1
