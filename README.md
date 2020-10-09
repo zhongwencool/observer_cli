@@ -24,13 +24,13 @@ Visualize Erlang/Elixir Nodes On The Command Line base on [recon](https://github
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.5.4
+dep_observer_cli = hex 1.6.0
 ```
 **Elixir**
 ```elixir
 # mix.exs
    def deps do
-     [{:observer_cli, "~> 1.5"}]
+     [{:observer_cli, "~> 1.6"}]
    end
 ```
 ------------------
@@ -203,6 +203,10 @@ Support F/B to page up/down.
 
 ----------------
 ### Changelog
+- 1.6.0
+   - hidden schedule usage default
+   - format by erlformat
+   - add `ps -o pcpu,pmem,rss,vsz` information
 - 1.5.4
   - Bump Recon to 2.5.1 for otp23 alloc compat.
 - 1.5.2

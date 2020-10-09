@@ -1,7 +1,7 @@
 {application, observer_cli,
     [
         {description, "Visualize Erlang Nodes On The Command Line"},
-        {vsn, "1.5.4"},
+        {vsn, "1.6.0"},
         {modules, [
             observer_cli
         ]},
@@ -14,6 +14,7 @@
         {files, ["include",
             "LICENSE*",
             "mix.exs",
+            "mix.lock",
             "README.md",
             "rebar.config",
             "rebar.lock",
