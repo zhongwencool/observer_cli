@@ -3,17 +3,25 @@
 
 -define(MIN_INTERVAL, 1000).
 -define(DEFAULT_INTERVAL, 1500).
+-define(DISABLE, disable).
+-define(ENABLE, enable).
 
--record(home, {func = proc_count :: atom(),
+-record(home, {
+    func = proc_count :: atom(),
     type = memory :: atom(),
     cur_page = 1 :: pos_integer(),
-    pages = [{1,1}] :: list(),
-    interval = ?DEFAULT_INTERVAL :: pos_integer()}).
+    pages = [{1, 1}] :: list(),
+    interval = ?DEFAULT_INTERVAL :: pos_integer(),
+    scheduler_usage = application:get_env(observer_cli, scheduler_usage, ?DISABLE) ::
+        ?DISABLE | ?ENABLE
+}).
 
 -record(ets, {
     interval = 2000 :: integer(),
     attr = memory :: atom(),
-    cur_page = 1 :: integer()}).
+    cur_page = 1 :: integer()
+}).
+
 -record(system, {interval = ?DEFAULT_INTERVAL :: integer()}).
 
 -record(db, {
@@ -21,7 +29,7 @@
     hide_sys = true :: boolean(),
     cur_page = 1 :: integer(),
     attr = memory :: atom()
-    }).
+}).
 
 -record(help, {interval = ?DEFAULT_INTERVAL :: integer()}).
 -record(inet, {
@@ -29,22 +37,15 @@
     func = inet_count :: atom(),
     type = cnt :: atom(),
     cur_page = 1 :: pos_integer(),
-    pages = [{1,1}] :: list()}).
+    pages = [{1, 1}] :: list()
+}).
 
 -record(process, {interval = ?DEFAULT_INTERVAL :: integer()}).
 
-%%   [%{
-%%      module  =>  atom(),
-%%      title =>  string(),
-%%      width => pos_integer(),
-%%      shortcut => string(),
-%%      interval => pos_integer(),
-%%      cur_page => pos_integer(),
-%%      sort_row => pos_integer()
-%%     }]
--record(plug, {cur_index = 1 ::pos_integer(), plugs = [] ::map()|[]}).
+-record(plug, {cur_index = 1 :: pos_integer(), plugs = [] :: map() | []}).
 
--record(view_opts, {home = #home{} :: home(),
+-record(view_opts, {
+    home = #home{} :: home(),
     ets = #ets{} :: ets(),
     sys = #system{} :: system(),
     db = #db{} :: db(),
@@ -52,21 +53,21 @@
     inet = #inet{} :: inet(),
     process = #process{} :: process(),
     port = ?DEFAULT_INTERVAL :: pos_integer(),
-    plug = #plug{} ::plug(),
+    plug = #plug{} :: plug(),
     auto_row = true :: boolean()
 }).
 
 -export_type([view_opts/0]).
 
--type(view_opts() :: #view_opts{}).
--type(home() :: #home{}).
--type(system() :: #system{}).
--type(ets() :: #ets{}).
--type(db() :: #db{}).
--type(help() :: #help{}).
--type(inet() :: #inet{}).
--type(process() :: #process{}).
--type(plug() :: #plug{}).
+-type view_opts() :: #view_opts{}.
+-type home() :: #home{}.
+-type system() :: #system{}.
+-type ets() :: #ets{}.
+-type db() :: #db{}.
+-type help() :: #help{}.
+-type inet() :: #inet{}.
+-type process() :: #process{}.
+-type plug() :: #plug{}.
 
 -define(CURSOR_TOP, <<"\e[H">>).
 -define(CLEAR, <<"\e[H\e[J">>).
@@ -97,5 +98,3 @@
 -define(render(_FA_), observer_cli_lib:render(_FA_)).
 -define(output(_F_, _A_), io:format(iolist_to_binary(_F_), _A_)).
 -define(output(_L_), ?output(_L_, [])).
-
-

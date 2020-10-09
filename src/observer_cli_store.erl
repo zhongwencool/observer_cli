@@ -26,12 +26,16 @@ update(StorePid, Row, TopNList) ->
 -spec lookup_pos(pid(), pos_integer()) -> {pos_integer(), pid()}.
 lookup_pos(StorePid, CurPos) ->
     erlang:send(StorePid, {?LOOKUP_PID, CurPos, self()}),
-    receive {?LOOKUP_PID_RES, Res} -> Res end.
+    receive
+        {?LOOKUP_PID_RES, Res} -> Res
+    end.
 
 -spec lookup_row(pid()) -> pos_integer().
 lookup_row(StorePid) ->
     erlang:send(StorePid, {?LOOKUP_ROW, self()}),
-    receive {?LOOKUP_ROW_RES, Res} -> Res end.
+    receive
+        {?LOOKUP_ROW_RES, Res} -> Res
+    end.
 
 loop({Row, PidList} = TopList) ->
     NewTopList =
@@ -41,7 +45,8 @@ loop({Row, PidList} = TopList) ->
             {?LOOKUP_PID, Pos, From} ->
                 Res =
                     case PidList of
-                        [] -> {error, undefined};
+                        [] ->
+                            {error, undefined};
                         _ ->
                             case lists:keyfind(Pos, 1, PidList) of
                                 false -> lists:last(PidList);
