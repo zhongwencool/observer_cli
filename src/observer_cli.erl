@@ -71,6 +71,7 @@ start_plugin() ->
     application:ensure_all_started(observer_cli),
     observer_cli_plugin:start(#view_opts{}).
 
+-spec clean(list()) -> boolean().
 clean([RenderPid, StorePid, SchWallFlag, SchUsage]) ->
     observer_cli_lib:exit_processes([RenderPid, StorePid]),
     set_scheduler_wall_time(SchWallFlag, SchUsage).

@@ -30,6 +30,7 @@ start(#view_opts{sys = #system{interval = Interval}} = ViewOpts) ->
     end),
     manager(Pid, ViewOpts).
 
+-spec clean(list()) -> ok.
 clean(Pids) -> observer_cli_lib:exit_processes(Pids).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

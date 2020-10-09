@@ -19,6 +19,7 @@ start(#view_opts{} = ViewOpts) ->
     end),
     manager(Pid, ViewOpts).
 
+-spec clean(list()) -> ok.
 clean(Pids) -> observer_cli_lib:exit_processes(Pids).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

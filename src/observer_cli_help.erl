@@ -21,6 +21,7 @@ start(#view_opts{help = #help{interval = Interval}} = ViewOpts) ->
     end),
     manager(ChildPid, ViewOpts).
 
+-spec clean(list()) -> ok.
 clean(Pids) -> observer_cli_lib:exit_processes(Pids).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

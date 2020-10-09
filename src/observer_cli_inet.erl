@@ -24,6 +24,7 @@ start(#view_opts{inet = InetOpt, auto_row = AutoRow} = ViewOpts) ->
     ),
     manager(StorePid, RenderPid, ViewOpts).
 
+-spec clean(list()) -> ok.
 clean(Pids) -> observer_cli_lib:exit_processes(Pids).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
