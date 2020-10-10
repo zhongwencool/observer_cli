@@ -22,7 +22,7 @@
     cur_page = 1 :: integer()
 }).
 
--record(system, {interval = ?DEFAULT_INTERVAL :: integer()}).
+-record(system, {interval = 2000 :: integer()}).
 
 -record(db, {
     interval = ?DEFAULT_INTERVAL :: integer(),
