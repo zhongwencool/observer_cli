@@ -199,20 +199,20 @@ redraw_running(PsCmd, StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRo
     ProcessRows = max(TerminalRow - 14 - CPURow, 0),
     TopLen = ProcessRows * CurPage,
     TopList = get_top_n(Func, Type, Interval, TopLen, IsFirstTime),
-    {UseMemInt, AllocatedMemInt, UnusedMemInt} = get_change_system_info(),
+    {ActiveTask, ContextSwitch, Reductions} = get_change_system_info(),
     AtomStatus = get_atom_status(),
     Text = get_refresh_prompt(Func, Type, Interval, TopLen),
     MenuLine = observer_cli_lib:render_menu(home, Text),
     SystemLine = render_system_line(
         PsCmd,
-        StableInfo,
+        element(1, StableInfo),
         AtomStatus,
-        UseMemInt,
-        AllocatedMemInt,
-        UnusedMemInt,
+        ActiveTask,
+        ContextSwitch,
+        Reductions,
         Processes
     ),
-    MemLine = render_memory_process_line(Processes, Schedulers, Interval),
+    MemLine = render_memory_process_line(Processes, Schedulers, element(2, StableInfo), Interval),
     {TopNList, RankLine} = render_top_n_view(Type, TopList, ProcessRows, RankPos, CurPage),
     LastLine = observer_cli_lib:render_last_line(?LAST_LINE),
     ?output([?CURSOR_TOP, MenuLine, SystemLine, MemLine, CPULine, RankLine, LastLine]),
@@ -228,10 +228,8 @@ redraw_running(PsCmd, StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRo
             redraw_running(PsCmd, StorePid, Home, StableInfo, NewStats, TimeRef, AutoRow, false)
     end.
 
-render_system_line(PsCmd, StableInfo, AtomStatus, UseMem, AllocatedMem, UnusedMem, ProcSum) ->
+render_system_line(PsCmd, StableInfo, AtomStatus, ActiveTask, ContextSwitch, Reductions, ProcSum) ->
     [Version, SysVersion, ProcLimit, PortLimit, EtsLimit] = StableInfo,
-    UsePercent = observer_cli_lib:to_percent(UseMem / AllocatedMem),
-    UnUsePercent = observer_cli_lib:to_percent(UnusedMem / AllocatedMem),
     {PortWarning, ProcWarning, PortCount, ProcCount} = get_port_proc_info(
         PortLimit,
         ProcLimit,
@@ -246,9 +244,9 @@ render_system_line(PsCmd, StableInfo, AtomStatus, UseMem, AllocatedMem, UnusedMe
         ?GRAY_BG,
         ?W("System", 10),
         ?W("Count/Limit", 21),
-        ?W("System Switch", 25),
+        ?W("System", 25),
         ?W("Status", 21),
-        ?W("Memory Info", 20),
+        ?W("Stat Info", 20),
         ?W("Size", 24)
     ]),
     Row1 = ?render([
@@ -256,18 +254,17 @@ render_system_line(PsCmd, StableInfo, AtomStatus, UseMem, AllocatedMem, UnusedMe
         ?W2(ProcWarning, ProcCount, 22),
         ?W(" Version", 26),
         ?W(Version, 21),
-        ?W("Allocted Mem", 20),
-        ?W({byte, AllocatedMem}, 15),
-        ?W("100.0%", 6),
+        ?W("Active Task", 20),
+        ?W(ActiveTask, 24),
         ?NEW_LINE,
         ?W("Port Count", 10),
         ?W2(PortWarning, PortCount, 22),
         ?W(" ps -o pcpu", 26),
         ?W(CpuPsV ++ "%", 21),
-        ?W("Use Mem", 20),
-        ?W({byte, UseMem}, 15),
-        ?W(UsePercent, 6)
+        ?W("Context Switch", 20),
+        ?W(ContextSwitch, 24)
     ]),
+    {Reds, AddReds} = Reductions,
     Row2 =
         case AtomStatus of
             {ok, AtomLimit, AtomCount} ->
@@ -278,9 +275,8 @@ render_system_line(PsCmd, StableInfo, AtomStatus, UseMem, AllocatedMem, UnusedMe
                     ?W2(AtomWarning, Atom, 22),
                     ?W(" ps -o pmem", 26),
                     ?W(MemPsV ++ "%", 21),
-                    ?W("Unuse Mem", 20),
-                    ?W({byte, UnusedMem}, 15),
-                    ?W(UnUsePercent, 6)
+                    ?W("Reds(Total/SinceLastCall)", 20),
+                    ?W(integer_to_list(Reds) ++ "/" ++ integer_to_list(AddReds), 24)
                 ]);
             {error, unsupported} ->
                 ?render([
@@ -289,14 +285,13 @@ render_system_line(PsCmd, StableInfo, AtomStatus, UseMem, AllocatedMem, UnusedMe
                     ?W(EtsLimit, 21),
                     ?W(" ps -o pmem", 25),
                     ?W(MemPsV ++ "%", 21),
-                    ?W("Unuse Mem", 20),
-                    ?W({byte, UnusedMem}, 15),
-                    ?W(UnUsePercent, 6)
+                    ?W("Reductions", 20),
+                    ?W(Reductions, 24)
                 ])
         end,
     [Title, Row1, Row2].
 
-render_memory_process_line(ProcSum, MemSum, Interval) ->
+render_memory_process_line(ProcSum, MemSum, PortParallelism, Interval) ->
     CodeMem = erlang:memory(code),
     [
         {process_count, _ProcC},
@@ -312,8 +307,7 @@ render_memory_process_line(ProcSum, MemSum, Interval) ->
         {bytes_in, BytesIn},
         {bytes_out, BytesOut},
         {gc_count, GcCount},
-        {gc_words_reclaimed, GcWordsReclaimed},
-        {reductions, Reductions}
+        {gc_words_reclaimed, GcWordsReclaimed}
         | _
     ] = MemSum,
 
@@ -363,8 +357,8 @@ render_memory_process_line(ProcSum, MemSum, Interval) ->
         ?W("Atom", 10),
         ?W({byte, AtomMem}, 12),
         ?W(AtomMemPercent, 6),
-        ?W("Reductions", 25),
-        ?W(Reductions, 21),
+        ?W("Port Parallelism (+spp)", 25),
+        ?W(PortParallelism, 21),
         ?W("Gc Count", 20),
         ?W(GcCount, 24),
         ?NEW_LINE,
@@ -812,18 +806,20 @@ get_stable_system_info() ->
             {ok, VersionBin} -> erlang:binary_to_list(VersionBin) -- "\n";
             _ -> OtpRelease
         end,
-    [
-        Version,
-        SysVersion,
-        erlang:system_info(process_limit),
-        erlang:system_info(port_limit),
-        erlang:system_info(ets_limit)
-    ].
+    {[
+            Version,
+            SysVersion,
+            erlang:system_info(process_limit),
+            erlang:system_info(port_limit),
+            erlang:system_info(ets_limit)
+        ],
+        erlang:system_info(port_parallelism)}.
 
 get_change_system_info() ->
-    UsedMem = recon_alloc:memory(used),
-    AllocatedMem = recon_alloc:memory(allocated),
-    {UsedMem, AllocatedMem, AllocatedMem - UsedMem}.
+    ActiveTask = erlang:statistics(total_active_tasks),
+    {ContextSwitch, _} = erlang:statistics(context_switches),
+    Reductions = erlang:statistics(reductions),
+    {ActiveTask, ContextSwitch, Reductions}.
 
 get_atom_status() ->
     try erlang:system_info(atom_limit) of
@@ -889,7 +885,6 @@ node_stats({LastIn, LastOut, LastGCs, LastWords, LastScheduleWall}, SchUsage) ->
     BytesOut = Out - LastOut,
     GCCount = GCs - LastGCs,
     GCWords = Words - LastWords,
-    {_, Reds} = erlang:statistics(reductions),
     ScheduleUsage = recon_lib:scheduler_usage_diff(LastScheduleWall, ScheduleWall),
     {
         {[
@@ -906,7 +901,6 @@ node_stats({LastIn, LastOut, LastGCs, LastWords, LastScheduleWall}, SchUsage) ->
                 {bytes_out, BytesOut},
                 {gc_count, GCCount},
                 {gc_words_reclaimed, GCWords},
-                {reductions, Reds},
                 {scheduler_usage, ScheduleUsage}
             ]},
         New
