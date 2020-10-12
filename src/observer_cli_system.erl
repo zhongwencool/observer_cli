@@ -139,16 +139,16 @@ render_cache_hit_rates(CacheHitInfo, Len) ->
             {SeqStr4, Hit4, Call4, HitRateStr4} = get_cachehit_info(Seq4, CacheHitInfo),
             ?render([
                 SeqStr1,
-                ?W(Hit1 ++ "/" ++ Call1, 19),
+                ?W([Hit1, "/", Call1], 19),
                 ?W(HitRateStr1, 6),
                 SeqStr2,
-                ?W(Hit2 ++ "/" ++ Call2, 19),
+                ?W([Hit2, "/", Call2], 19),
                 ?W(HitRateStr2, 6),
                 SeqStr3,
-                ?W(Hit3 ++ "/" ++ Call3, 19),
+                ?W([Hit3, "/", Call3], 19),
                 ?W(HitRateStr3, 6),
                 SeqStr4,
-                ?W(Hit4 ++ "/" ++ Call4, 18),
+                ?W([Hit4, "/", Call4], 18),
                 ?W(HitRateStr4, 6)
             ])
         end
