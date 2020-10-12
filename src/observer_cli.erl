@@ -16,8 +16,8 @@
 %% port or process reach max_limit * 0.85 will be highlight
 -define(COUNT_ALARM_THRESHOLD, 0.85).
 -define(LAST_LINE,
-    "q(quit) p(pause) r/rr(reduction) " ++
-        "m/mm(mem) b/bb(binary mem) t/tt(total heap size) mq/mmq(msg queue) 9(proc 9 info) F/B(page forward/back)"
+    "q(quit) p(pause) r/rr(reduction) m/mm(mem)"
+    "b/bb(binary mem) t/tt(total heap size) mq/mmq(msg queue) 9(proc 9 info) F/B(page forward/back)"
 ).
 
 -spec start() -> no_return.
@@ -194,25 +194,15 @@ redraw_running(PsCmd, StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRo
     } = Home,
     erlang:cancel_timer(LastTimeRef),
     TerminalRow = observer_cli_lib:get_terminal_rows(AutoRow),
-    {{Processes, Schedulers}, NewStats} = node_stats(LastStats, SchUsage),
+    {Diffs, Schedulers, NewStats} = node_stats(LastStats, SchUsage),
     {CPURow, CPULine} = render_scheduler_usage(Schedulers),
     ProcessRows = max(TerminalRow - 14 - CPURow, 0),
     TopLen = ProcessRows * CurPage,
     TopList = get_top_n(Func, Type, Interval, TopLen, IsFirstTime),
-    {ActiveTask, ContextSwitch, Reductions} = get_change_system_info(),
-    AtomStatus = get_atom_status(),
     Text = get_refresh_prompt(Func, Type, Interval, TopLen),
     MenuLine = observer_cli_lib:render_menu(home, Text),
-    SystemLine = render_system_line(
-        PsCmd,
-        element(1, StableInfo),
-        AtomStatus,
-        ActiveTask,
-        ContextSwitch,
-        Reductions,
-        Processes
-    ),
-    MemLine = render_memory_process_line(Processes, Schedulers, element(2, StableInfo), Interval),
+    SystemLine = render_system_line(PsCmd, element(1, StableInfo)),
+    MemLine = render_memory_process_line(Diffs, element(2, StableInfo), Interval),
     {TopNList, RankLine} = render_top_n_view(Type, TopList, ProcessRows, RankPos, CurPage),
     LastLine = observer_cli_lib:render_last_line(?LAST_LINE),
     ?output([?CURSOR_TOP, MenuLine, SystemLine, MemLine, CPULine, RankLine, LastLine]),
@@ -228,16 +218,21 @@ redraw_running(PsCmd, StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRo
             redraw_running(PsCmd, StorePid, Home, StableInfo, NewStats, TimeRef, AutoRow, false)
     end.
 
-render_system_line(PsCmd, StableInfo, AtomStatus, ActiveTask, ContextSwitch, Reductions, ProcSum) ->
+render_system_line(PsCmd, StableInfo) ->
     [Version, SysVersion, ProcLimit, PortLimit, EtsLimit] = StableInfo,
-    {PortWarning, ProcWarning, PortCount, ProcCount} = get_port_proc_info(
-        PortLimit,
-        ProcLimit,
-        ProcSum
-    ),
+    ActiveTask = erlang:statistics(total_active_tasks),
+    {ContextSwitch, _} = erlang:statistics(context_switches),
+    AtomStatus = get_atom_status(),
+    Reductions = erlang:statistics(reductions),
+    {PortWarning, ProcWarning, PortCount, ProcCount} =
+        get_port_proc_info(PortLimit, ProcLimit),
     [_, CmdValue | _] = string:split(os:cmd(PsCmd), "\n", all),
+
     [CpuPsV, MemPsV] =
-        lists:filter(fun(Y) -> Y =/= [] end, string:split(CmdValue, " ", all)),
+        case lists:filter(fun(Y) -> Y =/= [] end, string:split(CmdValue, " ", all)) of
+            [] -> ["--", "--"];
+            [V1, V2] -> [V1, V2]
+        end,
     Title = ?render([
         ?W(SysVersion, 136),
         ?NEW_LINE,
@@ -260,7 +255,7 @@ render_system_line(PsCmd, StableInfo, AtomStatus, ActiveTask, ContextSwitch, Red
         ?W("Port Count", 10),
         ?W2(PortWarning, PortCount, 22),
         ?W(" ps -o pcpu", 26),
-        ?W(CpuPsV ++ "%", 21),
+        ?W([CpuPsV, "%"], 21),
         ?W("Context Switch", 20),
         ?W(ContextSwitch, 24)
     ]),
@@ -274,9 +269,9 @@ render_system_line(PsCmd, StableInfo, AtomStatus, ActiveTask, ContextSwitch, Red
                     ?W("Atom Count", 10),
                     ?W2(AtomWarning, Atom, 22),
                     ?W(" ps -o pmem", 26),
-                    ?W(MemPsV ++ "%", 21),
+                    ?W([MemPsV, "%"], 21),
                     ?W("Reds(Total/SinceLastCall)", 20),
-                    ?W(integer_to_list(Reds) ++ "/" ++ integer_to_list(AddReds), 24)
+                    ?W([integer_to_list(Reds), "/", integer_to_list(AddReds)], 24)
                 ]);
             {error, unsupported} ->
                 ?render([
@@ -284,32 +279,28 @@ render_system_line(PsCmd, StableInfo, AtomStatus, ActiveTask, ContextSwitch, Red
                     ?W("Ets Limit", 10),
                     ?W(EtsLimit, 21),
                     ?W(" ps -o pmem", 25),
-                    ?W(MemPsV ++ "%", 21),
+                    ?W([MemPsV, "%"], 21),
                     ?W("Reductions", 20),
                     ?W(Reductions, 24)
                 ])
         end,
     [Title, Row1, Row2].
 
-render_memory_process_line(ProcSum, MemSum, PortParallelism, Interval) ->
-    CodeMem = erlang:memory(code),
-    [
-        {process_count, _ProcC},
-        {run_queue, RunQ},
-        {memory_total, TotalMem},
-        {memory_proc, ProcMem},
-        {memory_atom, AtomMem},
-        {memory_bin, BinMem},
-        {memory_ets, EtsMem}
-        | _
-    ] = ProcSum,
-    [
-        {bytes_in, BytesIn},
-        {bytes_out, BytesOut},
-        {gc_count, GcCount},
-        {gc_words_reclaimed, GcWordsReclaimed}
-        | _
-    ] = MemSum,
+render_memory_process_line(MemSum, PortParallelism, Interval) ->
+    RunQ = erlang:statistics(run_queue),
+    Mem = erlang:memory(),
+    TotalMem = proplists:get_value(total, Mem),
+    ProcMem = proplists:get_value(processes_used, Mem),
+    CodeMem = proplists:get_value(code, Mem),
+    AtomMem = proplists:get_value(atom_used, Mem),
+    BinMem = proplists:get_value(binary, Mem),
+    EtsMem = proplists:get_value(ets, Mem),
+    {
+        BytesIn,
+        BytesOut,
+        GcCount,
+        GcWordsReclaimed
+    } = MemSum,
 
     {Queue, LogKey} =
         case whereis(error_logger) of
@@ -317,7 +308,7 @@ render_memory_process_line(ProcSum, MemSum, PortParallelism, Interval) ->
                 {erlang:integer_to_list(RunQ), "RunQueue"};
             Pid ->
                 {_, Q} = process_info(Pid, message_queue_len),
-                {erlang:integer_to_list(RunQ) ++ "/" ++ erlang:integer_to_list(Q),
+                {[erlang:integer_to_list(RunQ), "/", erlang:integer_to_list(Q)],
                     "RunQueue/ErrorLoggerQueue"}
         end,
     ProcMemPercent = observer_cli_lib:to_percent(ProcMem / TotalMem),
@@ -332,8 +323,8 @@ render_memory_process_line(ProcSum, MemSum, PortParallelism, Interval) ->
         ?W("Size", 21),
         ?W("Mem Type", 25),
         ?W("Size", 21),
-        ?W("IO/GC", 20),
-        ?W(["Interval: ", erlang:integer_to_binary(Interval), "ms"], 24)
+        ?W(["IO/GC:(", erlang:integer_to_binary(Interval), "ms)"], 20),
+        ?W("Total/Increments", 24)
     ]),
     Row = ?render([
         ?W("Total", 10),
@@ -343,7 +334,7 @@ render_memory_process_line(ProcSum, MemSum, PortParallelism, Interval) ->
         ?W({byte, BinMem}, 12),
         ?W(BinMemPercent, 6),
         ?W("IO Output", 20),
-        ?W({byte, BytesOut}, 24),
+        ?W(BytesOut, 24),
         ?NEW_LINE,
         ?W("Process", 10),
         ?W({byte, ProcMem}, 12),
@@ -352,7 +343,7 @@ render_memory_process_line(ProcSum, MemSum, PortParallelism, Interval) ->
         ?W({byte, CodeMem}, 12),
         ?W(CodeMemPercent, 6),
         ?W("IO Input", 20),
-        ?W({byte, BytesIn}, 24),
+        ?W(BytesIn, 24),
         ?NEW_LINE,
         ?W("Atom", 10),
         ?W({byte, AtomMem}, 12),
@@ -372,14 +363,11 @@ render_memory_process_line(ProcSum, MemSum, PortParallelism, Interval) ->
     ]),
     [Title, Row].
 
-render_scheduler_usage(MemSum) ->
-    case proplists:get_value(scheduler_usage, MemSum) of
-        undefined ->
-            {0, []};
-        SchedulerUsage ->
-            SchedulerNum = erlang:length(SchedulerUsage),
-            render_scheduler_usage(SchedulerUsage, SchedulerNum)
-    end.
+render_scheduler_usage(undefined) ->
+    {0, []};
+render_scheduler_usage(SchedulerUsage) ->
+    SchedulerNum = erlang:length(SchedulerUsage),
+    render_scheduler_usage(SchedulerUsage, SchedulerNum).
 
 %% < 8 core split 2 part
 render_scheduler_usage(SchedulerUsage, SchedulerNum) when SchedulerNum < 8 ->
@@ -724,11 +712,11 @@ get_current_initial_call(Call) ->
     {_, InitialCall} = lists:keyfind(initial_call, 1, Call),
     {observer_cli_lib:mfa_to_list(CurFun), InitialCall}.
 
-get_port_proc_info(PortLimit, ProcLimit, ProcSum) ->
-    ProcCount = proplists:get_value(process_count, ProcSum),
+get_port_proc_info(PortLimit, ProcLimit) ->
+    ProcCount = erlang:system_info(process_count),
     PortCount = erlang:system_info(port_count),
-    PortCountStr = integer_to_list(PortCount) ++ "/" ++ integer_to_list(PortLimit),
-    ProcCountStr = integer_to_list(ProcCount) ++ "/" ++ integer_to_list(ProcLimit),
+    PortCountStr = [integer_to_list(PortCount), "/", integer_to_list(PortLimit)],
+    ProcCountStr = [integer_to_list(ProcCount), "/", integer_to_list(ProcLimit)],
     PortWarning =
         case PortCount > PortLimit * ?COUNT_ALARM_THRESHOLD of
             true -> ?RED;
@@ -742,7 +730,7 @@ get_port_proc_info(PortLimit, ProcLimit, ProcSum) ->
     {PortWarning, ProcWarning, PortCountStr, ProcCountStr}.
 
 format_atom_info(AtomLimit, AtomCount) ->
-    Atom = integer_to_list(AtomCount) ++ "/" ++ integer_to_list(AtomLimit),
+    Atom = [integer_to_list(AtomCount), "/", integer_to_list(AtomLimit)],
     case AtomCount > AtomLimit * ?COUNT_ALARM_THRESHOLD of
         true -> {?RED, Atom};
         false -> {<<"">>, Atom}
@@ -815,12 +803,6 @@ get_stable_system_info() ->
         ],
         erlang:system_info(port_parallelism)}.
 
-get_change_system_info() ->
-    ActiveTask = erlang:statistics(total_active_tasks),
-    {ContextSwitch, _} = erlang:statistics(context_switches),
-    Reductions = erlang:statistics(reductions),
-    {ActiveTask, ContextSwitch, Reductions}.
-
 get_atom_status() ->
     try erlang:system_info(atom_limit) of
         Limit ->
@@ -870,39 +852,20 @@ check_auto_row() ->
     end.
 
 node_stats({LastIn, LastOut, LastGCs, LastWords, LastScheduleWall}, SchUsage) ->
-    ProcC = erlang:system_info(process_count),
-    RunQ = erlang:statistics(run_queue),
-    %% Mem (Absolutes)
-    Mem = erlang:memory(),
-    Tot = proplists:get_value(total, Mem),
-    ProcM = proplists:get_value(processes_used, Mem),
-    Atom = proplists:get_value(atom_used, Mem),
-    Bin = proplists:get_value(binary, Mem),
-    Ets = proplists:get_value(ets, Mem),
-    %% Incremental
     New = {In, Out, GCs, Words, ScheduleWall} = get_incremental_stats(SchUsage),
-    BytesIn = In - LastIn,
-    BytesOut = Out - LastOut,
-    GCCount = GCs - LastGCs,
-    GCWords = Words - LastWords,
+    BytesInDiff = In - LastIn,
+    BytesOutDiff = Out - LastOut,
+    GCCountDiff = GCs - LastGCs,
+    GCWordsDiff = Words - LastWords,
     ScheduleUsage = recon_lib:scheduler_usage_diff(LastScheduleWall, ScheduleWall),
     {
-        {[
-                {process_count, ProcC},
-                {run_queue, RunQ},
-                {memory_total, Tot},
-                {memory_proc, ProcM},
-                {memory_atom, Atom},
-                {memory_bin, Bin},
-                {memory_ets, Ets}
-            ],
-            [
-                {bytes_in, BytesIn},
-                {bytes_out, BytesOut},
-                {gc_count, GCCount},
-                {gc_words_reclaimed, GCWords},
-                {scheduler_usage, ScheduleUsage}
-            ]},
+        {
+            [observer_cli_lib:to_byte(In), "/", observer_cli_lib:to_byte(BytesInDiff)],
+            [observer_cli_lib:to_byte(Out), "/", observer_cli_lib:to_byte(BytesOutDiff)],
+            [integer_to_list(GCs), "/", integer_to_list(GCCountDiff)],
+            [integer_to_list(Words), "/", integer_to_list(GCWordsDiff)]
+        },
+        ScheduleUsage,
         New
     }.
 

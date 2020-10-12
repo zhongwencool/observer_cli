@@ -74,13 +74,6 @@ render_help() ->
         "| \e[48;2;80;80;80m13       \e[0m choose the 13th process(green line), the integer must in top list.\n",
         "| \e[48;2;80;80;80mp        \e[0m pause/unpause the view.\n",
 
-        "|\e[44m4. About HOME(H)'s IO Output/Input\e[49m \n",
-        "| Due to bytes in and out of the node, number of garbage collector runs, words of \n",
-        "| memory that were garbage collected, and the global reductions count for the node \n",
-        "| never stop increasing, \e[48;2;80;80;80mHOME(H)\e[0m's \"IO input/out\", \"Gc Words Reclaimed\", \"Gc \n",
-        "| Count\" only represents the increments between two refresh interval \n",
-        "| The total bytes in and out in \e[48;2;80;80;80mNetwork(N)\e[0m view. \n",
-
         "|\e[44m5. Reference\e[49m \n",
         "|More information about recon:proc_count/2 and recon:proc_window/3 \n",
         "|refer to https://github.com/ferd/recon/blob/master/src/recon.erl  \n",

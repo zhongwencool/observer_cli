@@ -288,7 +288,10 @@ sys_info(Cmd) ->
         end,
     [_, CmdValue | _] = string:split(os:cmd(Cmd), "\n", all),
     [CpuPsV, MemPsV, RssPsV, VszPsV] =
-        lists:filter(fun(Y) -> Y =/= [] end, string:split(CmdValue, " ", all)),
+        case lists:filter(fun(Y) -> Y =/= [] end, string:split(CmdValue, " ", all)) of
+            [] -> ["--", "--", "--", "--"];
+            [V1, V2, V3, V4] -> [V1, V2, V3, V4]
+        end,
 
     {{_, Input}, {_, Output}} = erlang:statistics(io),
     [
