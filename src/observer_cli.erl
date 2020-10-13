@@ -85,24 +85,20 @@ rpc_start(Node, Interval) ->
         true ->
             rpc:call(Node, ?MODULE, start, [Interval]);
         false ->
-            connect_error(
-                {badrpc, nodedown},
-                <<"Node(~p) refuse to be connected, make sure cookie is valid~n">>,
-                Node
-            );
+            Msg = <<"Node(~p) refuse to be connected, make sure cookie is valid~n">>,
+            connect_error(Msg, Node),
+            {badrpc, nodedown};
         ignored ->
-            connect_error(
-                {badrpc, nodedown},
-                <<"Ignored by node(~p), local node is not alive!~n">>,
-                Node
-            )
+            Msg = <<"Ignored by node(~p), local node is not alive!~n">>,
+            connect_error(Msg, Node),
+            {badrpc, nodedown}
     end.
 
 manager(StorePid, RenderPid, Opts, LastSchWallFlag) ->
     #view_opts{home = Home = #home{cur_page = CurPage, pages = Pages, scheduler_usage = SchUsage}} =
         Opts,
-    Args = [RenderPid, StorePid, LastSchWallFlag, SchUsage],
-    case observer_cli_lib:parse_cmd(Opts, ?MODULE, Args) of
+    Resource = [RenderPid, StorePid, LastSchWallFlag, SchUsage],
+    case observer_cli_lib:parse_cmd(Opts, ?MODULE, Resource) of
         quit ->
             erlang:unlink(RenderPid),
             erlang:send(RenderPid, quit),
@@ -113,7 +109,7 @@ manager(StorePid, RenderPid, Opts, LastSchWallFlag) ->
             erlang:send(RenderPid, pause_or_resume),
             manager(StorePid, RenderPid, Opts, LastSchWallFlag);
         {new_interval, NewInterval} ->
-            clean(Args),
+            clean(Resource),
             start(Opts#view_opts{home = Home#home{interval = NewInterval}});
         scheduler_usage ->
             NewSchUsage =
@@ -121,32 +117,26 @@ manager(StorePid, RenderPid, Opts, LastSchWallFlag) ->
                     ?DISABLE -> ?ENABLE;
                     ?ENABLE -> ?DISABLE
                 end,
-            clean(Args),
+            clean(Resource),
             start(Opts#view_opts{home = Home#home{scheduler_usage = NewSchUsage}});
         {jump, NewPos} ->
             NewPages = observer_cli_lib:update_page_pos(CurPage, NewPos, Pages),
-            NewHome = Home#home{pages = NewPages},
-            start_process_view(
-                StorePid,
-                RenderPid,
-                Opts#view_opts{home = NewHome},
-                LastSchWallFlag,
-                false
-            );
+            NewOpts = Opts#view_opts{home = Home#home{pages = NewPages}},
+            start_process_view(StorePid, RenderPid, NewOpts, LastSchWallFlag, false);
         jump ->
             start_process_view(StorePid, RenderPid, Opts, LastSchWallFlag, true);
         {func, Func, Type} ->
-            clean(Args),
+            clean(Resource),
             start(Opts#view_opts{home = Home#home{func = Func, type = Type}});
         page_down_top_n ->
             NewPage = max(CurPage + 1, 1),
             NewPages = observer_cli_lib:update_page_pos(StorePid, NewPage, Pages),
-            clean(Args),
+            clean(Resource),
             start(Opts#view_opts{home = Home#home{cur_page = NewPage, pages = NewPages}});
         page_up_top_n ->
             NewPage = max(CurPage - 1, 1),
             NewPages = observer_cli_lib:update_page_pos(StorePid, NewPage, Pages),
-            clean(Args),
+            clean(Resource),
             start(Opts#view_opts{home = Home#home{cur_page = NewPage, pages = NewPages}});
         _ ->
             manager(StorePid, RenderPid, Opts, LastSchWallFlag)
@@ -323,7 +313,7 @@ render_memory_process_line(MemSum, PortParallelism, Interval) ->
         ?W("Size", 21),
         ?W("Mem Type", 25),
         ?W("Size", 21),
-        ?W(["IO/GC:(", erlang:integer_to_binary(Interval), "ms)"], 20),
+        ?W(["IO/GC:(", integer_to_binary(Interval), "ms)"], 20),
         ?W("Total/Increments", 24)
     ]),
     Row = ?render([
@@ -823,10 +813,9 @@ get_top_n(proc_window, Type, Interval, Rows, IsFirstTime) when not IsFirstTime -
 get_top_n(_Func, Type, _Interval, Rows, _FirstTime) ->
     recon:proc_count(Type, Rows).
 
-connect_error(Reason, Prompt, Node) ->
+connect_error(Prompt, Node) ->
     Prop = <<?RED/binary, Prompt/binary, ?RESET/binary>>,
-    ?output(Prop, [Node]),
-    Reason.
+    ?output(Prop, [Node]).
 
 start_process_view(StorePid, RenderPid, Opts = #view_opts{home = Home}, LastSchWallFlag, AutoJump) ->
     #home{cur_page = CurPage, pages = Pages, scheduler_usage = SchUsage} = Home,
@@ -857,7 +846,6 @@ node_stats({LastIn, LastOut, LastGCs, LastWords, LastScheduleWall}, SchUsage) ->
     BytesOutDiff = Out - LastOut,
     GCCountDiff = GCs - LastGCs,
     GCWordsDiff = Words - LastWords,
-    ScheduleUsage = recon_lib:scheduler_usage_diff(LastScheduleWall, ScheduleWall),
     {
         {
             [observer_cli_lib:to_byte(In), "/", observer_cli_lib:to_byte(BytesInDiff)],
@@ -865,7 +853,7 @@ node_stats({LastIn, LastOut, LastGCs, LastWords, LastScheduleWall}, SchUsage) ->
             [integer_to_list(GCs), "/", integer_to_list(GCCountDiff)],
             [integer_to_list(Words), "/", integer_to_list(GCWordsDiff)]
         },
-        ScheduleUsage,
+        recon_lib:scheduler_usage_diff(LastScheduleWall, ScheduleWall),
         New
     }.
 

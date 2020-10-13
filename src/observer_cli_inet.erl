@@ -9,7 +9,7 @@
 
 -define(LAST_LINE,
     "q(quit) ic(inet_count) iw(inet_window) rc(recv_cnt) ro(recv_oct)"
-        " sc(send_cnt) so(send_oct) cnt oct 9(port 9 info) pd/pu(page:down/up)"
+    " sc(send_cnt) so(send_oct) cnt oct 9(port 9 info) pd/pu(page:down/up)"
 ).
 
 -spec start(view_opts()) -> no_return.
