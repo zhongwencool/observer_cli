@@ -20,10 +20,10 @@
     "b/bb(binary mem) t/tt(total heap size) mq/mmq(msg queue) 9(proc 9 info) F/B(page forward/back)"
 ).
 
--spec start() -> no_return.
+-spec start() -> no_return | {badrpc, term()}.
 start() -> start(#view_opts{}).
 
--spec start(Node) -> no_return when Node :: atom() | non_neg_integer().
+-spec start(Node) -> no_return | {badrpc, term()} when Node :: atom() | non_neg_integer().
 start(Node) when Node =:= node() ->
     start(#view_opts{});
 start(Node) when is_atom(Node) ->
@@ -49,7 +49,7 @@ start(Interval) when is_integer(Interval), Interval >= ?MIN_INTERVAL ->
         port = Interval
     }).
 
--spec start(Node, Cookies | Options) -> no_return when
+-spec start(Node, Cookies | Options) -> no_return | {badrpc, term()} when
     Node :: atom(),
     Cookies :: atom(),
     Options :: proplists:proplist().
@@ -726,7 +726,7 @@ format_atom_info(AtomLimit, AtomCount) ->
         false -> {<<"">>, Atom}
     end.
 
-warning_color(Percent) when is_integer(Percent), Percent >= ?CPU_ALARM_THRESHOLD -> ?RED;
+warning_color(Percent) when Percent >= ?CPU_ALARM_THRESHOLD -> ?RED;
 warning_color(_Percent) -> ?GREEN.
 
 process_bar_format_style(Percents, IsLastLine) ->

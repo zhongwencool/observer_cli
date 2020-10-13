@@ -3,7 +3,7 @@
 -export([main/1]).
 
 %% @doc escript main
--spec main(list()) -> no_return.
+-spec main(list()) -> 'ok'.
 
 -define(BEAM_MODS, [
     recon,

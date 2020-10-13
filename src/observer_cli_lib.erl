@@ -265,7 +265,7 @@ tidy_format_args([F | Rest], NeedLine, FAcc, AAcc) ->
 to_str({byte, Bytes}) -> to_byte(Bytes);
 to_str(Term) -> to_list(Term).
 
--spec parse_cmd(#view_opts{}, atom(), list()) -> atom() | string().
+-spec parse_cmd(#view_opts{}, atom(), list()) -> atom() | string() | tuple().
 parse_cmd(ViewOpts, Module, Args) ->
     case to_list(io:get_line("")) of
         "H\n" ->
