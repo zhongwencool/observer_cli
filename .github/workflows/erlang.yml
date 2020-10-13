@@ -25,14 +25,6 @@ jobs:
     - uses: gleam-lang/setup-erlang@v1.0.0
       with:
         otp-version: ${{ matrix.otp_version }}
-    - uses: actions/cache@v2
-      name: Cache
-      with:
-        path: |
-          _build
-        key: ${{ runner.os }}-build-${{ matrix.otp_version }}-${{ hashFiles(format('rebar.lock')) }}
-        restore-keys: |
-          ${{ runner.os }}-build-${{ matrix.otp_version }}-
     - name: Compile
       run: rebar3 compile
     - name: XRef
