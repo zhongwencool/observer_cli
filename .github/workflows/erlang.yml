@@ -1,31 +1,23 @@
-name: Erlang
+name: Erlang CI
 
 on:
-  pull_request:
-    branches:
-      - 'master'
   push:
-    branches:
-      - 'master'
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
 
 jobs:
+
   build:
-    name: Test on OTP ${{ matrix.otp_version }} and ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        otp_version: ['23', '22.3.4.2', '21.3.8.16', '19.3', '18.3']
-        os: [ubuntu-latest]
-    env:
-      OTP_VERSION: ${{ matrix.otp_version }}
+
+    runs-on: ubuntu-latest
+
+    container:
+      image: erlang:22.0.7
+
     steps:
     - uses: actions/checkout@v2
-    - name: Run Collector
-      run: docker-compose up -d
-    - uses: gleam-lang/setup-erlang@v1.0.0
-      with:
-        otp-version: ${{ matrix.otp_version }}
     - name: Compile
       run: rebar3 compile
-    - name: XRef
+    - name: Run xref
       run: rebar3 xref
