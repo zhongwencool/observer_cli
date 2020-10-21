@@ -199,6 +199,7 @@ Support F/B to page up/down.
    - hidden schedule usage default
    - format by erlformat
    - add `ps -o pcpu,pmem,rss,vsz` information
+   - remove recon_alloc:memory/1 from `HOME`(too much cpu usage)   
 - 1.5.4
   - Bump Recon to 2.5.1 for otp23 alloc compat.
 - 1.5.2

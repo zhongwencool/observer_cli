@@ -6,7 +6,7 @@ to be used to assist DevOps people diagnose problems in production
 nodes, included panels are:
 
 == Home ==
-<img src="https://user-images.githubusercontent.com/3116225/39091211-55554414-4622-11e8-8b28-bd3b5c7e17a6.jpg" width="100%" alt="Home"></img>
+<img src="https://user-images.githubusercontent.com/3116225/96714573-ede2f280-13d4-11eb-999c-f2aedb0d6ab1.jpg" width="95%" alt="Home"></img>
 
 <a href="http://erlang.org/doc/man/erlang.html#system_info-1" target="_blank" >erlang:system_info/1</a> returns specified information about the current system by below item. When the ratio is greater than 85%, it becomes red.
 <table border="2">
@@ -30,16 +30,13 @@ nodes, included panels are:
   <li><b>atom_limit</b>: `erl +t size' sets the maximum number of atoms the virtual machine can handle. Defaults to 1,048,576.</li>
 </ul>
 
-<a href="https://github.com/ferd/recon/blob/master/src/recon_alloc.erl#L162" target="_blank" >recon:memory/1</a> reports memory values for the entire node depending on what is to be reported.
+<a href="https://man7.org/linux/man-pages/man1/ps.1.html" target="_blank" > PS </a> report a snapshot of the beam process.
 <table border="2">
 <tr>
-<td> allocated </td> <td>the memory that is reserved by the VM,includes the memory used, but also the memory yet-to-be-used but still given by the OS.</td>
+<td> ps -o pcpu </td> <td>cpu utilization of the process in "##.#" format.  Currently, it is the CPU time used divided by the time the process has been running (cputime/realtime ratio), expressed as a percentage.  It will not add up to 100% unless you are lucky. .</td>
 </tr>
 <tr>
-<td> used </td> <td>the memory that is actively used for allocated Erlang data.</td>
-</tr>
-<tr>
-<td> unused </td> <td>the amount of memory reserved by the VM that is not being allocated. Equivalent to `allocated - used'.</td>
+<td> ps -o pmem </td> <td>ratio of the process's resident set size  to the physical memory on the machine, expressed as a percentage.</td>
 </tr>
 </table>
 
@@ -68,19 +65,22 @@ nodes, included panels are:
 <a href="http://erlang.org/doc/man/erlang.html#statistics-1" target="_blank" >erlang:statistics/1</a>
 <table border="2">
 <tr>
-<td> reductions </td> <td>Reductions Since Last Call, The reductions of growth during the refresh interval.</td>
+<td> active task </td> <td> returns the same as statistics(active_tasks_all) with the exception that no information about the dirty IO run queue and its associated schedulers is part of the result. That is, only tasks that are expected to be CPU bound are part of the result. </td>
 </tr>
 <tr>
-<td> run_queue </td> <td>The total length of all normal run-queues. That is, the number of processes and ports that are ready to run on all available normal run-queues. Dirty run queues are not part of the result.</td>
+<td> context switches </td> <td> returns the total number of context switches since the system started. </td>
 </tr>
 <tr>
-<td> io </td> <td>The receive/send bytes through ports of growth during the refresh interval. It's different from `erlang:statistcs(io)' which is the total number of bytes received/send through ports.</td>
+<td> reductions(total/sinceLastCall) </td> <td>total reductions/reductions since last call.</td>
 </tr>
 <tr>
-<td> garbage_collection </td> <td>The `{Number_of_GCs, Words_Reclaimed}' of growth during the refresh interval. It's different from `erlang:statistcs(garbage_collection)' which is return total value.</td>
+<td> io </td> <td>The total number of bytes received/send through ports and the receive/send bytes through ports of growth during the refresh interval.</td>
 </tr>
 <tr>
-<td> ErrorLoggerQueue </td> <td>The `error_logger' process message queue length. it will take its sweet time to log things to disk or over the network, and will do so much more slowly than errors can be generated.</td>
+<td> garbage_collection </td> <td>`erlang:statistcs(garbage_collection)' which is return total value and the `{Number_of_GCs, Words_Reclaimed}' of growth during the refresh interval.</td>
+</tr>
+<tr>
+<td>run_queue</td> <td>The total length of all normal run-queues. That is, the number of processes and ports that are ready to run on all available normal run-queues. Dirty run queues are not part of the result.</td>
 </tr>
 </table>
 Increments are values that are mostly useful when compared to a previous
@@ -111,7 +111,7 @@ ratio.
 When looking for high memory usage, for example it's interesting to be able to list all
 of a node's processes and find the top N consumers. Enter `m' then press `Enter' will use the
 `recon:proc_count(memory, N)' function, we can get:
-<img src="https://user-images.githubusercontent.com/3116225/39963461-0e3e0dfe-569e-11e8-879a-5d652a79df54.jpg" width="100%" alt="Top"> </img>
+<img src="https://user-images.githubusercontent.com/3116225/96717499-25539e00-13d9-11eb-85af-fdde633da098.jpg" width="95%" alt="Top"> </img>
 <a href="http://ferd.github.io/recon/recon.html#proc_count-2" target="_blank" >recon:proc_count/2</a>
 and <a href="http://ferd.github.io/recon/recon.html#proc_window-3" target="_blank" >recon:proc_window/3</a>
 are to be used when you require information about processes in a larger sense:
@@ -123,7 +123,7 @@ More detail about sliding time windows see <a href="http://ferd.github.io/recon/
 When an abnormal process is found, enter the suspected process sequence(Integer) then press `Enter' will use
 <a href="http://erlang.org/doc/man/erlang.html#process_info-2" target="_blank" > erlang:process_info/2</a> to show
 a lot of information available(which is safe to use in production) about processes.
-<img src="https://user-images.githubusercontent.com/3116225/39091219-66ba0398-4622-11e8-81b1-f489251f111a.jpg" width="100%" alt="Process"></img>
+<img src="https://user-images.githubusercontent.com/3116225/39091219-66ba0398-4622-11e8-81b1-f489251f111a.jpg" width="95%" alt="Process"></img>
 <ul>
   <li>
   <b>registered_name</b>: if the process has a name (as registered with `erlang:register/2'), it is given here.
@@ -186,7 +186,7 @@ a lot of information available(which is safe to use in production) about process
 
 == Network ==
 
-<img src="https://user-images.githubusercontent.com/3116225/39091212-55870e22-4622-11e8-99e7-8e8c56223765.jpg" width="100%" alt="Network"></img>
+<img src="https://user-images.githubusercontent.com/3116225/96717492-2389da80-13d9-11eb-9795-0f77ee441329.jpg" width="95%" alt="Network"></img>
 <ul>
  <li>
 <b>Byte input/output</b>: The byte of growth input/output during the refresh interval.
@@ -218,7 +218,7 @@ When find out who is slowly but surely eating up all your bandwidth,
 enter the suspected port sequence(Integer) then press `Enter' will use
 <a href="http://ferd.github.io/recon/recon.html#port_info-2" target="_blank"> recon:port_info/2</a>
 to show a lot of information available about port.
-<img src="https://user-images.githubusercontent.com/3116225/39091218-6687caf4-4622-11e8-86c7-190c2106d41e.jpg" width="100%" alt="Port"></img>
+<img src="https://user-images.githubusercontent.com/3116225/39091218-6687caf4-4622-11e8-86c7-190c2106d41e.jpg" width="95%" alt="Port"></img>
 <ul>
 <li>
 <b>id</b>: internal index of a port. Of no particular use except to differentiate ports.
@@ -256,7 +256,7 @@ a list of all local address/port number pairs for a socket.
 
 == System ==
 
-<img src="https://user-images.githubusercontent.com/3116225/39091213-55b9aaf8-4622-11e8-91ed-b37c04e20173.jpg" width="100%" alt="System"></img>
+<img src="https://user-images.githubusercontent.com/3116225/39091213-55b9aaf8-4622-11e8-91ed-b37c04e20173.jpg" width="95%" alt="System"></img>
 
 <ul>
 <li>
@@ -273,7 +273,7 @@ Cache can be tweaked using three VM flags: `+MMmcs', `+MMrmcbf', and `+MMamcbf'.
 
 == ETS ==
 
-<img src="https://user-images.githubusercontent.com/3116225/39091214-55eae91a-4622-11e8-95c2-bc514219b5d9.jpg" width="100%" alt="Ets"></img>
+<img src="https://user-images.githubusercontent.com/3116225/39091214-55eae91a-4622-11e8-95c2-bc514219b5d9.jpg" width="95%" alt="Ets"></img>
 ETS tables are never garbage collected, and will maintain their memory usage as long as
 records will be left undeleted in a table. Only removing records manually (or deleting the
 table) will reclaim memory.
@@ -282,13 +282,13 @@ Top N list sort by memory size, all items defined in <a href="http://erlang.org/
 
 == Mnesia ==
 
-<img src="https://user-images.githubusercontent.com/3116225/39091215-5637b4fc-4622-11e8-9639-99405318fc09.jpg" width="100%" alt="Mnesia"></img>
+<img src="https://user-images.githubusercontent.com/3116225/39091215-5637b4fc-4622-11e8-9639-99405318fc09.jpg" width="95%" alt="Mnesia"></img>
 
 Top N list sort by memory size, all items defined in <a href="http://erlang.org/doc/man/mnesia.html#table_info-2" target="_blank">mnesia:table_info/2</a>
 
 == Application ==
 
-<img src="https://user-images.githubusercontent.com/3116225/39091216-567ddab8-4622-11e8-8b32-db0f621d6b90.jpg" width="100%" alt="Application"></img>
+<img src="https://user-images.githubusercontent.com/3116225/39091216-567ddab8-4622-11e8-8b32-db0f621d6b90.jpg" width="95%" alt="Application"></img>
 
 Find application debug information by
 <a href="https://github.com/erlang/otp/blob/master/lib/kernel/src/application_controller.erl#L280" target="_blank"> application_controller:info()</a>.
