@@ -2,10 +2,11 @@
 -module(observer_cli_lib).
 
 -include("observer_cli.hrl").
+
 -compile(inline).
 
 %% API
--export([parse_cmd/2]).
+-export([parse_cmd/3]).
 -export([uptime/0]).
 -export([to_percent/1]).
 -export([to_list/1]).
@@ -25,15 +26,12 @@
 -export([get_pos/4]).
 -export([sublist/3]).
 -export([sbcs_to_mbcs/2]).
-%% the number 35 from 13' mbp
--define(DEFAULT_ROW_SIZE, application:get_env(observer_cli, default_row_size, 35)).
 
 -define(select(Title), ?RED_BG, Title, ?RESET_BG).
 -define(unselect(Title), ?L_GRAY_BG, Title, ?RESET_BG).
 
 -spec uptime() -> list().
 uptime() ->
-    
     {UpTime, _} = erlang:statistics(wall_clock),
     {D, {H, M, S}} = calendar:seconds_to_daystime(UpTime div 1000),
     Time = [
@@ -65,26 +63,124 @@ to_list(Float) when is_float(Float) -> erlang:float_to_list(Float, [{decimals, 4
 to_list(Val) -> Val.
 
 get_menu_title(home, MnesiaTitle) ->
-    [?select("Home(H)"), "|", ?unselect("Network(N)"), "|", ?unselect("System(S)"), "|", ?unselect("Ets(E)"),
-        unselect(MnesiaTitle), "|", ?unselect("App(A)"), "|", ?unselect("Doc(D)"), "|", ?unselect("Plugin(P)")];
+    [
+        ?select("Home(H)"),
+        "|",
+        ?unselect("Network(N)"),
+        "|",
+        ?unselect("System(S)"),
+        "|",
+        ?unselect("Ets(E)"),
+        unselect(MnesiaTitle),
+        "|",
+        ?unselect("App(A)"),
+        "|",
+        ?unselect("Doc(D)"),
+        "|",
+        ?unselect("Plugin(P)")
+    ];
 get_menu_title(ets, MnesiaTitle) ->
-    [?unselect("Home(H)"), "|", ?unselect("Network(N)"), "|", ?unselect("System(S)"), "|", ?select("Ets(E)"),
-        unselect(MnesiaTitle), "|", ?unselect("App(A)"), "|", ?unselect("Doc(D)"), "|", ?unselect("Plugin(P)")];
+    [
+        ?unselect("Home(H)"),
+        "|",
+        ?unselect("Network(N)"),
+        "|",
+        ?unselect("System(S)"),
+        "|",
+        ?select("Ets(E)"),
+        unselect(MnesiaTitle),
+        "|",
+        ?unselect("App(A)"),
+        "|",
+        ?unselect("Doc(D)"),
+        "|",
+        ?unselect("Plugin(P)")
+    ];
 get_menu_title(allocator, MnesiaTitle) ->
-    [?unselect("Home(H)"), "|", ?unselect("Network(N)"), "|", ?select("System(S)"), "|", ?unselect("Ets(E)"),
-        unselect(MnesiaTitle), "|", ?unselect("App(A)"), "|", ?unselect("Doc(D)"), "|", ?unselect("Plugin(P)")];
+    [
+        ?unselect("Home(H)"),
+        "|",
+        ?unselect("Network(N)"),
+        "|",
+        ?select("System(S)"),
+        "|",
+        ?unselect("Ets(E)"),
+        unselect(MnesiaTitle),
+        "|",
+        ?unselect("App(A)"),
+        "|",
+        ?unselect("Doc(D)"),
+        "|",
+        ?unselect("Plugin(P)")
+    ];
 get_menu_title(doc, MnesiaTitle) ->
-    [?unselect("Home(H)"), "|", ?unselect("Network(N)"), "|", ?unselect("System(S)"), "|", ?unselect("Ets(E)"),
-        unselect(MnesiaTitle), "|", ?unselect("App(A)"), "|", ?select("Doc(D)"), "|", ?unselect("Plugin(P)")];
+    [
+        ?unselect("Home(H)"),
+        "|",
+        ?unselect("Network(N)"),
+        "|",
+        ?unselect("System(S)"),
+        "|",
+        ?unselect("Ets(E)"),
+        unselect(MnesiaTitle),
+        "|",
+        ?unselect("App(A)"),
+        "|",
+        ?select("Doc(D)"),
+        "|",
+        ?unselect("Plugin(P)")
+    ];
 get_menu_title(inet, MnesiaTitle) ->
-    [?unselect("Home(H)"), "|", ?select("Network(N)"), "|", ?unselect("System(S)"), "|", ?unselect("Ets(E)"),
-        unselect(MnesiaTitle), "|", ?unselect("App(A)"), "|", ?unselect("Doc(D)"), "|", ?unselect("Plugin(P)")];
+    [
+        ?unselect("Home(H)"),
+        "|",
+        ?select("Network(N)"),
+        "|",
+        ?unselect("System(S)"),
+        "|",
+        ?unselect("Ets(E)"),
+        unselect(MnesiaTitle),
+        "|",
+        ?unselect("App(A)"),
+        "|",
+        ?unselect("Doc(D)"),
+        "|",
+        ?unselect("Plugin(P)")
+    ];
 get_menu_title(mnesia, MnesiaTitle) ->
-    [?unselect("Home(H)"), "|", ?unselect("Network(N)"), "|", ?unselect("System(S)"), "|", ?unselect("Ets(E)"),
-        select(MnesiaTitle), "|", ?unselect("App(A)"), "|", ?unselect("Doc(D)"), "|", ?unselect("Plugin(P)")];
+    [
+        ?unselect("Home(H)"),
+        "|",
+        ?unselect("Network(N)"),
+        "|",
+        ?unselect("System(S)"),
+        "|",
+        ?unselect("Ets(E)"),
+        select(MnesiaTitle),
+        "|",
+        ?unselect("App(A)"),
+        "|",
+        ?unselect("Doc(D)"),
+        "|",
+        ?unselect("Plugin(P)")
+    ];
 get_menu_title(app, MnesiaTitle) ->
-    [?unselect("Home(H)"), "|", ?unselect("Network(N)"), "|", ?unselect("System(S)"), "|", ?unselect("Ets(E)"),
-        unselect(MnesiaTitle), "|", ?select("App(A)"), "|", ?unselect("Doc(D)"), "|", ?unselect("Plugin(P)")].
+    [
+        ?unselect("Home(H)"),
+        "|",
+        ?unselect("Network(N)"),
+        "|",
+        ?unselect("System(S)"),
+        "|",
+        ?unselect("Ets(E)"),
+        unselect(MnesiaTitle),
+        "|",
+        ?select("App(A)"),
+        "|",
+        ?unselect("Doc(D)"),
+        "|",
+        ?unselect("Plugin(P)")
+    ].
 
 -spec select(string()) -> list().
 select(Title) -> [?RED_BG, Title, ?RESET_BG].
@@ -96,18 +192,23 @@ unselect(Title) -> [?L_GRAY_BG, Title, ?RESET_BG].
 green(String) -> "\e[32;1m" ++ String ++ "\e[0m".
 
 -spec to_byte(pos_integer()) -> list().
-to_byte(Byte) when is_integer(Byte), Byte < 1024 -> %% byte
-    [erlang:integer_to_list(Byte), $ , $B];
-to_byte(Byte) when Byte < 1024 * 1024 ->  %% kilobyte
-    [erlang:float_to_list(Byte / 1024, [{decimals, 4}]), $ , $K, $B];
-to_byte(Byte) when Byte < 1024 * 1024 * 1024 -> %% megabyte
-    [erlang:float_to_list(Byte / (1024 * 1024), [{decimals, 4}]), $ , $M, $B];
-to_byte(Byte) when is_integer(Byte) -> %% megabyte
-    [erlang:float_to_list(Byte / (1024 * 1024 * 1024), [{decimals, 4}]), $ , $G, $B];
-to_byte(Byte) -> %% process died
+%% byte
+to_byte(Byte) when is_integer(Byte), Byte < 1024 ->
+    [erlang:integer_to_list(Byte), $\s, $B];
+%% kilobyte
+to_byte(Byte) when Byte < 1024 * 1024 ->
+    [erlang:float_to_list(Byte / 1024, [{decimals, 4}]), $\s, $K, $B];
+%% megabyte
+to_byte(Byte) when Byte < 1024 * 1024 * 1024 ->
+    [erlang:float_to_list(Byte / (1024 * 1024), [{decimals, 4}]), $\s, $M, $B];
+%% megabyte
+to_byte(Byte) when is_integer(Byte) ->
+    [erlang:float_to_list(Byte / (1024 * 1024 * 1024), [{decimals, 4}]), $\s, $G, $B];
+%% process died
+to_byte(Byte) ->
     [to_list(Byte)].
 
--spec mfa_to_list({atom(), atom(), integer()}|term()) -> nonempty_string().
+-spec mfa_to_list({atom(), atom(), integer()} | term()) -> nonempty_string().
 mfa_to_list({Module, Fun, Arg}) ->
     [atom_to_list(Module), ":", atom_to_list(Fun), "/", integer_to_list(Arg)];
 mfa_to_list(Function) ->
@@ -117,18 +218,23 @@ mfa_to_list(Function) ->
 render(FA) ->
     {F, A} = tidy_format_args([" \e[0m|~n" | lists:reverse(["|" | FA])], true, [], []),
     io_lib:format(erlang:iolist_to_binary(F), A).
+
 %{erlang:iolist_to_binary(F), A}.
 
 -spec render_menu(atom(), string()) -> iolist().
 render_menu(Type, Text) ->
-    MnesiaTitle = case ets:info(schema, owner) of undefined -> ""; _ -> "/Mnesia(M)" end,
+    MnesiaTitle =
+        case ets:info(schema, owner) of
+            undefined -> "";
+            _ -> "/Mnesia(M)"
+        end,
     Title = get_menu_title(Type, MnesiaTitle),
     UpTime = uptime(),
     TitleWidth = ?COLUMN + 151 - erlang:length(UpTime),
     ?render([?W([Title | Text], TitleWidth) | UpTime]).
 
-tidy_format_args([], _NeedLine, FAcc, AAcc) -> {FAcc, AAcc};
-
+tidy_format_args([], _NeedLine, FAcc, AAcc) ->
+    {FAcc, AAcc};
 tidy_format_args([{extend, A, W} | Rest], true, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
     F = <<"~-", WBin/binary, ".", WBin/binary, "ts">>,
@@ -137,7 +243,6 @@ tidy_format_args([{extend, A, W} | Rest], false, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
     F = <<"~-", WBin/binary, ".", WBin/binary, "ts", ?I/binary>>,
     tidy_format_args(Rest, false, [F | FAcc], [to_str(A) | AAcc]);
-
 tidy_format_args([{extend_color, C, A, W} | Rest], true, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
     F = <<C/binary, "~-", WBin/binary, ".", WBin/binary, "ts">>,
@@ -146,7 +251,6 @@ tidy_format_args([{extend_color, C, A, W} | Rest], false, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
     F = <<C/binary, "~-", WBin/binary, ".", WBin/binary, "ts", ?I2/binary>>,
     tidy_format_args(Rest, false, [F | FAcc], [to_str(A) | AAcc]);
-
 tidy_format_args([{extend_color_2, C, A, W} | Rest], true, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
     F = <<C/binary, "~-", WBin/binary, ".", WBin/binary, "ts">>,
@@ -155,75 +259,109 @@ tidy_format_args([{extend_color_2, C, A, W} | Rest], false, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
     F = <<C/binary, "~-", WBin/binary, ".", WBin/binary, "ts", ?RESET/binary, ?I2/binary>>,
     tidy_format_args(Rest, false, [F | FAcc], [to_str(A) | AAcc]);
-
 tidy_format_args([F | Rest], NeedLine, FAcc, AAcc) ->
     tidy_format_args(Rest, NeedLine, [F | FAcc], AAcc).
 
 to_str({byte, Bytes}) -> to_byte(Bytes);
 to_str(Term) -> to_list(Term).
 
--spec parse_cmd(#view_opts{}, [pid()]) -> atom()|string().
-parse_cmd(ViewOpts, Pids) ->
+-spec parse_cmd(#view_opts{}, atom(), list()) -> atom() | string() | tuple().
+parse_cmd(ViewOpts, Module, Args) ->
     case to_list(io:get_line("")) of
-        %% inet
-        "ic\n" -> inet_count;
-        "iw\n" -> inet_window;
-        "rc\n" -> recv_cnt;
-        "ro\n" -> recv_oct;
-        "sc\n" -> send_cnt;
-        "so\n" -> send_oct;
-        "cnt\n" -> cnt;
-        "oct\n" -> oct;
-        
-        %% menu view
         "H\n" ->
-            exit_processes(Pids),
+            Module:clean(Args),
             observer_cli:start(ViewOpts);
         "S\n" ->
-            exit_processes(Pids),
+            Module:clean(Args),
             observer_cli_system:start(ViewOpts);
         "A\n" ->
-            exit_processes(Pids),
+            Module:clean(Args),
             observer_cli_application:start(ViewOpts);
         "N\n" ->
-            exit_processes(Pids),
+            Module:clean(Args),
             observer_cli_inet:start(ViewOpts);
         "M\n" ->
-            exit_processes(Pids),
+            Module:clean(Args),
             observer_cli_mnesia:start(ViewOpts);
         "E\n" ->
-            exit_processes(Pids),
+            Module:clean(Args),
             observer_cli_ets:start(ViewOpts);
         "D\n" ->
-            exit_processes(Pids),
+            Module:clean(Args),
             observer_cli_help:start(ViewOpts);
         "P\n" ->
-            exit_processes(Pids),
+            Module:clean(Args),
             observer_cli_plugin:start(ViewOpts);
-        "q\n" -> quit;
-        "Q\n" -> quit;
-        "pu\n" -> page_up_top_n;     %% backward
-        "pd\n" -> page_down_top_n;   %% forward
-        "PU\n" -> page_up_top_n;     %% backward
-        "PD\n" -> page_down_top_n;   %% forward
-        "B\n" -> page_up_top_n;     %% backward
-        "F\n" -> page_down_top_n;   %% forward
-        
+        %% inet
+        "ic\n" ->
+            inet_count;
+        "iw\n" ->
+            inet_window;
+        "rc\n" ->
+            recv_cnt;
+        "ro\n" ->
+            recv_oct;
+        "sc\n" ->
+            send_cnt;
+        "so\n" ->
+            send_oct;
+        "cnt\n" ->
+            cnt;
+        "oct\n" ->
+            oct;
+        "q\n" ->
+            quit;
+        "Q\n" ->
+            quit;
+        %% backward
+        "pu\n" ->
+            page_up_top_n;
+        %% forward
+        "pd\n" ->
+            page_down_top_n;
+        %% backward
+        "PU\n" ->
+            page_up_top_n;
+        %% forward
+        "PD\n" ->
+            page_down_top_n;
+        %% backward
+        "B\n" ->
+            page_up_top_n;
+        %% forward
+        "F\n" ->
+            page_down_top_n;
         %% home
-        "p\n" -> pause_or_resume;
-        "r\n" -> {func, proc_count, reductions};
-        "b\n" -> {func, proc_count, binary_memory};
-        "t\n" -> {func, proc_count, total_heap_size};
-        "m\n" -> {func, proc_count, memory};
-        "mq\n" -> {func, proc_count, message_queue_len};
-        "rr\n" -> {func, proc_window, reductions};
-        "bb\n" -> {func, proc_window, binary_memory};
-        "tt\n" -> {func, proc_window, total_heap_size};
-        "mm\n" -> {func, proc_window, memory};
-        "mmq\n" -> {func, proc_window, message_queue_len};
-        "\n" -> jump;
-        "s\n" -> size;
-        "hide\n" -> hide;
+        "p\n" ->
+            pause_or_resume;
+        "r\n" ->
+            {func, proc_count, reductions};
+        "b\n" ->
+            {func, proc_count, binary_memory};
+        "t\n" ->
+            {func, proc_count, total_heap_size};
+        "m\n" ->
+            {func, proc_count, memory};
+        "mq\n" ->
+            {func, proc_count, message_queue_len};
+        "rr\n" ->
+            {func, proc_window, reductions};
+        "bb\n" ->
+            {func, proc_window, binary_memory};
+        "tt\n" ->
+            {func, proc_window, total_heap_size};
+        "mm\n" ->
+            {func, proc_window, memory};
+        "mmq\n" ->
+            {func, proc_window, message_queue_len};
+        "\n" ->
+            jump;
+        "s\n" ->
+            size;
+        "hide\n" ->
+            hide;
+        "`\n" ->
+            scheduler_usage;
         Number ->
             parse_integer(Number)
     end.
@@ -234,10 +372,11 @@ next_redraw(LastTimeRef, Interval) ->
     erlang:send_after(Interval, self(), redraw).
 
 -spec get_terminal_rows(boolean()) -> integer().
-get_terminal_rows(_AutoRow = false) -> ?DEFAULT_ROW_SIZE;
+get_terminal_rows(_AutoRow = false) ->
+    application:get_env(observer_cli, default_row_size, 30);
 get_terminal_rows(_AutoRow = true) ->
     case io:rows() of
-        {error, _} -> ?DEFAULT_ROW_SIZE;
+        {error, _} -> application:get_env(observer_cli, default_row_size, 30);
         {ok, Rows} -> Rows
     end.
 
@@ -247,8 +386,9 @@ parse_integer(Number) ->
         {error, _Reason} ->
             {input_str, Number -- "\n"};
         {Integer, _} ->
-            if Integer >= ?MIN_INTERVAL ->
-                {new_interval, Integer};
+            if
+                Integer >= ?MIN_INTERVAL ->
+                    {new_interval, Integer};
                 Integer > 0 ->
                     {jump, Integer};
                 true ->
@@ -262,7 +402,13 @@ render_last_line(Text) ->
 
 -spec exit_processes(list()) -> ok.
 exit_processes(List) ->
-    [erlang:exit(Pid, stop) || Pid <- List],
+    [
+        begin
+            erlang:unlink(Pid),
+            erlang:exit(Pid, stop)
+        end
+        || Pid <- List
+    ],
     flush(),
     ok.
 
@@ -273,7 +419,8 @@ update_page_pos(StorePid, Page, Pages) when is_pid(StorePid) ->
             false ->
                 Row = observer_cli_store:lookup_row(StorePid),
                 (Page - 1) * Row + 1;
-            {_, P} -> P
+            {_, P} ->
+                P
         end,
     update_page_pos(Page, Pos, Pages);
 update_page_pos(Page, Pos, Pages) ->
@@ -281,7 +428,8 @@ update_page_pos(Page, Pos, Pages) ->
 
 -spec get_pos(pos_integer(), pos_integer(), list(), pos_integer()) ->
     {pos_integer(), pos_integer()}.
-get_pos(_Page, _PageRow, _Pages, 0) -> {1, 1};
+get_pos(_Page, _PageRow, _Pages, 0) ->
+    {1, 1};
 get_pos(Page, PageRow, Pages, TopLen) ->
     Start = erlang:min((Page - 1) * PageRow + 1, TopLen),
     case lists:keyfind(Page, 1, Pages) of
@@ -290,8 +438,9 @@ get_pos(Page, PageRow, Pages, TopLen) ->
     end.
 
 flush() ->
-    receive _Msg ->
-        flush()
+    receive
+        _Msg ->
+            flush()
     after 100 -> ok
     end.
 
@@ -302,17 +451,19 @@ sublist(AllEts, Rows, CurPage) ->
     case erlang:length(SortEts) >= Start of
         true ->
             lists:sublist(SortEts, Start, Rows);
-        false -> []
+        false ->
+            []
     end.
 
 -spec sbcs_to_mbcs(list(), list()) -> list().
 sbcs_to_mbcs(TypeList, STMList) ->
-    FoldlFun =
-        fun({{Type, _}, New}, Acc) when is_number(New) ->
+    FoldlFun = fun
+        ({{Type, _}, New}, Acc) when is_number(New) ->
             case lists:member(Type, TypeList) of
                 true -> maps:update_with(Type, fun(V) -> V + New end, 0, Acc);
                 false -> Acc
             end;
-            (_, Acc) -> Acc
-        end,
+        (_, Acc) ->
+            Acc
+    end,
     maps:to_list(lists:foldl(FoldlFun, #{}, STMList)).

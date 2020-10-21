@@ -3,14 +3,26 @@
 -export([main/1]).
 
 %% @doc escript main
--spec main(list()) -> no_return.
+-spec main(list()) -> 'ok'.
 
 -define(BEAM_MODS, [
-    recon, recon_alloc, recon_lib, recon_trace,
-    observer_cli, observer_cli_ets, observer_cli_lib, observer_cli_process,
-    observer_cli_application, observer_cli_help, observer_cli_mnesia, observer_cli_store,
-    observer_cli_escriptize, observer_cli_inet, observer_cli_port, observer_cli_system
-    ]).
+    recon,
+    recon_alloc,
+    recon_lib,
+    recon_trace,
+    observer_cli,
+    observer_cli_ets,
+    observer_cli_lib,
+    observer_cli_process,
+    observer_cli_application,
+    observer_cli_help,
+    observer_cli_mnesia,
+    observer_cli_store,
+    observer_cli_escriptize,
+    observer_cli_inet,
+    observer_cli_port,
+    observer_cli_system
+]).
 
 main([TargetNode]) ->
     run(TargetNode, undefined, 1500);
@@ -24,24 +36,31 @@ main(_Options) ->
 run(TargetNode, Cookie, Interval) ->
     {TargetNodeAtom, NameOpt} = resolve_target_name(TargetNode),
     LocalNode = random_local_node_name(),
-    MyName = case NameOpt of
-                 shortnames -> list_to_atom(LocalNode);
-                 longnames -> list_to_atom(LocalNode ++ "@127.0.0.1")
-             end,
+    MyName =
+        case NameOpt of
+            shortnames -> list_to_atom(LocalNode);
+            longnames -> list_to_atom(LocalNode ++ "@127.0.0.1")
+        end,
     {ok, _} = net_kernel:start([MyName, NameOpt]),
     Start = fun() ->
         Options = [{cookie, Cookie}, {interval, Interval}],
         observer_cli:start(TargetNodeAtom, Options)
-            end,
+    end,
     case Start() of
         {badrpc, _} ->
             remote_load(TargetNodeAtom),
             io:format("~p~n", [Start()]);
-        _ -> ok
+        _ ->
+            ok
     end.
 
 remote_load(Node) ->
-    [begin recon:remote_load([Node], Mod) end|| Mod <- ?BEAM_MODS].
+    [
+        begin
+            recon:remote_load([Node], Mod)
+        end
+        || Mod <- ?BEAM_MODS
+    ].
 
 random_local_node_name() ->
     {_, {H, M, S}} = calendar:local_time(),

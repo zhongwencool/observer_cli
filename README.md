@@ -24,13 +24,13 @@ Visualize Erlang/Elixir Nodes On The Command Line base on [recon](https://github
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.5.4
+dep_observer_cli = hex 1.6.0
 ```
 **Elixir**
 ```elixir
 # mix.exs
    def deps do
-     [{:observer_cli, "~> 1.5"}]
+     [{:observer_cli, "~> 1.6"}]
    end
 ```
 ------------------
@@ -74,14 +74,6 @@ _build/dev/rel/example/bin/example rpc ":observer_cli.start"
 ----------------
 ### DEMO
 <img src="https://user-images.githubusercontent.com/3116225/39091211-55554414-4622-11e8-8b28-bd3b5c7e17a6.jpg" width="100%" alt="Home"> </img>
-<img src="https://user-images.githubusercontent.com/3116225/39091212-55870e22-4622-11e8-99e7-8e8c56223765.jpg" width="100%" alt="Network"></img>
-<img src="https://user-images.githubusercontent.com/3116225/39091213-55b9aaf8-4622-11e8-91ed-b37c04e20173.jpg" width="100%" alt="System"></img>
-<img src="https://user-images.githubusercontent.com/3116225/39091214-55eae91a-4622-11e8-95c2-bc514219b5d9.jpg" width="100%" alt="Ets"></img>
-<img src="https://user-images.githubusercontent.com/3116225/39091215-5637b4fc-4622-11e8-9639-99405318fc09.jpg" width="100%" alt="Mnesia"></img>
-<img src="https://user-images.githubusercontent.com/3116225/39091216-567ddab8-4622-11e8-8b32-db0f621d6b90.jpg" width="100%" alt="Application"></img>
-<img src="https://user-images.githubusercontent.com/3116225/39091217-57258844-4622-11e8-9b21-2a7d661bc623.jpg" width="100%" alt="Document"></img>
-<img src="https://user-images.githubusercontent.com/3116225/39091219-66ba0398-4622-11e8-81b1-f489251f111a.jpg" width="100%" alt="Process"></img>
-<img src="https://user-images.githubusercontent.com/3116225/39091218-6687caf4-4622-11e8-86c7-190c2106d41e.jpg" width="100%" alt="Port"></img>
 
 ### How to write your own plugin?
 If you need to customize some of your internal metrics and integrate it into observer_ci,
@@ -203,6 +195,11 @@ Support F/B to page up/down.
 
 ----------------
 ### Changelog
+- 1.6.0
+   - hidden schedule usage default
+   - format by erlformat
+   - add `ps -o pcpu,pmem,rss,vsz` information
+   - remove recon_alloc:memory/1 from `HOME`(too much cpu usage)   
 - 1.5.4
   - Bump Recon to 2.5.1 for otp23 alloc compat.
 - 1.5.2
