@@ -230,7 +230,7 @@ render_process_info(
             ?W("Value", 42),
             ?W("Memory Used", 16),
             ?W("Value", 12),
-            ?W("Grabage Collection", 18),
+            ?W("Garbage Collection", 18),
             ?W("Value", 12)
         ]),
         ?render([
