@@ -778,14 +778,8 @@ get_refresh_prompt(proc_window, Type, Interval, Rows) ->
 get_stable_system_info() ->
     OtpRelease = erlang:system_info(otp_release),
     SysVersion = erlang:system_info(system_version) -- "\n",
-    Path = filename:join([code:root_dir(), "releases", OtpRelease, "OTP_VERSION"]),
-    Version =
-        case file:read_file(Path) of
-            {ok, VersionBin} -> erlang:binary_to_list(VersionBin) -- "\n";
-            _ -> OtpRelease
-        end,
     {[
-            Version,
+            OtpRelease,
             SysVersion,
             erlang:system_info(process_limit),
             erlang:system_info(port_limit),
