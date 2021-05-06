@@ -24,7 +24,7 @@ Visualize Erlang/Elixir Nodes On The Command Line base on [recon](https://github
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.6.1
+dep_observer_cli = hex 1.6.2
 ```
 **Elixir**
 ```elixir
@@ -195,6 +195,10 @@ Support F/B to page up/down.
 
 ----------------
 ### Changelog
+- 1.6.2
+  - fixed crash when ps command not found on windows.
+- 1.6.1
+  - remove precise opt version
 - 1.6.0
    - hidden schedule usage default
    - format by erlformat
