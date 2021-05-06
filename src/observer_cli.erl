@@ -216,7 +216,10 @@ render_system_line(PsCmd, StableInfo) ->
     Reductions = erlang:statistics(reductions),
     {PortWarning, ProcWarning, PortCount, ProcCount} =
         get_port_proc_info(PortLimit, ProcLimit),
-    [_, CmdValue | _] = string:split(os:cmd(PsCmd), "\n", all),
+    CmdValue = case string:split(os:cmd(PsCmd), "\n", all) of
+        [_, CmdValueTmp | _] -> CmdValueTmp;
+        _ -> ""
+    end,
 
     [CpuPsV, MemPsV] =
         case lists:filter(fun(Y) -> Y =/= [] end, string:split(CmdValue, " ", all)) of
