@@ -223,8 +223,8 @@ render_system_line(PsCmd, StableInfo) ->
 
     [CpuPsV, MemPsV] =
         case lists:filter(fun(Y) -> Y =/= [] end, string:split(CmdValue, " ", all)) of
-            [] -> ["--", "--"];
-            [V1, V2] -> [V1, V2]
+            [V1, V2] -> [V1, V2];
+            _ -> ["--", "--"]
         end,
     Title = ?render([
         ?W(SysVersion, 136),
