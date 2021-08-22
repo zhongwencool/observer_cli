@@ -24,13 +24,13 @@ Visualize Erlang/Elixir Nodes On The Command Line base on [recon](https://github
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.6.2
+dep_observer_cli = hex 1.7.0
 ```
 **Elixir**
 ```elixir
 # mix.exs
    def deps do
-     [{:observer_cli, "~> 1.6"}]
+     [{:observer_cli, "~> 1.7"}]
    end
 ```
 ------------------
@@ -88,19 +88,22 @@ you only need to write a `observer_cli_plugin` behaviour in a few simple steps t
 
 {plugins,
   [
-    #{module => observer_cli_plug_behaviour1, title => "XPlug",
-      interval => 1500, shortcut => "X", sort_column => 3},
-    #{module => observer_cli_plug_behaviour2, title => "YPlug",
-      interval => 1600, shortcut => "Y", sort_column => 3}
+    #{module => observer_cli_plug_behaviour_x, title => "XPlug",
+      interval => 1600, shortcut => "X", sort_column => 3},
+    #{module => observer_cli_plug_behaviour_y, title => "YPlug",
+      interval =>2000, shortcut => "Y", sort_column => 3}
   ]
 }
-
 ```
-<img src="https://user-images.githubusercontent.com/3116225/46514684-ebff7280-c891-11e8-820e-90c3302f9108.jpg" width="90%"></img>
-
+The main view is `HOME` by default(`observer_cli:start()`).
+If you want to plugin view as main view, DO:`your_cli:start().`
+```erlang
+% your_cli.erl
+start() -> observer_cli:start_plugin().
+```
 2. Write observer_cli_plugin behaviour.
 observer_cli_plugin has 3 callbacks.
-
+   
 2.1 attributes.
 ```erlang
 -callback atributes(PrevState) -> {[Rows], NewState} when
@@ -110,37 +113,42 @@ observer_cli_plugin has 3 callbacks.
 for example:
 ```erlang
 attributes(PrevState) ->
-    Attrs =
+  Attrs = [
     [
-        [
-            #{content => "XXX Ets Size", width => 20},
-            #{content => ets:info(xxx,size), width => 10},
-            #{content => "Pool1 Size", width => 15},
-            #{content => application:get_env(app,pool1_size), width => 30},
-            #{content => "XYZ1 Process Mem", width => 18,
-            #{content => {byte, element(2, erlang:process_info(xyz1, memory))}, width => 16}
-        ],
-        [
-            #{content => "YYY Ets Size", width =>20},
-            #{content => ets:info(yyy,size), width => 10},
-            #{content => "Pool2 Size", width =>15},
-            #{content => application:get_env(app,pool2_size), width => 30},
-            #{content =>"XYZ2 Process Mem", width =>18},
-            #{content => {byte, element(2, erlang:process_info(xyz2, memory))}, width => 16}
-        ],
-        [
-            #{content => "ZZZ Ets Size", width =>20},
-            #{content => ets:info(zzz,size), width => 10},
-            #{content => "Pool3 Size", width =>15},
-            #{content => application:get_env(app,pool3_size), width => 30},
-            #{content => "XYZ3 Process Mem", width =>18},
-            #{content => {byte, element(2, erlang:process_info(xyz3, memory))}, width => 16}
-        ]
+      #{content => "XXX Ets Size", width => 15},
+      #{content => 122, width => 10},
+      #{content => "Memory Capcity", width => 15},
+      #{content => {percent, 0.12}, width => 16},
+      #{content => "XYZ1 Process Mem", width => 19},
+      #{content => {byte, 1023 * 1203}, width => 19}
     ],
-    NewState = PrevState,
-    {Attrs, NewState}.
+    [
+      #{content => "YYY Ets Size", width => 15},
+      #{content => 43, width => 10},
+      #{content => "Disk Capcity", width => 15},
+      #{content => {percent, 0.23}, width => 16},
+      #{content => "XYZ2 Process Mem", width => 19},
+      #{content => {byte, 2034 * 220}, width => 19}
+    ],
+    [
+      #{content => "ZZZ Ets Size", width => 15},
+      #{content => 108, width => 10},
+      #{content => "Volume Capcity", width => 15},
+      #{content => {percent, 0.101}, width => 16},
+      #{content => "XYZ3 Process Mem", width => 19},
+      #{content => {byte, 12823}, width => 19}
+    ]
+  ],
+  NewState = PrevState,
+  {Attrs, NewState}.
 ```
-<img src="https://user-images.githubusercontent.com/3116225/46514685-ebff7280-c891-11e8-915e-67f558694328.jpg" width="90%"></img>
+
+```markdown
+|Home(H)|XPlug(X)|YPlug(Y)|                                                                 | 0Days 3:34:50    |
+|XXX Ets Size    | 122        | Memory Capcity  | 12.00%           | XYZ1 Process Mem    | 1.1737 MB           |
+|YYY Ets Size    | 43         | Disk Capcity    | 23.00%           | XYZ2 Process Mem    | 436.9922 KB         |
+|ZZZ Ets Size    | 108        | Volume Capcity  | 10.10%           | XYZ3 Process Mem    | 12.5225 KB          |
+```
 
 ```erlang
 -callback sheet_header() -> [SheetHeader] when
@@ -149,13 +157,16 @@ attributes(PrevState) ->
 for example:
 ```erlang
 sheet_header() ->
-    [
-        #{title => "Pid", width => 25},
-        #{title => "Status", width => 25},
-        #{title => "Memory", width => 24, shortcut => "S"},
-        #{title => "Reductions", width => 24, shortcut => "R"},
-        #{title => "Message Queue Len", width => 25, shortcut => "Q"}
-    ].
+  [
+    #{title => "Pid", width => 15},
+    #{title => "Register", width => 20},
+    #{title => "Memory", width => 20, shortcut => "S"},
+    #{title => "Reductions", width => 23, shortcut => "R"},
+    #{title => "Message Queue Len", width => 23, shortcut => "Q"}
+  ].
+```
+```markdown
+|No |Pid            |Register            |Memory(S)           |Reductions(R)          |Message Queue Len(Q)    |
 ```
 
 ```erlang
@@ -167,34 +178,55 @@ sheet_header() ->
 ```
 
 for example:
-
 ```erlang
 sheet_body(PrevState) ->
-    Body =
-      [begin
-         [
-             Pid,
-             element(2, erlang:process_info(Pid, status)),
-             element(2, erlang:process_info(Pid, memory)),
-             element(2, erlang:process_info(Pid, reductions)),
-             element(2, erlang:process_info(Pid, message_queue_len))
-         ]
-     end||Pid <- erlang:processes()
-    ],
-    NewState = PrevState,
-    {Body, NewState}.
+  Body = [
+    begin
+      Register =
+        case erlang:process_info(Pid, registered_name) of
+          [] -> [];
+          {_, Name} -> Name
+        end,
+      [
+        Pid,
+        Register,
+        {byte, element(2, erlang:process_info(Pid, memory))},
+        element(2, erlang:process_info(Pid, reductions)),
+        element(2, erlang:process_info(Pid, message_queue_len))
+      ]
+    end
+    || Pid <- erlang:processes()
+  ],
+  NewState = PrevState,
+  {Body, NewState}.
 ```
+Support `{byte, 1024*10}` to ` 10.0000 KB`; `{percent, 0.12}` to `12.00%`.
 
+```markdown
+|No |Pid            |Register            |Memory(S)           |Reductions(R)          |Message Queue Len(Q)    |
+|1   |<0.242.0>     |                    | 4.5020 MB          | 26544288              | 0                      |
+|2  | <0.206.0>     |                    | 1.2824 MB          | 13357885              | 0                      |
+|3  | <0.10.0>      | erl_prim_loader    | 1.0634 MB          | 10046775              | 0                      |
+|4  | <0.434.0>     |                    | 419.1719 KB        | 10503690              | 0                      |
+|5  | <0.44.0>      | application_contro | 416.6250 KB        | 153598                | 0                      |
+|6  | <0.50.0>      | code_server        | 416.4219 KB        | 301045                | 0                      |
+|7  | <0.9.0>       | rebar_agent        | 136.7031 KB        | 1337603               | 0                      |
+|8  | <0.207.0>     |                    | 99.3125 KB         | 9629                  | 0                      |
+|9  | <0.58.0>      | file_server_2      | 41.3359 KB         | 34303                 | 0                      |
+|10 | <0.209.0>     |                    | 27.3438 KB         | 31210                 | 0                      |
+|11 | <0.0.0>       | init               | 25.8516 KB         | 8485                  | 0                      |
+|refresh: 1600ms q(quit) Positive Number(set refresh interval time ms) F/B(forward/back) Current pages is 1    |
+```
 Support F/B to page up/down.
-
-<img src="https://user-images.githubusercontent.com/3116225/46514686-ec980900-c891-11e8-8232-f6ad98fd2e5c.jpg" width="90%"></img>
-
-<img src="https://user-images.githubusercontent.com/3116225/46514783-96779580-c892-11e8-872a-1a44e4d92b76.jpg" width="90%"></img>
 
 [A more specific plugin](https://github.com/zhongwencool/os_stats) can collect linux system information such as kernel vsn, loadavg, disk, memory usage, cpu utilization, IO statistics.
 
 ----------------
 ### Changelog
+- 1.7.0
+  - plugin support `{byte, 1024}` to `10.0000 KB`
+  - plugin support `{percent, 0.1234` to `12.34%`
+  - plugin support dig deep process view.
 - 1.6.2
   - fixed crash when ps command not found on windows.
 - 1.6.1
