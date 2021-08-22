@@ -216,10 +216,11 @@ render_system_line(PsCmd, StableInfo) ->
     Reductions = erlang:statistics(reductions),
     {PortWarning, ProcWarning, PortCount, ProcCount} =
         get_port_proc_info(PortLimit, ProcLimit),
-    CmdValue = case string:split(os:cmd(PsCmd), "\n", all) of
-        [_, CmdValueTmp | _] -> CmdValueTmp;
-        _ -> ""
-    end,
+    CmdValue =
+        case string:split(os:cmd(PsCmd), "\n", all) of
+            [_, CmdValueTmp | _] -> CmdValueTmp;
+            _ -> ""
+        end,
 
     [CpuPsV, MemPsV] =
         case lists:filter(fun(Y) -> Y =/= [] end, string:split(CmdValue, " ", all)) of
@@ -734,14 +735,7 @@ warning_color(_Percent) -> ?GREEN.
 
 process_bar_format_style(Percents, IsLastLine) ->
     Format =
-        case
-            [
-                begin
-                    warning_color(P)
-                end
-                || P <- Percents
-            ]
-        of
+        case [warning_color(P) || P <- Percents] of
             [W1, W2] ->
                 <<"|", W1/binary, "|~2..0w ~-57.57s~s", W2/binary,
                     " |~2..0w ~-57.57s ~s \e[0m|~n">>;
@@ -820,10 +814,10 @@ start_process_view(StorePid, RenderPid, Opts = #view_opts{home = Home}, LastSchW
     case observer_cli_store:lookup_pos(StorePid, CurPos) of
         {CurPos, ChoosePid} ->
             clean([RenderPid, StorePid, LastSchWallFlag, SchUsage]),
-            observer_cli_process:start(ChoosePid, Opts);
+            observer_cli_process:start(home, ChoosePid, Opts);
         {_, ChoosePid} when AutoJump ->
             clean([RenderPid, StorePid, LastSchWallFlag, SchUsage]),
-            observer_cli_process:start(ChoosePid, Opts);
+            observer_cli_process:start(home, ChoosePid, Opts);
         _ ->
             manager(StorePid, RenderPid, Opts, LastSchWallFlag)
     end.

@@ -235,27 +235,27 @@ render_menu(Type, Text) ->
 
 tidy_format_args([], _NeedLine, FAcc, AAcc) ->
     {FAcc, AAcc};
-tidy_format_args([{extend, A, W} | Rest], true, FAcc, AAcc) ->
+tidy_format_args([{width, A, W} | Rest], true, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
     F = <<"~-", WBin/binary, ".", WBin/binary, "ts">>,
     tidy_format_args(Rest, false, [F | FAcc], [to_str(A) | AAcc]);
-tidy_format_args([{extend, A, W} | Rest], false, FAcc, AAcc) ->
+tidy_format_args([{width, A, W} | Rest], false, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
     F = <<"~-", WBin/binary, ".", WBin/binary, "ts", ?I/binary>>,
     tidy_format_args(Rest, false, [F | FAcc], [to_str(A) | AAcc]);
-tidy_format_args([{extend_color, C, A, W} | Rest], true, FAcc, AAcc) ->
+tidy_format_args([{width_color, C, A, W} | Rest], true, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
     F = <<C/binary, "~-", WBin/binary, ".", WBin/binary, "ts">>,
     tidy_format_args(Rest, false, [F | FAcc], [to_str(A) | AAcc]);
-tidy_format_args([{extend_color, C, A, W} | Rest], false, FAcc, AAcc) ->
+tidy_format_args([{width_color, C, A, W} | Rest], false, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
     F = <<C/binary, "~-", WBin/binary, ".", WBin/binary, "ts", ?I2/binary>>,
     tidy_format_args(Rest, false, [F | FAcc], [to_str(A) | AAcc]);
-tidy_format_args([{extend_color_2, C, A, W} | Rest], true, FAcc, AAcc) ->
+tidy_format_args([{width_color_2, C, A, W} | Rest], true, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
     F = <<C/binary, "~-", WBin/binary, ".", WBin/binary, "ts">>,
     tidy_format_args(Rest, false, [F | FAcc], [to_str(A) | AAcc]);
-tidy_format_args([{extend_color_2, C, A, W} | Rest], false, FAcc, AAcc) ->
+tidy_format_args([{width_color_2, C, A, W} | Rest], false, FAcc, AAcc) ->
     WBin = erlang:integer_to_binary(W),
     F = <<C/binary, "~-", WBin/binary, ".", WBin/binary, "ts", ?RESET/binary, ?I2/binary>>,
     tidy_format_args(Rest, false, [F | FAcc], [to_str(A) | AAcc]);
@@ -444,15 +444,15 @@ flush() ->
     after 100 -> ok
     end.
 
--spec sublist(list(), integer(), integer()) -> list().
+-spec sublist(list(), integer(), integer()) -> {integer(), list()}.
 sublist(AllEts, Rows, CurPage) ->
     SortEts = recon_lib:sublist_top_n_attrs(AllEts, Rows * CurPage),
     Start = Rows * (CurPage - 1) + 1,
     case erlang:length(SortEts) >= Start of
         true ->
-            lists:sublist(SortEts, Start, Rows);
+            {Start, lists:sublist(SortEts, Start, Rows)};
         false ->
-            []
+            {Start, []}
     end.
 
 -spec sbcs_to_mbcs(list(), list()) -> list().

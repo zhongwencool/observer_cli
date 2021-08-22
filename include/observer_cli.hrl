@@ -88,9 +88,9 @@
 -define(NEW_LINE, "\e[0m\n|").
 -define(I, <<" | ">>).
 -define(I2, <<"|">>).
--define(W(_C_, _A_, _W_), {extend_color, _C_, _A_, _W_}).
--define(W2(_C_, _A_, _W_), {extend_color_2, _C_, _A_, _W_}).
--define(W(_A_, _W_), {extend, _A_, _W_}).
+-define(W(_C_, _A_, _W_), {width_color, _C_, _A_, _W_}).
+-define(W2(_C_, _A_, _W_), {width_color_2, _C_, _A_, _W_}).
+-define(W(_A_, _W_), {width, _A_, _W_}).
 
 -define(SELECT(Text), observer_cli_lib:select(Text)).
 -define(UNSELECT(Text), observer_cli_lib:unselect(Text)).

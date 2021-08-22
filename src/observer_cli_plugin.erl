@@ -30,11 +30,12 @@
 -spec start(ViewOpts) -> no_return() when ViewOpts :: view_opts().
 start(#view_opts{plug = Plugs, auto_row = AutoRow} = ViewOpts) ->
     NewPlugs = init_config(Plugs),
+    SheetCache = ets:new(?MODULE, [set, public]),
     Pid = spawn_link(fun() ->
         ?output(?CLEAR),
-        render_worker(?INIT_TIME_REF, NewPlugs, AutoRow, undefined, undefined)
+        render_worker(?INIT_TIME_REF, NewPlugs, AutoRow, SheetCache, undefined, undefined)
     end),
-    manager(Pid, ViewOpts#view_opts{plug = NewPlugs}).
+    manager(Pid, SheetCache, ViewOpts#view_opts{plug = NewPlugs}).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
@@ -49,6 +50,7 @@ init_config(#plug{plugs = []}) ->
             Config = maps:merge(
                 #{
                     cur_page => 1,
+                    cur_row => 1,
                     sort_column => 2,
                     interval => 1500,
                     sheet_width => SheetWidth
@@ -64,13 +66,15 @@ init_config(#plug{plugs = []}) ->
 init_config(Plugs) ->
     Plugs.
 
-manager(ChildPid, ViewOpts) ->
+manager(ChildPid, SheetCache, ViewOpts) ->
     #view_opts{plug = PlugOpts = #plug{cur_index = CurIndex, plugs = Plugs}} = ViewOpts,
     case parse_cmd() of
         quit ->
+            ets:delete(SheetCache),
             erlang:send(ChildPid, quit);
         go_home ->
             observer_cli_lib:exit_processes([ChildPid]),
+            ets:delete(SheetCache),
             observer_cli:start(ViewOpts);
         {new_interval, NewMs} ->
             observer_cli_lib:exit_processes([ChildPid]),
@@ -90,6 +94,40 @@ manager(ChildPid, ViewOpts) ->
             NewPlugs = update_plugins(CurIndex, Plugs, #{cur_page => NewPage}),
             observer_cli_lib:exit_processes([ChildPid]),
             start(ViewOpts#view_opts{plug = PlugOpts#plug{plugs = NewPlugs}});
+        {jump, CurRow} ->
+            case ets:lookup(SheetCache, CurRow) of
+                [{CurRow, Items}] ->
+                    case [I || I <- Items, is_pid(I)] of
+                        [ChoosePid | _] ->
+                            observer_cli_lib:exit_processes([ChildPid]),
+                            ets:delete(SheetCache),
+                            NewPlugs = update_plugins(CurIndex, Plugs, #{cur_row => CurRow}),
+                            NewViewOpts = ViewOpts#view_opts{
+                                plug = PlugOpts#plug{plugs = NewPlugs}
+                            },
+                            observer_cli_process:start(plugin, ChoosePid, NewViewOpts);
+                        [] ->
+                            manager(ChildPid, SheetCache, ViewOpts)
+                    end;
+                _ ->
+                    manager(ChildPid, SheetCache, ViewOpts)
+            end;
+        jump ->
+            CurPlugs = maps:get(CurIndex, Plugs),
+            CurRow = maps:get(cur_row, CurPlugs),
+            case ets:lookup(SheetCache, CurRow) of
+                [{CurRow, Items}] ->
+                    case [I || I <- Items, is_pid(I)] of
+                        [ChoosePid | _] ->
+                            observer_cli_lib:exit_processes([ChildPid]),
+                            ets:delete(SheetCache),
+                            observer_cli_process:start(plugin, ChoosePid, ViewOpts);
+                        [] ->
+                            manager(ChildPid, SheetCache, ViewOpts)
+                    end;
+                _ ->
+                    manager(ChildPid, SheetCache, ViewOpts)
+            end;
         {input_str, Cmd} ->
             case maybe_shortcut(Cmd, ViewOpts) of
                 {ok, menu, Index} ->
@@ -100,10 +138,10 @@ manager(ChildPid, ViewOpts) ->
                     observer_cli_lib:exit_processes([ChildPid]),
                     start(ViewOpts#view_opts{plug = PlugOpts#plug{plugs = NewPlugs}});
                 {error, _} ->
-                    manager(ChildPid, ViewOpts)
+                    manager(ChildPid, SheetCache, ViewOpts)
             end;
         _ ->
-            manager(ChildPid, ViewOpts)
+            manager(ChildPid, SheetCache, ViewOpts)
     end.
 
 update_plugins(CurIndex, Lists, UpdateItems) ->
@@ -149,6 +187,7 @@ render_worker(
     LastTimeRef,
     #plug{cur_index = CurIndex, plugs = Plugs} = PlugInfo,
     AutoRow,
+    SheetCache,
     PrevAttrs,
     PrevSheet
 ) ->
@@ -160,15 +199,16 @@ render_worker(
             {SheetLine, NewSheet} = render_sheet(
                 erlang:max(0, TerminalRow - LabelLine - 4),
                 CurPlug,
+                SheetCache,
                 PrevSheet
             ),
             LastText = io_lib:format(?LAST_LINE, [Interval, CurPage]),
-            LastLine = ?render([?UNDERLINE, ?GRAY_BG, ?W(LastText, SheetWidth)]),
+            LastLine = ?render([?UNDERLINE, ?GRAY_BG, ?W(LastText, SheetWidth + 4)]),
             ?output([?CURSOR_TOP, Menu, Labels, SheetLine, LastLine]),
             NextTimeRef = observer_cli_lib:next_redraw(LastTimeRef, Interval),
             receive
                 quit -> quit;
-                _ -> render_worker(NextTimeRef, PlugInfo, AutoRow, NewAttrs, NewSheet)
+                _ -> render_worker(NextTimeRef, PlugInfo, AutoRow, SheetCache, NewAttrs, NewSheet)
             end;
         error ->
             Menu = ?render([
@@ -189,6 +229,7 @@ parse_cmd() ->
         %% forward
         "F\n" -> page_down_top_n;
         "q\n" -> quit;
+        "\n" -> jump;
         Number -> observer_cli_lib:parse_integer(Number)
     end.
 
@@ -204,7 +245,7 @@ render_menu(#plug{cur_index = CurIndex, plugs = Plugs}, SheetWidth) ->
                 "|",
                 Title
             ],
-            SheetWidth + Num * 21 + 1
+            SheetWidth + Num * 21 + 5
         ),
         Time
     ]).
@@ -232,9 +273,14 @@ render_attributes(#{module := Module}, PrevAttrs) ->
                 L = [
                     begin
                         #{content := Content, width := Width} = Item,
+                        Value =
+                            case Content of
+                                {percent, Float} -> observer_cli_lib:to_percent(Float);
+                                _ -> Content
+                            end,
                         case maps:find(color, Item) of
-                            {ok, Color} -> ?W2(Color, Content, Width);
-                            error -> ?W(Content, Width)
+                            {ok, Color} -> ?W2(Color, Value, Width);
+                            error -> ?W(Value, Width)
                         end
                     end
                     || Item <- Label
@@ -249,14 +295,29 @@ render_attributes(#{module := Module}, PrevAttrs) ->
             {[], 0, PrevAttrs}
     end.
 
-render_sheet(Rows, #{sort_column := SortColumn, cur_page := CurPage, module := Module}, PrevSheet) ->
+render_sheet(Rows, Plug, SheetCache, PrevSheet) ->
+    #{
+        sort_column := SortColumn,
+        cur_page := CurPage,
+        cur_row := CurRow,
+        module := Module
+    } = Plug,
     try
         {Headers, Widths} = render_sheet_header(Module, SortColumn),
-        {Body, NewSheet} = render_sheet_body(Module, CurPage, Rows, SortColumn, Widths, PrevSheet),
+        {Body, NewSheet} = render_sheet_body(
+            Module,
+            CurPage,
+            CurRow,
+            Rows,
+            SortColumn,
+            Widths,
+            SheetCache,
+            PrevSheet
+        ),
         {[Headers | Body], NewSheet}
     catch
         error:undef ->
-            []
+            {[], []}
     end.
 
 render_sheet_header(Module, SortRow) ->
@@ -289,32 +350,32 @@ render_sheet_header(Module, SortRow) ->
         {[], [], length(SheetHeader)},
         lists:reverse(SheetHeader)
     ),
-    {?render(Headers), Widths}.
+    {?render([?W2(?GRAY_BG, "No ", 3) | Headers]), Widths}.
 
-render_sheet_body(Module, CurPage, Rows, SortRow, Widths, PrevSheet) ->
+render_sheet_body(Module, CurPage, CurRow, Rows, SortRow, Widths, SheetCache, PrevSheet) ->
     {Diff, NewSheet} = Module:sheet_body(PrevSheet),
-    DataSet = lists:map(
-        fun(I) ->
-            {0, lists:nth(SortRow, I), I}
+    DataSet = lists:map(fun(I) -> {0, lists:nth(SortRow, I), I} end, Diff),
+    {StartAt, SortData} = observer_cli_lib:sublist(DataSet, Rows, CurPage),
+    {Line, _} = lists:foldl(
+        fun({_, _, Item}, {List, Pos}) ->
+            L = mix_content_width(Item, Widths, []),
+            ets:insert(SheetCache, {Pos, Item}),
+            case CurRow =:= Pos of
+                false -> {[?render([?W(Pos, 2) | L])] ++ List, Pos + 1};
+                true -> {[?render([?W(?CHOOSE_BG, Pos, 4) | L])] ++ List, Pos + 1}
+            end
         end,
-        Diff
+        {[], StartAt},
+        SortData
     ),
-    SortData = observer_cli_lib:sublist(DataSet, Rows, CurPage),
-    Line = [
-        begin
-            List = mix_content_width(Item, Widths, []),
-            ?render(List)
-        end
-        || {_, _, Item} <- SortData
-    ],
-    {Line, NewSheet}.
+    {lists:reverse(Line), NewSheet}.
 
 mix_content_width([], _, Acc) ->
     lists:reverse(Acc);
 %% first
 mix_content_width([I | IRest], [W | WRest], []) ->
     IList = observer_cli_lib:to_list(I),
-    mix_content_width(IRest, WRest, [?W(IList, W - 1)]);
+    mix_content_width(IRest, WRest, [?W(IList, W - 2)]);
 %% last
 mix_content_width([I], [W], Acc) ->
     IList = observer_cli_lib:to_list(I),

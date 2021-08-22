@@ -77,7 +77,7 @@ render_ets_info(Rows, CurPage, Attr) ->
         || Tab <- ets:all()
     ],
     WordSize = erlang:system_info(wordsize),
-    SortEts = observer_cli_lib:sublist(AllEts, Rows, CurPage),
+    {_StartPos, SortEts} = observer_cli_lib:sublist(AllEts, Rows, CurPage),
     {MemColor, SizeColor} =
         case Attr of
             memory -> {?RED_BG, ?GRAY_BG};
