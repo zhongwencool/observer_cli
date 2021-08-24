@@ -333,10 +333,10 @@ render_sheet_header(Module, SortRow) ->
                     Shortcut -> Header ++ "(" ++ Shortcut ++ ")"
                 end,
             Line =
-            case Index =:= SortRow of
-                true -> [?UNDERLINE, ?W2(?RED_BG, Title, Width) | HeaderAcc];
-                false -> [?UNDERLINE, ?W2(?GRAY_BG, Title, Width) | HeaderAcc]
-            end,
+                case Index =:= SortRow of
+                    true -> [?UNDERLINE, ?W2(?RED_BG, Title, Width) | HeaderAcc];
+                    false -> [?UNDERLINE, ?W2(?GRAY_BG, Title, Width) | HeaderAcc]
+                end,
             {Line, [Width | WidthAcc], Index - 1}
         end,
         {[], [], length(SheetHeader)},
