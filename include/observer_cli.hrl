@@ -16,6 +16,12 @@
         ?DISABLE | ?ENABLE
 }).
 
+-record(app, {
+    type = {memory, 1} :: {atom(), pos_integer()},
+    cur_page = 1 :: pos_integer(),
+    interval = ?DEFAULT_INTERVAL :: pos_integer()
+}).
+
 -record(ets, {
     interval = 2000 :: integer(),
     attr = memory :: atom(),
@@ -48,6 +54,7 @@
     home = #home{} :: home(),
     ets = #ets{} :: ets(),
     sys = #system{} :: system(),
+    app = #app{} :: app(),
     db = #db{} :: db(),
     help = #help{} :: help(),
     inet = #inet{} :: inet(),
@@ -61,6 +68,7 @@
 
 -type view_opts() :: #view_opts{}.
 -type home() :: #home{}.
+-type app() :: #app{}.
 -type system() :: #system{}.
 -type ets() :: #ets{}.
 -type db() :: #db{}.
