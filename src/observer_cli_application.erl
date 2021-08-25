@@ -134,6 +134,8 @@ render_app_info(Row, CurPage, {Type, N}) ->
     ),
     [Title | lists:reverse(View)].
 
+-define(Unknown, {unknown, unknown}).
+
 app_info() ->
     Info = application:info(),
     {running, Running} = lists:keyfind(running, 1, Info),
@@ -169,17 +171,19 @@ app_info() ->
                     ] = Prop,
                     case maps:find(Group, Leaders) of
                         error ->
-                            Acc;
+                            {ok, {R1, M1, Q1, C1}} = maps:find(?Unknown, Acc),
+                            NewInfo = {R1 + Reds, M1 + Memory, Q1 + MsgQ, C1 + 1},
+                            maps:put(?Unknown, NewInfo, Acc);
                         {ok, AppInfo} ->
                             case maps:find(AppInfo, Acc) of
                                 {ok, {R, M, Q, C}} ->
                                     maps:put(AppInfo, {R + Reds, M + Memory, Q + MsgQ, C + 1}, Acc);
-                                _ ->
+                                error ->
                                     maps:put(AppInfo, {Reds, Memory, MsgQ, 1}, Acc)
                             end
                     end
             end
         end,
-        #{},
+        #{?Unknown => {0, 0, 0, 0}},
         erlang:processes()
     ).
