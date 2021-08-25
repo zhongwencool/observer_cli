@@ -224,6 +224,7 @@ Support F/B to page up/down.
 ----------------
 ### Changelog
 - 1.7.0
+  - application view support reductions/memory/process_count sort
   - plugin support `{byte, 1024}` to `10.0000 KB`
   - plugin support `{percent, 0.1234` to `12.34%`
   - plugin support dig deep process view.
