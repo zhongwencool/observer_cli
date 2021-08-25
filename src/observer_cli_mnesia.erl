@@ -98,7 +98,7 @@ render_worker(Interval, LastTimeRef, HideSystemTable, AutoRow, Attr, CurPage) ->
     end.
 
 render_mnesia(MnesiaList, Attr, Rows, CurPage) ->
-    SortMnesia = observer_cli_lib:sublist(MnesiaList, Rows, CurPage),
+    {_StartPos, SortMnesia} = observer_cli_lib:sublist(MnesiaList, Rows, CurPage),
     {MemColor, SizeColor} =
         case Attr of
             memory -> {?RED_BG, ?GRAY_BG};

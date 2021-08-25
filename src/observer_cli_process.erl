@@ -2,42 +2,52 @@
 
 -include("observer_cli.hrl").
 
--export([start/2]).
+-export([start/3]).
 
 %% lists:foldl(fun(_X, Acc) -> queue:in('NaN', Acc) end, queue:new(), lists:seq(1, 5))
 -define(INIT_QUEUE, {['NaN', 'NaN', 'NaN', 'NaN'], ['NaN']}).
 
--spec start(pid(), view_opts()) -> no_return.
-start(Pid, Opts) ->
+-spec start(Type, pid(), view_opts()) -> no_return when Type :: home | plugin.
+start(Type, Pid, Opts) ->
     #view_opts{process = #process{interval = RefreshMs}} = Opts,
     RenderPid = spawn_link(fun() ->
         ?output(?CLEAR),
-        render_worker(info, RefreshMs, Pid, ?INIT_TIME_REF, ?INIT_QUEUE, ?INIT_QUEUE)
+        render_worker(info, Type, RefreshMs, Pid, ?INIT_TIME_REF, ?INIT_QUEUE, ?INIT_QUEUE)
     end),
-    manager(RenderPid, Opts).
+    manager(RenderPid, Type, Opts).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-manager(RenderPid, #view_opts{process = ProcOpts} = Opts) ->
-    case parse_cmd(Opts, RenderPid) of
+manager(RenderPid, Type, #view_opts{process = ProcOpts} = Opts) ->
+    case parse_cmd() of
         quit ->
             erlang:send(RenderPid, quit);
         {new_interval, NewInterval} ->
             erlang:send(RenderPid, {new_interval, NewInterval}),
-            manager(RenderPid, Opts#view_opts{process = ProcOpts#process{interval = NewInterval}});
+            NewOpt = Opts#view_opts{process = ProcOpts#process{interval = NewInterval}},
+            manager(RenderPid, Type, NewOpt);
+        home ->
+            erlang:exit(RenderPid, stop),
+            observer_cli:start(Opts);
+        back when Type =:= home ->
+            erlang:exit(RenderPid, stop),
+            observer_cli:start(Opts);
+        back when Type =:= plugin ->
+            erlang:exit(RenderPid, stop),
+            observer_cli_plugin:start(Opts);
         ViewAction ->
             erlang:send(RenderPid, ViewAction),
-            manager(RenderPid, Opts)
+            manager(RenderPid, Type, Opts)
     end.
 
-render_worker(info, Interval, Pid, TimeRef, RedQ, MemQ) ->
+render_worker(info, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
     ProcessInfo = recon:info(Pid),
     Meta = proplists:get_value(meta, ProcessInfo),
     case Meta of
         undefined ->
-            output_die_view(Pid, Interval),
-            next_draw_view(info, TimeRef, Interval, Pid, RedQ, MemQ);
+            output_die_view(Pid, Type, Interval),
+            next_draw_view(info, Type, TimeRef, Interval, Pid, RedQ, MemQ);
         _ ->
             RegisteredName = proplists:get_value(registered_name, Meta),
             GroupLeader = proplists:get_value(group_leader, Meta),
@@ -62,7 +72,7 @@ render_worker(info, Interval, Pid, TimeRef, RedQ, MemQ) ->
             Work = proplists:get_value(work, ProcessInfo),
             Reductions = proplists:get_value(reductions, Work),
 
-            Menu = render_menu(info, Interval),
+            Menu = render_menu(info, Type, Interval),
 
             Line1 = render_process_info(
                 Pid,
@@ -84,9 +94,9 @@ render_worker(info, Interval, Pid, TimeRef, RedQ, MemQ) ->
             LastLine = render_last_line(),
 
             ?output([?CURSOR_TOP, Menu, Line1, Line2, Line3, LastLine]),
-            next_draw_view(info, TimeRef, Interval, Pid, NewRedQ, NewMemQ)
+            next_draw_view(info, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ)
     end;
-render_worker(message, Interval, Pid, TimeRef, RedQ, MemQ) ->
+render_worker(message, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
     case erlang:process_info(Pid, message_queue_len) of
         {message_queue_len, Len} ->
             Line =
@@ -102,14 +112,14 @@ render_worker(message, Interval, Pid, TimeRef, RedQ, MemQ) ->
                             truncate_str(Messages)
                         ]
                 end,
-            Menu = render_menu(message, Interval),
+            Menu = render_menu(message, Type, Interval),
             LastLine = render_last_line(),
             ?output([?CURSOR_TOP, Menu, Line, LastLine]),
-            next_draw_view(message, TimeRef, Interval, Pid, RedQ, MemQ);
+            next_draw_view(message, Type, TimeRef, Interval, Pid, RedQ, MemQ);
         undefined ->
-            render_worker(info, Interval, Pid, ?INIT_TIME_REF, ?INIT_QUEUE, ?INIT_QUEUE)
+            render_worker(info, Type, Interval, Pid, ?INIT_TIME_REF, ?INIT_QUEUE, ?INIT_QUEUE)
     end;
-render_worker(dict, Interval, Pid, TimeRef, RedQ, MemQ) ->
+render_worker(dict, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
     case erlang:process_info(Pid, dictionary) of
         {dictionary, List} ->
             Len = erlang:length(List),
@@ -122,17 +132,17 @@ render_worker(dict, Interval, Pid, TimeRef, RedQ, MemQ) ->
                     0 -> "\e[32;1mNo dictionary was found\e[0m\n";
                     _ -> truncate_str(List)
                 end,
-            Menu = render_menu(dict, Interval),
+            Menu = render_menu(dict, Type, Interval),
             LastLine = render_last_line(),
             ?output([?CURSOR_TOP, Menu, Line1, Line2, LastLine]),
-            next_draw_view(dict, TimeRef, Interval, Pid, RedQ, MemQ);
+            next_draw_view(dict, Type, TimeRef, Interval, Pid, RedQ, MemQ);
         undefined ->
-            render_worker(info, Interval, Pid, ?INIT_TIME_REF, ?INIT_QUEUE, ?INIT_QUEUE)
+            render_worker(info, Type, Interval, Pid, ?INIT_TIME_REF, ?INIT_QUEUE, ?INIT_QUEUE)
     end;
-render_worker(stack, Interval, Pid, TimeRef, RedQ, MemQ) ->
+render_worker(stack, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
     case erlang:process_info(Pid, current_stacktrace) of
         {current_stacktrace, StackTrace} ->
-            Menu = render_menu(stack, Interval),
+            Menu = render_menu(stack, Type, Interval),
             Prompt = io_lib:format("erlang:process_info(~p, current_stacktrace).      ~n", [Pid]),
             LastLine = render_last_line(),
             {_, Line} =
@@ -151,44 +161,44 @@ render_worker(stack, Interval, Pid, TimeRef, RedQ, MemQ) ->
                     lists:sublist(StackTrace, 30)
                 ),
             ?output([?CURSOR_TOP, Menu, Prompt, ?render(Line), LastLine]),
-            next_draw_view(stack, TimeRef, Interval, Pid, RedQ, MemQ);
+            next_draw_view(stack, Type, TimeRef, Interval, Pid, RedQ, MemQ);
         undefined ->
-            render_worker(info, Interval, Pid, ?INIT_TIME_REF, ?INIT_QUEUE, ?INIT_QUEUE)
+            render_worker(info, Type, Interval, Pid, ?INIT_TIME_REF, ?INIT_QUEUE, ?INIT_QUEUE)
     end;
-render_worker(state, Interval, Pid, TimeRef, RedQ, MemQ) ->
-    case render_state(Pid, Interval) of
-        ok -> next_draw_view(state, TimeRef, Interval, Pid, RedQ, MemQ);
-        error -> next_draw_view_2(state, TimeRef, Interval, Pid, RedQ, MemQ)
+render_worker(state, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
+    case render_state(Pid, Type, Interval) of
+        ok -> next_draw_view(state, Type, TimeRef, Interval, Pid, RedQ, MemQ);
+        error -> next_draw_view_2(state, Type, TimeRef, Interval, Pid, RedQ, MemQ)
     end.
 
-next_draw_view(Status, TimeRef, Interval, Pid, NewRedQ, NewMemQ) ->
+next_draw_view(Status, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ) ->
     NewTimeRef = observer_cli_lib:next_redraw(TimeRef, Interval),
-    next_draw_view_2(Status, NewTimeRef, Interval, Pid, NewRedQ, NewMemQ).
+    next_draw_view_2(Status, Type, NewTimeRef, Interval, Pid, NewRedQ, NewMemQ).
 
-next_draw_view_2(Status, TimeRef, Interval, Pid, NewRedQ, NewMemQ) ->
+next_draw_view_2(Status, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ) ->
     receive
         quit ->
             quit;
         {new_interval, NewInterval} ->
             ?output(?CLEAR),
-            render_worker(Status, NewInterval, Pid, TimeRef, NewRedQ, NewMemQ);
+            render_worker(Status, Type, NewInterval, Pid, TimeRef, NewRedQ, NewMemQ);
         info_view ->
             ?output(?CLEAR),
-            render_worker(info, Interval, Pid, TimeRef, NewRedQ, NewMemQ);
+            render_worker(info, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ);
         message_view ->
             ?output(?CLEAR),
-            render_worker(message, Interval, Pid, TimeRef, NewRedQ, NewMemQ);
+            render_worker(message, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ);
         dict_view ->
             ?output(?CLEAR),
-            render_worker(dict, Interval, Pid, TimeRef, NewRedQ, NewMemQ);
+            render_worker(dict, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ);
         stack_view ->
             ?output(?CLEAR),
-            render_worker(stack, Interval, Pid, TimeRef, NewRedQ, NewMemQ);
+            render_worker(stack, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ);
         state_view ->
             ?output(?CLEAR),
-            render_worker(state, Interval, Pid, TimeRef, NewRedQ, NewMemQ);
+            render_worker(state, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ);
         _Msg ->
-            render_worker(Status, Interval, Pid, TimeRef, NewRedQ, NewMemQ)
+            render_worker(Status, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ)
     end.
 
 render_process_info(
@@ -334,56 +344,61 @@ chart_format([R1, R2 | RestRed], Lines) when R1 > R2 ->
 chart_format([R1, R2 | RestRed], Lines) when R1 < R2 ->
     chart_format([R2 | RestRed], Lines ++ observer_cli_lib:to_list(R1) ++ "->").
 
-render_menu(Type, Interval) ->
+render_menu(Type, Menu, Interval) ->
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
-    Title = get_menu_title(Type),
+    Title = get_menu_title(Type, Menu),
     UpTime = observer_cli_lib:uptime(),
     TitleWidth = ?COLUMN + 104 - erlang:length(UpTime),
     ?render([?W([Title | Text], TitleWidth) | UpTime]).
 
-get_menu_title(Type) ->
-    [Home, Process, Messages, Dict, Stack, State] = get_menu_title2(Type),
+get_menu_title(Type, Menu) ->
+    MenuStr =
+        case Menu of
+            home -> "Home(H)";
+            plugin -> "Back(B)"
+        end,
+    [Home, Process, Messages, Dict, Stack, State] = get_menu_title2(Type, MenuStr),
     [Home, "|", Process, "|", Messages, "|", Dict, "|", Stack, "|", State, "|"].
 
-get_menu_title2(info) ->
+get_menu_title2(info, Menu) ->
     [
-        ?UNSELECT("Home(H)"),
+        ?UNSELECT(Menu),
         ?SELECT("Process Info(P)"),
         ?UNSELECT("Messages(M)"),
         ?UNSELECT("Dictionary(D)"),
         ?UNSELECT("Current Stack(C)"),
         ?UNSELECT("State(S)")
     ];
-get_menu_title2(message) ->
+get_menu_title2(message, Menu) ->
     [
-        ?UNSELECT("Home(H)"),
+        ?UNSELECT(Menu),
         ?UNSELECT("Process Info(P)"),
         ?SELECT("Messages(M)"),
         ?UNSELECT("Dictionary(D)"),
         ?UNSELECT("Current Stack(C)"),
         ?UNSELECT("State(S)")
     ];
-get_menu_title2(dict) ->
+get_menu_title2(dict, Menu) ->
     [
-        ?UNSELECT("Home(H)"),
+        ?UNSELECT(Menu),
         ?UNSELECT("Process Info(P)"),
         ?UNSELECT("Messages(M)"),
         ?SELECT("Dictionary(D)"),
         ?UNSELECT("Current Stack(C)"),
         ?UNSELECT("State(S)")
     ];
-get_menu_title2(stack) ->
+get_menu_title2(stack, Menu) ->
     [
-        ?UNSELECT("Home(H)"),
+        ?UNSELECT(Menu),
         ?UNSELECT("Process Info(P)"),
         ?UNSELECT("Messages(M)"),
         ?UNSELECT("Dictionary(D)"),
         ?SELECT("Current Stack(C)"),
         ?UNSELECT("State(S)")
     ];
-get_menu_title2(state) ->
+get_menu_title2(state, Menu) ->
     [
-        ?UNSELECT("Home(H)"),
+        ?UNSELECT(Menu),
         ?UNSELECT("Process Info(P)"),
         ?UNSELECT("Messages(M)"),
         ?UNSELECT("Dictionary(D)"),
@@ -391,7 +406,7 @@ get_menu_title2(state) ->
         ?SELECT("State(S)")
     ].
 
-parse_cmd(ViewOpts, Pid) ->
+parse_cmd() ->
     case observer_cli_lib:to_list(io:get_line("")) of
         "q\n" ->
             quit;
@@ -408,14 +423,15 @@ parse_cmd(ViewOpts, Pid) ->
         "S\n" ->
             state_view;
         "H\n" ->
-            erlang:exit(Pid, stop),
-            observer_cli:start(ViewOpts);
+            home;
+        "B\n" ->
+            back;
         Number ->
             observer_cli_lib:parse_integer(Number)
     end.
 
-render_state(Pid, Interval) ->
-    Menu = render_menu(state, Interval),
+render_state(Pid, Type, Interval) ->
+    Menu = render_menu(state, Type, Interval),
     PromptRes = io_lib:format("recon:get_state(~p, 2500).                            ~n", [Pid]),
     PromptBefore = io_lib:format("\e[32;1mWaiting recon:get_state(~p, 2500) return...\e[0m~n", [Pid]),
     LastLine = render_last_line(),
@@ -433,8 +449,8 @@ render_state(Pid, Interval) ->
             error
     end.
 
-output_die_view(Pid, Interval) ->
-    Menu = render_menu(info, Interval),
+output_die_view(Pid, Type, Interval) ->
+    Menu = render_menu(info, Type, Interval),
     Line = io_lib:format("\e[31mProcess(~p) has already die.\e[0m~n", [Pid]),
     LastLine = render_last_line(),
     ?output([?CURSOR_TOP, Menu, Line, LastLine]).
