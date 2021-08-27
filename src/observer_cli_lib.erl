@@ -362,6 +362,9 @@ parse_cmd(ViewOpts, Module, Args) ->
             hide;
         "`\n" ->
             scheduler_usage;
+        %% {error, estale}|{error, terminated}
+        {error, _Reason} ->
+            quit;
         Number ->
             parse_integer(Number)
     end.

@@ -17,7 +17,7 @@
 }).
 
 -record(app, {
-    type = {memory, 1} :: {atom(), pos_integer()},
+    type = {proc_count, 1} :: {atom(), pos_integer()},
     cur_page = 1 :: pos_integer(),
     interval = ?DEFAULT_INTERVAL :: pos_integer()
 }).

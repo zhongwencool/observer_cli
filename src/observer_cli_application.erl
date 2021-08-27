@@ -34,18 +34,18 @@ manager(Pid, Opts = #view_opts{app = App = #app{cur_page = CurPage}}) ->
             erlang:unlink(Pid),
             erlang:send(Pid, quit),
             quit;
-        {func, proc_count, reductions} ->
-            clean([Pid]),
-            start(Opts#view_opts{app = App#app{type = {reductions, 2}}});
-        {func, proc_count, memory} ->
-            clean([Pid]),
-            start(Opts#view_opts{app = App#app{type = {memory, 3}}});
         {func, proc_count, message_queue_len} ->
             clean([Pid]),
             start(Opts#view_opts{app = App#app{type = {message_queue_len, 4}}});
+        {func, proc_count, reductions} ->
+            clean([Pid]),
+            start(Opts#view_opts{app = App#app{type = {reductions, 3}}});
+        {func, proc_count, memory} ->
+            clean([Pid]),
+            start(Opts#view_opts{app = App#app{type = {memory, 2}}});
         pause_or_resume ->
             clean([Pid]),
-            start(Opts#view_opts{app = App#app{type = {process_count, 5}}});
+            start(Opts#view_opts{app = App#app{type = {proc_count, 1}}});
         {new_interval, NewInterval} ->
             clean([Pid]),
             start(Opts#view_opts{app = App#app{interval = NewInterval}});
@@ -80,14 +80,14 @@ render_worker(App, AutoRow) ->
 render_app_info(Row, CurPage, {Type, N}) ->
     List = [
         begin
-            {0, element(N, I), [App, C, R, M, Q, V, S]}
+            {0, {element(N, I), S}, [App, C, M, R, Q, S, V]}
         end
-        || {{App, V}, I = {S, R, M, Q, C}} <- maps:to_list(app_info())
+        || {App, I = {C, M, R, Q, S, V}} <- maps:to_list(app_info())
     ],
     {StartPos, SortList} = observer_cli_lib:sublist(List, Row, CurPage),
     InitColor = [
         {memory, ?GRAY_BG},
-        {process_count, ?GRAY_BG},
+        {proc_count, ?GRAY_BG},
         {reductions, ?GRAY_BG},
         {message_queue_len, ?GRAY_BG}
     ],
@@ -117,7 +117,7 @@ render_app_info(Row, CurPage, {Type, N}) ->
     ]),
     {_, View} = lists:foldl(
         fun({_, _, Item}, {Pos, Acc}) ->
-            [App, C, R, M, Q, V, S] = Item,
+            [App, C, R, M, Q, S, V] = Item,
             {Pos + 1, [
                 ?render([
                     ?W(Pos, 2),
@@ -137,76 +137,106 @@ render_app_info(Row, CurPage, {Type, N}) ->
     ),
     [Title | lists:reverse(View)].
 
--define(Unknown, {unknown, unknown}).
-
 app_info() ->
     Info = application:info(),
+    AllApps = app_status(Info),
+    Leaders = leader_info(Info),
+    app_info(AllApps, Leaders, erlang:processes(), self()).
+
+app_info(AllApps, _Leaders, [], _Self) ->
+    AllApps;
+app_info(AllApps, Leaders, [Self | Process], Self) ->
+    app_info(AllApps, Leaders, Process, Self);
+app_info(AllApps, Leaders, [Pid | Process], Self) ->
+    case erlang:process_info(Pid, [group_leader, memory, reductions, message_queue_len]) of
+        undefined ->
+            app_info(AllApps, Leaders, Process, Self);
+        Prop ->
+            [
+                {group_leader, Group},
+                {memory, Memory},
+                {reductions, Reds},
+                {message_queue_len, MsgQ}
+            ] = Prop,
+            NewAllApps =
+                case maps:find(Group, Leaders) of
+                    error ->
+                        {ok, {C1, M1, R1, Q1, S1, V1}} = maps:find(unknown, AllApps),
+                        NewInfo = {C1 + 1, M1 + Memory, R1 + Reds, Q1 + MsgQ, S1, V1},
+                        maps:put(unknown, NewInfo, AllApps);
+                    {ok, App} ->
+                        {ok, {C, M, R, Q, S, V}} = maps:find(App, AllApps),
+                        maps:put(App, {C + 1, M + Memory, R + Reds, Q + MsgQ, S, V}, AllApps)
+                end,
+            app_info(NewAllApps, Leaders, Process, Self)
+    end.
+
+leader_info(Info) ->
     {running, Running} = lists:keyfind(running, 1, Info),
+    leader_info(Running, #{}).
+
+leader_info([{App, Sup} | Running], Acc) when is_pid(Sup) ->
+    NewAcc =
+        case erlang:process_info(Sup, group_leader) of
+            undefined ->
+                Acc;
+            {group_leader, Pid} ->
+                Acc#{Pid => App}
+        end,
+    leader_info(Running, NewAcc);
+leader_info([_ | Running], Acc) ->
+    leader_info(Running, Acc);
+leader_info([], Acc) ->
+    Acc.
+
+app_status(Info) ->
     {loaded, Loaded} = lists:keyfind(loaded, 1, Info),
     {loading, Loading} = lists:keyfind(loading, 1, Info),
     {started, Started} = lists:keyfind(started, 1, Info),
     {start_p_false, StartPFalse} = lists:keyfind(start_p_false, 1, Info),
     {starting, Starting} = lists:keyfind(starting, 1, Info),
-    Leaders =
-        lists:foldl(
-            fun
-                ({_App, undefined}, Acc) ->
-                    Acc;
-                ({App, Sup}, Acc) ->
-                    case erlang:process_info(Sup, group_leader) of
-                        undefined ->
-                            Acc;
-                        {group_leader, Pid} ->
-                            {_, _, Version} = lists:keyfind(App, 1, Loaded),
-                            Acc#{Pid => {App, Version}}
-                    end
-            end,
-            #{},
-            Running
-        ),
-    Status = lists:foldl(fun({App, _desc, Version}, Acc) ->
-        IsLoading = lists:keyfind(App, 1, Loading) =/= false,
-        IsStarting = lists:keyfind(App, 1, Starting) =/= false,
-        IsStartPFalse = lists:keyfind(App, 1, StartPFalse) =/= false,
-        IsStarted = lists:keyfind(App, 1, Started) =/= false,
-        IsLoaded = lists:keyfind(App, 1, Loaded) =/= false,
-        case {IsLoading, IsStarting, IsStartPFalse, IsStarted, IsLoaded} of
-            {true, _, _, _, _} -> Acc#{{App, Version} => "Loading"};
-            {_, true, _, _, _} -> Acc#{{App, Version} => "Starting"};
-            {_, _, true, _, _} -> Acc#{{App, Version} => "StartPFalse"};
-            {_, _, _, true, _} -> Acc#{{App, Version} => "Started"};
-            {_, _, _, _, true} -> Acc#{{App, Version} => "Loaded"};
-            _ -> Acc#{{App, Version} => "Unknown"}
-        end
-                         end, #{}, application:which_applications(5000)),
-    lists:foldl(
-        fun(Pid, Acc) ->
-            case erlang:process_info(Pid, [group_leader, memory, reductions, message_queue_len]) of
-                undefined ->
-                    Acc;
-                Prop ->
-                    [
-                        {group_leader, Group},
-                        {memory, Memory},
-                        {reductions, Reds},
-                        {message_queue_len, MsgQ}
-                    ] = Prop,
-                    case maps:find(Group, Leaders) of
-                        error ->
-                            {ok, {S1, R1, M1, Q1, C1}} = maps:find(?Unknown, Acc),
-                            NewInfo = {S1, R1 + Reds, M1 + Memory, Q1 + MsgQ, C1 + 1},
-                            maps:put(?Unknown, NewInfo, Acc);
-                        {ok, AppInfo} ->
-                            case maps:find(AppInfo, Acc) of
-                                {ok, {S, R, M, Q, C}} ->
-                                    maps:put(AppInfo, {S, R + Reds, M + Memory, Q + MsgQ, C + 1}, Acc);
-                                error ->
-                                    {ok, S} = maps:find(AppInfo, Status),
-                                    maps:put(AppInfo, {S, Reds, Memory, MsgQ, 1}, Acc)
-                            end
-                    end
-            end
+    R0 = #{unknown => {0, 0, 0, 0, "Unknown", "unknown"}},
+    R1 = lists:foldl(
+        fun({App, _From}, Acc) ->
+            Acc#{App => {0, 0, 0, 0, "Loading", "unknown"}}
         end,
-        #{?Unknown => {"unknown", 0, 0, 0, 0}},
-        erlang:processes()
+        R0,
+        Loading
+    ),
+    R2 = lists:foldl(
+        fun({App, _Desc, Version}, Acc) ->
+            Acc#{App => {0, 0, 0, 0, "Loaded", Version}}
+        end,
+        R1,
+        Loaded
+    ),
+    R3 = lists:foldl(
+        fun({App, _RestartType, _Type, _From}, Acc) ->
+            Version = get_version(App, Acc),
+            Acc#{App => {0, 0, 0, 0, "Starting", Version}}
+        end,
+        R2,
+        Starting
+    ),
+    R4 = lists:foldl(
+        fun({App, _RestartType}, Acc) ->
+            Version = get_version(App, Acc),
+            Acc#{App => {0, 0, 0, 0, "Started", Version}}
+        end,
+        R3,
+        Started
+    ),
+    lists:foldl(
+        fun({App, _RestartType, _Type, _From}, Acc) ->
+            Version = get_version(App, Acc),
+            Acc#{App => {0, 0, 0, 0, "StartPFlase", Version}}
+        end,
+        R4,
+        StartPFalse
     ).
+
+get_version(App, Maps) ->
+    case maps:find(App, Maps) of
+        {ok, {_, _, _, _, _, V}} -> V;
+        _ -> "unknown"
+    end.
