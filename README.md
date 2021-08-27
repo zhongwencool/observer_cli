@@ -24,7 +24,7 @@ Visualize Erlang/Elixir Nodes On The Command Line base on [recon](https://github
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.7.0
+dep_observer_cli = hex 1.7.1
 ```
 **Elixir**
 ```elixir
@@ -223,6 +223,10 @@ Support F/B to page up/down.
 
 ----------------
 ### Changelog
+- 1.7.1
+  - application view show starting/loading/startPfalse/loaded/started application.
+  - fixed badarg when staring by rpc and stop by `ctrl+c`.
+  - fixed mix.exe version error
 - 1.7.0
   - application view support reductions/memory/process_count sort
   - plugin support `{byte, 1024}` to `10.0000 KB`
