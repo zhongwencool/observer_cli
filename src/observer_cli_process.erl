@@ -426,6 +426,9 @@ parse_cmd() ->
             home;
         "B\n" ->
             back;
+        %% {error, estale}|{error, terminated}
+        {error, _Reason} ->
+            quit;
         Number ->
             observer_cli_lib:parse_integer(Number)
     end.

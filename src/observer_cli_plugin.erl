@@ -230,6 +230,8 @@ parse_cmd() ->
         "F\n" -> page_down_top_n;
         "q\n" -> quit;
         "\n" -> jump;
+        %% {error, estale}|{error, terminated}
+        {error, _Reason} -> quit;
         Number -> observer_cli_lib:parse_integer(Number)
     end.
 
