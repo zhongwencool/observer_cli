@@ -9,7 +9,7 @@
 
 -define(LAST_LINE,
     "q(quit) s(sort by size) m(sort by memory) pd/pu(page:down/up) F/B(forward/back)"
-    " hide(swith between hide and display system table)"
+    " hide(switch between hide and display system table)"
 ).
 
 -spec start(#view_opts{}) -> any().
