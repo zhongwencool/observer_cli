@@ -284,10 +284,10 @@ render_link_monitor(Link, Monitors, MonitoredBy) ->
     MonitorsStr = [
         begin
             case P of
+                {process, {RegName, Node}} ->
+                    observer_cli_lib:to_list(RegName) ++ "/" ++ observer_cli_lib:to_list(Node);
                 {process, Pid} ->
-                    observer_cli_lib:to_list(Pid);
-                {RegName, Node} ->
-                    observer_cli_lib:to_list(RegName) ++ "/" ++ observer_cli_lib:to_list(Node)
+                    observer_cli_lib:to_list(Pid)
             end
         end
         || P <- lists:sublist(Monitors, 30)
