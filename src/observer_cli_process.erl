@@ -49,6 +49,8 @@ render_worker(info, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
             output_die_view(Pid, Type, Interval),
             next_draw_view(info, Type, TimeRef, Interval, Pid, RedQ, MemQ);
         _ ->
+            WordSize = erlang:system_info(wordsize),
+
             RegisteredName = proplists:get_value(registered_name, Meta),
             GroupLeader = proplists:get_value(group_leader, Meta),
             Status = proplists:get_value(status, Meta),
@@ -65,8 +67,8 @@ render_worker(info, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
             MemoryUsed = proplists:get_value(memory_used, ProcessInfo),
             Memory = proplists:get_value(memory, MemoryUsed),
             MessageQueueLen = proplists:get_value(message_queue_len, MemoryUsed),
-            HeapSize = proplists:get_value(heap_size, MemoryUsed),
-            TotalHeapSize = proplists:get_value(total_heap_size, MemoryUsed),
+            HeapSize = proplists:get_value(heap_size, MemoryUsed, 0) * WordSize,
+            TotalHeapSize = proplists:get_value(total_heap_size, MemoryUsed, 0) * WordSize,
             GarbageCollection = proplists:get_value(garbage_collection, MemoryUsed),
 
             Work = proplists:get_value(work, ProcessInfo),
