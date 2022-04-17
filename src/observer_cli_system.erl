@@ -290,15 +290,15 @@ sys_info(Cmd) ->
     [CpuPsV, MemPsV, RssPsV, VszPsV] =
         case lists:filter(fun(Y) -> Y =/= [] end, string:split(CmdValue, " ", all)) of
             [] -> ["--", "--", "--", "--"];
-            [V1, V2, V3, V4] -> [V1, V2, V3, V4]
+            [V1, V2, V3, V4] -> [V1, V2, list_to_integer(V3) * 1024, list_to_integer(V4) * 1024]
         end,
 
     {{_, Input}, {_, Output}} = erlang:statistics(io),
     [
         {ps_cpu, CpuPsV ++ "%"},
         {ps_mem, MemPsV ++ "%"},
-        {ps_rss, list_to_integer(RssPsV) * 1024},
-        {ps_vsz, list_to_integer(VszPsV) * 1024},
+        {ps_rss, RssPsV},
+        {ps_vsz, VszPsV},
         {io_input, Input},
         {io_output, Output},
 
