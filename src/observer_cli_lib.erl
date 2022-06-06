@@ -362,6 +362,9 @@ parse_cmd(ViewOpts, Module, Args) ->
             hide;
         "`\n" ->
             scheduler_usage;
+        [$p, $i, $d | PidStr] ->
+            NoNewline = lists:reverse(tl(lists:reverse(PidStr))),
+            {go_to_pid, NoNewline};
         %% {error, estale}|{error, terminated}
         {error, _Reason} ->
             quit;
