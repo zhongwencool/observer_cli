@@ -2,22 +2,20 @@ name: Erlang CI
 
 on:
   push:
-    branches: [ master ]
+    branches: [master]
   pull_request:
-    branches: [ master ]
+    branches: [master]
 
 jobs:
-
   build:
-
     runs-on: ubuntu-latest
 
     container:
       image: erlang:22.0.7
 
     steps:
-    - uses: actions/checkout@v2
-    - name: Compile
-      run: rebar3 compile
-    - name: Run xref
-      run: rebar3 xref
+      - uses: actions/checkout@v2
+      - name: Compile
+        run: rebar3 compile
+      - name: Run xref
+        run: rebar3 xref
