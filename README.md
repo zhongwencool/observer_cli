@@ -27,7 +27,7 @@ Visualize Erlang/Elixir Nodes On The Command Line base on [recon](https://github
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.7.3
+dep_observer_cli = hex 1.7.4
 ```
 
 **Elixir**
@@ -256,6 +256,8 @@ Support F/B to page up/down.
 
 ### Changelog
 
+- 1.7.4
+  - fix crash when ets:info/1 return undefined.
 - 1.7.3
   - fix system pane exception by `ps` command.
 - 1.7.2
