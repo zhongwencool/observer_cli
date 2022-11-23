@@ -130,26 +130,9 @@ render_ets_info(Rows, CurPage, Attr) ->
 get_ets_info(Tab, Attr) ->
     case catch ets:info(Tab) of
         {'EXIT', _} ->
-            {
-                0,
-                0,
-                [
-                    %%it maybe die
-                    {name, unread},
-                    {write_concurrency, unread},
-                    {read_concurrency, unread},
-                    {compressed, unread},
-                    {memory, unread},
-                    {owner, unread},
-                    {heir, unread},
-                    {size, unread},
-                    {node, unread},
-                    {named_table, unread},
-                    {type, unread},
-                    {keypos, unread},
-                    {protection, unread}
-                ]
-            };
+            unread();
+        undefined ->
+            unread();
         Info when is_list(Info) ->
             Owner = proplists:get_value(owner, Info),
             NewInfo =
@@ -169,3 +152,25 @@ is_reg(Owner) ->
         {registered_name, Name} -> Name;
         _ -> Owner
     end.
+
+unread() ->
+    {
+        0,
+        0,
+        [
+            %%it maybe die
+            {name, unread},
+            {write_concurrency, unread},
+            {read_concurrency, unread},
+            {compressed, unread},
+            {memory, unread},
+            {owner, unread},
+            {heir, unread},
+            {size, unread},
+            {node, unread},
+            {named_table, unread},
+            {type, unread},
+            {keypos, unread},
+            {protection, unread}
+        ]
+    }.
