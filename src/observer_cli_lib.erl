@@ -34,15 +34,7 @@
 uptime() ->
     {UpTime, _} = erlang:statistics(wall_clock),
     {D, {H, M, S}} = calendar:seconds_to_daystime(UpTime div 1000),
-    Time = [
-        integer_to_list(D),
-        "Days ",
-        integer_to_list(H),
-        ":",
-        integer_to_list(M),
-        ":",
-        integer_to_list(S)
-    ],
+    Time = io_lib:format("~BDays ~2..0B:~2..0B:~2..0B", [D, H, M, S]),
     [?W(?GREEN, Time, 16)].
 
 %% @doc 0.982342 -> 98.23%, 1 -> 100.0%
