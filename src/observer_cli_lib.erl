@@ -27,9 +27,6 @@
 -export([sublist/3]).
 -export([sbcs_to_mbcs/2]).
 
--define(select(Title), ?RED_BG, Title, ?RESET_BG).
--define(unselect(Title), ?L_GRAY_BG, Title, ?RESET_BG).
-
 -spec uptime() -> list().
 uptime() ->
     {UpTime, _} = erlang:statistics(wall_clock),
@@ -54,125 +51,19 @@ to_list(Ref) when is_reference(Ref) -> erlang:ref_to_list(Ref);
 to_list(Float) when is_float(Float) -> erlang:float_to_list(Float, [{decimals, 4}]);
 to_list(Val) -> Val.
 
-get_menu_title(home, MnesiaTitle) ->
-    [
-        ?select("Home(H)"),
-        "|",
-        ?unselect("Network(N)"),
-        "|",
-        ?unselect("System(S)"),
-        "|",
-        ?unselect("Ets(E)"),
-        unselect(MnesiaTitle),
-        "|",
-        ?unselect("App(A)"),
-        "|",
-        ?unselect("Doc(D)"),
-        "|",
-        ?unselect("Plugin(P)")
-    ];
-get_menu_title(ets, MnesiaTitle) ->
-    [
-        ?unselect("Home(H)"),
-        "|",
-        ?unselect("Network(N)"),
-        "|",
-        ?unselect("System(S)"),
-        "|",
-        ?select("Ets(E)"),
-        unselect(MnesiaTitle),
-        "|",
-        ?unselect("App(A)"),
-        "|",
-        ?unselect("Doc(D)"),
-        "|",
-        ?unselect("Plugin(P)")
-    ];
-get_menu_title(allocator, MnesiaTitle) ->
-    [
-        ?unselect("Home(H)"),
-        "|",
-        ?unselect("Network(N)"),
-        "|",
-        ?select("System(S)"),
-        "|",
-        ?unselect("Ets(E)"),
-        unselect(MnesiaTitle),
-        "|",
-        ?unselect("App(A)"),
-        "|",
-        ?unselect("Doc(D)"),
-        "|",
-        ?unselect("Plugin(P)")
-    ];
-get_menu_title(doc, MnesiaTitle) ->
-    [
-        ?unselect("Home(H)"),
-        "|",
-        ?unselect("Network(N)"),
-        "|",
-        ?unselect("System(S)"),
-        "|",
-        ?unselect("Ets(E)"),
-        unselect(MnesiaTitle),
-        "|",
-        ?unselect("App(A)"),
-        "|",
-        ?select("Doc(D)"),
-        "|",
-        ?unselect("Plugin(P)")
-    ];
-get_menu_title(inet, MnesiaTitle) ->
-    [
-        ?unselect("Home(H)"),
-        "|",
-        ?select("Network(N)"),
-        "|",
-        ?unselect("System(S)"),
-        "|",
-        ?unselect("Ets(E)"),
-        unselect(MnesiaTitle),
-        "|",
-        ?unselect("App(A)"),
-        "|",
-        ?unselect("Doc(D)"),
-        "|",
-        ?unselect("Plugin(P)")
-    ];
-get_menu_title(mnesia, MnesiaTitle) ->
-    [
-        ?unselect("Home(H)"),
-        "|",
-        ?unselect("Network(N)"),
-        "|",
-        ?unselect("System(S)"),
-        "|",
-        ?unselect("Ets(E)"),
-        select(MnesiaTitle),
-        "|",
-        ?unselect("App(A)"),
-        "|",
-        ?unselect("Doc(D)"),
-        "|",
-        ?unselect("Plugin(P)")
-    ];
-get_menu_title(app, MnesiaTitle) ->
-    [
-        ?unselect("Home(H)"),
-        "|",
-        ?unselect("Network(N)"),
-        "|",
-        ?unselect("System(S)"),
-        "|",
-        ?unselect("Ets(E)"),
-        unselect(MnesiaTitle),
-        "|",
-        ?select("App(A)"),
-        "|",
-        ?unselect("Doc(D)"),
-        "|",
-        ?unselect("Plugin(P)")
-    ].
+get_menu_title(Selection, MnesiaTitle) ->
+    Options = [{home, "Home(H)"},
+               {inet, "Network(N)"},
+               {allocator, "System(S)"},
+               {ets, "Ets(E)"},
+               {mnesia, MnesiaTitle},
+               {app, "App(A)"},
+               {doc, "Doc(D)"},
+               {plugin, "Plugin(P)"}],
+    lists:map(fun({_Key, ""}) -> unselect("");
+                 ({Key, Value}) when Key =:= Selection -> select(Value) ++ "|";
+                 ({_Key, Value}) -> unselect(Value) ++ "|"
+              end, Options).
 
 -spec select(string()) -> list().
 select(Title) -> [?RED_BG, Title, ?RESET_BG].
