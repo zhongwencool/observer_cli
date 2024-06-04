@@ -256,6 +256,9 @@ Support F/B to page up/down.
 
 ### Changelog
 
+- 1.7.5
+  - Fix crash when mnesia table with external copies.
+    Which `mnesia:table_info(TabName, storage_type)` returns tuple `{ext, _, _}`
 - 1.7.4
   - fix crash when ets:info/1 return undefined.
 - 1.7.3
