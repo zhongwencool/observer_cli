@@ -143,7 +143,7 @@ render_mnesia(MnesiaList, Attr, Rows, CurPage) ->
                 ?W(RegName, 19)
             ])
         end
-        || {_, _, Mnesia} <- SortMnesia
+     || {_, _, Mnesia} <- SortMnesia
     ],
     [Title | View].
 
@@ -196,7 +196,6 @@ get_table_list2(Owner, HideSys, Attr) ->
             true ->
                 Acc;
             false ->
-                Storage = mnesia:table_info(Id, storage_type),
                 Size = mnesia:table_info(Id, size),
                 Memory = mnesia:table_info(Id, memory) * WordSize,
                 Tab0 = [
@@ -206,23 +205,33 @@ get_table_list2(Owner, HideSys, Attr) ->
                     {reg_name, RegName},
                     {type, mnesia:table_info(Id, type)},
                     {memory, Memory},
-                    {storage, Storage},
                     {index, mnesia:table_info(Id, index)}
                 ],
-                Tab =
-                    case Storage of
-                        _ when Storage =:= ram_copies orelse Storage =:= disc_copies ->
-                            [
-                                {fixed, ets:info(Id, fixed)},
-                                {compressed, ets:info(Id, compressed)}
-                                | Tab0
-                            ];
-                        disc_only_copies ->
-                            [{fixed, dets:info(Id, safe_fixed)} | Tab0];
-                        _ ->
-                            Tab0
-                    end,
+                Tab = with_storage_type(Id, Tab0),
                 [{0, proplists:get_value(Attr, Tab), Tab} | Acc]
         end
     end,
     lists:foldl(CollectFun, [], mnesia:system_info(tables)).
+
+with_storage_type(Id, Tab0) ->
+    Storage = mnesia:table_info(Id, storage_type),
+    with_storage_type(Id, Storage, Tab0).
+
+with_storage_type(Id, Storage, Tab0) when Storage =:= ram_copies orelse Storage =:= disc_copies ->
+    [
+        {fixed, ets:info(Id, fixed)},
+        {compressed, ets:info(Id, compressed)},
+        {storage, Storage}
+        | Tab0
+    ];
+with_storage_type(Id, disc_only_copies = Storage, Tab0) ->
+    [
+        {fixed, dets:info(Id, safe_fixed)},
+        {storage, Storage}
+        | Tab0
+    ];
+with_storage_type(_Id, {ext, _, _} = Storage, Tab0) ->
+    [
+        {storage, io_lib:format("~tp", [Storage])}
+        | Tab0
+    ].
