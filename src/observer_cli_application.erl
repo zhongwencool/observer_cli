@@ -117,7 +117,7 @@ render_app_info(Row, CurPage, {Type, N}) ->
     ]),
     {_, View} = lists:foldl(
         fun({_, _, Item}, {Pos, Acc}) ->
-            [App, C, R, M, Q, S, V] = Item,
+            [App, C, M, R, Q, S, V] = Item,
             {Pos + 1, [
                 ?render([
                     ?W(Pos, 2),
