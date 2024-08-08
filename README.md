@@ -27,7 +27,7 @@ Visualize Erlang/Elixir Nodes On The Command Line base on [recon](https://github
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.7.4
+dep_observer_cli = hex 1.7.5
 ```
 
 **Elixir**
@@ -259,6 +259,8 @@ Support F/B to page up/down.
 - 1.7.5
   - Fix crash when mnesia table with external copies.
     Which `mnesia:table_info(TabName, storage_type)` returns tuple `{ext, _, _}`
+  - Correct the order of the application information; the items Memory and Reductions have been switched.
+
 - 1.7.4
   - fix crash when ets:info/1 return undefined.
 - 1.7.3
