@@ -1,21 +1,23 @@
 name: Erlang CI
 
-on:
-  push:
-    branches: [master]
-  pull_request:
-    branches: [master]
+on: push
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    container:
-      image: erlang:22.0.7
-
+  test:
+    runs-on: ubuntu-20.04
+    name: Erlang/OTP ${{matrix.otp}} / rebar3 ${{matrix.rebar3}}
+    strategy:
+      matrix:
+        otp: ['26', '25', '24']
+        rebar3: ['3.22']
     steps:
-      - uses: actions/checkout@v2
-      - name: Compile
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{matrix.otp}}
+          rebar3-version: ${{matrix.rebar3}}
+      - name: compile
         run: rebar3 compile
-      - name: Run xref
+      - name: xref
         run: rebar3 xref
+
