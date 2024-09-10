@@ -138,6 +138,10 @@ manager(StorePid, RenderPid, Opts, LastSchWallFlag) ->
             NewPages = observer_cli_lib:update_page_pos(StorePid, NewPage, Pages),
             clean(Resource),
             start(Opts#view_opts{home = Home#home{cur_page = NewPage, pages = NewPages}});
+        {go_to_pid, PidStr} ->
+            Pid = erlang:list_to_pid(PidStr),
+            clean(Resource),
+            observer_cli_process:start(home, Pid, Opts);
         _ ->
             manager(StorePid, RenderPid, Opts, LastSchWallFlag)
     end.
