@@ -302,8 +302,10 @@ render_memory_process_line(MemSum, PortParallelism, Interval) ->
                 {erlang:integer_to_list(RunQ), "RunQueue"};
             Pid ->
                 {_, Q} = process_info(Pid, message_queue_len),
-                {[erlang:integer_to_list(RunQ), "/", erlang:integer_to_list(Q)],
-                    "RunQueue/ErrorLoggerQueue"}
+                {
+                    [erlang:integer_to_list(RunQ), "/", erlang:integer_to_list(Q)],
+                    "RunQueue/ErrorLoggerQueue"
+                }
         end,
     ProcMemPercent = observer_cli_lib:to_percent(ProcMem / TotalMem),
     AtomMemPercent = observer_cli_lib:to_percent(AtomMem / TotalMem),
@@ -390,7 +392,7 @@ render_scheduler_usage(SchedulerUsage, SchedulerNum) when SchedulerNum < 8 ->
                 CPU2
             ])
         end
-        || Seq1 <- lists:seq(1, Column)
+     || Seq1 <- lists:seq(1, Column)
     ],
     {Column, CPU};
 %% 100 >= scheduler >= 8 split 4 part
@@ -434,7 +436,7 @@ render_scheduler_usage(SchedulerUsage, SchedulerNum) when SchedulerNum =< 100 ->
                 CPU4
             ])
         end
-        || Seq1 <- lists:seq(1, Column)
+     || Seq1 <- lists:seq(1, Column)
     ],
     {Column, CPU};
 %% scheduler > 100 don't show process bar.
@@ -512,7 +514,7 @@ render_scheduler_usage(SchedulerUsage, SchedulerNum) ->
                 CPU10
             ])
         end
-        || Seq1 <- lists:seq(1, Column)
+     || Seq1 <- lists:seq(1, Column)
     ],
     {Column, CPU}.
 
@@ -527,8 +529,8 @@ render_top_n_view(memory, MemoryList, Num, Pages, Page) ->
     Title = ?render([
         ?W2(?GRAY_BG, "No | Pid", 16),
         ?W2(?RED_BG, "     Memory", 14),
-        ?W(?GRAY_BG, "Name or Initial Call", 38),
-        ?W(?GRAY_BG, "           Reductions", 21),
+        ?W(?GRAY_BG, "Name|>Lable|>Initial Call", 45),
+        ?W(?GRAY_BG, "    Reductions", 14),
         ?W(?GRAY_BG, " MsgQueue", 10),
         ?W(?GRAY_BG, "Current Function", 32)
     ]),
@@ -557,8 +559,8 @@ render_top_n_view(binary_memory, MemoryList, Num, Pages, Page) ->
     Title = ?render([
         ?W2(?GRAY_BG, "No | Pid", 16),
         ?W2(?RED_BG, "  BinMemory", 14),
-        ?W(?GRAY_BG, "Name or Initial Call", 38),
-        ?W(?GRAY_BG, "           Reductions", 21),
+        ?W(?GRAY_BG, "Name|>Lable|>Initial Call", 45),
+        ?W(?GRAY_BG, "    Reductions", 14),
         ?W(?GRAY_BG, " MsgQueue", 10),
         ?W(?GRAY_BG, "Current Function", 32)
     ]),
@@ -586,8 +588,8 @@ render_top_n_view(binary_memory, MemoryList, Num, Pages, Page) ->
 render_top_n_view(reductions, ReductionList, Num, Pages, Page) ->
     Title = ?render([
         ?W2(?GRAY_BG, "No | Pid", 16),
-        ?W2(?RED_BG, "     Reductions", 21),
-        ?W(?GRAY_BG, "Name or Initial Call", 38),
+        ?W2(?RED_BG, "   Reductions", 15),
+        ?W(?GRAY_BG, "Name|>Lable|>Initial Call", 45),
         ?W(?GRAY_BG, "      Memory", 13),
         ?W(?GRAY_BG, " MsgQueue", 10),
         ?W(?GRAY_BG, "Current Function", 33)
@@ -617,8 +619,8 @@ render_top_n_view(total_heap_size, HeapList, Num, Pages, Page) ->
     Title = ?render([
         ?W2(?GRAY_BG, "No | Pid", 16),
         ?W2(?RED_BG, " TotalHeapSize", 14),
-        ?W(?GRAY_BG, "Name or Initial Call", 38),
-        ?W(?GRAY_BG, "           Reductions", 21),
+        ?W(?GRAY_BG, "Name|>Lable|>Initial Call", 45),
+        ?W(?GRAY_BG, "    Reductions", 14),
         ?W(?GRAY_BG, " MsgQueue", 10),
         ?W(?GRAY_BG, "Current Function", 32)
     ]),
@@ -647,9 +649,9 @@ render_top_n_view(message_queue_len, MQLenList, Num, Pages, Page) ->
     Title = ?render([
         ?W2(?GRAY_BG, "No | Pid", 16),
         ?W2(?RED_BG, " MsgQueue", 11),
-        ?W(?GRAY_BG, "Name or Initial Call", 37),
+        ?W(?GRAY_BG, "Name|>Lable|>Initial Call", 44),
         ?W(?GRAY_BG, "      Memory", 13),
-        ?W(?GRAY_BG, " Reductions", 21),
+        ?W(?GRAY_BG, "    Reductions", 14),
         ?W(?GRAY_BG, "Current Function", 33)
     ]),
     {Start, ChoosePos} = observer_cli_lib:get_pos(Page, Num, Pages, erlang:length(MQLenList)),
@@ -682,19 +684,19 @@ notify_pause_status() ->
     ?output("\e[31;1m PAUSE  INPUT (p, r/rr, b/bb, h/hh, m/mm) to resume or q to quit \e[0m~n").
 
 get_memory_format(Pos, Pos) ->
-    "|\e[42m~-3.3w|~-12.12s|~13.13s |~-38.38s|~21.21s| ~-9.9s|~-33.33s\e[49m|~n";
+    "|\e[42m~-3.3w|~-12.12s|~13.13s |~-45.45s|~14.14s| ~-9.9s|~-33.33s\e[49m|~n";
 get_memory_format(_Pos, _RankPos) ->
-    "|~-3.3w|~-12.12s|~13.13s |~-38.38s|~21.21s| ~-9.9s|~-33.33s|~n".
+    "|~-3.3w|~-12.12s|~13.13s |~-45.45s|~14.14s| ~-9.9s|~-33.33s|~n".
 
 get_reduction_format(Pos, Pos) ->
-    "|\e[42m~-3.3w|~-12.12s|~-21.21s|~-38.38s|~13.13s| ~-9.9s|~-34.34s\e[49m|~n";
+    "|\e[42m~-3.3w|~-12.12s|~-15.15s|~-45.45s|~12.12s| ~-9.9s|~-34.34s\e[49m|~n";
 get_reduction_format(_Pos, _RankPos) ->
-    "|~-3.3w|~-12.12s|~-21.21s|~-38.38s|~13.13s| ~-9.9s|~-34.34s|~n".
+    "|~-3.3w|~-12.12s|~-15.15s|~-45.45s|~12.12s| ~-9.9s|~-34.34s|~n".
 
 get_message_queue_format(Pos, Pos) ->
-    "|\e[42m~-3.3w|~-12.12s|~-11.11s|~-37.37s|~13.13s| ~-20.20s|~-34.34s\e[49m|~n";
+    "|\e[42m~-3.3w|~-12.12s|~-11.11s|~-44.44s|~13.13s| ~-13.13s|~-34.34s\e[49m|~n";
 get_message_queue_format(_Pos, _RankPos) ->
-    "|~-3.3w|~-12.12s|~-11.11s|~-37.37s|~13.13s| ~-20.20s|~-34.34s|~n".
+    "|~-3.3w|~-12.12s|~-11.11s|~-44.44s|~13.13s| ~-13.13s|~-34.34s|~n".
 
 refresh_next_time(proc_count, Type, Interval) ->
     erlang:send_after(Interval, self(), {proc_count, Type});
@@ -756,15 +758,39 @@ process_bar_format_style(Percents, IsLastLine) ->
 get_top_n_info(Item) ->
     {Pid, Val, Call = [IsName | _]} = Item,
     {CurFun, InitialCall} = get_current_initial_call(Call),
-    NameOrCall = display_name_or_initial_call(IsName, InitialCall, Pid),
-    {Pid, Val, CurFun, NameOrCall}.
+    Flag = display_unique_flag(IsName, InitialCall, Pid),
+    {Pid, Val, CurFun, Flag}.
 
-display_name_or_initial_call(IsName, _Call, _Pid) when is_atom(IsName) ->
+display_unique_flag(IsName, Call, Pid) ->
+    case choose_name(IsName) of
+        undefined ->
+            case choose_lable(Pid) of
+                undefined -> choose_call(Call, Pid);
+                Lable -> Lable
+            end;
+        Name ->
+            Name
+    end.
+
+choose_name(IsName) when is_atom(IsName) ->
     atom_to_list(IsName);
-display_name_or_initial_call(_IsName, {proc_lib, init_p, 5}, Pid) ->
+choose_name(_) ->
+    undefined.
+
+choose_lable(Pid) ->
+    case
+        erlang:function_exported(proc_lib, get_label, 1) andalso
+            proc_lib:get_label(Pid)
+    of
+        false -> undefined;
+        undefined -> undefined;
+        Lable -> io_lib:format("~p", [Lable])
+    end.
+
+choose_call({proc_lib, init_p, 5}, Pid) ->
     %% translate gen_xxx behavior
     observer_cli_lib:mfa_to_list(proc_lib:translate_initial_call(Pid));
-display_name_or_initial_call(_IsName, Call, _Pid) ->
+choose_call(Call, _Pid) ->
     observer_cli_lib:mfa_to_list(Call).
 
 get_refresh_prompt(proc_count, Type, Interval, Rows) ->
@@ -775,14 +801,16 @@ get_refresh_prompt(proc_window, Type, Interval, Rows) ->
 get_stable_system_info() ->
     OtpRelease = erlang:system_info(otp_release),
     SysVersion = erlang:system_info(system_version) -- "\n",
-    {[
+    {
+        [
             OtpRelease,
             SysVersion,
             erlang:system_info(process_limit),
             erlang:system_info(port_limit),
             erlang:system_info(ets_limit)
         ],
-        erlang:system_info(port_parallelism)}.
+        erlang:system_info(port_parallelism)
+    }.
 
 get_atom_status() ->
     try erlang:system_info(atom_limit) of
