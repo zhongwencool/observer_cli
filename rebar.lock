@@ -1,5 +1,10 @@
 {"1.2.0",
-[{<<"recon">>,{pkg,<<"recon">>,<<"2.5.5">>},0}]}.
+[{<<"eqwalizer_support">>,
+  {git_subdir,"https://github.com/whatsapp/eqwalizer.git",
+              {ref,"0c099bbfa2fba1869d60e239c9b2cf2b6fb31ea9"},
+              "eqwalizer_support"},
+  0},
+ {<<"recon">>,{pkg,<<"recon">>,<<"2.5.5">>},0}]}.
 [
 {pkg_hash,[
  {<<"recon">>, <<"C108A4C406FA301A529151A3BB53158CADC4064EC0C5F99B03DDB8C0E4281BDF">>}]},

@@ -107,7 +107,7 @@ render_cache_hit_rates(CacheHitInfo, Len) when Len =< 8 ->
                 ?W(HitRateStr, 6)
             ])
         end
-        || Seq <- lists:seq(0, Len - 1)
+     || Seq <- lists:seq(0, Len - 1)
     ],
     [Title | View];
 render_cache_hit_rates(CacheHitInfo, Len) ->
@@ -152,7 +152,7 @@ render_cache_hit_rates(CacheHitInfo, Len) ->
                 ?W(HitRateStr4, 6)
             ])
         end
-        || Seq1 <- lists:seq(1, Num)
+     || Seq1 <- lists:seq(1, Num)
     ],
     [Title | Rows].
 
@@ -188,7 +188,7 @@ render_block_size_info(AverageBlockCurs, AverageBlockMaxes, SbcsToMbcsCurs, Sbcs
                 ?W(MSTM, 19)
             ])
         end
-        || AllocKey <- ?UTIL_ALLOCATORS
+     || AllocKey <- ?UTIL_ALLOCATORS
     ],
     [Title | View].
 
@@ -237,8 +237,8 @@ render_sys_info(System, CPU, Memory, Statistics) ->
         begin
             {Key, Value}
         end
-        || {Key, Value} <- System,
-           Key =/= "Compiled for" andalso Key =/= "smp Support"
+     || {Key, Value} <- System,
+        Key =/= "Compiled for" andalso Key =/= "smp Support"
     ],
     [{_, TotalMem} | _R] = Memory,
     {bytes, TotalMemInt} = TotalMem,
@@ -263,7 +263,7 @@ render_sys_info(System, CPU, Memory, Statistics) ->
                 ?W(to_list(StatisticsVal), 11)
             ])
         end
-        || Pos <- lists:seq(1, 6)
+     || Pos <- lists:seq(1, 6)
     ],
     Compile = ?render([
         ?UNDERLINE,

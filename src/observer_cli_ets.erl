@@ -74,7 +74,7 @@ render_ets_info(Rows, CurPage, Attr) ->
         begin
             get_ets_info(Tab, Attr)
         end
-        || Tab <- ets:all()
+     || Tab <- ets:all()
     ],
     WordSize = erlang:system_info(wordsize),
     {_StartPos, SortEts} = observer_cli_lib:sublist(AllEts, Rows, CurPage),
@@ -123,7 +123,7 @@ render_ets_info(Rows, CurPage, Attr) ->
                 ?W(Owner, 14)
             ])
         end
-        || {_, _, Ets} <- SortEts
+     || {_, _, Ets} <- SortEts
     ],
     [Title | RowView].
 

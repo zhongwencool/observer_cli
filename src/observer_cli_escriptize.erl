@@ -59,7 +59,7 @@ remote_load(Node) ->
         begin
             recon:remote_load([Node], Mod)
         end
-        || Mod <- ?BEAM_MODS
+     || Mod <- ?BEAM_MODS
     ].
 
 random_local_node_name() ->

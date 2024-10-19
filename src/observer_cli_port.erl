@@ -145,7 +145,7 @@ render_link_monitor(Link, Monitors) ->
         begin
             observer_cli_lib:to_list(P)
         end
-        || P <- lists:sublist(Link, 30)
+     || P <- lists:sublist(Link, 30)
     ],
     MonitorsStr = [
         begin
@@ -156,7 +156,7 @@ render_link_monitor(Link, Monitors) ->
                     observer_cli_lib:to_list(RegName) ++ "/" ++ observer_cli_lib:to_list(Node)
             end
         end
-        || P <- lists:sublist(Monitors, 30)
+     || P <- lists:sublist(Monitors, 30)
     ],
     LinkInfo = "Links(" ++ erlang:integer_to_list(erlang:length(Link)) ++ ")",
     MonitorInfo = "Monitors(" ++ erlang:integer_to_list(erlang:length(Monitors)) ++ ")",
@@ -363,6 +363,6 @@ addr_to_str({Addr, Port}) ->
         begin
             erlang:integer_to_list(A)
         end
-        || A <- erlang:tuple_to_list(Addr)
+     || A <- erlang:tuple_to_list(Addr)
     ],
     string:join(AddrList, ".") ++ ":" ++ erlang:integer_to_list(Port).

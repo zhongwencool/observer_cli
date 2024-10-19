@@ -1,4 +1,4 @@
-name: Erlang CI
+name: ci
 
 on: push
 
@@ -8,7 +8,7 @@ jobs:
     name: Erlang/OTP ${{matrix.otp}} / rebar3 ${{matrix.rebar3}}
     strategy:
       matrix:
-        otp: ['26', '25', '24']
+        otp: ['27', '26', '25', '24']
         rebar3: ['3.22']
     steps:
       - uses: actions/checkout@v4

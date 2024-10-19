@@ -285,11 +285,11 @@ render_attributes(#{module := Module}, PrevAttrs) ->
                             error -> ?W(Value, Width)
                         end
                     end
-                    || Item <- Label
+                 || Item <- Label
                 ],
                 ?render(L)
             end
-            || Label <- DiffAttrs
+         || Label <- DiffAttrs
         ],
         {Render, length(Render), NewAttrs}
     catch
