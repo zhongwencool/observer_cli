@@ -2,7 +2,7 @@
 
 # observer_cli
 
-[![Build Status](https://travis-ci.org/zhongwencool/observer_cli.svg?branch=master)](https://travis-ci.org/zhongwencool/observer_cli)
+[![Build Status](https://github.com/zhongwencool/observer_cli/workflows/ci/badge.svg)](https://github.com/zhongwencool/observer_cli/actions)
 [![GitHub tag](https://img.shields.io/github/tag/zhongwencool/observer_cli.svg)](https://github.com/zhongwencool/observer_cli)
 [![MIT License](https://img.shields.io/hexpm/l/observer_cli.svg)](https://hex.pm/packages/observer_cli)
 [![Hex.pm Version](https://img.shields.io/hexpm/v/observer_cli.svg)](https://hex.pm/packages/observer_cli)

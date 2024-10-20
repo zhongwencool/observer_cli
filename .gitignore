@@ -1,4 +1,5 @@
 .eunit
+.tool-versions
 _build
 deps
 elvis

@@ -82,7 +82,7 @@ render_app_info(Row, CurPage, {Type, N}) ->
         begin
             {0, {element(N, I), S}, [App, C, M, R, Q, S, V]}
         end
-        || {App, I = {C, M, R, Q, S, V}} <- maps:to_list(app_info())
+     || {App, I = {C, M, R, Q, S, V}} <- maps:to_list(app_info())
     ],
     {StartPos, SortList} = observer_cli_lib:sublist(List, Row, CurPage),
     InitColor = [

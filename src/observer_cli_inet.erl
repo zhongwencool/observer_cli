@@ -129,12 +129,14 @@ render_io_rows({LastIn, LastOut}) ->
 render_inet_rows([], Rows, #inet{func = inet_count, type = Type}) ->
     {[], io_lib:format("\e[32;1mGet nothing for recon:inet_count(~p, ~p)\e[0m~n", [Type, Rows])};
 render_inet_rows([], Rows, #inet{func = inet_window, type = Type, interval = Interval}) ->
-    {[],
+    {
+        [],
         io_lib:format("\e[32;1mGet nothing for recon:inet_window(~p, ~p, ~p)\e[0m~n", [
             Type,
             Rows,
             Interval
-        ])};
+        ])
+    };
 render_inet_rows(InetList, Num, #inet{
     type = Type,
     pages = Pages,
@@ -294,7 +296,7 @@ get_remote_ip(P) ->
                 begin
                     erlang:integer_to_list(A)
                 end
-                || A <- erlang:tuple_to_list(Addr)
+             || A <- erlang:tuple_to_list(Addr)
             ],
             string:join(AddrList, ".") ++ ":" ++ erlang:integer_to_list(Port);
         {error, Err} ->

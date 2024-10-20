@@ -281,7 +281,7 @@ render_link_monitor(Link, Monitors, MonitoredBy) ->
         begin
             observer_cli_lib:to_list(P)
         end
-        || P <- lists:sublist(Link, 30)
+     || P <- lists:sublist(Link, 30)
     ],
     MonitorsStr = [
         begin
@@ -292,13 +292,13 @@ render_link_monitor(Link, Monitors, MonitoredBy) ->
                     observer_cli_lib:to_list(Pid)
             end
         end
-        || P <- lists:sublist(Monitors, 30)
+     || P <- lists:sublist(Monitors, 30)
     ],
     MonitoredByStr = [
         begin
             observer_cli_lib:to_list(P)
         end
-        || P <- lists:sublist(MonitoredBy, 30)
+     || P <- lists:sublist(MonitoredBy, 30)
     ],
     LinkInfo = "Links(" ++ erlang:integer_to_list(erlang:length(Link)) ++ ")",
     MonitorInfo = "Monitors(" ++ erlang:integer_to_list(erlang:length(Monitors)) ++ ")",

@@ -52,18 +52,24 @@ to_list(Float) when is_float(Float) -> erlang:float_to_list(Float, [{decimals, 4
 to_list(Val) -> Val.
 
 get_menu_title(Selection, MnesiaTitle) ->
-    Options = [{home, "Home(H)"},
-               {inet, "Network(N)"},
-               {allocator, "System(S)"},
-               {ets, "Ets(E)"},
-               {mnesia, MnesiaTitle},
-               {app, "App(A)"},
-               {doc, "Doc(D)"},
-               {plugin, "Plugin(P)"}],
-    lists:map(fun({_Key, ""}) -> unselect("");
-                 ({Key, Value}) when Key =:= Selection -> select(Value) ++ "|";
-                 ({_Key, Value}) -> unselect(Value) ++ "|"
-              end, Options).
+    Options = [
+        {home, "Home(H)"},
+        {inet, "Network(N)"},
+        {allocator, "System(S)"},
+        {ets, "Ets(E)"},
+        {mnesia, MnesiaTitle},
+        {app, "App(A)"},
+        {doc, "Doc(D)"},
+        {plugin, "Plugin(P)"}
+    ],
+    lists:map(
+        fun
+            ({_Key, ""}) -> unselect("");
+            ({Key, Value}) when Key =:= Selection -> select(Value) ++ "|";
+            ({_Key, Value}) -> unselect(Value) ++ "|"
+        end,
+        Options
+    ).
 
 -spec select(string()) -> list().
 select(Title) -> [?RED_BG, Title, ?RESET_BG].
@@ -293,7 +299,7 @@ exit_processes(List) ->
             erlang:unlink(Pid),
             erlang:exit(Pid, stop)
         end
-        || Pid <- List
+     || Pid <- List
     ],
     flush(),
     ok.
