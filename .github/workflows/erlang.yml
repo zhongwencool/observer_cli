@@ -20,4 +20,6 @@ jobs:
         run: rebar3 compile
       - name: xref
         run: rebar3 xref
+      - name: dialyzer
+        run: rebar3 dialyzer
 

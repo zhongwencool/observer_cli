@@ -27,7 +27,7 @@ Visualize Erlang/Elixir Nodes On The Command Line base on [recon](https://github
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.7.5
+dep_observer_cli = hex 1.8.0
 ```
 
 **Elixir**
@@ -35,7 +35,7 @@ dep_observer_cli = hex 1.7.5
 ```elixir
 # mix.exs
    def deps do
-     [{:observer_cli, "~> 1.7"}]
+     [{:observer_cli, "~> 1.8"}]
    end
 ```
 
@@ -89,7 +89,7 @@ _build/dev/rel/example/bin/example rpc ":observer_cli.start"
 
 ### DEMO
 
-<img src="https://user-images.githubusercontent.com/3116225/39091211-55554414-4622-11e8-8b28-bd3b5c7e17a6.jpg" width="100%" alt="Home"> </img>
+<img src="https://github.com/user-attachments/assets/ce797033-732a-4178-a9c5-df4de559ed0c" width="100%" alt="Home"> </img>
 
 ### How to write your own plugin?
 
@@ -255,7 +255,12 @@ Support F/B to page up/down.
 ---
 
 ### Changelog
-
+- 1.8.0
+  - Support `<Pid` to jump to specific pid.
+  - Show process's label if it's set with [proc_lib:set_label(Label)](https://www.erlang.org/doc/apps/stdlib/proc_lib.html#set_label/1)
+  - Show The number of bytes in the output distribution queue on System View. This queue sits between the Erlang code and the port driver, using undocumented function`erlang:dist_get_stat/1`.
+  - Fix Doc View not show when otp version = 27
+  
 - 1.7.5
   - Fix crash when mnesia table with external copies.
     Which `mnesia:table_info(TabName, storage_type)` returns tuple `{ext, _, _}`

@@ -35,13 +35,11 @@ uptime() ->
     [?W(?GREEN, Time, 16)].
 
 %% @doc 0.982342 -> 98.23%, 1 -> 100.0%
--spec to_percent(float()) -> string().
 to_percent(Float) when Float < 0.1 -> [$0, erlang:float_to_list(Float * 100, [{decimals, 2}]), $%];
 to_percent(Float) when Float < 1 -> [erlang:float_to_list(Float * 100, [{decimals, 2}]), $%];
 to_percent(undefined) -> "******";
 to_percent(_) -> "100.0%".
 
--spec to_list(term()) -> list().
 to_list(Atom) when is_atom(Atom) -> atom_to_list(Atom);
 to_list(Integer) when is_integer(Integer) -> integer_to_list(Integer);
 to_list(Pid) when is_pid(Pid) -> erlang:pid_to_list(Pid);
@@ -251,6 +249,10 @@ parse_cmd(ViewOpts, Module, Args) ->
             hide;
         "`\n" ->
             scheduler_usage;
+        [$< | PidStr] ->
+            to_pid(PidStr);
+        [$> | PidStr] ->
+            to_pid(PidStr);
         %% {error, estale}|{error, terminated}
         {error, _Reason} ->
             quit;
@@ -258,7 +260,18 @@ parse_cmd(ViewOpts, Module, Args) ->
             parse_integer(Number)
     end.
 
--spec next_redraw(reference(), pos_integer()) -> reference().
+-spec to_pid(string()) -> {go_to_pid, pid()} | quit.
+to_pid(Str) ->
+    case string:tokens(Str, ".<>\n") of
+        [X, Y, Z] ->
+            {go_to_pid, list_to_pid("<" ++ X ++ "." ++ Y ++ "." ++ Z ++ ">")};
+        [Y] ->
+            {go_to_pid, list_to_pid("<0." ++ Y ++ ".0>")};
+        _ ->
+            quit
+    end.
+
+-spec next_redraw(reference() | ?INIT_TIME_REF, pos_integer()) -> reference().
 next_redraw(LastTimeRef, Interval) ->
     LastTimeRef =/= ?INIT_TIME_REF andalso erlang:cancel_timer(LastTimeRef),
     erlang:send_after(Interval, self(), redraw).

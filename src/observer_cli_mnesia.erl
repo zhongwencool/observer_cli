@@ -187,6 +187,7 @@ get_table_list(HideSys, Attr) ->
         _ -> get_table_list2(Owner, HideSys, Attr)
     end.
 
+-dialyzer([{nowarn_function, [get_table_list2/3]}]).
 get_table_list2(Owner, HideSys, Attr) ->
     {registered_name, RegName} = process_info(Owner, registered_name),
     WordSize = erlang:system_info(wordsize),
@@ -212,6 +213,8 @@ get_table_list2(Owner, HideSys, Attr) ->
         end
     end,
     lists:foldl(CollectFun, [], mnesia:system_info(tables)).
+
+-dialyzer([{nowarn_function, [with_storage_type/2]}]).
 
 with_storage_type(Id, Tab0) ->
     Storage = mnesia:table_info(Id, storage_type),

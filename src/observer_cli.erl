@@ -23,7 +23,8 @@
 -spec start() -> no_return | {badrpc, term()}.
 start() -> start(#view_opts{}).
 
--spec start(Node) -> no_return | {badrpc, term()} when Node :: atom() | non_neg_integer().
+-spec start(Node) -> no_return | {badrpc, term()} when
+    Node :: atom() | non_neg_integer() | #view_opts{}.
 start(Node) when Node =:= node() ->
     start(#view_opts{});
 start(Node) when is_atom(Node) ->
@@ -138,6 +139,9 @@ manager(StorePid, RenderPid, Opts, LastSchWallFlag) ->
             NewPages = observer_cli_lib:update_page_pos(StorePid, NewPage, Pages),
             clean(Resource),
             start(Opts#view_opts{home = Home#home{cur_page = NewPage, pages = NewPages}});
+        {go_to_pid, Pid} ->
+            clean(Resource),
+            observer_cli_process:start(home, Pid, Opts);
         _ ->
             manager(StorePid, RenderPid, Opts, LastSchWallFlag)
     end.
@@ -289,6 +293,7 @@ render_memory_process_line(MemSum, PortParallelism, Interval) ->
     AtomMem = proplists:get_value(atom_used, Mem),
     BinMem = proplists:get_value(binary, Mem),
     EtsMem = proplists:get_value(ets, Mem),
+    EtsLen = erlang:length(ets:all()),
     {
         BytesIn,
         BytesOut,
@@ -349,7 +354,7 @@ render_memory_process_line(MemSum, PortParallelism, Interval) ->
         ?W("Gc Count", 20),
         ?W(GcCount, 24),
         ?NEW_LINE,
-        ?W("Ets", 10),
+        ?W("Ets/" ++ erlang:integer_to_list(EtsLen), 10),
         ?W({byte, EtsMem}, 12),
         ?W(EtsMemPercent, 6),
         ?W(LogKey, 25),
@@ -777,6 +782,8 @@ choose_name(IsName) when is_atom(IsName) ->
 choose_name(_) ->
     undefined.
 
+%% proc_lib:get_label/1 is not exported before OTP 27
+-dialyzer([{nowarn_function, [choose_lable/1]}]).
 choose_lable(Pid) ->
     case
         erlang:function_exported(proc_lib, get_label, 1) andalso

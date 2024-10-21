@@ -38,16 +38,20 @@ render_worker(Interval) ->
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
     Menu = observer_cli_lib:render_menu(doc, Text),
     ?output([?CURSOR_TOP, Menu]),
+    render_doc(Text),
     erlang:send_after(Interval, self(), redraw),
     receive
         redraw ->
             render_worker(Interval);
         quit ->
-            MenuQ = observer_cli_lib:render_menu(doc, Text),
-            HelpQ = render_help(),
-            LastLine = observer_cli_lib:render_last_line("q(quit)"),
-            ?output([?CURSOR_TOP, MenuQ, HelpQ, ?UNDERLINE, ?GRAY_BG, LastLine, ?RESET_BG, ?RESET])
+            ok
     end.
+
+render_doc(Text) ->
+    MenuQ = observer_cli_lib:render_menu(doc, Text),
+    HelpQ = render_help(),
+    LastLine = observer_cli_lib:render_last_line("q(quit)"),
+    ?output([?CURSOR_TOP, MenuQ, HelpQ, ?UNDERLINE, ?GRAY_BG, LastLine, ?RESET_BG, ?RESET]).
 
 render_help() ->
     [
@@ -57,22 +61,24 @@ render_help() ->
         "| \e[48;2;80;80;80m1.3\e[0m  observer_start:start(Node, Cookie).\n",
 
         "|\e[44m2. HOME(H) Commands\e[49m \n",
-        "| \e[48;2;80;80;80m`        \e[0m  enable/disable schedule usage.\n",
-        "| \e[48;2;80;80;80mPageDown \e[0m  pd or F(forward).\n",
-        "| \e[48;2;80;80;80mPageUp   \e[0m  pu or B(back).\n",
-        "| \e[48;2;80;80;80mr        \e[0m switch mode to reduction(proc_count).\n",
-        "| \e[48;2;80;80;80mrr       \e[0m switch mode to reduction(proc_window).\n",
-        "| \e[48;2;80;80;80mm        \e[0m switch mode to memory(proc_count).\n",
-        "| \e[48;2;80;80;80mmm       \e[0m switch mode to memory(proc_window).\n",
-        "| \e[48;2;80;80;80mb        \e[0m switch mode to bin memory(proc_count).\n",
-        "| \e[48;2;80;80;80mbb       \e[0m switch mode to bin memory(proc_window).\n",
-        "| \e[48;2;80;80;80mmq       \e[0m switch mode to message queue len(proc_count).\n",
-        "| \e[48;2;80;80;80mmmq      \e[0m switch mode to message queue len(proc_window).\n",
-        "| \e[48;2;80;80;80mt        \e[0m switch mode to total heap size(proc_count).\n",
-        "| \e[48;2;80;80;80mtt       \e[0m switch mode to total heap size(proc_window).\n",
-        "| \e[48;2;80;80;80m3000     \e[0m set interval time to 3000ms, the integer must >= 1500.\n",
-        "| \e[48;2;80;80;80m13       \e[0m choose the 13th process(green line), the integer must in top list.\n",
-        "| \e[48;2;80;80;80mp        \e[0m pause/unpause the view.\n",
+        "| \e[48;2;80;80;80m`            \e[0m  enable/disable schedule usage.\n",
+        "| \e[48;2;80;80;80mPageDown     \e[0m  pd or F(forward).\n",
+        "| \e[48;2;80;80;80mPageUp       \e[0m  pu or B(back).\n",
+        "| \e[48;2;80;80;80mr            \e[0m switch mode to reduction(proc_count).\n",
+        "| \e[48;2;80;80;80mrr           \e[0m switch mode to reduction(proc_window).\n",
+        "| \e[48;2;80;80;80mm            \e[0m switch mode to memory(proc_count).\n",
+        "| \e[48;2;80;80;80mmm           \e[0m switch mode to memory(proc_window).\n",
+        "| \e[48;2;80;80;80mb            \e[0m switch mode to bin memory(proc_count).\n",
+        "| \e[48;2;80;80;80mbb           \e[0m switch mode to bin memory(proc_window).\n",
+        "| \e[48;2;80;80;80mmq           \e[0m switch mode to message queue len(proc_count).\n",
+        "| \e[48;2;80;80;80mmmq          \e[0m switch mode to message queue len(proc_window).\n",
+        "| \e[48;2;80;80;80mt            \e[0m switch mode to total heap size(proc_count).\n",
+        "| \e[48;2;80;80;80mtt           \e[0m switch mode to total heap size(proc_window).\n",
+        "| \e[48;2;80;80;80m3000         \e[0m set interval time to 3000ms, the integer must >= 1500.\n",
+        "| \e[48;2;80;80;80m13           \e[0m choose the 13th process(green line), the integer must in top list.\n",
+        "| \e[48;2;80;80;80m<0.43.0>     \e[0m choose the <0.43.0> process, the pid does not need to be in the top list.\n",
+        "| \e[48;2;80;80;80m<431 or >431 \e[0m choose the <0.431.0> process, the pid does not need to be in the top list.\n",
+        "| \e[48;2;80;80;80mp            \e[0m pause/unpause the view.\n",
 
         "|\e[44m5. Reference\e[49m \n",
         "|More information about recon:proc_count/2 and recon:proc_window/3 \n",

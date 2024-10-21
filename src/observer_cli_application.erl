@@ -14,7 +14,7 @@
 
 %% @doc List application info
 
--spec start(ViewOpts) -> no_return when ViewOpts :: view_opts().
+-spec start(ViewOpts) -> quit when ViewOpts :: view_opts().
 start(#view_opts{app = App, auto_row = AutoRow} = ViewOpts) ->
     Pid = spawn_link(fun() ->
         ?output(?CLEAR),
