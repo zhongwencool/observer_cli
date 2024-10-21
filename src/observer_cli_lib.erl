@@ -251,11 +251,26 @@ parse_cmd(ViewOpts, Module, Args) ->
             hide;
         "`\n" ->
             scheduler_usage;
+        [$< | PidStr] ->
+            to_pid(PidStr);
+        [$> | PidStr] ->
+            to_pid(PidStr);
         %% {error, estale}|{error, terminated}
         {error, _Reason} ->
             quit;
         Number ->
             parse_integer(Number)
+    end.
+
+-spec to_pid(string()) -> {go_to_pid, pid()} | quit.
+to_pid(Str) ->
+    case string:tokens(Str, ".<>\n") of
+        [X, Y, Z] ->
+            {go_to_pid, list_to_pid("<" ++ X ++ "." ++ Y ++ "." ++ Z ++ ">")};
+        [Y] ->
+            {go_to_pid, list_to_pid("<0." ++ Y ++ ".0>")};
+        _ ->
+            quit
     end.
 
 -spec next_redraw(reference(), pos_integer()) -> reference().
