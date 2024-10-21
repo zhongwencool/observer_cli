@@ -158,7 +158,7 @@ get_address(Info) ->
 get_dist_queue_size(Node) ->
     case ets:lookup(sys_dist, Node) of
         [] ->
-            0;
+            not_found;
         [Dist] ->
             ConnId = element(3, Dist),
             {ok, _, _, Size} = erlang:dist_get_stat(ConnId),

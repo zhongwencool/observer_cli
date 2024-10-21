@@ -139,9 +139,7 @@ manager(ChildPid, SheetCache, ViewOpts) ->
                     start(ViewOpts#view_opts{plug = PlugOpts#plug{plugs = NewPlugs}});
                 {error, _} ->
                     manager(ChildPid, SheetCache, ViewOpts)
-            end;
-        _ ->
-            manager(ChildPid, SheetCache, ViewOpts)
+            end
     end.
 
 update_plugins(CurIndex, Lists, UpdateItems) ->

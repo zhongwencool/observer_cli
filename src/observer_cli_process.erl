@@ -2,6 +2,12 @@
 
 -include("observer_cli.hrl").
 
+-dialyzer([
+    {nowarn_function, [
+        render_worker/7, render_reduction_memory/4, get_chart_format/1, chart_format/2
+    ]}
+]).
+
 -export([start/3]).
 
 %% lists:foldl(fun(_X, Acc) -> queue:in('NaN', Acc) end, queue:new(), lists:seq(1, 5))

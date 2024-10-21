@@ -782,6 +782,8 @@ choose_name(IsName) when is_atom(IsName) ->
 choose_name(_) ->
     undefined.
 
+%% proc_lib:get_label/1 is not exported before OTP 27
+-dialyzer([{nowarn_function, [choose_lable/1]}]).
 choose_lable(Pid) ->
     case
         erlang:function_exported(proc_lib, get_label, 1) andalso
