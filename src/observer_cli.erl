@@ -23,7 +23,8 @@
 -spec start() -> no_return | {badrpc, term()}.
 start() -> start(#view_opts{}).
 
--spec start(Node) -> no_return | {badrpc, term()} when Node :: atom() | non_neg_integer().
+-spec start(Node) -> no_return | {badrpc, term()} when
+    Node :: atom() | non_neg_integer() | #view_opts{}.
 start(Node) when Node =:= node() ->
     start(#view_opts{});
 start(Node) when is_atom(Node) ->
