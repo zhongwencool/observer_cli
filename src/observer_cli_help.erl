@@ -38,16 +38,20 @@ render_worker(Interval) ->
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
     Menu = observer_cli_lib:render_menu(doc, Text),
     ?output([?CURSOR_TOP, Menu]),
+    render_doc(Text),
     erlang:send_after(Interval, self(), redraw),
     receive
         redraw ->
             render_worker(Interval);
         quit ->
-            MenuQ = observer_cli_lib:render_menu(doc, Text),
-            HelpQ = render_help(),
-            LastLine = observer_cli_lib:render_last_line("q(quit)"),
-            ?output([?CURSOR_TOP, MenuQ, HelpQ, ?UNDERLINE, ?GRAY_BG, LastLine, ?RESET_BG, ?RESET])
+            ok
     end.
+
+render_doc(Text) ->
+    MenuQ = observer_cli_lib:render_menu(doc, Text),
+    HelpQ = render_help(),
+    LastLine = observer_cli_lib:render_last_line("q(quit)"),
+    ?output([?CURSOR_TOP, MenuQ, HelpQ, ?UNDERLINE, ?GRAY_BG, LastLine, ?RESET_BG, ?RESET]).
 
 render_help() ->
     [

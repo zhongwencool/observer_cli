@@ -2,6 +2,7 @@
 -module(observer_cli_system).
 
 -include("observer_cli.hrl").
+-include_lib("kernel/include/net_address.hrl").
 
 %% API
 -export([start/1]).
@@ -66,14 +67,102 @@ render_worker(Cmd, Interval, LastTimeRef) ->
         SbcsToMbcsCurs,
         SbcsToMbcsMaxs
     ),
+    DistNodesInfo = get_dist_nodes_info(),
+    DistNodeView = render_dist_node_info(DistNodesInfo),
     HitView = render_cache_hit_rates(CacheHitInfo, erlang:length(CacheHitInfo)),
     LastLine = observer_cli_lib:render_last_line("q(quit)"),
-    ?output([?CURSOR_TOP, Menu, Sys, BlockView, HitView, LastLine]),
+    ?output([?CURSOR_TOP, Menu, Sys, BlockView, DistNodeView, HitView, LastLine]),
     NextTimeRef = observer_cli_lib:next_redraw(LastTimeRef, Interval),
     receive
         quit -> quit;
         {new_interval, NewInterval} -> render_worker(Cmd, NewInterval, NextTimeRef);
         redraw -> render_worker(Cmd, Interval, NextTimeRef)
+    end.
+
+get_dist_nodes_info() ->
+    case ets:info(sys_dist, size) of
+        undefined ->
+            [];
+        0 ->
+            [];
+        _ ->
+            {ok, DistNodesInfo} = net_kernel:nodes_info(),
+            DistNodesInfo
+    end.
+
+render_dist_node_info([]) ->
+    [];
+render_dist_node_info(DistNodesInfo) ->
+    Title = ?render([
+        ?UNDERLINE,
+        ?GRAY_BG,
+        ?W("Node", 30),
+        ?W("Dist Node Queue Size Bytes", 20),
+        ?W("Percent", 7),
+        ?W("Address", 19),
+        ?W("In", 11),
+        ?W("Out", 11),
+        ?W("Type", 7),
+        ?W("State", 10)
+    ]),
+    Limit = erlang:system_info(dist_buf_busy_limit),
+    LimitStr = integer_to_list(Limit),
+    View = lists:map(
+        fun({Node, Info}) ->
+            State = proplists:get_value(state, Info),
+            Type = proplists:get_value(type, Info),
+            Address = get_address(Info),
+            In = proplists:get_value(in, Info),
+            Out = proplists:get_value(out, Info),
+            QueueSize = get_dist_queue_size(Node),
+            QueueSizeStr = observer_cli_lib:to_list(QueueSize),
+            QueueSizeLimitStr = QueueSizeStr ++ "/" ++ LimitStr,
+            Percent =
+                case is_integer(QueueSize) of
+                    true ->
+                        Float = QueueSize / Limit,
+                        [erlang:float_to_list(Float * 100, [{decimals, 2}]), $%];
+                    false ->
+                        "unsupported"
+                end,
+            ?render([
+                ?W(Node, 30),
+                ?W(QueueSizeLimitStr, 20),
+                ?W(Percent, 7),
+                ?W(Address, 19),
+                ?W(In, 11),
+                ?W(Out, 11),
+                ?W(Type, 7),
+                ?W(State, 10)
+            ])
+        end,
+        lists:sort(DistNodesInfo)
+    ),
+    [Title | View].
+
+get_address(Info) ->
+    #net_address{address = Address} = proplists:get_value(address, Info, #net_address{}),
+    case Address of
+        {Addr, Port} ->
+            case inet:ntoa(Addr) of
+                {error, _} ->
+                    AddrStr = lists:flatten(io_lib:format("~p", [Addr])),
+                    AddrStr ++ ":" ++ integer_to_list(Port);
+                AddrStr ->
+                    AddrStr ++ ":" ++ integer_to_list(Port)
+            end;
+        _ ->
+            "unknown"
+    end.
+
+get_dist_queue_size(Node) ->
+    case ets:lookup(sys_dist, Node) of
+        [] ->
+            0;
+        [Dist] ->
+            ConnId = element(3, Dist),
+            {ok, _, _, Size} = erlang:dist_get_stat(ConnId),
+            Size
     end.
 
 render_cache_hit_rates(CacheHitInfo, Len) when Len =< 8 ->
