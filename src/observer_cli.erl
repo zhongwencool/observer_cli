@@ -813,7 +813,7 @@ get_stable_system_info() ->
     {
         [
             OtpRelease,
-            SysVersion,
+            SysVersion ++ " " ++ atom_to_list(erlang:node()),
             erlang:system_info(process_limit),
             erlang:system_info(port_limit),
             erlang:system_info(ets_limit)
