@@ -27,7 +27,7 @@ Visualize Erlang/Elixir Nodes On The Command Line base on [recon](https://github
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.8.0
+dep_observer_cli = hex 1.8.1
 ```
 
 **Elixir**
@@ -255,6 +255,9 @@ Support F/B to page up/down.
 ---
 
 ### Changelog
+- 1.8.1
+  - Show node name in system pane.
+ 
 - 1.8.0
   - Support `<Pid` to jump to specific pid.
   - Show process's label if it's set with [proc_lib:set_label(Label)](https://www.erlang.org/doc/apps/stdlib/proc_lib.html#set_label/1)
