@@ -271,7 +271,7 @@ render_process_info(
             ?W("total_heap_size", 16),
             ?W({byte, TotalHeapSize}, 12),
             ?W("fullsweep_after", 18),
-            ?W({byte, FullSweepAfter}, 12),
+            ?W(FullSweepAfter, 12),
             ?NEW_LINE,
             ?W("status", 16),
             ?W(Status, 42),
