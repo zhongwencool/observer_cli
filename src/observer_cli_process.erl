@@ -295,7 +295,11 @@ render_link_monitor(Link, Monitors, MonitoredBy) ->
                 {process, {RegName, Node}} ->
                     observer_cli_lib:to_list(RegName) ++ "/" ++ observer_cli_lib:to_list(Node);
                 {process, Pid} ->
-                    observer_cli_lib:to_list(Pid)
+                    observer_cli_lib:to_list(Pid);
+                {port, {RegName, Node}} ->
+                    observer_cli_lib:to_list(RegName) ++ "/" ++ observer_cli_lib:to_list(Node);
+                {port, Port} ->
+                    observer_cli_lib:to_list(Port)
             end
         end
      || P <- lists:sublist(Monitors, 30)
