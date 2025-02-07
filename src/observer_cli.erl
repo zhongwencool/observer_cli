@@ -5,7 +5,7 @@
 -include("observer_cli.hrl").
 
 %% proc_lib:get_label/1 is not exported before OTP 27
--dialyzer([{nowarn_function, [choose_lable/1]}]).
+-dialyzer([{nowarn_function, [choose_label/1]}]).
 -ignore_xref({proc_lib, get_label, 1}).
 
 %% API
@@ -538,7 +538,7 @@ render_top_n_view(memory, MemoryList, Num, Pages, Page) ->
     Title = ?render([
         ?W2(?GRAY_BG, "No | Pid", 16),
         ?W2(?RED_BG, "     Memory", 14),
-        ?W(?GRAY_BG, "Name|>Lable|>Initial Call", 45),
+        ?W(?GRAY_BG, "Name|>Label|>Initial Call", 45),
         ?W(?GRAY_BG, "    Reductions", 14),
         ?W(?GRAY_BG, " MsgQueue", 10),
         ?W(?GRAY_BG, "Current Function", 32)
@@ -568,7 +568,7 @@ render_top_n_view(binary_memory, MemoryList, Num, Pages, Page) ->
     Title = ?render([
         ?W2(?GRAY_BG, "No | Pid", 16),
         ?W2(?RED_BG, "  BinMemory", 14),
-        ?W(?GRAY_BG, "Name|>Lable|>Initial Call", 45),
+        ?W(?GRAY_BG, "Name|>Label|>Initial Call", 45),
         ?W(?GRAY_BG, "    Reductions", 14),
         ?W(?GRAY_BG, " MsgQueue", 10),
         ?W(?GRAY_BG, "Current Function", 32)
@@ -598,7 +598,7 @@ render_top_n_view(reductions, ReductionList, Num, Pages, Page) ->
     Title = ?render([
         ?W2(?GRAY_BG, "No | Pid", 16),
         ?W2(?RED_BG, "   Reductions", 15),
-        ?W(?GRAY_BG, "Name|>Lable|>Initial Call", 45),
+        ?W(?GRAY_BG, "Name|>Label|>Initial Call", 45),
         ?W(?GRAY_BG, "      Memory", 13),
         ?W(?GRAY_BG, " MsgQueue", 10),
         ?W(?GRAY_BG, "Current Function", 33)
@@ -628,7 +628,7 @@ render_top_n_view(total_heap_size, HeapList, Num, Pages, Page) ->
     Title = ?render([
         ?W2(?GRAY_BG, "No | Pid", 16),
         ?W2(?RED_BG, " TotalHeapSize", 14),
-        ?W(?GRAY_BG, "Name|>Lable|>Initial Call", 45),
+        ?W(?GRAY_BG, "Name|>Label|>Initial Call", 45),
         ?W(?GRAY_BG, "    Reductions", 14),
         ?W(?GRAY_BG, " MsgQueue", 10),
         ?W(?GRAY_BG, "Current Function", 32)
@@ -658,7 +658,7 @@ render_top_n_view(message_queue_len, MQLenList, Num, Pages, Page) ->
     Title = ?render([
         ?W2(?GRAY_BG, "No | Pid", 16),
         ?W2(?RED_BG, " MsgQueue", 11),
-        ?W(?GRAY_BG, "Name|>Lable|>Initial Call", 44),
+        ?W(?GRAY_BG, "Name|>Label|>Initial Call", 44),
         ?W(?GRAY_BG, "      Memory", 13),
         ?W(?GRAY_BG, "    Reductions", 14),
         ?W(?GRAY_BG, "Current Function", 33)
@@ -773,9 +773,9 @@ get_top_n_info(Item) ->
 display_unique_flag(IsName, Call, Pid) ->
     case choose_name(IsName) of
         undefined ->
-            case choose_lable(Pid) of
+            case choose_label(Pid) of
                 undefined -> choose_call(Call, Pid);
-                Lable -> Lable
+                Label -> Label
             end;
         Name ->
             Name
@@ -786,14 +786,14 @@ choose_name(IsName) when is_atom(IsName) ->
 choose_name(_) ->
     undefined.
 
-choose_lable(Pid) ->
+choose_label(Pid) ->
     case
         erlang:function_exported(proc_lib, get_label, 1) andalso
             proc_lib:get_label(Pid)
     of
         false -> undefined;
         undefined -> undefined;
-        Lable -> io_lib:format("~p", [Lable])
+        Label -> io_lib:format("~p", [Label])
     end.
 
 choose_call({proc_lib, init_p, 5}, Pid) ->
