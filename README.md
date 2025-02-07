@@ -27,7 +27,7 @@ Visualize Erlang/Elixir Nodes On The Command Line base on [recon](https://github
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.8.1
+dep_observer_cli = hex 1.8.2
 ```
 
 **Elixir**
@@ -255,6 +255,10 @@ Support F/B to page up/down.
 ---
 
 ### Changelog
+
+- 1.8.2
+  - Fix unit of `fullsweep_after`, The value of `fullsweep_after` is a number, not bytes.
+
 - 1.8.1
   - Show node name in system pane.
  

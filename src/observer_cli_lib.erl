@@ -113,7 +113,7 @@ render_menu(Type, Text) ->
     MnesiaTitle =
         case ets:info(schema, owner) of
             undefined -> "";
-            _ -> "/Mnesia(M)"
+            _ -> "Mnesia(M)"
         end,
     Title = get_menu_title(Type, MnesiaTitle),
     UpTime = uptime(),
