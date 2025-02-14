@@ -84,13 +84,13 @@ to_byte(Byte) when is_integer(Byte), Byte < 1024 ->
     [erlang:integer_to_list(Byte), $\s, $B];
 %% kilobyte
 to_byte(Byte) when Byte < 1024 * 1024 ->
-    [erlang:float_to_list(Byte / 1024, [{decimals, 4}]), $\s, $K, $B];
+    [erlang:float_to_list(Byte / 1024, [{decimals, 4}]), $\s, $K, $i, $B];
 %% megabyte
 to_byte(Byte) when Byte < 1024 * 1024 * 1024 ->
-    [erlang:float_to_list(Byte / (1024 * 1024), [{decimals, 4}]), $\s, $M, $B];
+    [erlang:float_to_list(Byte / (1024 * 1024), [{decimals, 4}]), $\s, $M, $i, $B];
 %% megabyte
 to_byte(Byte) when is_integer(Byte) ->
-    [erlang:float_to_list(Byte / (1024 * 1024 * 1024), [{decimals, 4}]), $\s, $G, $B];
+    [erlang:float_to_list(Byte / (1024 * 1024 * 1024), [{decimals, 4}]), $\s, $G, $i, $B];
 %% process died
 to_byte(Byte) ->
     [to_list(Byte)].
