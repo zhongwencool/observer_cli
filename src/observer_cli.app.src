@@ -16,6 +16,7 @@
         "mix.exs",
         "mix.lock",
         "README.md",
+        "docs/*",
         "rebar.config",
         "rebar.lock",
         "src"
