@@ -233,7 +233,8 @@ with_storage_type(Id, disc_only_copies = Storage, Tab0) ->
         {storage, Storage}
         | Tab0
     ];
-with_storage_type(_Id, {ext, _, _} = Storage, Tab0) ->
+%% {ext, _, _} or unknown
+with_storage_type(_Id, Storage, Tab0) ->
     [
         {storage, io_lib:format("~tp", [Storage])}
         | Tab0

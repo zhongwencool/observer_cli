@@ -45,7 +45,7 @@ to_percent(undefined) ->
 to_percent(_) ->
     "100.0%".
 
--spec to_list(term()) -> string().
+-spec to_list(term()) -> string() | {error, term()}.
 to_list(Atom) when is_atom(Atom) -> atom_to_list(Atom);
 to_list(Integer) when is_integer(Integer) -> integer_to_list(Integer);
 to_list(Pid) when is_pid(Pid) -> erlang:pid_to_list(Pid);
