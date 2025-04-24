@@ -2,6 +2,7 @@
 .tool-versions
 _build
 deps
+doc
 elvis
 *.o
 *.beam
