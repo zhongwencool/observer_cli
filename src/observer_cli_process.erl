@@ -13,7 +13,7 @@
 %% lists:foldl(fun(_X, Acc) -> queue:in('NaN', Acc) end, queue:new(), lists:seq(1, 5))
 -define(INIT_QUEUE, {['NaN', 'NaN', 'NaN', 'NaN'], ['NaN']}).
 
--spec start(Type, pid(), view_opts()) -> no_return when Type :: home | plugin.
+-spec start(Type, pid(), view_opts()) -> no_return() when Type :: home | plugin.
 start(Type, Pid, Opts) ->
     #view_opts{process = #process{interval = RefreshMs}} = Opts,
     RenderPid = spawn_link(fun() ->

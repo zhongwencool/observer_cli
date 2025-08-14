@@ -12,7 +12,7 @@
     " sc(send_cnt) so(send_oct) cnt oct 9(port 9 info) pd/pu(page:down/up)"
 ).
 
--spec start(view_opts()) -> no_return.
+-spec start(view_opts()) -> no_return().
 start(#view_opts{inet = InetOpt, auto_row = AutoRow} = ViewOpts) ->
     StorePid = observer_cli_store:start(),
     RenderPid = spawn_link(
