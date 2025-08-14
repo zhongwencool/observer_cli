@@ -12,6 +12,11 @@
     "refresh: ~wms q(quit) Positive Number(set refresh interval time ms) F/B(forward/back) Current pages is ~w"
 ).
 
+%% erlang:processes_iterator/0 is not exported before OTP 27
+-dialyzer([{nowarn_function, [app_info_iter/4]}]).
+-ignore_xref({erlang, processes_iterator, 0}).
+-ignore_xref({erlang, processes_next, 1}).
+
 %% @doc List application info
 
 -spec start(ViewOpts) -> quit when ViewOpts :: view_opts().
@@ -141,7 +146,73 @@ app_info() ->
     Info = application:info(),
     AllApps = app_status(Info),
     Leaders = leader_info(Info),
-    app_info(AllApps, Leaders, erlang:processes(), self()).
+    case erlang:function_exported(erlang, processes_iterator, 0) of
+        true ->
+            app_info_iter(AllApps, Leaders, erlang:processes_iterator(), self());
+        false ->
+            app_info(AllApps, Leaders, erlang:processes(), self())
+    end.
+
+app_info_iter(AllApps, Leaders, Iter, Self) ->
+    case erlang:processes_next(Iter) of
+        {Pid, NewIter} when is_pid(Pid) ->
+            case erlang:process_info(Pid, [group_leader, memory, reductions, message_queue_len]) of
+                undefined ->
+                    app_info_iter(AllApps, Leaders, NewIter, Self);
+                Prop ->
+                    [
+                        {group_leader, Group},
+                        {memory, Memory},
+                        {reductions, Reds},
+                        {message_queue_len, MsgQ}
+                    ] = Prop,
+                    NewAllApps =
+                        case maps:find(Group, Leaders) of
+                            error ->
+                                case find_group_leader(Group) of
+                                    no_group ->
+                                        {ok, {C1, M1, R1, Q1, S1, V1}} = maps:find(
+                                            no_group, AllApps
+                                        ),
+                                        NewInfo = {
+                                            C1 + 1, M1 + Memory, R1 + Reds, Q1 + MsgQ, S1, V1
+                                        },
+                                        maps:put(no_group, NewInfo, AllApps);
+                                    GroupLeader ->
+                                        case maps:find(GroupLeader, Leaders) of
+                                            error ->
+                                                {ok, {C1, M1, R1, Q1, S1, V1}} = maps:find(
+                                                    no_group, AllApps
+                                                ),
+                                                NewInfo = {
+                                                    C1 + 1,
+                                                    M1 + Memory,
+                                                    R1 + Reds,
+                                                    Q1 + MsgQ,
+                                                    S1,
+                                                    V1
+                                                },
+                                                maps:put(no_group, NewInfo, AllApps);
+                                            {ok, App} ->
+                                                {ok, {C, M, R, Q, S, V}} = maps:find(App, AllApps),
+                                                maps:put(
+                                                    App,
+                                                    {C + 1, M + Memory, R + Reds, Q + MsgQ, S, V},
+                                                    AllApps
+                                                )
+                                        end
+                                end;
+                            {ok, App} ->
+                                {ok, {C, M, R, Q, S, V}} = maps:find(App, AllApps),
+                                maps:put(
+                                    App, {C + 1, M + Memory, R + Reds, Q + MsgQ, S, V}, AllApps
+                                )
+                        end,
+                    app_info_iter(NewAllApps, Leaders, NewIter, Self)
+            end;
+        none ->
+            AllApps
+    end.
 
 app_info(AllApps, _Leaders, [], _Self) ->
     AllApps;
@@ -161,9 +232,9 @@ app_info(AllApps, Leaders, [Pid | Process], Self) ->
             NewAllApps =
                 case maps:find(Group, Leaders) of
                     error ->
-                        {ok, {C1, M1, R1, Q1, S1, V1}} = maps:find(unknown, AllApps),
+                        {ok, {C1, M1, R1, Q1, S1, V1}} = maps:find(no_group, AllApps),
                         NewInfo = {C1 + 1, M1 + Memory, R1 + Reds, Q1 + MsgQ, S1, V1},
-                        maps:put(unknown, NewInfo, AllApps);
+                        maps:put(no_group, NewInfo, AllApps);
                     {ok, App} ->
                         {ok, {C, M, R, Q, S, V}} = maps:find(App, AllApps),
                         maps:put(App, {C + 1, M + Memory, R + Reds, Q + MsgQ, S, V}, AllApps)
@@ -195,7 +266,7 @@ app_status(Info) ->
     {started, Started} = lists:keyfind(started, 1, Info),
     {start_p_false, StartPFalse} = lists:keyfind(start_p_false, 1, Info),
     {starting, Starting} = lists:keyfind(starting, 1, Info),
-    R0 = #{unknown => {0, 0, 0, 0, "Unknown", "unknown"}},
+    R0 = #{no_group => {0, 0, 0, 0, "Unknown", "unknown"}},
     R1 = lists:foldl(
         fun({App, _From}, Acc) ->
             Acc#{App => {0, 0, 0, 0, "Loading", "unknown"}}
@@ -239,4 +310,11 @@ get_version(App, Maps) ->
     case maps:find(App, Maps) of
         {ok, {_, _, _, _, _, V}} -> V;
         _ -> "unknown"
+    end.
+
+find_group_leader(Pid) ->
+    case erlang:process_info(Pid, group_leader) of
+        undefined -> no_group;
+        {group_leader, Pid} -> Pid;
+        {group_leader, Group} -> find_group_leader(Group)
     end.
