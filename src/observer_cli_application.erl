@@ -13,7 +13,7 @@
 ).
 
 %% erlang:processes_iterator/0 is not exported before OTP 27
--dialyzer([{nowarn_function, [app_info_iter/4]}]).
+-dialyzer([{nowarn_function, [app_info/0]}]).
 -ignore_xref({erlang, processes_iterator, 0}).
 -ignore_xref({erlang, processes_next, 1}).
 

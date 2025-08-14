@@ -24,10 +24,10 @@
     "b/bb(binary mem) t/tt(total heap size) mq/mmq(msg queue) 9(proc 9 info) F/B(page forward/back)"
 ).
 
--spec start() -> no_return | {badrpc, term()}.
+-spec start() -> no_return() | {badrpc, term()}.
 start() -> start(#view_opts{}).
 
--spec start(Node) -> no_return | {badrpc, term()} when
+-spec start(Node) -> no_return() | {badrpc, term()} when
     Node :: atom() | non_neg_integer() | #view_opts{}.
 start(Node) when Node =:= node() ->
     start(#view_opts{});
@@ -54,7 +54,7 @@ start(Interval) when is_integer(Interval), Interval >= ?MIN_INTERVAL ->
         port = Interval
     }).
 
--spec start(Node, Cookies | Options) -> no_return | {badrpc, term()} when
+-spec start(Node, Cookies | Options) -> no_return() | {badrpc, term()} when
     Node :: atom(),
     Cookies :: atom(),
     Options :: proplists:proplist().
@@ -70,7 +70,7 @@ start(Node, Options) when is_atom(Node) andalso is_list(Options) ->
     Interval = proplists:get_value(interval, Options, ?DEFAULT_INTERVAL),
     rpc_start(Node, Interval).
 
--spec start_plugin() -> no_return.
+-spec start_plugin() -> no_return().
 start_plugin() ->
     erlang:process_flag(trap_exit, true),
     application:ensure_all_started(observer_cli),

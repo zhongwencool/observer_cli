@@ -49,9 +49,7 @@ run(TargetNode, Cookie, Interval) ->
     case Start() of
         {badrpc, _} ->
             remote_load(TargetNodeAtom),
-            io:format("~p~n", [Start()]);
-        _ ->
-            ok
+            io:format("~p~n", [Start()])
     end.
 
 remote_load(Node) ->

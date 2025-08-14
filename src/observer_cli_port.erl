@@ -4,7 +4,7 @@
 
 -export([start/2]).
 
--spec start(pid(), view_opts()) -> no_return.
+-spec start(pid(), view_opts()) -> no_return().
 start(Port, Opts) ->
     #view_opts{port = RefreshMs} = Opts,
     RenderPid = spawn_link(fun() ->

@@ -22,7 +22,7 @@
 
 %% @doc List System and Architecture, CPU's and Threads metrics  in observer's system
 %%  List Memory Allocators: std, ll, eheap, ets, fix, binary, driver.
--spec start(ViewOpts) -> no_return when ViewOpts :: view_opts().
+-spec start(ViewOpts) -> no_return() when ViewOpts :: view_opts().
 start(#view_opts{sys = #system{interval = Interval}} = ViewOpts) ->
     Pid = spawn_link(fun() ->
         ?output(?CLEAR),

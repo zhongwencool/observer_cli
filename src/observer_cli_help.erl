@@ -9,7 +9,7 @@
 
 -define(HELP_COLUMN_WIDTH, 85).
 
--spec start(view_opts()) -> no_return.
+-spec start(view_opts()) -> no_return().
 start(#view_opts{help = #help{interval = Interval}} = ViewOpts) ->
     ChildPid = spawn_link(fun() ->
         Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
