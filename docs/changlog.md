@@ -1,5 +1,8 @@
 # Changelog
-
+- 1.8.4
+  - Fix OTP 28 dialzyer warning.
+  - Use erlang:processes_iterator/0, erlang:process_next/1 to fold processes when OTP 28.
+  
 - 1.8.3
   - Fix mnesia crash by handling unknown storage types.
   - Fix OTP 27 warning.
