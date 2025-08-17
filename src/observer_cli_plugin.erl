@@ -95,17 +95,19 @@ manager(ChildPid, SheetCache, ViewOpts) ->
             observer_cli_lib:exit_processes([ChildPid]),
             start(ViewOpts#view_opts{plug = PlugOpts#plug{plugs = NewPlugs}});
         {jump, CurRow} ->
+            CurPlugs = maps:get(CurIndex, Plugs),
+            {Filter, Handler} = maps:get(handler, CurPlugs, {fun is_pid/1, observer_cli_process}),
             case ets:lookup(SheetCache, CurRow) of
                 [{CurRow, Items}] ->
-                    case [I || I <- Items, is_pid(I)] of
-                        [ChoosePid | _] ->
+                    case [I || I <- Items, Filter(I)] of
+                        [ChooseItem | _] ->
                             observer_cli_lib:exit_processes([ChildPid]),
                             ets:delete(SheetCache),
                             NewPlugs = update_plugins(CurIndex, Plugs, #{cur_row => CurRow}),
                             NewViewOpts = ViewOpts#view_opts{
                                 plug = PlugOpts#plug{plugs = NewPlugs}
                             },
-                            observer_cli_process:start(plugin, ChoosePid, NewViewOpts);
+                            Handler:start(plugin, ChooseItem, NewViewOpts);
                         [] ->
                             manager(ChildPid, SheetCache, ViewOpts)
                     end;
@@ -114,14 +116,15 @@ manager(ChildPid, SheetCache, ViewOpts) ->
             end;
         jump ->
             CurPlugs = maps:get(CurIndex, Plugs),
-            CurRow = maps:get(cur_row, CurPlugs),
+            CurRow = maps:get(cur_row, CurPlugs, observer_cli_process),
+            {Filter, Handler} = maps:get(handler, CurPlugs, {fun is_pid/1, observer_cli_process}),
             case ets:lookup(SheetCache, CurRow) of
                 [{CurRow, Items}] ->
-                    case [I || I <- Items, is_pid(I)] of
-                        [ChoosePid | _] ->
+                    case [I || I <- Items, Filter(I)] of
+                        [ChooseItem | _] ->
                             observer_cli_lib:exit_processes([ChildPid]),
                             ets:delete(SheetCache),
-                            observer_cli_process:start(plugin, ChoosePid, ViewOpts);
+                            Handler:start(plugin, ChooseItem, ViewOpts);
                         [] ->
                             manager(ChildPid, SheetCache, ViewOpts)
                     end;
