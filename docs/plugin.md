@@ -158,3 +158,34 @@ Support `{byte, 1024*10}` to ` 10.0000 KB`; `{percent, 0.12}` to `12.00%`.
 Support F/B to page up/down.
 
 [A more specific plugin](https://github.com/zhongwencool/os_stats) can collect linux system information such as kernel vsn, loadavg, disk, memory usage, cpu utilization, IO statistics.
+
+3. Handler: specific per-item behavior
+
+By default, once you select a row, it will show the process information in `observer_cli_process` view. This is done 
+by looking for a `pid` in the row, so the first one found will be used and passed to the `observer_cli_process` view.
+
+To customize this behavior, you can implement your own handler. The handler is a tuple with a function and a module. 
+The function is a predicate that will be used to filter all row's items and, if the resulting list in not empty, the 
+`Handler:start/3` function will be called. The signature is the same of `observer_cli_process:start/3`.
+
+The new configuration will look like this:
+
+```erlang
+%% module       - Specific module implements plugin behavior. It's mandatory.
+%% title        - Menu title. It's mandatory.
+%% shortcut     - Switch plugin by shortcut. It's mandatory.
+%% interval     - Refresh interval ms. It's optional. default is 1500ms.
+%% sort_column  - Sort the sheet by this index. It's optional default is 2.
+%% handler      - Specific handler implements per-item behavior. It's optional, default is `{fun is_pid/1,observer_cli_process}`.`
+
+{plugins,
+  [
+    #{module => observer_cli_plug_behaviour_x, title => "XPlug",
+      interval => 1600, shortcut => "X", sort_column => 3,
+      handler => {fun is_pid/1, observer_cli_plug_item_behaviour_x}},
+    #{module => observer_cli_plug_behaviour_y, title => "YPlug",
+      interval =>2000, shortcut => "Y", sort_column => 3,
+      handler => {fun is_binary/1, observer_cli_plug_item_behaviour_y}},
+  ]
+}
+```
