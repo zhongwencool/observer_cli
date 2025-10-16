@@ -88,6 +88,7 @@ clean([RenderPid, StorePid, SchWallFlag, SchUsage]) ->
 rpc_start(Node, Interval) ->
     case net_kernel:hidden_connect_node(Node) of
         true ->
+            update_net_ticktime_from(Node),
             rpc:call(Node, ?MODULE, start, [Interval]);
         false ->
             Msg = <<"Node(~p) refuse to be connected, make sure cookie is valid~n">>,
@@ -894,3 +895,12 @@ get_incremental_stats(SchUsage) ->
             ?DISABLE -> undefined
         end,
     {In, Out, GCs, Words, ScheduleWall}.
+
+update_net_ticktime_from(Node) ->
+    NetTickTime = rpc:call(Node, net_kernel, get_net_ticktime, []),
+    case net_kernel:set_net_ticktime(NetTickTime) of
+        change_initiated ->
+            ok;
+        {ongoing_change_to, NetTickTime} ->
+            ok
+    end.
