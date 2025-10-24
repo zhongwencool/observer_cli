@@ -11,7 +11,7 @@ defmodule ObserverCli.MixProject do
         {:recon, "~> 2.5.6"}
       ],
       env: [
-        scheduler_usage: :disable,
+        # scheduler_usage: :enable, # default value is 'disable', uncomment to enable by default
         plugins: [
           # module       - Specific module implements plugin behavior. It's mandatory.
           # title        - Menu title. It's mandatory.
