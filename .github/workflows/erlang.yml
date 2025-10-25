@@ -16,10 +16,6 @@ jobs:
             rebar3: '3.22'
           - otp: '26'
             rebar3: '3.22'
-          - otp: '25'
-            rebar3: '3.22'
-          - otp: '24'
-            rebar3: '3.22'
     steps:
       - uses: actions/checkout@v4
       - uses: erlef/setup-beam@v1
