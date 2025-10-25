@@ -46,11 +46,9 @@ run(TargetNode, Cookie, Interval) ->
         Options = [{cookie, Cookie}, {interval, Interval}],
         observer_cli:start(TargetNodeAtom, Options)
     end,
-    case Start() of
-        {badrpc, _} ->
-            remote_load(TargetNodeAtom),
-            io:format("~p~n", [Start()])
-    end.
+    {badrpc, _} = Start(),
+    remote_load(TargetNodeAtom),
+    io:format("~p~n", [Start()]).
 
 remote_load(Node) ->
     [

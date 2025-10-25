@@ -28,12 +28,12 @@
 start() -> start(#view_opts{}).
 
 -spec start(Node) -> no_return() | {badrpc, term()} when
-    Node :: atom() | non_neg_integer() | #view_opts{}.
+    Node :: atom() | non_neg_integer() | view_opts().
 start(Node) when Node =:= node() ->
     start(#view_opts{});
 start(Node) when is_atom(Node) ->
     rpc_start(Node, ?DEFAULT_INTERVAL);
-start(#view_opts{home = Home} = Opts) ->
+start(Opts = #view_opts{home = Home}) ->
     erlang:process_flag(trap_exit, true),
     AutoRow = check_auto_row(),
     #home{scheduler_usage = SchUsage} = Home,
