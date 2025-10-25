@@ -12,7 +12,7 @@
     " hide(switch between hide and display system table)"
 ).
 
--spec start(#view_opts{}) -> any().
+-spec start(view_opts()) -> any().
 start(
     #view_opts{
         db = #db{

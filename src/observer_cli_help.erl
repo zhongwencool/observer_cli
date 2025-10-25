@@ -2,6 +2,7 @@
 -module(observer_cli_help).
 
 -include("observer_cli.hrl").
+-import_type({observer_cli_types, [view_opts/0]}).
 
 %% API
 -export([start/1]).

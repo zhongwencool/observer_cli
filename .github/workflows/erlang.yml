@@ -26,10 +26,6 @@ jobs:
         with:
           otp-version: ${{matrix.otp}}
           rebar3-version: ${{matrix.rebar3}}
-      - name: compile
-        run: rebar3 compile
-      - name: xref
-        run: rebar3 xref
-      - name: dialyzer
-        run: rebar3 dialyzer
+      - name: quality checks
+        run: rebar3 check
 

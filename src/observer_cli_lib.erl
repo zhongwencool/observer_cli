@@ -158,32 +158,32 @@ tidy_format_args([F | Rest], NeedLine, FAcc, AAcc) ->
 to_str({byte, Bytes}) -> to_byte(Bytes);
 to_str(Term) -> to_list(Term).
 
--spec parse_cmd(#view_opts{}, atom(), list()) -> atom() | string() | tuple().
+-spec parse_cmd(view_opts(), atom(), list()) -> atom() | string() | tuple().
 parse_cmd(ViewOpts, Module, Args) ->
     case to_list(io:get_line("")) of
         "H\n" ->
-            Module:clean(Args),
+            apply(Module, clean, [Args]),
             observer_cli:start(ViewOpts);
         "S\n" ->
-            Module:clean(Args),
+            apply(Module, clean, [Args]),
             observer_cli_system:start(ViewOpts);
         "A\n" ->
-            Module:clean(Args),
+            apply(Module, clean, [Args]),
             observer_cli_application:start(ViewOpts);
         "N\n" ->
-            Module:clean(Args),
+            apply(Module, clean, [Args]),
             observer_cli_inet:start(ViewOpts);
         "M\n" ->
-            Module:clean(Args),
+            apply(Module, clean, [Args]),
             observer_cli_mnesia:start(ViewOpts);
         "E\n" ->
-            Module:clean(Args),
+            apply(Module, clean, [Args]),
             observer_cli_ets:start(ViewOpts);
         "D\n" ->
-            Module:clean(Args),
+            apply(Module, clean, [Args]),
             observer_cli_help:start(ViewOpts);
         "P\n" ->
-            Module:clean(Args),
+            apply(Module, clean, [Args]),
             observer_cli_plugin:start(ViewOpts);
         %% inet
         "ic\n" ->

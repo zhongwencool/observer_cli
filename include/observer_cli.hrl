@@ -51,20 +51,31 @@
 -record(plug, {cur_index = 1 :: pos_integer(), plugs = [] :: map() | []}).
 
 -record(view_opts, {
-    home = #home{} :: home(),
-    ets = #ets{} :: ets(),
-    sys = #system{} :: system(),
-    app = #app{} :: app(),
-    db = #db{} :: db(),
-    help = #help{} :: help(),
-    inet = #inet{} :: inet(),
-    process = #process{} :: process(),
+    home = #home{} :: #home{},
+    ets = #ets{} :: #ets{},
+    sys = #system{} :: #system{},
+    app = #app{} :: #app{},
+    db = #db{} :: #db{},
+    help = #help{} :: #help{},
+    inet = #inet{} :: #inet{},
+    process = #process{} :: #process{},
     port = ?DEFAULT_INTERVAL :: pos_integer(),
-    plug = #plug{} :: plug(),
+    plug = #plug{} :: #plug{},
     auto_row = true :: boolean()
 }).
 
--export_type([view_opts/0]).
+-export_type([
+    view_opts/0,
+    home/0,
+    app/0,
+    system/0,
+    ets/0,
+    db/0,
+    help/0,
+    inet/0,
+    process/0,
+    plug/0
+]).
 
 -type view_opts() :: #view_opts{}.
 -type home() :: #home{}.
@@ -103,6 +114,6 @@
 -define(SELECT(Text), observer_cli_lib:select(Text)).
 -define(UNSELECT(Text), observer_cli_lib:unselect(Text)).
 
--define(render(_FA_), observer_cli_lib:render(_FA_)).
--define(output(_F_, _A_), io:format(iolist_to_binary(_F_), _A_)).
--define(output(_L_), ?output(_L_, [])).
+-define('render'(_FA_), observer_cli_lib:render(_FA_)).
+-define('output'(_F_, _A_), io:format(iolist_to_binary(_F_), _A_)).
+-define('output'(_L_), ?output(_L_, [])).

@@ -166,53 +166,44 @@ app_info_iter(AllApps, Leaders, Iter, Self) ->
                         {reductions, Reds},
                         {message_queue_len, MsgQ}
                     ] = Prop,
-                    NewAllApps =
-                        case maps:find(Group, Leaders) of
-                            error ->
-                                case find_group_leader(Group) of
-                                    no_group ->
-                                        {ok, {C1, M1, R1, Q1, S1, V1}} = maps:find(
-                                            no_group, AllApps
-                                        ),
-                                        NewInfo = {
-                                            C1 + 1, M1 + Memory, R1 + Reds, Q1 + MsgQ, S1, V1
-                                        },
-                                        maps:put(no_group, NewInfo, AllApps);
-                                    GroupLeader ->
-                                        case maps:find(GroupLeader, Leaders) of
-                                            error ->
-                                                {ok, {C1, M1, R1, Q1, S1, V1}} = maps:find(
-                                                    no_group, AllApps
-                                                ),
-                                                NewInfo = {
-                                                    C1 + 1,
-                                                    M1 + Memory,
-                                                    R1 + Reds,
-                                                    Q1 + MsgQ,
-                                                    S1,
-                                                    V1
-                                                },
-                                                maps:put(no_group, NewInfo, AllApps);
-                                            {ok, App} ->
-                                                {ok, {C, M, R, Q, S, V}} = maps:find(App, AllApps),
-                                                maps:put(
-                                                    App,
-                                                    {C + 1, M + Memory, R + Reds, Q + MsgQ, S, V},
-                                                    AllApps
-                                                )
-                                        end
-                                end;
-                            {ok, App} ->
-                                {ok, {C, M, R, Q, S, V}} = maps:find(App, AllApps),
-                                maps:put(
-                                    App, {C + 1, M + Memory, R + Reds, Q + MsgQ, S, V}, AllApps
-                                )
-                        end,
+                    NewAllApps = update_app_stats(Group, Memory, Reds, MsgQ, AllApps, Leaders),
                     app_info_iter(NewAllApps, Leaders, NewIter, Self)
             end;
         none ->
             AllApps
     end.
+
+%% @doc Update application statistics for a process
+update_app_stats(Group, Memory, Reds, MsgQ, AllApps, Leaders) ->
+    case maps:find(Group, Leaders) of
+        error ->
+            handle_group_not_in_leaders(Group, Memory, Reds, MsgQ, AllApps, Leaders);
+        {ok, App} ->
+            increment_app_stats(App, Memory, Reds, MsgQ, AllApps)
+    end.
+
+%% @doc Handle case when group leader is not found in leaders map
+handle_group_not_in_leaders(Group, Memory, Reds, MsgQ, AllApps, Leaders) ->
+    case find_group_leader(Group) of
+        no_group ->
+            increment_app_stats(no_group, Memory, Reds, MsgQ, AllApps);
+        GroupLeader ->
+            handle_found_group_leader(GroupLeader, Memory, Reds, MsgQ, AllApps, Leaders)
+    end.
+
+%% @doc Handle case when a group leader is found
+handle_found_group_leader(GroupLeader, Memory, Reds, MsgQ, AllApps, Leaders) ->
+    case maps:find(GroupLeader, Leaders) of
+        error ->
+            increment_app_stats(no_group, Memory, Reds, MsgQ, AllApps);
+        {ok, App} ->
+            increment_app_stats(App, Memory, Reds, MsgQ, AllApps)
+    end.
+
+%% @doc Increment statistics for an application
+increment_app_stats(App, Memory, Reds, MsgQ, AllApps) ->
+    {ok, {C, M, R, Q, S, V}} = maps:find(App, AllApps),
+    maps:put(App, {C + 1, M + Memory, R + Reds, Q + MsgQ, S, V}, AllApps).
 
 app_info(AllApps, _Leaders, [], _Self) ->
     AllApps;

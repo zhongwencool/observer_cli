@@ -240,7 +240,7 @@ Top N list sort by memory size, all items defined in [`mnesia:table_info/2`](htt
 
 ### Application
 
-![Application](https://github.com/zhongwencool/observer_cli/raw/main/docs/images/application.jpg)
+![Application](https://github.com/zhongwencool/observer_cli/raw/main/docs/images/application.png)
 
 The Application panel aggregates supervision data from [`application_controller:info()`](https://github.com/erlang/otp/blob/master/lib/kernel/src/application_controller.erl#L280), groups processes by their application master, and shows their live resource usage. Each row includes:
 
