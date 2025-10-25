@@ -1,6 +1,6 @@
 {application, observer_cli, [
     {description, "Visualize Erlang Nodes On The Command Line"},
-    {vsn, "1.8.4"},
+    {vsn, "1.8.5"},
     {modules, [
         observer_cli
     ]},
@@ -24,7 +24,7 @@
     {build_tools, ["mix", "rebar3"]},
     {env, [
         %% {scheduler_usage, enable} %% default value is 'disable', uncomment to enable by default
-        {plugins, [
+        %% {plugins, [
             %% module       - Specific module implements plugin behavior. It's mandatory.
             %% title        - Menu title. It's mandatory.
             %% shortcut     - Switch plugin by shortcut. It's mandatory.
@@ -33,7 +33,7 @@
 
             %% #{module => observer_cli_plug_1, title => "Example-1", interval => 1500, shortcut => "S", sort_column => 3},
             %% #{module => observer_cli_plug_2, title => "Example-2", interval => 1600, shortcut => "D", sort_column => 2}
-        ]}
+        %% ]}
     ]},
     {licenses, ["MIT"]},
     {links, [{"Github", "https://github.com/zhongwencool/observer_cli"}]}
