@@ -11,7 +11,7 @@
 
 Observer CLI is a library to be dropped into any beam nodes, to be used to assist DevOps  people diagnose problems in production nodes. Based on [recon](https://github.com/ferd/recon).
 
-<img src="https://github.com/user-attachments/assets/ce797033-732a-4178-a9c5-df4de559ed0c" width="100%" alt="Home"> </img>
+<img src="https://github.com/zhongwencool/observer_cli/raw/main/docs/images/home.png" width="100%" alt="Home"> </img>
 
 - Provide a high-performance tool usable both in development and production settings.
 - Focus on important and detailed information about real-time running system.
@@ -28,7 +28,7 @@ Observer CLI is a library to be dropped into any beam nodes, to be used to assis
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.8.3
+dep_observer_cli = hex 1.8.5
 ```
 
 ### Elixir
@@ -81,6 +81,9 @@ iex(1)> :observer_cli.start(:'target@host', :'magic_cookie')
 > #### exclamation {: .info}
 > **ensure observer_cli application been loaded on target node.**
 
+> #### tip {: .tip}
+> Pass `{interval, 3000}` (Erlang) or `interval: 3000` (Elixir) to sample every 3 seconds. The minimum refresh interval is 1000 ms.
+
 ### Escriptize
 
 1. cd path/to/observer_cli/
@@ -93,7 +96,7 @@ iex(1)> :observer_cli.start(:'target@host', :'magic_cookie')
 
 ### Home Panel
 
-![Home](https://user-images.githubusercontent.com/3116225/96714573-ede2f280-13d4-11eb-999c-f2aedb0d6ab1.jpg)
+![Home](https://github.com/zhongwencool/observer_cli/raw/main/docs/images/home_panel.jpg)
 
 The Home panel provides a comprehensive overview of your Erlang node:
 
@@ -109,12 +112,14 @@ The Home panel provides a comprehensive overview of your Erlang node:
 * **port_limit**: `erl +Q Number` sets the maximum number of simultaneously existing ports for this system if a Number is passed as value. Valid range for Number is [1024-134217727]. The default value used is normally 65536. However, if the runtime system is able to determine maximum amount of file descriptors that it is allowed to open and this value is larger than 65536, the chosen value will increased to a value larger or equal to the maximum amount of file descriptors that can be opened.
 * **atom_limit**: `erl +t size` sets the maximum number of atoms the virtual machine can handle. Defaults to 1,048,576.
 
-[`PS`](https://man7.org/linux/man-pages/man1/ps.1.html) report a snapshot of the beam process.
+[`ps`](https://man7.org/linux/man-pages/man1/ps.1.html) reports a snapshot of the BEAM OS process and feeds the system panel. Observer CLI samples four columns:
 
-| Command/Flag | Description                                                                                                                                                                                             |
-|--------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| ps -o pcpu   | cpu utilization of the process in "##.#" format. Currently, it is the CPU time used divided by the time the process has been running (cputime/realtime ratio), expressed as a percentage. It will not add up to 100% unless you are lucky. |
-| ps -o pmem   | ratio of the process's resident set size to the physical memory on the machine, expressed as a percentage.                                                                                             |
+| Command/Flag | Description |
+|--------------|-------------|
+| `ps -o pcpu` | CPU utilization of the BEAM OS process expressed as percentage of a single core. Calculated from cumulative scheduler time / wall clock time, so it may exceed what top reports on multi-core systems. |
+| `ps -o pmem` | Percentage of physical memory used by the BEAM OS process (resident set size / total RAM). |
+| `ps -o rss`  | Resident set size in kilobytes, useful for spotting long-lived memory growth. |
+| `ps -o vsz`  | Virtual memory size in kilobytes, highlighting total address space reservations (code, heap, and mapped binaries). |
 
 [`erlang:memory/0`](http://erlang.org/doc/man/erlang.html#memory-0) Returns a list with information about memory dynamically allocated by the Erlang emulator.
 
@@ -144,9 +149,9 @@ Scheduler utilization by [`erlang:statistics(scheduler_wall_time)`](http://erlan
 
 ### Process
 
-When looking for high memory usage, for example it's interesting to be able to list all of a node's processes and find the top N consumers. Enter `m` then press `Enter` will use the `recon:proc_count(memory, N)` function, we can get:
+When looking for high memory usage, for example it's interesting to be able to list all of a node's processes and find the top N consumers. Enter `m` then press `Enter` will use the `recon:proc_count(memory, N)` function, and you will get output like the following. On OTP 27+ nodes, process rows also display any label set through [`proc_lib:set_label/1`](https://www.erlang.org/doc/apps/stdlib/proc_lib.html#set_label/1), which helps correlate supervised jobs with their metrics.
 
-![Top](https://user-images.githubusercontent.com/3116225/96717499-25539e00-13d9-11eb-85af-fdde633da098.jpg)
+![Top](https://github.com/zhongwencool/observer_cli/raw/main/docs/images/process.jpg)
 
 [`recon:proc_count/2`](http://ferd.github.io/recon/recon.html#proc_count-2) and [`recon:proc_window/3`](http://ferd.github.io/recon/recon.html#proc_window-3) are to be used when you require information about processes in a larger sense: biggest consumers of given process `memory`, `reductions`, `binary`, `total_heap_size`, `message_queue_len`, either absolutely or over a sliding time window, respectively.
 
@@ -154,7 +159,7 @@ More detail about sliding time windows see [`recon:proc_window/3`](http://ferd.g
 
 When an abnormal process is found, enter the suspected process sequence(Integer) then press `Enter` will use [`erlang:process_info/2`](http://erlang.org/doc/man/erlang.html#process_info-2) to show a lot of information available (which is safe to use in production) about processes.
 
-![Process](https://user-images.githubusercontent.com/3116225/39091219-66ba0398-4622-11e8-81b1-f489251f111a.jpg)
+![Process](https://github.com/zhongwencool/observer_cli/raw/main/docs/images/process_info.jpg)
 
 * **registered_name**: if the process has a name (as registered with `erlang:register/2`), it is given here.
 * **trap_exit**: set `trap_exit` to true, exit signals arriving to a process are converted to `{EXIT,From,Reason}` messages, which can be received as ordinary messages. If `trap_exit` is set to false, the process exits if it receives an exit signal other than normal and the exit signal is propagated to its linked processes. Application processes are normally not to trap exits.
@@ -179,7 +184,7 @@ When an abnormal process is found, enter the suspected process sequence(Integer)
 
 ### Network
 
-![Network](https://user-images.githubusercontent.com/3116225/96717492-2389da80-13d9-11eb-9795-0f77ee441329.jpg)
+![Network](https://github.com/zhongwencool/observer_cli/raw/main/docs/images/network.jpg)
 
 * **Byte input/output**: The byte of growth input/output during the refresh interval.
 * **Total input/output**: [`erlang:statistics(io)`](http://erlang.org/doc/man/erlang.html#statistics-1) returns `Input`, which is the total number of bytes received through ports, and `Output`, which is the total number of bytes output to ports.
@@ -195,7 +200,7 @@ Fetches a given attribute from all inet ports (`TCP, UDP, SCTP`) and returns the
 
 When find out who is slowly but surely eating up all your bandwidth, enter the suspected port sequence(Integer) then press `Enter` will use [`recon:port_info/2`](http://ferd.github.io/recon/recon.html#port_info-2) to show a lot of information available about port.
 
-![Port](https://user-images.githubusercontent.com/3116225/39091218-6687caf4-4622-11e8-86c7-190c2106d41e.jpg)
+![Port](https://github.com/zhongwencool/observer_cli/raw/main/docs/images/port_info.jpg)
 
 * **id**: internal index of a port. Of no particular use except to differentiate ports.
 * **name**: type of the port — with names such as `"tcp_inet"`, `"udp_inet"`, or `"efile"`.
@@ -212,15 +217,16 @@ When find out who is slowly but surely eating up all your bandwidth, enter the s
 
 ### System
 
-![System](https://user-images.githubusercontent.com/3116225/39091213-55b9aaf8-4622-11e8-91ed-b37c04e20173.jpg)
+![System](https://github.com/zhongwencool/observer_cli/raw/main/docs/images/system.jpg)
 
 * **System Info**: [`erlang:system_info/1`](http://erlang.org/doc/man/erlang.html#system_info-1) returns various information about the allocators of the current system (emulator).
 * **Allocator Info**: [`recon_alloc:average_block_sizes(current|max)`](https://ferd.github.io/recon/recon_alloc.html#average_block_sizes-1) check all allocators in `allocator` and returns the average block sizes being used for mbcs and sbcs. This value is interesting to use because it will tell us how large most blocks are. This can be related to the VM's largest multiblock carrier size (lmbcs) and smallest multiblock carrier size (smbcs) to specify allocation strategies regarding the carrier sizes to be used.
 * **Cache Hit Rate**: [`recon_alloc:cache_hit_rates()`](https://ferd.github.io/recon/recon_alloc.html#cache_hit_rates-0) Cache can be tweaked using three VM flags: `+MMmcs`, `+MMrmcbf`, and `+MMamcbf`.
+* **Distribution buffers**: Uses [`erlang:dist_get_stat/1`](https://www.erlang.org/doc/man/erlang.html#dist_get_stat-1) on OTP 24+ to track per-node distribution queue sizes and the configured `dist_buf_busy_limit`.
 
 ### ETS
 
-![Ets](https://user-images.githubusercontent.com/3116225/39091214-55eae91a-4622-11e8-95c2-bc514219b5d9.jpg)
+![Ets](https://github.com/zhongwencool/observer_cli/raw/main/docs/images/ets.jpg)
 
 ETS tables are never garbage collected, and will maintain their memory usage as long as records will be left undeleted in a table. Only removing records manually (or deleting the table) will reclaim memory.
 
@@ -228,12 +234,22 @@ Top N list sort by memory size, all items defined in [`ets:info/2`](http://erlan
 
 ### Mnesia
 
-![Mnesia](https://user-images.githubusercontent.com/3116225/39091215-5637b4fc-4622-11e8-9639-99405318fc09.jpg)
+![Mnesia](https://github.com/zhongwencool/observer_cli/raw/main/docs/images/mnesia.jpg)
 
 Top N list sort by memory size, all items defined in [`mnesia:table_info/2`](http://erlang.org/doc/man/mnesia.html#table_info-2)
 
 ### Application
 
-![Application](https://user-images.githubusercontent.com/3116225/39091216-567ddab8-4622-11e8-8b32-db0f621d6b90.jpg)
+![Application](https://github.com/zhongwencool/observer_cli/raw/main/docs/images/application.jpg)
 
-Find application debug information by [`application_controller:info()`](https://github.com/erlang/otp/blob/master/lib/kernel/src/application_controller.erl#L280).
+The Application panel aggregates supervision data from [`application_controller:info()`](https://github.com/erlang/otp/blob/master/lib/kernel/src/application_controller.erl#L280), groups processes by their application master, and shows their live resource usage. Each row includes:
+
+- **No/App**: position in the table and the OTP application name. `no_group` collects processes that do not belong to any application supervisor.
+- **ProcessCount** (`p`): number of processes currently owned by that application. Toggle sorting with `p` to track churn.
+- **Memory** (`m`): total heap/stack memory used by those processes, formatted via `{byte, Size}`.
+- **Reductions** (`r`): cumulative reduction count, useful to spot CPU-heavy apps.
+- **MsgQ** (`mq`): total pending messages across the application’s processes.
+- **Status**: lifecycle state derived from `application_controller` (one of `Loading`, `Loaded`, `Starting`, `Started`, `StartPFalse`, or `Unknown`).
+- **Version**: semantic version reported by the application specification when available.
+
+Shortcuts follow the same pattern as other panels: `p/m/r/mq` switch the primary sort column, `F/B` paginate large installations, numeric input jumps to a row, and entering a PID delegates to the process view. Use `{interval, Milliseconds}` to adjust the refresh cadence.

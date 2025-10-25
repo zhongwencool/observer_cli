@@ -218,7 +218,7 @@ render_worker(
                 ?W(?SELECT("EmptyPlugin"), 144)
             ]),
             ErrInfo =
-                "|Plugin Error: Can't find your observer_cli config.\n|Please visit \"How to write your own plugin\" in readme.\n",
+                "| No plugins found.\n|Please visit \"How to write your own plugin\" in readme.\n",
             ?output([?CURSOR_TOP, Menu, ErrInfo])
     end.
 

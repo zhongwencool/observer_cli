@@ -1,191 +1,193 @@
 # How to write your own plugin?
 
-If you need to customize some of your internal metrics and integrate it into observer_ci,
-you only need to write a `observer_cli_plugin` behaviour in a few simple steps to get a nice presentation.
+Observer CLI exposes a small behaviour (`observer_cli_plugin`) that lets you present custom metrics alongside the built-in views. This guide walks through the required configuration and each callback so you can build your own panels quickly.
 
-1. Configure observer_cli，tell observer_cli how to find your plugin.
+## 1. Register the plugin module
+
+Add a `plugins` entry to the Observer CLI environment (for example in `mix.exs` or `observer_cli.app.src`):
 
 ```erlang
-%% module       - Specific module implements plugin behavior. It's mandatory.
-%% title        - Menu title. It's mandatory.
-%% shortcut     - Switch plugin by shortcut. It's mandatory.
-%% interval     - Refresh interval ms. It's optional. default is 1500ms.
-%% sort_column  - Sort the sheet by this index. It's optional default is 2.
-
 {plugins,
-  [
-    #{module => observer_cli_plug_behaviour_x, title => "XPlug",
-      interval => 1600, shortcut => "X", sort_column => 3},
-    #{module => observer_cli_plug_behaviour_y, title => "YPlug",
-      interval =>2000, shortcut => "Y", sort_column => 3}
-  ]
-}
+ [
+  #{module => observer_cli_plug_behaviour_x,
+    title => "XPlug",
+    shortcut => "X",
+    interval => 1600,
+    sort_column => 3},
+  #{module => observer_cli_plug_behaviour_y,
+    title => "YPlug",
+    shortcut => "Y",
+    interval => 2000,
+    sort_column => 3}
+ ]}.
 ```
 
-The main view is `HOME` by default(`observer_cli:start()`).
-If you want to plugin view as main view, DO:`your_cli:start().`
+**Option reference**
+
+- `module` - module implementing the behaviour (required).
+- `title` - label rendered in the menu bar (required).
+- `shortcut` - single key used to jump to the plugin (required).
+- `interval` - refresh rate in milliseconds (optional, defaults to `1500`).
+- `sort_column` - index used when sorting the sheet (optional, defaults to `2`).
+- `handler` - tuple `{PredicateFun, Module}` for custom row handling (optional, see [Custom handlers](#4-custom-handlers)).
+
+The default entry point is still the `HOME` view (`observer_cli:start()`). To boot straight into plugin mode expose a shim:
 
 ```erlang
-% your_cli.erl
-start() -> observer_cli:start_plugin().
+-module(your_cli).
+
+start() ->
+    observer_cli:start_plugin().
 ```
 
-2. Write observer_cli_plugin behaviour.
-   observer_cli_plugin has 3 callbacks.
+## 2. Implement `observer_cli_plugin`
 
-2.1 attributes.
+The behaviour defines three callbacks.
+
+### `attributes/1`
 
 ```erlang
 -callback attributes(PrevState) -> {[Rows], NewState} when
-    Rows :: #{content => string()|integer()|{byte, pos_integer()},
-              width => pos_integer(), color => binary()}.
+    Rows :: [
+        #{content => string() | integer() | {byte, pos_integer()} | {percent, float()},
+          width   => pos_integer(),
+          color   => binary()}
+    ],
+    NewState :: any().
 ```
 
-for example:
+This callback drives the banner directly under the menu. The structure is a list of rows; each row is a list of maps describing individual cells.
 
 ```erlang
 attributes(PrevState) ->
-  Attrs = [
-    [
-      #{content => "XXX Ets Size", width => 15},
-      #{content => 122, width => 10},
-      #{content => "Memory Capcity", width => 15},
-      #{content => {percent, 0.12}, width => 16},
-      #{content => "XYZ1 Process Mem", width => 19},
-      #{content => {byte, 1023 * 1203}, width => 19}
+    Attrs = [
+        [
+            #{content => "XXX ETS Size", width => 15},
+            #{content => 122, width => 10},
+            #{content => "Memory Capacity", width => 16},
+            #{content => {percent, 0.12}, width => 10},
+            #{content => "XYZ1 Process Mem", width => 20},
+            #{content => {byte, 1023 * 1203}, width => 14}
+        ],
+        [
+            #{content => "YYY ETS Size", width => 15},
+            #{content => 43, width => 10},
+            #{content => "Disk Capacity", width => 15},
+            #{content => {percent, 0.23}, width => 10},
+            #{content => "XYZ2 Process Mem", width => 20},
+            #{content => {byte, 2034 * 220}, width => 14}
+        ]
     ],
-    [
-      #{content => "YYY Ets Size", width => 15},
-      #{content => 43, width => 10},
-      #{content => "Disk Capcity", width => 15},
-      #{content => {percent, 0.23}, width => 16},
-      #{content => "XYZ2 Process Mem", width => 19},
-      #{content => {byte, 2034 * 220}, width => 19}
-    ],
-    [
-      #{content => "ZZZ Ets Size", width => 15},
-      #{content => 108, width => 10},
-      #{content => "Volume Capcity", width => 15},
-      #{content => {percent, 0.101}, width => 16},
-      #{content => "XYZ3 Process Mem", width => 19},
-      #{content => {byte, 12823}, width => 19}
-    ]
-  ],
-  NewState = PrevState,
-  {Attrs, NewState}.
+    {Attrs, PrevState}.
 ```
 
-```markdown
-|Home(H)|XPlug(X)|YPlug(Y)| | 0Days 3:34:50 |
-|XXX Ets Size | 122 | Memory Capcity | 12.00% | XYZ1 Process Mem | 1.1737 MB |
-|YYY Ets Size | 43 | Disk Capcity | 23.00% | XYZ2 Process Mem | 436.9922 KB |
-|ZZZ Ets Size | 108 | Volume Capcity | 10.10% | XYZ3 Process Mem | 12.5225 KB |
+Rendered banner:
+
 ```
+|Home(H)|XPlug(X)|YPlug(Y)| | 0Days 3:34:50 |
+|XXX ETS Size | 122 | Memory Capacity | 12.00% | XYZ1 Process Mem | 1.1737 MB |
+|YYY ETS Size | 43  | Disk Capacity   | 23.00% | XYZ2 Process Mem | 436.9922 KB |
+```
+
+### `sheet_header/0`
 
 ```erlang
 -callback sheet_header() -> [SheetHeader] when
-    SheetHeader :: #{title => string(), width => pos_integer(), shortcut => string()}.
+    SheetHeader :: #{title => string(),
+                     width => pos_integer(),
+                     shortcut => string()}.
 ```
 
-for example:
+Defines the tabular columns shown underneath the banner. Shortcuts let the user sort the sheet by pressing the letter.
 
 ```erlang
 sheet_header() ->
-  [
-    #{title => "Pid", width => 15},
-    #{title => "Register", width => 20},
-    #{title => "Memory", width => 20, shortcut => "S"},
-    #{title => "Reductions", width => 23, shortcut => "R"},
-    #{title => "Message Queue Len", width => 23, shortcut => "Q"}
-  ].
+    [
+        #{title => "Pid", width => 15},
+        #{title => "Register", width => 20},
+        #{title => "Memory", width => 20, shortcut => "S"},
+        #{title => "Reductions", width => 23, shortcut => "R"},
+        #{title => "Message Queue Len", width => 23, shortcut => "Q"}
+    ].
 ```
 
-```markdown
-|No |Pid |Register |Memory(S) |Reductions(R) |Message Queue Len(Q) |
+Result:
+
 ```
+|No |Pid        |Register           |Memory(S) |Reductions(R) |Message Queue Len(Q) |
+```
+
+### `sheet_body/1`
 
 ```erlang
--callback sheet_body(PrevState) -> {[SheetBody], NewState} when
-    PrevState :: any(),
-    SheetBody :: list(),
-    NewState :: any().
-
+-callback sheet_body(PrevState) -> {[SheetBody], NewState}.
 ```
 
-for example:
+Return the table rows. Each row is a list; Observer CLI paginates automatically (PageDown/PageUp or `F/B` keys).
 
 ```erlang
 sheet_body(PrevState) ->
-  Body = [
-    begin
-      Register =
-        case erlang:process_info(Pid, registered_name) of
-          [] -> [];
-          {_, Name} -> Name
-        end,
-      [
-        Pid,
-        Register,
-        {byte, element(2, erlang:process_info(Pid, memory))},
-        element(2, erlang:process_info(Pid, reductions)),
-        element(2, erlang:process_info(Pid, message_queue_len))
-      ]
-    end
-    || Pid <- erlang:processes()
-  ],
-  NewState = PrevState,
-  {Body, NewState}.
+    Rows = [
+        begin
+            Register =
+                case erlang:process_info(Pid, registered_name) of
+                    [] -> [];
+                    {_, Name} -> Name
+                end,
+            [
+                Pid,
+                Register,
+                {byte, element(2, erlang:process_info(Pid, memory))},
+                element(2, erlang:process_info(Pid, reductions)),
+                element(2, erlang:process_info(Pid, message_queue_len))
+            ]
+        end
+     || Pid <- erlang:processes()
+    ],
+    {Rows, PrevState}.
 ```
 
-Support `{byte, 1024*10}` to ` 10.0000 KB`; `{percent, 0.12}` to `12.00%`.
+Rendered sample:
 
-```markdown
-|No |Pid |Register |Memory(S) |Reductions(R) |Message Queue Len(Q) |
-|1 |<0.242.0> | | 4.5020 MB | 26544288 | 0 |
-|2 | <0.206.0> | | 1.2824 MB | 13357885 | 0 |
-|3 | <0.10.0> | erl_prim_loader | 1.0634 MB | 10046775 | 0 |
-|4 | <0.434.0> | | 419.1719 KB | 10503690 | 0 |
-|5 | <0.44.0> | application_contro | 416.6250 KB | 153598 | 0 |
-|6 | <0.50.0> | code_server | 416.4219 KB | 301045 | 0 |
-|7 | <0.9.0> | rebar_agent | 136.7031 KB | 1337603 | 0 |
-|8 | <0.207.0> | | 99.3125 KB | 9629 | 0 |
-|9 | <0.58.0> | file_server_2 | 41.3359 KB | 34303 | 0 |
-|10 | <0.209.0> | | 27.3438 KB | 31210 | 0 |
-|11 | <0.0.0> | init | 25.8516 KB | 8485 | 0 |
-|refresh: 1600ms q(quit) Positive Number(set refresh interval time ms) F/B(forward/back) Current pages is 1 |
+```
+|No |Pid       |Register           |Memory(S) |Reductions(R) |Message Queue Len(Q) |
+|1  |<0.242.0> |                   |4.5020 MB | 26544288     | 0 |
+|2  |<0.206.0> |                   |1.2824 MB | 13357885     | 0 |
+|3  |<0.10.0>  |erl_prim_loader    |1.0634 MB | 10046775     | 0 |
+...
+|refresh: 1600ms q(quit) Positive Number(set refresh interval time ms) F/B(forward/back) Current page is 1 |
 ```
 
-Support F/B to page up/down.
+### Formatting helpers
 
-[A more specific plugin](https://github.com/zhongwencool/os_stats) can collect linux system information such as kernel vsn, loadavg, disk, memory usage, cpu utilization, IO statistics.
+- `{byte, Value}` automatically renders human-readable byte units.
+- `{percent, Value}` outputs a percentage with two decimals.
+- `color` can be any ANSI color escape (e.g., `?RED_BG`) to highlight critical cells.
 
-3. Handler: specific per-item behavior
+## 3. Custom handlers
 
-By default, once you select a row, it will show the process information in `observer_cli_process` view. This is done 
-by looking for a `pid` in the row, so the first one found will be used and passed to the `observer_cli_process` view.
-
-To customize this behavior, you can implement your own handler. The handler is a tuple with a function and a module. 
-The function is a predicate that will be used to filter all row's items and, if the resulting list in not empty, the 
-`Handler:start/3` function will be called. The signature is the same of `observer_cli_process:start/3`.
-
-The new configuration will look like this:
+By default, selecting a row in your plugin opens the standard `observer_cli_process` view for the first `pid` found in that row. To override this, add a `handler` tuple to the plugin definition. The predicate receives every element in the row and should return true for the items you need. When the predicate matches, `HandlerModule:start/3` is invoked with the same contract as `observer_cli_process:start/3`.
 
 ```erlang
-%% module       - Specific module implements plugin behavior. It's mandatory.
-%% title        - Menu title. It's mandatory.
-%% shortcut     - Switch plugin by shortcut. It's mandatory.
-%% interval     - Refresh interval ms. It's optional. default is 1500ms.
-%% sort_column  - Sort the sheet by this index. It's optional default is 2.
-%% handler      - Specific handler implements per-item behavior. It's optional, default is `{fun is_pid/1,observer_cli_process}`.`
-
 {plugins,
-  [
-    #{module => observer_cli_plug_behaviour_x, title => "XPlug",
-      interval => 1600, shortcut => "X", sort_column => 3,
-      handler => {fun is_pid/1, observer_cli_plug_item_behaviour_x}},
-    #{module => observer_cli_plug_behaviour_y, title => "YPlug",
-      interval =>2000, shortcut => "Y", sort_column => 3,
-      handler => {fun is_binary/1, observer_cli_plug_item_behaviour_y}},
-  ]
-}
+ [
+  #{module => observer_cli_plug_behaviour_x,
+    title => "XPlug",
+    shortcut => "X",
+    interval => 1600,
+    sort_column => 3,
+    handler => {fun is_pid/1, observer_cli_plug_item_behaviour_x}},
+  #{module => observer_cli_plug_behaviour_y,
+    title => "YPlug",
+    shortcut => "Y",
+    interval => 2000,
+    sort_column => 3,
+    handler => {fun is_binary/1, observer_cli_plug_item_behaviour_y}}
+ ]}.
 ```
+
+Use this when a row selection should drill into a custom detail view (for example, ETS metadata or OS metrics).
+
+## 4. Example plugin
+
+[`os_stats`](https://github.com/zhongwencool/os_stats) shows a complete implementation that surfaces Linux kernel information, load averages, disk usage, memory, CPU, and IO statistics via the same behaviour. Use it as inspiration for structuring larger dashboards.
