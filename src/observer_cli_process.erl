@@ -179,6 +179,10 @@ render_worker(state, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
         error -> next_draw_view_2(state, Type, TimeRef, Interval, Pid, RedQ, MemQ)
     end.
 
+%% state_view is static - no need to redraw. if timer exists must destroy it
+next_draw_view(state, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ) ->
+    flush_redraw_timer(TimeRef),
+    next_draw_view_2(state, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ);
 next_draw_view(Status, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ) ->
     NewTimeRef = observer_cli_lib:next_redraw(TimeRef, Interval),
     next_draw_view_2(Status, Type, NewTimeRef, Interval, Pid, NewRedQ, NewMemQ).
@@ -205,7 +209,7 @@ next_draw_view_2(Status, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ) ->
         state_view ->
             ?output(?CLEAR),
             render_worker(state, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ);
-        _Msg ->
+        {timeout, TimeRef, redraw} ->
             render_worker(Status, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ)
     end.
 
@@ -454,7 +458,8 @@ render_state(Pid, Type, Interval) ->
     try
         State = recon:get_state(Pid, 2500),
         Line = truncate_str(State),
-        ?output([?CURSOR_TOP, Menu, PromptRes, Line, LastLine]),
+        print_with_less(Line),
+        ?output([?CURSOR_TOP, Menu, PromptRes, "", LastLine]),
         ok
     catch
         _Err:_Reason ->
@@ -469,6 +474,13 @@ output_die_view(Pid, Type, Interval) ->
     Line = io_lib:format("\e[31mProcess(~p) has already die.\e[0m~n", [Pid]),
     LastLine = render_last_line(),
     ?output([?CURSOR_TOP, Menu, Line, LastLine]).
+
+print_with_less(Input) ->
+    observer_cli_compose:pipe(Input, [
+        fun(X) -> {ok, LessServer} = less_server:start_link(X), LessServer end,
+        fun less_client:main/1,
+        fun less_server:stop/1
+    ]).
 
 truncate_str(Term) ->
     State = #{
@@ -507,4 +519,11 @@ format(State) ->
         observer_cli_formatter:format(FormatMod, Term)
     catch
         _:_ -> observer_cli_formatter:format(FormatModDefault, Term)
+    end.
+
+flush_redraw_timer(?INIT_TIME_REF) ->
+    ok;
+flush_redraw_timer(TimeRef) ->
+    receive
+        {timeout, TimeRef, redraw} -> ok
     end.
