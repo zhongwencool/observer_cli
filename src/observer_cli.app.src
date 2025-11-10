@@ -5,6 +5,9 @@
         observer_cli
     ]},
     {registered, []},
+    {included_applications, [
+        recon
+    ]},
     {applications, [
         kernel,
         stdlib,
@@ -23,6 +26,7 @@
     ]},
     {build_tools, ["mix", "rebar3"]},
     {env, [
+        {formatter, #{application => observer_cli, mod => observer_cli_formatter_default}}
         %% {scheduler_usage, enable} %% default value is 'disable', uncomment to enable by default
         %% {plugins, [
         %% module       - Specific module implements plugin behavior. It's mandatory.

@@ -470,5 +470,41 @@ output_die_view(Pid, Type, Interval) ->
     LastLine = render_last_line(),
     ?output([?CURSOR_TOP, Menu, Line, LastLine]).
 
-truncate_str(Input) ->
-    lists:sublist(lists:flatten(io_lib:format("~W", [Input, 50 * 30])), 140 * 30) ++ "\n".
+truncate_str(Term) ->
+    State = #{
+        term => Term,
+        %% we need default mod, cause user can override conf
+        formatter_default => observer_cli_formatter_default,
+        formatter => undefined
+    },
+    observer_cli_compose:pipe(State, [
+        fun format_mod/1,
+        fun format/1
+    ]).
+
+format_mod(State) ->
+    #{formatter_default := FormatModDefault} = State,
+    observer_cli_compose:pipe(State, [
+        fun(StateAcc) ->
+            {ok, X} = application:get_env(observer_cli, formatter),
+            StateAcc#{formatter => X}
+        end,
+        fun(StateAcc) ->
+            #{formatter := X} = StateAcc,
+            StateAcc#{formatter => maps:get(mod, X, FormatModDefault)}
+        end
+    ]).
+
+format(
+    State = #{formatter := FormatModDefault, formatter_default := FormatModDefault}
+) ->
+    #{term := Term} = State,
+    observer_cli_formatter:format(FormatModDefault, Term);
+format(State) ->
+    #{term := Term, formatter := FormatMod, formatter_default := FormatModDefault} =
+        State,
+    try
+        observer_cli_formatter:format(FormatMod, Term)
+    catch
+        _:_ -> observer_cli_formatter:format(FormatModDefault, Term)
+    end.
