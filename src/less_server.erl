@@ -184,7 +184,7 @@ state_2(Buf, Lines) ->
     String :: string().
 %%--------------------------------------------------------------------
 page_2(State) ->
-    pipe(State#state.buf, [
+    observer_cli_compose:pipe(State#state.buf, [
         fun(X) -> lists:sublist(X, State#state.position + 1, State#state.lines) end,
         fun buf_to_string/1
     ]).
@@ -226,17 +226,8 @@ string_to_buf(String) ->
     string:split(String, "\n", all).
 
 buf_to_string(Buf) ->
-    pipe(Buf, [
+    observer_cli_compose:pipe(Buf, [
         fun(X) -> string:join(X, "\n") end,
         fun(X) -> string:concat(X, "\n") end
     ]).
-
-%%%===================================================================
-%%% utils
-%%%===================================================================
-
-pipe(Acc, FunList) ->
-    lists:foldl(
-        fun(Fun, Acc2) when is_function(Fun, 1) -> Fun(Acc2) end, Acc, FunList
-    ).
 
