@@ -13,19 +13,27 @@ main(LessServer) ->
 loop(LessServer) ->
     case io:get_line("") of
         "j\n" ->
-            ?output(?CLEAR),
-            Page = less_server:next(LessServer),
-            ?output([Page]),
+            handle_next_page(LessServer),
             loop(LessServer);
         "k\n" ->
-            ?output(?CLEAR),
-            Page = less_server:prev(LessServer),
-            ?output([Page]),
+            handle_prev_page(LessServer),
             loop(LessServer);
         "q\n" ->
-            ?output(?CLEAR),
+            handle_quit(LessServer),
             LessServer;
         _ ->
             loop(LessServer)
     end.
+
+handle_next_page(LessServer) ->
+    ?output(?CLEAR),
+    Page = less_server:next(LessServer),
+    ?output([Page]).
+
+handle_prev_page(LessServer) ->
+    ?output(?CLEAR),
+    Page = less_server:prev(LessServer),
+    ?output([Page]).
+
+handle_quit(_LessServer) -> ?output(?CLEAR).
 
