@@ -15,7 +15,13 @@ loop(LessServer) ->
         "j\n" ->
             handle_next_page(LessServer),
             loop(LessServer);
+        "F\n" ->
+            handle_next_page(LessServer),
+            loop(LessServer);
         "k\n" ->
+            handle_prev_page(LessServer),
+            loop(LessServer);
+        "B\n" ->
             handle_prev_page(LessServer),
             loop(LessServer);
         "q\n" ->
