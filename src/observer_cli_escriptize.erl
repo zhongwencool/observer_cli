@@ -80,7 +80,7 @@ required_modules(AppList, Res) ->
     ).
 
 all_applications(App) ->
-    observer_cli_compose:pipe([], [
+    observer_cli_lib:pipe([], [
         fun(ApplicationsAcc) ->
             applications(ApplicationsAcc, App)
         end,

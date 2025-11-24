@@ -476,7 +476,7 @@ output_die_view(Pid, Type, Interval) ->
     ?output([?CURSOR_TOP, Menu, Line, LastLine]).
 
 print_with_less(Input) ->
-    observer_cli_compose:pipe(Input, [
+    observer_cli_lib:pipe(Input, [
         fun(X) -> {ok, LessServer} = less_server:start_link(X), LessServer end,
         fun less_client:main/1,
         fun less_server:stop/1
@@ -489,14 +489,14 @@ truncate_str(Term) ->
         formatter_default => observer_cli_formatter_default,
         formatter => undefined
     },
-    observer_cli_compose:pipe(State, [
+    observer_cli_lib:pipe(State, [
         fun format_mod/1,
         fun format/1
     ]).
 
 format_mod(State) ->
     #{formatter_default := FormatModDefault} = State,
-    observer_cli_compose:pipe(State, [
+    observer_cli_lib:pipe(State, [
         fun(StateAcc) ->
             {ok, X} = application:get_env(observer_cli, formatter),
             StateAcc#{formatter => X}

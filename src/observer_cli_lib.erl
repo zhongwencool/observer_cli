@@ -26,6 +26,7 @@
 -export([get_pos/4]).
 -export([sublist/3]).
 -export([sbcs_to_mbcs/2]).
+-export([pipe/2]).
 
 -spec uptime() -> list().
 uptime() ->
@@ -378,3 +379,12 @@ sbcs_to_mbcs(TypeList, STMList) ->
             Acc
     end,
     maps:to_list(lists:foldl(FoldlFun, #{}, STMList)).
+
+-spec pipe(Acc, FunList :: [F]) -> Acc2 when
+    Acc :: term(),
+    F :: fun((X :: term()) -> X2 :: term()),
+    Acc2 :: term().
+pipe(Acc, FunList) ->
+    lists:foldl(
+        fun(Fun, Acc2) when is_function(Fun, 1) -> Fun(Acc2) end, Acc, FunList
+    ).
