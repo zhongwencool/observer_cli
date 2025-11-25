@@ -1,6 +1,8 @@
 name: ci
 
-on: push
+on:
+  push:
+  pull_request:
 
 jobs:
   test:
@@ -24,4 +26,3 @@ jobs:
           rebar3-version: ${{matrix.rebar3}}
       - name: quality checks
         run: rebar3 check
-
