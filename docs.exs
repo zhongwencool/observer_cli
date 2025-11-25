@@ -2,7 +2,7 @@
   extras: [
     {"README.md", title: "Home"},
     "./docs/plugin.md",
-    "./docs/changlog.md",
+    "./docs/CHANGELOG.md",
     "LICENSE"
   ],
   logo: "./docs/favicon.png",
@@ -11,7 +11,7 @@
   ],
   main: "readme",
   source_url: "https://github.com/zhongwencool/observer_cli",
-  homepage_url: "https://github.com/zhongwencool/obsever_cli",
+  homepage_url: "https://github.com/zhongwencool/observer_cli",
   with_mermaid: true,
   before_closing_body_tag: fn
     :html ->
