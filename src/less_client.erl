@@ -1,12 +1,29 @@
 -module(less_client).
 
--export([main/1]).
+-export([init/1, main/1]).
 
 -include("observer_cli.hrl").
 
+%%--------------------------------------------------------------------
+%% @doc
+-spec init(Input :: string()) ->
+    LessServer :: pid().
+%%--------------------------------------------------------------------
+init(Input) ->
+    %% We must save 1 line for status render
+    {ok, LessServer} = less_server:start_link(Input, less_server:lines() - 1),
+    LessServer.
+%%--------------------------------------------------------------------
+
+%%--------------------------------------------------------------------
+%% @doc
+-spec main(LessServer :: pid()) ->
+    ok.
+%%--------------------------------------------------------------------
 main(LessServer) ->
     handle_current_page(LessServer),
     loop(LessServer).
+%%--------------------------------------------------------------------
 
 loop(LessServer) ->
     case io:get_line("") of
@@ -24,7 +41,7 @@ loop(LessServer) ->
             loop(LessServer);
         "q\n" ->
             handle_quit(LessServer),
-            LessServer;
+            ok;
         _ ->
             handle_current_page(LessServer),
             loop(LessServer)
@@ -39,12 +56,14 @@ handle_next_page(LessServer) ->
 handle_prev_page(LessServer) ->
     handle_page(less_server:prev(LessServer)).
 
+handle_quit(LessServer) ->
+    less_server:stop(LessServer),
+    ?output(?CLEAR).
+
 handle_page(Page) ->
     ?output(?CLEAR),
     ?output([Page]),
     ?output([render_last_line()]).
-
-handle_quit(_LessServer) -> ?output(?CLEAR).
 
 render_last_line() ->
     unicode:characters_to_binary([

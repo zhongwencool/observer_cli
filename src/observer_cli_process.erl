@@ -477,9 +477,8 @@ output_die_view(Pid, Type, Interval) ->
 
 print_with_less(Input) ->
     observer_cli_lib:pipe(Input, [
-        fun(X) -> {ok, LessServer} = less_server:start_link(X), LessServer end,
-        fun less_client:main/1,
-        fun less_server:stop/1
+        fun less_client:init/1,
+        fun less_client:main/1
     ]).
 
 truncate_str(Term) ->
