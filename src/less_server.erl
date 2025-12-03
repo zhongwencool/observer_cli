@@ -1,6 +1,9 @@
 -module(less_server).
 -behaviour(gen_server).
 
+%% utils
+-export([lines/0]).
+
 %% api
 -export([
     start_link/1,
@@ -157,7 +160,7 @@ terminate(_Reason, _State) ->
     State :: state().
 %%--------------------------------------------------------------------
 state(String) ->
-    state_2(string_to_buf(String), os:getenv("LINES", 43)).
+    state_2(string_to_buf(String), lines()).
 %%--------------------------------------------------------------------
 
 %%--------------------------------------------------------------------
@@ -231,3 +234,12 @@ buf_to_string(Buf) ->
         fun(X) -> string:concat(X, "\n") end
     ]).
 
+%%%===================================================================
+%%% utils
+%%%===================================================================
+
+lines() ->
+    case io:rows() of
+        {ok, Rows} -> Rows;
+        _ -> 43
+    end.
