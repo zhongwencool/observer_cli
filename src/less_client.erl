@@ -5,9 +5,7 @@
 -include("observer_cli.hrl").
 
 main(LessServer) ->
-    ?output(?CLEAR),
-    Page = less_server:page(LessServer),
-    ?output([Page]),
+    handle_current_page(LessServer),
     loop(LessServer).
 
 loop(LessServer) ->
@@ -28,18 +26,30 @@ loop(LessServer) ->
             handle_quit(LessServer),
             LessServer;
         _ ->
+            handle_current_page(LessServer),
             loop(LessServer)
     end.
 
+handle_current_page(LessServer) ->
+    handle_page(less_server:page(LessServer)).
+
 handle_next_page(LessServer) ->
-    ?output(?CLEAR),
-    Page = less_server:next(LessServer),
-    ?output([Page]).
+    handle_page(less_server:next(LessServer)).
 
 handle_prev_page(LessServer) ->
+    handle_page(less_server:prev(LessServer)).
+
+handle_page(Page) ->
     ?output(?CLEAR),
-    Page = less_server:prev(LessServer),
-    ?output([Page]).
+    ?output([Page]),
+    ?output([render_last_line()]).
 
 handle_quit(_LessServer) -> ?output(?CLEAR).
 
+render_last_line() ->
+    unicode:characters_to_binary([
+        <<"|">>,
+        ?GRAY_BG,
+        <<"q(quit) F/j(next page) B/k(previous page)">>,
+        ?RESET
+    ]).
