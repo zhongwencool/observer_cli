@@ -179,7 +179,7 @@ render_worker(state, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
         error -> next_draw_view_2(state, Type, TimeRef, Interval, Pid, RedQ, MemQ)
     end.
 
-%% state_view is static - no need to redraw. if timer exists must destroy it
+%% state_view is static. user left state view and may stay long after. no need for redraw
 next_draw_view(state, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ) ->
     observer_cli_lib:flush_redraw_timer(TimeRef),
     next_draw_view_2(state, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ);
@@ -207,6 +207,8 @@ next_draw_view_2(Status, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ) ->
             ?output(?CLEAR),
             render_worker(stack, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ);
         state_view ->
+            %% state view is static. user chose state view - no need for redraw
+            observer_cli_lib:flush_redraw_timer(TimeRef),
             ?output(?CLEAR),
             render_worker(state, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ);
         redraw ->
