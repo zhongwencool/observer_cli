@@ -209,7 +209,7 @@ next_draw_view_2(Status, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ) ->
         state_view ->
             ?output(?CLEAR),
             render_worker(state, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ);
-        {timeout, TimeRef, redraw} ->
+        redraw ->
             render_worker(Status, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ)
     end.
 
