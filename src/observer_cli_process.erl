@@ -181,7 +181,7 @@ render_worker(state, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
 
 %% state_view is static - no need to redraw. if timer exists must destroy it
 next_draw_view(state, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ) ->
-    flush_redraw_timer(TimeRef),
+    observer_cli_lib:flush_redraw_timer(TimeRef),
     next_draw_view_2(state, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ);
 next_draw_view(Status, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ) ->
     NewTimeRef = observer_cli_lib:next_redraw(TimeRef, Interval),
@@ -518,11 +518,4 @@ format(State) ->
         observer_cli_formatter:format(FormatMod, Term)
     catch
         _:_ -> observer_cli_formatter:format(FormatModDefault, Term)
-    end.
-
-flush_redraw_timer(?INIT_TIME_REF) ->
-    ok;
-flush_redraw_timer(TimeRef) ->
-    receive
-        {timeout, TimeRef, redraw} -> ok
     end.
