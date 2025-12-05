@@ -117,7 +117,7 @@ render_worker(message, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
                         {messages, Messages} = recon:info(Pid, messages),
                         [
                             io_lib:format("~p Message Len:~p~n", [Pid, Len]),
-                            truncate_str(Messages)
+                            truncate_str(Pid, Messages)
                         ]
                 end,
             Menu = render_menu(message, Type, Interval),
@@ -138,7 +138,7 @@ render_worker(dict, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
             Line2 =
                 case Len of
                     0 -> "\e[32;1mNo dictionary was found\e[0m\n";
-                    _ -> truncate_str(List)
+                    _ -> truncate_str(Pid, List)
                 end,
             Menu = render_menu(dict, Type, Interval),
             LastLine = render_last_line(),
@@ -179,6 +179,10 @@ render_worker(state, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
         error -> next_draw_view_2(state, Type, TimeRef, Interval, Pid, RedQ, MemQ)
     end.
 
+%% state_view is static. user left state view and may stay long after. no need for redraw
+next_draw_view(state, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ) ->
+    observer_cli_lib:flush_redraw_timer(TimeRef),
+    next_draw_view_2(state, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ);
 next_draw_view(Status, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ) ->
     NewTimeRef = observer_cli_lib:next_redraw(TimeRef, Interval),
     next_draw_view_2(Status, Type, NewTimeRef, Interval, Pid, NewRedQ, NewMemQ).
@@ -203,9 +207,11 @@ next_draw_view_2(Status, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ) ->
             ?output(?CLEAR),
             render_worker(stack, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ);
         state_view ->
+            %% state view is static. user chose state view - no need for redraw
+            observer_cli_lib:flush_redraw_timer(TimeRef),
             ?output(?CLEAR),
             render_worker(state, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ);
-        _Msg ->
+        redraw ->
             render_worker(Status, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ)
     end.
 
@@ -453,8 +459,9 @@ render_state(Pid, Type, Interval) ->
     ?output([?CURSOR_TOP, Menu, PromptBefore]),
     try
         State = recon:get_state(Pid, 2500),
-        Line = truncate_str(State),
-        ?output([?CURSOR_TOP, Menu, PromptRes, Line, LastLine]),
+        Line = truncate_str(Pid, State),
+        print_with_less(Line),
+        ?output([?CURSOR_TOP, Menu, PromptRes, "", LastLine]),
         ok
     catch
         _Err:_Reason ->
@@ -470,5 +477,53 @@ output_die_view(Pid, Type, Interval) ->
     LastLine = render_last_line(),
     ?output([?CURSOR_TOP, Menu, Line, LastLine]).
 
-truncate_str(Input) ->
-    lists:sublist(lists:flatten(io_lib:format("~W", [Input, 50 * 30])), 140 * 30) ++ "\n".
+print_with_less(Input) ->
+    observer_cli_lib:pipe(Input, [
+        fun less_client:init/1,
+        fun less_client:main/1
+    ]).
+
+truncate_str(Pid, Term) ->
+    State = #{
+        pid => Pid,
+        term => Term,
+        %% we need default mod, cause user can override conf
+        formatter_default => observer_cli_formatter_default,
+        formatter => undefined
+    },
+    observer_cli_lib:pipe(State, [
+        fun format_mod/1,
+        fun format/1
+    ]).
+
+format_mod(State) ->
+    #{formatter_default := FormatModDefault} = State,
+    observer_cli_lib:pipe(State, [
+        fun(StateAcc) ->
+            {ok, X} = application:get_env(observer_cli, formatter),
+            StateAcc#{formatter => X}
+        end,
+        fun(StateAcc) ->
+            #{formatter := X} = StateAcc,
+            StateAcc#{formatter => maps:get(mod, X, FormatModDefault)}
+        end
+    ]).
+
+format(
+    State = #{formatter := FormatModDefault, formatter_default := FormatModDefault}
+) ->
+    #{pid := Pid, term := Term} = State,
+    observer_cli_formatter:format(FormatModDefault, Pid, Term);
+format(State) ->
+    #{
+        pid := Pid,
+        term := Term,
+        formatter := FormatMod,
+        formatter_default := FormatModDefault
+    } =
+        State,
+    try
+        observer_cli_formatter:format(FormatMod, Pid, Term)
+    catch
+        _:_ -> observer_cli_formatter:format(FormatModDefault, Pid, Term)
+    end.

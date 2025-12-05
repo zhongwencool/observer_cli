@@ -15,6 +15,7 @@
 -export([mfa_to_list/1]).
 -export([render/1]).
 -export([next_redraw/2]).
+-export([flush_redraw_timer/1]).
 -export([render_menu/2]).
 -export([get_terminal_rows/1]).
 -export([select/1]).
@@ -26,6 +27,7 @@
 -export([get_pos/4]).
 -export([sublist/3]).
 -export([sbcs_to_mbcs/2]).
+-export([pipe/2]).
 
 -spec uptime() -> list().
 uptime() ->
@@ -279,8 +281,13 @@ to_pid(Str) ->
 
 -spec next_redraw(reference() | ?INIT_TIME_REF, pos_integer()) -> reference().
 next_redraw(LastTimeRef, Interval) ->
-    LastTimeRef =/= ?INIT_TIME_REF andalso erlang:cancel_timer(LastTimeRef),
+    flush_redraw_timer(LastTimeRef),
     erlang:send_after(Interval, self(), redraw).
+
+-spec flush_redraw_timer(LastTimeRef :: reference() | ?INIT_TIME_REF) -> ok.
+flush_redraw_timer(LastTimeRef) ->
+    LastTimeRef =/= ?INIT_TIME_REF andalso erlang:cancel_timer(LastTimeRef),
+    ok.
 
 -spec get_terminal_rows(boolean()) -> integer().
 get_terminal_rows(_AutoRow = false) ->
@@ -378,3 +385,12 @@ sbcs_to_mbcs(TypeList, STMList) ->
             Acc
     end,
     maps:to_list(lists:foldl(FoldlFun, #{}, STMList)).
+
+-spec pipe(Acc, FunList :: [F]) -> Acc2 when
+    Acc :: term(),
+    F :: fun((X :: term()) -> X2 :: term()),
+    Acc2 :: term().
+pipe(Acc, FunList) ->
+    lists:foldl(
+        fun(Fun, Acc2) when is_function(Fun, 1) -> Fun(Acc2) end, Acc, FunList
+    ).
