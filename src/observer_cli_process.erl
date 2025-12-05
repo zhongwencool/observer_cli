@@ -117,7 +117,7 @@ render_worker(message, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
                         {messages, Messages} = recon:info(Pid, messages),
                         [
                             io_lib:format("~p Message Len:~p~n", [Pid, Len]),
-                            truncate_str(Messages)
+                            truncate_str(Pid, Messages)
                         ]
                 end,
             Menu = render_menu(message, Type, Interval),
@@ -138,7 +138,7 @@ render_worker(dict, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
             Line2 =
                 case Len of
                     0 -> "\e[32;1mNo dictionary was found\e[0m\n";
-                    _ -> truncate_str(List)
+                    _ -> truncate_str(Pid, List)
                 end,
             Menu = render_menu(dict, Type, Interval),
             LastLine = render_last_line(),
@@ -459,7 +459,7 @@ render_state(Pid, Type, Interval) ->
     ?output([?CURSOR_TOP, Menu, PromptBefore]),
     try
         State = recon:get_state(Pid, 2500),
-        Line = truncate_str(State),
+        Line = truncate_str(Pid, State),
         print_with_less(Line),
         ?output([?CURSOR_TOP, Menu, PromptRes, "", LastLine]),
         ok
@@ -483,8 +483,9 @@ print_with_less(Input) ->
         fun less_client:main/1
     ]).
 
-truncate_str(Term) ->
+truncate_str(Pid, Term) ->
     State = #{
+        pid => Pid,
         term => Term,
         %% we need default mod, cause user can override conf
         formatter_default => observer_cli_formatter_default,
@@ -511,13 +512,18 @@ format_mod(State) ->
 format(
     State = #{formatter := FormatModDefault, formatter_default := FormatModDefault}
 ) ->
-    #{term := Term} = State,
-    observer_cli_formatter:format(FormatModDefault, Term);
+    #{pid := Pid, term := Term} = State,
+    observer_cli_formatter:format(FormatModDefault, Pid, Term);
 format(State) ->
-    #{term := Term, formatter := FormatMod, formatter_default := FormatModDefault} =
+    #{
+        pid := Pid,
+        term := Term,
+        formatter := FormatMod,
+        formatter_default := FormatModDefault
+    } =
         State,
     try
-        observer_cli_formatter:format(FormatMod, Term)
+        observer_cli_formatter:format(FormatMod, Pid, Term)
     catch
-        _:_ -> observer_cli_formatter:format(FormatModDefault, Term)
+        _:_ -> observer_cli_formatter:format(FormatModDefault, Pid, Term)
     end.

@@ -1,13 +1,18 @@
 # How use your own formatter?
 
-Observer CLI renders process's state in less-like ui. By default it uses
-`io:format("~p", [])`.
+Observer CLI before rendering does formatting for:
+
+* Proccess State;
+* Process Messages;
+* Process Dictionary.
+
+By default it uses `io:format("~p", [])`.
 
 User can change this. Observer CLI exposes behaviour `observer_cli_formatter`
 with callback:
 
 ```erlang
--callback format(Term :: term()) ->
+-callback format(Pid :: pid(), Term :: term()) ->
     string().
 ```
 So, for changing `Term` formatting we need:
