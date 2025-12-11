@@ -5,9 +5,6 @@
         observer_cli
     ]},
     {registered, []},
-    {included_applications, [
-        recon
-    ]},
     {applications, [
         kernel,
         stdlib,
