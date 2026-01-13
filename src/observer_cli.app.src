@@ -1,45 +1,14 @@
-{application, observer_cli, [
-    {description, "Visualize Erlang Nodes On The Command Line"},
-    {vsn, "1.8.5"},
-    {modules, [
-        observer_cli
-    ]},
-    {registered, []},
-    {applications, [
-        kernel,
-        stdlib,
-        recon
-    ]},
-    {files, [
-        "include",
-        "LICENSE*",
-        "mix.exs",
-        "mix.lock",
-        "README.md",
-        "docs/*",
-        "rebar.config",
-        "rebar.lock",
-        "src"
-    ]},
-    {build_tools, ["mix", "rebar3"]},
-    {env, [
-        % {formatter, #{
-        % application := atom(), - Formatter application. observer_cli loads all it's modules to remote node.
-        % mod := module() - observer_cli_formatter implementation.
-        % }}
-        {formatter, #{application => observer_cli, mod => observer_cli_formatter_default}}
-        %% {scheduler_usage, enable} %% default value is 'disable', uncomment to enable by default
-        %% {plugins, [
-        %% module       - Specific module implements plugin behavior. It's mandatory.
-        %% title        - Menu title. It's mandatory.
-        %% shortcut     - Switch plugin by shortcut. It's mandatory.
-        %% interval     - Refresh interval ms. It's options. default is 1500ms.
-        %% sort_column  - Sort the sheet by this index. It's options default is 2.
-
-        %% #{module => observer_cli_plug_1, title => "Example-1", interval => 1500, shortcut => "S", sort_column => 3},
-        %% #{module => observer_cli_plug_2, title => "Example-2", interval => 1600, shortcut => "D", sort_column => 2}
-        %% ]}
-    ]},
-    {licenses, ["MIT"]},
-    {links, [{"Github", "https://github.com/zhongwencool/observer_cli"}]}
-]}.
+{application,observer_cli,
+             [{description,"Visualize Erlang Nodes On The Command Line"},
+              {vsn,"1.8.6"},
+              {modules,[observer_cli]},
+              {registered,[]},
+              {applications,[kernel,stdlib,recon]},
+              {files,["include","LICENSE*","mix.exs","mix.lock","README.md",
+                      "docs/*","rebar.config","rebar.lock","src"]},
+              {build_tools,["mix","rebar3"]},
+              {env,[{formatter,#{application => observer_cli,
+                                 mod => observer_cli_formatter_default}}]},
+              {licenses,["MIT"]},
+              {links,[{"Github",
+                       "https://github.com/zhongwencool/observer_cli"}]}]}.

@@ -28,7 +28,7 @@ Observer CLI is a library to be dropped into any BEAM nodes, to be used to help 
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.8.5
+dep_observer_cli = hex 1.8.6
 ```
 
 ### Elixir

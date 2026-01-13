@@ -1,8 +1,8 @@
-# How use your own formatter?
+# How to use your own formatter?
 
 Observer CLI before rendering does formatting for:
 
-* Proccess State;
+* Process State;
 * Process Messages;
 * Process Dictionary.
 
@@ -28,7 +28,6 @@ Default formatter config:
 
 **Option reference**
 
-- `application` - Formatter application. Observer CLI loads all it's modules to
+- `application` - Formatter application. Observer CLI loads all its modules to
   remote node.
 - `mod` - Implementation of observer_cli_formatter behaviour.
-
