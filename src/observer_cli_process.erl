@@ -512,12 +512,19 @@ render_state(Pid, Type, Interval) ->
         ?output([?CURSOR_TOP, Menu, PromptRes, "", LastLine]),
         ok
     catch
-        _Err:_Reason ->            
+        Class:Reason:Stacktrace ->
+            log_render_state_error(Class, Reason, Stacktrace, Pid, Type, Interval),
             Error =
                 "Information could not be retrieved, system messages may not be handled by this process.\n",
             ?output([?CURSOR_TOP, Menu, PromptRes, Error, LastLine]),
             error
     end.
+
+log_render_state_error(Class, Reason, Stacktrace, Pid, Type, Interval) ->
+    error_logger:warning_msg(
+        "observer_cli render_state failed: class=~p reason=~p stacktrace=~p pid=~p type=~p interval=~p~n",
+        [Class, Reason, Stacktrace, Pid, Type, Interval]
+    ).
 
 output_die_view(Pid, Type, Interval) ->
     Menu = render_menu(info, Type, Interval),
