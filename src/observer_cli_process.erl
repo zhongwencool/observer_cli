@@ -35,34 +35,38 @@ start(Type, Pid, Opts) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-manager(RenderPid, Type, Pid, #view_opts{process = ProcOpts} = Opts) ->
-    case parse_cmd() of
-        quit ->
-            erlang:exit(RenderPid, stop);
-        {new_interval, NewInterval} ->
-            erlang:send(RenderPid, {new_interval, NewInterval}),
-            NewOpt = Opts#view_opts{process = ProcOpts#process{interval = NewInterval}},
-            manager(RenderPid, Type, Pid, NewOpt);
-        home ->
-            erlang:exit(RenderPid, stop),
-            observer_cli:start(Opts);
-        back when Type =:= home ->
-            erlang:exit(RenderPid, stop),
-            observer_cli:start(Opts);
-        back when Type =:= plugin ->
-            erlang:exit(RenderPid, stop),
-            observer_cli_plugin:start(Opts);
-        state_view ->
-            erlang:send(RenderPid, state_view),
-            wait_for_state_view(RenderPid, Type, Pid, Opts);
-        ViewAction ->
-            erlang:send(RenderPid, ViewAction),
-            manager(RenderPid, Type, Pid, Opts)
-    end.
+manager(RenderPid, Type, Pid, Opts) ->
+    handle_action(parse_cmd(), RenderPid, Type, Pid, Opts).
+
+handle_action(quit, RenderPid, _Type, _Pid, _Opts) ->
+    erlang:exit(RenderPid, stop);
+handle_action({new_interval, NewInterval}, RenderPid, Type, Pid, #view_opts{process = ProcOpts} = Opts) ->
+    erlang:send(RenderPid, {new_interval, NewInterval}),
+    NewOpt = Opts#view_opts{process = ProcOpts#process{interval = NewInterval}},
+    manager(RenderPid, Type, Pid, NewOpt);
+handle_action(home, RenderPid, _Type, _Pid, Opts) ->
+    erlang:exit(RenderPid, stop),
+    observer_cli:start(Opts);
+handle_action(back, RenderPid, home, _Pid, Opts) ->
+    erlang:exit(RenderPid, stop),
+    observer_cli:start(Opts);
+handle_action(back, RenderPid, plugin, _Pid, Opts) ->
+    erlang:exit(RenderPid, stop),
+    observer_cli_plugin:start(Opts);
+handle_action(state_view, RenderPid, Type, Pid, Opts) ->
+    erlang:send(RenderPid, state_view),
+    wait_for_state_view(RenderPid, Type, Pid, Opts);
+handle_action(ViewAction, RenderPid, Type, Pid, Opts) ->
+    erlang:send(RenderPid, ViewAction),
+    manager(RenderPid, Type, Pid, Opts).
 
 wait_for_state_view(RenderPid, Type, Pid, Opts) ->
     receive
-        state_view_done ->
+        {state_view_done, {ok, none}} ->
+            manager(RenderPid, Type, Pid, Opts);
+        {state_view_done, {ok, Action}} ->
+            handle_action(Action, RenderPid, Type, Pid, Opts);
+        {state_view_done, error} ->
             manager(RenderPid, Type, Pid, Opts)
     end.
 
@@ -221,9 +225,9 @@ render_worker(stack, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
     end;
 render_worker(state, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
     Result = render_state(Pid, Type, Interval),
-    erlang:send(ManagerPid, state_view_done),
+    erlang:send(ManagerPid, {state_view_done, Result}),
     case Result of
-        ok -> next_draw_view(state, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid);
+        {ok, _Action} -> next_draw_view(state, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid);
         error -> next_draw_view_2(state, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid)
     end.
 
@@ -507,10 +511,18 @@ render_state(Pid, Type, Interval) ->
     ?output([?CURSOR_TOP, Menu, PromptBefore]),
     try
         State = recon:get_state(Pid, 2500),
-        Line = truncate_str(Pid, State),
-        print_with_less(Line),
-        ?output([?CURSOR_TOP, Menu, PromptRes, "", LastLine]),
-        ok
+        Nav = state_nav(Type),
+        Line0 = truncate_str(Pid, State),
+        Line = replace_first_line(Line0, state_title(Pid)),
+        Footer = state_footer(Menu, Nav),
+        Action = print_with_less(Line, Menu, Nav, Footer),
+        case Action of
+            quit ->
+                {ok, quit};
+            _ ->
+                ?output([?CURSOR_TOP, Menu, PromptRes, "", LastLine]),
+                {ok, Action}
+        end
     catch
         Class:Reason:Stacktrace ->
             log_render_state_error(Class, Reason, Stacktrace, Pid, Type, Interval),
@@ -532,11 +544,75 @@ output_die_view(Pid, Type, Interval) ->
     LastLine = render_last_line(),
     ?output([?CURSOR_TOP, Menu, Line, LastLine]).
 
-print_with_less(Input) ->
-    observer_cli_lib:pipe(Input, [
+print_with_less(Input, Menu, Nav, Footer) ->
+    observer_cli_lib:pipe({Input, Menu, Nav, Footer}, [
         fun less_client:init/1,
         fun less_client:main/1
     ]).
+
+state_nav(Type) ->
+    Base = #{
+        "q\n" => quit,
+        "Q\n" => quit,
+        "H\n" => home,
+        "P\n" => info_view,
+        "M\n" => message_view,
+        "D\n" => dict_view,
+        "C\n" => stack_view
+    },
+    case Type of
+        plugin -> maps:put("B\n", back, Base);
+        home -> Base
+    end.
+
+state_title(Pid) ->
+    io_lib:format("recon:get_state(~p, 2500).", [Pid]).
+
+replace_first_line(Line, NewLine) ->
+    case string:split(Line, "\n", leading) of
+        [_First, Rest] -> NewLine ++ "\n" ++ Rest;
+        [_Only] -> NewLine ++ "\n"
+    end.
+
+state_footer(Menu, Nav) ->
+    Text = state_footer_text(Nav),
+    Width = erlang:max(menu_line_width(Menu), erlang:length(Text) + 3),
+    render_footer_line(Text, Width).
+
+state_footer_text(_Nav) ->
+    "q(quit)    F/B(page forward/back)".
+
+render_footer_line(Text, Width) ->
+    InnerWidth = Width - 3,
+    Padding = lists:duplicate(InnerWidth - erlang:length(Text), $\s),
+    ["|", ?GRAY_BG, Text, Padding, " ", ?RESET, "|", "\n"].
+
+menu_line_width(Menu) ->
+    Line = first_line(strip_ansi(iolist_to_binary(Menu))),
+    byte_size(Line).
+
+first_line(Bin) ->
+    case binary:split(Bin, <<"\n">>, [global]) of
+        [First | _] -> First;
+        [] -> <<>>
+    end.
+
+strip_ansi(Bin) ->
+    strip_ansi(Bin, <<>>).
+
+strip_ansi(<<>>, Acc) ->
+    Acc;
+strip_ansi(<<27, $[, Rest/binary>>, Acc) ->
+    strip_ansi(skip_ansi(Rest), Acc);
+strip_ansi(<<C, Rest/binary>>, Acc) ->
+    strip_ansi(Rest, <<Acc/binary, C>>).
+
+skip_ansi(<<C, Rest/binary>>) when C >= $@, C =< $~ ->
+    Rest;
+skip_ansi(<<_, Rest/binary>>) ->
+    skip_ansi(Rest);
+skip_ansi(<<>>) ->
+    <<>>.
 
 truncate_str(Pid, Term) ->
     State = #{
