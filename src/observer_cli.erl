@@ -833,7 +833,7 @@ get_atom_status() ->
 
 get_pid_info(Pid, Keys) ->
     case recon:info(Pid, Keys) of
-        undefined -> {"die", "die"};
+        undefined -> {"dead", "dead"};
         [{_, Val1}, {_, Val2}] -> {Val1, Val2}
     end.
 

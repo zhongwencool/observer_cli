@@ -158,7 +158,7 @@ unread() ->
         0,
         0,
         [
-            %%it maybe die
+            %% it may have died
             {name, unread},
             {write_concurrency, unread},
             {read_concurrency, unread},

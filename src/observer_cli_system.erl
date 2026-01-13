@@ -2,6 +2,8 @@
 -module(observer_cli_system).
 
 -include("observer_cli.hrl").
+%% net_address record from OTP lacks typed fields; keep warning local to this module.
+-compile(nowarn_untyped_record).
 -include_lib("kernel/include/net_address.hrl").
 
 %% API

@@ -354,7 +354,7 @@ parse_cmd(ViewOpts, Pid) ->
 
 output_die_view(Port, Interval) ->
     Menu = render_menu(info, Interval),
-    Line = io_lib:format("\e[31mPort(~p) has already die.\e[0m~n", [Port]),
+    Line = io_lib:format("\e[31mPort(~p) has already died.\e[0m~n", [Port]),
     LastLine = render_last_line(),
     ?output([?CURSOR_TOP, Menu, Line, LastLine]).
 

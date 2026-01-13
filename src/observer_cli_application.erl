@@ -291,7 +291,7 @@ app_status(Info) ->
     lists:foldl(
         fun({App, _RestartType, _Type, _From}, Acc) ->
             Version = get_version(App, Acc),
-            Acc#{App => {0, 0, 0, 0, "StartPFlase", Version}}
+            Acc#{App => {0, 0, 0, 0, "StartPFalse", Version}}
         end,
         R4,
         StartPFalse

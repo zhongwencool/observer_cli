@@ -342,7 +342,7 @@ render_reduction_memory(Reduction, Memory, ReductionQ, MemoryQ) ->
         end,
     View = [
         io_lib:format("|Reductions: ~120.120s|~n", [get_chart_format(NewRed)]),
-        io_lib:format("|Memorys: ~123.123s|~n", [get_chart_format(NewMem)])
+        io_lib:format("|Memory: ~124.124s|~n", [get_chart_format(NewMem)])
     ],
     {NewRed, NewMem, View}.
 
@@ -473,7 +473,7 @@ render_state(Pid, Type, Interval) ->
 
 output_die_view(Pid, Type, Interval) ->
     Menu = render_menu(info, Type, Interval),
-    Line = io_lib:format("\e[31mProcess(~p) has already die.\e[0m~n", [Pid]),
+    Line = io_lib:format("\e[31mProcess(~p) has already died.\e[0m~n", [Pid]),
     LastLine = render_last_line(),
     ?output([?CURSOR_TOP, Menu, Line, LastLine]).
 

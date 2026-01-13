@@ -238,6 +238,7 @@ buf_to_string(Buf) ->
 %%% utils
 %%%===================================================================
 
+-spec lines() -> pos_integer().
 lines() ->
     case io:rows() of
         {ok, Rows} -> Rows;

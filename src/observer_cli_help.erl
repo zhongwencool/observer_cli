@@ -59,7 +59,7 @@ render_help() ->
         "|\e[44m1. Start Mode\e[49m \n",
         "| \e[48;2;80;80;80m1.1\e[0m  observer_cli:start(). \n",
         "| \e[48;2;80;80;80m1.2\e[0m  observer_cli:start(Node).\n",
-        "| \e[48;2;80;80;80m1.3\e[0m  observer_start:start(Node, Cookie).\n",
+        "| \e[48;2;80;80;80m1.3\e[0m  observer_cli:start(Node, Cookie).\n",
 
         "|\e[44m2. HOME(H) Commands\e[49m \n",
         "| \e[48;2;80;80;80m`            \e[0m  enable/disable schedule usage.\n",

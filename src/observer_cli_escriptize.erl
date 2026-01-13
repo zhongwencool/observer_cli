@@ -64,7 +64,7 @@ resolve_target_name(TargetNode) ->
     end.
 
 %%%===================================================================
-%%% applicaiton
+%%% application
 %%%===================================================================
 
 required_modules(AppList) ->
@@ -90,6 +90,7 @@ all_applications(App) ->
         fun(ApplicationsAcc) -> ApplicationsAcc -- [kernel, stdlib] end
     ]).
 
+-spec ensure_set_env(App :: atom(), Env :: [{atom(), term()}]) -> ok | {error, term()}.
 ensure_set_env(App, Env) ->
     case application:get_all_env(App) of
         [] -> application:set_env([{App, Env}]);
