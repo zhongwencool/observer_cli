@@ -4,7 +4,7 @@
 
 -dialyzer([
     {nowarn_function, [
-        render_worker/7, render_reduction_memory/4, get_chart_format/1, chart_format/2
+        render_worker/8, render_reduction_memory/4, get_chart_format/1, chart_format/2
     ]}
 ]).
 
@@ -16,23 +16,33 @@
 -spec start(Type, pid(), view_opts()) -> no_return() when Type :: home | plugin.
 start(Type, Pid, Opts) ->
     #view_opts{process = #process{interval = RefreshMs}} = Opts,
+    ManagerPid = self(),
     RenderPid = spawn_link(fun() ->
         ?output(?CLEAR),
-        render_worker(info, Type, RefreshMs, Pid, ?INIT_TIME_REF, ?INIT_QUEUE, ?INIT_QUEUE)
+        render_worker(
+            info,
+            Type,
+            RefreshMs,
+            Pid,
+            ?INIT_TIME_REF,
+            ?INIT_QUEUE,
+            ?INIT_QUEUE,
+            ManagerPid
+        )
     end),
-    manager(RenderPid, Type, Opts).
+    manager(RenderPid, Type, Pid, Opts).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-manager(RenderPid, Type, #view_opts{process = ProcOpts} = Opts) ->
+manager(RenderPid, Type, Pid, #view_opts{process = ProcOpts} = Opts) ->
     case parse_cmd() of
         quit ->
-            erlang:send(RenderPid, quit);
+            erlang:exit(RenderPid, stop);
         {new_interval, NewInterval} ->
             erlang:send(RenderPid, {new_interval, NewInterval}),
             NewOpt = Opts#view_opts{process = ProcOpts#process{interval = NewInterval}},
-            manager(RenderPid, Type, NewOpt);
+            manager(RenderPid, Type, Pid, NewOpt);
         home ->
             erlang:exit(RenderPid, stop),
             observer_cli:start(Opts);
@@ -42,18 +52,27 @@ manager(RenderPid, Type, #view_opts{process = ProcOpts} = Opts) ->
         back when Type =:= plugin ->
             erlang:exit(RenderPid, stop),
             observer_cli_plugin:start(Opts);
+        state_view ->
+            erlang:send(RenderPid, state_view),
+            wait_for_state_view(RenderPid, Type, Pid, Opts);
         ViewAction ->
             erlang:send(RenderPid, ViewAction),
-            manager(RenderPid, Type, Opts)
+            manager(RenderPid, Type, Pid, Opts)
     end.
 
-render_worker(info, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
+wait_for_state_view(RenderPid, Type, Pid, Opts) ->
+    receive
+        state_view_done ->
+            manager(RenderPid, Type, Pid, Opts)
+    end.
+
+render_worker(info, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
     ProcessInfo = recon:info(Pid),
     Meta = proplists:get_value(meta, ProcessInfo),
     case Meta of
         undefined ->
             output_die_view(Pid, Type, Interval),
-            next_draw_view(info, Type, TimeRef, Interval, Pid, RedQ, MemQ);
+            next_draw_view(info, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid);
         _ ->
             WordSize = erlang:system_info(wordsize),
 
@@ -102,9 +121,9 @@ render_worker(info, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
             LastLine = render_last_line(),
 
             ?output([?CURSOR_TOP, Menu, Line1, Line2, Line3, LastLine]),
-            next_draw_view(info, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ)
+            next_draw_view(info, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ, ManagerPid)
     end;
-render_worker(message, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
+render_worker(message, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
     case erlang:process_info(Pid, message_queue_len) of
         {message_queue_len, Len} ->
             Line =
@@ -123,11 +142,20 @@ render_worker(message, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
             Menu = render_menu(message, Type, Interval),
             LastLine = render_last_line(),
             ?output([?CURSOR_TOP, Menu, Line, LastLine]),
-            next_draw_view(message, Type, TimeRef, Interval, Pid, RedQ, MemQ);
+            next_draw_view(message, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid);
         undefined ->
-            render_worker(info, Type, Interval, Pid, ?INIT_TIME_REF, ?INIT_QUEUE, ?INIT_QUEUE)
+            render_worker(
+                info,
+                Type,
+                Interval,
+                Pid,
+                ?INIT_TIME_REF,
+                ?INIT_QUEUE,
+                ?INIT_QUEUE,
+                ManagerPid
+            )
     end;
-render_worker(dict, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
+render_worker(dict, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
     case erlang:process_info(Pid, dictionary) of
         {dictionary, List} ->
             Len = erlang:length(List),
@@ -143,11 +171,20 @@ render_worker(dict, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
             Menu = render_menu(dict, Type, Interval),
             LastLine = render_last_line(),
             ?output([?CURSOR_TOP, Menu, Line1, Line2, LastLine]),
-            next_draw_view(dict, Type, TimeRef, Interval, Pid, RedQ, MemQ);
+            next_draw_view(dict, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid);
         undefined ->
-            render_worker(info, Type, Interval, Pid, ?INIT_TIME_REF, ?INIT_QUEUE, ?INIT_QUEUE)
+            render_worker(
+                info,
+                Type,
+                Interval,
+                Pid,
+                ?INIT_TIME_REF,
+                ?INIT_QUEUE,
+                ?INIT_QUEUE,
+                ManagerPid
+            )
     end;
-render_worker(stack, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
+render_worker(stack, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
     case erlang:process_info(Pid, current_stacktrace) of
         {current_stacktrace, StackTrace} ->
             Menu = render_menu(stack, Type, Interval),
@@ -169,50 +206,61 @@ render_worker(stack, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
                     lists:sublist(StackTrace, 30)
                 ),
             ?output([?CURSOR_TOP, Menu, Prompt, ?render(Line), LastLine]),
-            next_draw_view(stack, Type, TimeRef, Interval, Pid, RedQ, MemQ);
+            next_draw_view(stack, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid);
         undefined ->
-            render_worker(info, Type, Interval, Pid, ?INIT_TIME_REF, ?INIT_QUEUE, ?INIT_QUEUE)
+            render_worker(
+                info,
+                Type,
+                Interval,
+                Pid,
+                ?INIT_TIME_REF,
+                ?INIT_QUEUE,
+                ?INIT_QUEUE,
+                ManagerPid
+            )
     end;
-render_worker(state, Type, Interval, Pid, TimeRef, RedQ, MemQ) ->
-    case render_state(Pid, Type, Interval) of
-        ok -> next_draw_view(state, Type, TimeRef, Interval, Pid, RedQ, MemQ);
-        error -> next_draw_view_2(state, Type, TimeRef, Interval, Pid, RedQ, MemQ)
+render_worker(state, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
+    Result = render_state(Pid, Type, Interval),
+    erlang:send(ManagerPid, state_view_done),
+    case Result of
+        ok -> next_draw_view(state, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid);
+        error -> next_draw_view_2(state, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid)
     end.
 
 %% state_view is static. user left state view and may stay long after. no need for redraw
-next_draw_view(state, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ) ->
+next_draw_view(state, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ, ManagerPid) ->
     observer_cli_lib:flush_redraw_timer(TimeRef),
-    next_draw_view_2(state, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ);
-next_draw_view(Status, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ) ->
+    next_draw_view_2(state, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ, ManagerPid);
+next_draw_view(Status, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ, ManagerPid) ->
     NewTimeRef = observer_cli_lib:next_redraw(TimeRef, Interval),
-    next_draw_view_2(Status, Type, NewTimeRef, Interval, Pid, NewRedQ, NewMemQ).
+    next_draw_view_2(Status, Type, NewTimeRef, Interval, Pid, NewRedQ, NewMemQ, ManagerPid).
 
-next_draw_view_2(Status, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ) ->
+next_draw_view_2(Status, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ, ManagerPid) ->
     receive
         quit ->
-            quit;
+            exit(stop);
         {new_interval, NewInterval} ->
             ?output(?CLEAR),
-            render_worker(Status, Type, NewInterval, Pid, TimeRef, NewRedQ, NewMemQ);
+            render_worker(Status, Type, NewInterval, Pid, TimeRef, NewRedQ, NewMemQ, ManagerPid);
         info_view ->
             ?output(?CLEAR),
-            render_worker(info, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ);
+            render_worker(info, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ, ManagerPid);
         message_view ->
             ?output(?CLEAR),
-            render_worker(message, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ);
+            render_worker(message, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ, ManagerPid);
         dict_view ->
             ?output(?CLEAR),
-            render_worker(dict, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ);
+            render_worker(dict, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ, ManagerPid);
         stack_view ->
             ?output(?CLEAR),
-            render_worker(stack, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ);
+            render_worker(stack, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ, ManagerPid);
         state_view ->
             %% state view is static. user chose state view - no need for redraw
             observer_cli_lib:flush_redraw_timer(TimeRef),
             ?output(?CLEAR),
-            render_worker(state, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ);
+            render_worker(state, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ, ManagerPid);
         redraw ->
-            render_worker(Status, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ)
+            render_worker(Status, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ, ManagerPid)
     end.
 
 render_process_info(

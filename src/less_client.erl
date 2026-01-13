@@ -11,7 +11,9 @@
 %%--------------------------------------------------------------------
 init(Input) ->
     %% We must save 1 line for status render
-    {ok, LessServer} = less_server:start_link(Input, less_server:lines() - 1),
+    Lines0 = less_server:lines() - 1,
+    Lines = erlang:max(1, Lines0),
+    {ok, LessServer} = less_server:start_link(Input, Lines),
     LessServer.
 %%--------------------------------------------------------------------
 
@@ -40,6 +42,15 @@ loop(LessServer) ->
             handle_prev_page(LessServer),
             loop(LessServer);
         "q\n" ->
+            handle_quit(LessServer),
+            ok;
+        "Q\n" ->
+            handle_quit(LessServer),
+            ok;
+        eof ->
+            handle_quit(LessServer),
+            ok;
+        {error, _Reason} ->
             handle_quit(LessServer),
             ok;
         _ ->

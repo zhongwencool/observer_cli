@@ -178,7 +178,8 @@ state(String, Lines) ->
     state().
 %%--------------------------------------------------------------------
 state_2(Buf, Lines) ->
-    #state{buf = Buf, lines = Lines, position = 0}.
+    SafeLines = erlang:max(1, Lines),
+    #state{buf = Buf, lines = SafeLines, position = 0}.
 %%--------------------------------------------------------------------
 
 %%--------------------------------------------------------------------
@@ -199,11 +200,11 @@ page_2(State) ->
     State2 :: state().
 %%--------------------------------------------------------------------
 next_2(State) ->
-    case State#state.position + 1 of
-        Position when Position > length(State#state.buf) - State#state.lines ->
-            State;
-        Position ->
-            State#state{position = Position}
+    #state{position = Position, lines = Lines, buf = Buf} = State,
+    NewPosition = Position + Lines,
+    case NewPosition >= length(Buf) of
+        true -> State;
+        false -> State#state{position = NewPosition}
     end.
 %%--------------------------------------------------------------------
 
@@ -213,11 +214,16 @@ next_2(State) ->
     State2 :: state().
 %%--------------------------------------------------------------------
 prev_2(State) ->
-    case State#state.position of
-        0 ->
+    #state{position = Position, lines = Lines} = State,
+    case Position =< 0 of
+        true ->
             State;
-        Position ->
-            State#state{position = Position - 1}
+        false ->
+            NewPosition = Position - Lines,
+            case NewPosition =< 0 of
+                true -> State#state{position = 0};
+                false -> State#state{position = NewPosition}
+            end
     end.
 %%--------------------------------------------------------------------
 
