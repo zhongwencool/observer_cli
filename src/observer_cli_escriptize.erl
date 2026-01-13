@@ -1,5 +1,7 @@
 -module(observer_cli_escriptize).
 
+-include("observer_cli.hrl").
+
 -export([main/1]).
 
 %% for rpc
@@ -36,7 +38,7 @@ run(TargetNode, Cookie, Interval) ->
 
 remote_load(Node) ->
     application:load(observer_cli),
-    {ok, Formatter} = application:get_env(observer_cli, formatter),
+    Formatter = application:get_env(observer_cli, formatter, ?DEFAULT_FORMATTER),
     FormatterApp = maps:get(application, Formatter),
     Apps = lists:usort([observer_cli, FormatterApp]),
     [recon:remote_load([Node], Mod) || Mod <- required_modules(Apps)],

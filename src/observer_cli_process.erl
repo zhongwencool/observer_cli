@@ -464,7 +464,7 @@ render_state(Pid, Type, Interval) ->
         ?output([?CURSOR_TOP, Menu, PromptRes, "", LastLine]),
         ok
     catch
-        _Err:_Reason ->
+        _Err:_Reason ->            
             Error =
                 "Information could not be retrieved, system messages may not be handled by this process.\n",
             ?output([?CURSOR_TOP, Menu, PromptRes, Error, LastLine]),
@@ -500,12 +500,12 @@ format_mod(State) ->
     #{formatter_default := FormatModDefault} = State,
     observer_cli_lib:pipe(State, [
         fun(StateAcc) ->
-            {ok, X} = application:get_env(observer_cli, formatter),
-            StateAcc#{formatter => X}
+            Formatter = application:get_env(observer_cli, formatter, ?DEFAULT_FORMATTER),
+            StateAcc#{formatter => Formatter}
         end,
         fun(StateAcc) ->
-            #{formatter := X} = StateAcc,
-            StateAcc#{formatter => maps:get(mod, X, FormatModDefault)}
+            #{formatter := Formatter} = StateAcc,
+            StateAcc#{formatter => maps:get(mod, Formatter, FormatModDefault)}
         end
     ]).
 
