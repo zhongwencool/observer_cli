@@ -574,10 +574,9 @@ replace_first_line(Line, NewLine) ->
         [_Only] -> NewLine ++ "\n"
     end.
 
-state_footer(Menu, Nav) ->
+state_footer(_Menu, Nav) ->
     Text = state_footer_text(Nav),
-    Width = erlang:max(menu_line_width(Menu), erlang:length(Text) + 3),
-    render_footer_line(Text, Width).
+    render_footer_line(Text, ?COLUMN).
 
 state_footer_text(_Nav) ->
     "q(quit)    F/B(page forward/back)".
@@ -586,33 +585,6 @@ render_footer_line(Text, Width) ->
     InnerWidth = Width - 3,
     Padding = lists:duplicate(InnerWidth - erlang:length(Text), $\s),
     ["|", ?GRAY_BG, Text, Padding, " ", ?RESET, "|", "\n"].
-
-menu_line_width(Menu) ->
-    Line = first_line(strip_ansi(iolist_to_binary(Menu))),
-    byte_size(Line).
-
-first_line(Bin) ->
-    case binary:split(Bin, <<"\n">>, [global]) of
-        [First | _] -> First;
-        [] -> <<>>
-    end.
-
-strip_ansi(Bin) ->
-    strip_ansi(Bin, <<>>).
-
-strip_ansi(<<>>, Acc) ->
-    Acc;
-strip_ansi(<<27, $[, Rest/binary>>, Acc) ->
-    strip_ansi(skip_ansi(Rest), Acc);
-strip_ansi(<<C, Rest/binary>>, Acc) ->
-    strip_ansi(Rest, <<Acc/binary, C>>).
-
-skip_ansi(<<C, Rest/binary>>) when C >= $@, C =< $~ ->
-    Rest;
-skip_ansi(<<_, Rest/binary>>) ->
-    skip_ansi(Rest);
-skip_ansi(<<>>) ->
-    <<>>.
 
 truncate_str(Pid, Term) ->
     State = #{

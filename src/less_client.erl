@@ -22,8 +22,8 @@ init({Input, Header}) ->
 init({Input, Header, Nav}) ->
     init({Input, Header, Nav, undefined});
 init({Input, Header, Nav, Footer}) ->
-    %% We must save 1 line for status render and 1 line for menu
-    Lines0 = less_server:lines() - 1 - header_lines(Header),
+    %% We must save 1 line for footer and 1 line for menu
+    Lines0 = less_server:lines() - footer_lines(Footer) - header_lines(Header),
     Lines = erlang:max(1, Lines0),
     {ok, LessServer} = less_server:start_link(Input, Lines),
     {LessServer, Header, Nav, Footer}.
@@ -115,11 +115,14 @@ render_last_line(Nav) ->
         ?GRAY_BG,
         <<"q(quit) F/j(next page) ">>,
         PrevKey,
-        ?RESET
+        ?RESET,
+        <<"\n">>
     ]).
 
 header_lines(undefined) -> 0;
 header_lines(_Header) -> 1.
+
+footer_lines(_Footer) -> 1.
 
 maybe_output_header(undefined) ->
     ok;

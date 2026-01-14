@@ -53,6 +53,7 @@ dep_observer_cli = hex 1.8.6
 rebar3 shell
 1> observer_cli:start().
 ```
+Tip: CI uses `rebar3 as ci compile` (warnings are treated as errors).
 ### Elixir
 ```elixir
 %% mix project
