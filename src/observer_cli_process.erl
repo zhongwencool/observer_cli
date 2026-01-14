@@ -40,7 +40,9 @@ manager(RenderPid, Type, Pid, Opts) ->
 
 handle_action(quit, RenderPid, _Type, _Pid, _Opts) ->
     erlang:exit(RenderPid, stop);
-handle_action({new_interval, NewInterval}, RenderPid, Type, Pid, #view_opts{process = ProcOpts} = Opts) ->
+handle_action(
+    {new_interval, NewInterval}, RenderPid, Type, Pid, #view_opts{process = ProcOpts} = Opts
+) ->
     erlang:send(RenderPid, {new_interval, NewInterval}),
     NewOpt = Opts#view_opts{process = ProcOpts#process{interval = NewInterval}},
     manager(RenderPid, Type, Pid, NewOpt);
@@ -190,7 +192,7 @@ render_worker(dict, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
     end;
 render_worker(stack, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
     case erlang:process_info(Pid, current_stacktrace) of
-        {current_stacktrace, StackTrace} ->
+        {current_stacktrace, Stack} ->
             Menu = render_menu(stack, Type, Interval),
             Prompt = io_lib:format("erlang:process_info(~p, current_stacktrace).      ~n", [Pid]),
             LastLine = render_last_line(),
@@ -207,7 +209,7 @@ render_worker(stack, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
                         end
                     end,
                     {1, []},
-                    lists:sublist(StackTrace, 30)
+                    lists:sublist(Stack, 30)
                 ),
             ?output([?CURSOR_TOP, Menu, Prompt, ?render(Line), LastLine]),
             next_draw_view(stack, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid);
@@ -227,8 +229,10 @@ render_worker(state, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
     Result = render_state(Pid, Type, Interval),
     erlang:send(ManagerPid, {state_view_done, Result}),
     case Result of
-        {ok, _Action} -> next_draw_view(state, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid);
-        error -> next_draw_view_2(state, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid)
+        {ok, _Action} ->
+            next_draw_view(state, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid);
+        error ->
+            next_draw_view_2(state, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid)
     end.
 
 %% state_view is static. user left state view and may stay long after. no need for redraw

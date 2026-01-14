@@ -1,14 +1,27 @@
-{application,observer_cli,
-             [{description,"Visualize Erlang Nodes On The Command Line"},
-              {vsn,"1.8.6"},
-              {modules,[observer_cli]},
-              {registered,[]},
-              {applications,[kernel,stdlib,recon]},
-              {files,["include","LICENSE*","mix.exs","mix.lock","README.md",
-                      "docs/*","rebar.config","rebar.lock","src"]},
-              {build_tools,["mix","rebar3"]},
-              {env,[{formatter,#{application => observer_cli,
-                                 mod => observer_cli_formatter_default}}]},
-              {licenses,["MIT"]},
-              {links,[{"Github",
-                       "https://github.com/zhongwencool/observer_cli"}]}]}.
+{application, observer_cli, [
+    {description, "Visualize Erlang Nodes On The Command Line"},
+    {vsn, "1.8.6"},
+    {modules, [observer_cli]},
+    {registered, []},
+    {applications, [kernel, stdlib, recon]},
+    {files, [
+        "include",
+        "LICENSE*",
+        "mix.exs",
+        "mix.lock",
+        "README.md",
+        "docs/*",
+        "rebar.config",
+        "rebar.lock",
+        "src"
+    ]},
+    {build_tools, ["mix", "rebar3"]},
+    {env, [
+        %% {formatter, #{
+        %%     application => observer_cli,
+        %%     mod => observer_cli_formatter_default
+        %% }}
+    ]},
+    {licenses, ["MIT"]},
+    {links, [{"Github", "https://github.com/zhongwencool/observer_cli"}]}
+]}.
