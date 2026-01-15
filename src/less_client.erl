@@ -87,7 +87,6 @@ handle_prev_page({LessServer, _Header, _Nav, _Footer} = State) ->
 
 handle_quit({LessServer, _Header, _Nav, _Footer}) ->
     less_server:stop(LessServer),
-    ?output(?CLEAR),
     none.
 
 normalize_key(Key) when is_list(Key) ->
@@ -95,7 +94,10 @@ normalize_key(Key) when is_list(Key) ->
 
 handle_nav({LessServer, _Header, _Nav, _Footer}, Action) ->
     less_server:stop(LessServer),
-    ?output(?CLEAR),
+    case Action of
+        quit -> ok;
+        _ -> ?output(?CLEAR)
+    end,
     Action.
 
 handle_page({_LessServer, Header, Nav, Footer}, Page) ->

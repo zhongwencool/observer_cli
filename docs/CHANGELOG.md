@@ -1,4 +1,18 @@
 # Changelog
+- 1.8.6
+  - Add external formatter support (dynamic loading/app env) and docs; formatter callback now receives pid.
+  - Improve State view rendering by fixing redraw timers and infinite-loop edge cases.
+  - Improve less_client/less_server navigation and status output (F/B commands, last line, row fetching).
+  - Auto update net_ticktime.
+  - Fix mix compilation and avoid compiling test/ in release builds.
+  - Remove recon from included_applications.
+
+- 1.8.5
+  - Sync default env between mix.exs and .app.src; comment out scheduler_usage default.
+  - Refactor app stats and command parsing internals; update type specs and configs.
+  - Update docs and plugin guide; refresh README images/assets.
+  - CI: drop OTP 24/25 from test matrix.
+
 - 1.8.4
   - Fix OTP 28 dialyzer warning.
   - Use erlang:processes_iterator/0, erlang:process_next/1 to fold processes when OTP 28.
