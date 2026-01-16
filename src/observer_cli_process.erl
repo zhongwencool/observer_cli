@@ -15,7 +15,7 @@
     parse_cmd_str/1,
     chart_format/2,
     replace_first_line/2,
-    render_process_info/10,
+    render_process_info/1,
     render_link_monitor/3,
     render_reduction_memory/4,
     render_menu/3,
@@ -130,18 +130,19 @@ render_worker(info, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
 
             Menu = render_menu(info, Type, Interval),
 
-            Line1 = render_process_info(
-                Pid,
-                RegisteredName,
-                GroupLeader,
-                Status,
-                TrapExit,
-                InitialCall,
-                MessageQueueLen,
-                HeapSize,
-                TotalHeapSize,
-                GarbageCollection
-            ),
+            ProcessView = #{
+                pid => Pid,
+                registered_name => RegisteredName,
+                group_leader => GroupLeader,
+                status => Status,
+                trap_exit => TrapExit,
+                initial_call => InitialCall,
+                message_queue_len => MessageQueueLen,
+                heap_size => HeapSize,
+                total_heap_size => TotalHeapSize,
+                garbage_collection => GarbageCollection
+            },
+            Line1 = render_process_info(ProcessView),
 
             Line2 = render_link_monitor(Link, Monitors, MonitoredBy),
 
@@ -294,18 +295,18 @@ next_draw_view_2(Status, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ, Manager
             render_worker(Status, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ, ManagerPid)
     end.
 
-render_process_info(
-    Pid,
-    RegisteredName,
-    GroupLeader,
-    Status,
-    TrapExit,
-    InitialCall,
-    MessageQueueLen,
-    HeapSize,
-    TotalHeapSize,
-    GarbageCollection
-) ->
+render_process_info(#{
+    pid := Pid,
+    registered_name := RegisteredName,
+    group_leader := GroupLeader,
+    status := Status,
+    trap_exit := TrapExit,
+    initial_call := InitialCall,
+    message_queue_len := MessageQueueLen,
+    heap_size := HeapSize,
+    total_heap_size := TotalHeapSize,
+    garbage_collection := GarbageCollection
+}) ->
     MinBinVHeapSize = proplists:get_value(min_bin_vheap_size, GarbageCollection),
     MinHeapSize = proplists:get_value(min_heap_size, GarbageCollection),
     FullSweepAfter = proplists:get_value(fullsweep_after, GarbageCollection),

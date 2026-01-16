@@ -161,13 +161,6 @@ maybe_wait_remote_stop(Node) ->
         true -> wait_for_nodedown(Node);
         false -> ok
     end.
--else.
-maybe_stop_remote(_App) ->
-    ok.
-
-maybe_wait_remote_stop(_Node) ->
-    ok.
--endif.
 
 wait_for_nodedown(Node) ->
     net_kernel:monitor_nodes(true),
@@ -186,6 +179,13 @@ wait_for_nodedown(Node) ->
     after
         net_kernel:monitor_nodes(false)
     end.
+-else.
+maybe_stop_remote(_App) ->
+    ok.
+
+maybe_wait_remote_stop(_Node) ->
+    ok.
+-endif.
 
 application_included(Application) ->
     case application:get_key(Application, included_applications) of

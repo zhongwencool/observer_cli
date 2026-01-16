@@ -7,7 +7,9 @@
 
 manager_quit_test() ->
     SheetCache = ets:new(test_sheet_cache_quit, [set, public]),
-    ChildPid = spawn(fun() -> receive after infinity -> ok end end),
+    ChildPid = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     Opts = #view_opts{plug = #plug{cur_index = 1, plugs = #{}}},
     try
         observer_cli_test_io:with_input(
@@ -107,7 +109,9 @@ parse_cmd_str_test() ->
 
 start_jump_action_test() ->
     SheetCache = ets:new(test_sheet_cache_jump, [set, public]),
-    ChildPid = spawn(fun() -> receive after infinity -> ok end end),
+    ChildPid = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     ets:insert(SheetCache, {1, [item]}),
     Plug = #plug{
         cur_index = 1,
@@ -136,7 +140,9 @@ start_jump_action_test() ->
 
 start_jump_default_row_test() ->
     SheetCache = ets:new(test_sheet_cache_jump_default, [set, public]),
-    ChildPid = spawn(fun() -> receive after infinity -> ok end end),
+    ChildPid = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     ets:insert(SheetCache, {1, [item]}),
     Plug = #plug{
         cur_index = 1,
@@ -165,7 +171,9 @@ start_jump_default_row_test() ->
 
 start_jump_no_match_test() ->
     SheetCache = ets:new(test_sheet_cache_jump_nomatch, [set, public]),
-    ChildPid = spawn(fun() -> receive after infinity -> ok end end),
+    ChildPid = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     ets:insert(SheetCache, {1, [item]}),
     Plug = #plug{
         cur_index = 1,
@@ -224,15 +232,16 @@ render_worker_quit_test() ->
         [],
         fun() ->
             Pid = spawn_link(fun() ->
-                Parent ! {render_worker_result,
-                    observer_cli_plugin:render_worker(
-                        ?INIT_TIME_REF,
-                        Plug,
-                        false,
-                        SheetCache,
-                        undefined,
-                        undefined
-                    )}
+                Parent !
+                    {render_worker_result,
+                        observer_cli_plugin:render_worker(
+                            ?INIT_TIME_REF,
+                            Plug,
+                            false,
+                            SheetCache,
+                            undefined,
+                            undefined
+                        )}
             end),
             Pid ! quit,
             receive
@@ -265,7 +274,9 @@ render_worker_missing_plugins_test() ->
 
 manager_jump_missing_row_test() ->
     SheetCache = ets:new(test_sheet_cache_jump_missing, [set, public]),
-    ChildPid = spawn(fun() -> receive after infinity -> ok end end),
+    ChildPid = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     Plug = #plug{
         cur_index = 1,
         plugs = #{
@@ -293,7 +304,9 @@ manager_jump_missing_row_test() ->
 
 manager_input_str_not_found_test() ->
     SheetCache = ets:new(test_sheet_cache_input_str, [set, public]),
-    ChildPid = spawn(fun() -> receive after infinity -> ok end end),
+    ChildPid = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     Plug = #plug{cur_index = 1, plugs = #{}},
     Opts = #view_opts{plug = Plug},
     try
@@ -341,7 +354,9 @@ run_manager_inputs(Inputs, Plug) ->
     Parent = self(),
     spawn_link(fun() ->
         SheetCache = ets:new(test_sheet_cache_manager, [set, public]),
-        ChildPid = spawn(fun() -> receive after infinity -> ok end end),
+        ChildPid = spawn(fun() -> receive
+            after infinity -> ok
+            end end),
         Opts = #view_opts{plug = Plug, auto_row = false},
         PrevRow = application:get_env(observer_cli, default_row_size),
         ok = application:set_env(observer_cli, default_row_size, 4),
@@ -370,8 +385,10 @@ run_manager_inputs(Inputs, Plug) ->
 with_plugins_env(Plugins, Fun) ->
     Prev = application:get_env(observer_cli, plugins),
     ok = application:set_env(observer_cli, plugins, Plugins),
-    try Fun()
-    after restore_plugins_env(Prev)
+    try
+        Fun()
+    after
+        restore_plugins_env(Prev)
     end.
 
 restore_plugins_env({ok, Plugins}) ->

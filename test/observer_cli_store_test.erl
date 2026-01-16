@@ -13,8 +13,12 @@ lookup_empty_test() ->
 
 update_and_lookup_test() ->
     StorePid = observer_cli_store:start(),
-    Pid1 = spawn(fun() -> receive after infinity -> ok end end),
-    Pid2 = spawn(fun() -> receive after infinity -> ok end end),
+    Pid1 = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
+    Pid2 = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     observer_cli_store:update(StorePid, 2, [{1, Pid1}, {2, Pid2}]),
     ?assertEqual(2, observer_cli_store:lookup_row(StorePid)),
     ?assertEqual({1, Pid1}, observer_cli_store:lookup_pos(StorePid, 1)),

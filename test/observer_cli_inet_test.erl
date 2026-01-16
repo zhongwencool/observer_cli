@@ -80,7 +80,9 @@ render_inet_rows_cnt_test() ->
     Opts = #inet{type = cnt, cur_page = 1, pages = [{1, 1}]},
     try
         {PortList, Rows} =
-            observer_cli_inet:render_inet_rows([{Listen, 1, [{recv_cnt, 2}, {send_cnt, 3}]}], 1, Opts),
+            observer_cli_inet:render_inet_rows(
+                [{Listen, 1, [{recv_cnt, 2}, {send_cnt, 3}]}], 1, Opts
+            ),
         ?assertEqual(1, length(PortList)),
         ?assertEqual(2, length(Rows))
     after
@@ -161,7 +163,9 @@ start_new_interval_test() ->
 start_port_view_jump_test() ->
     {ok, Listen} = gen_tcp:listen(0, [binary, {active, false}]),
     StorePid = observer_cli_store:start(),
-    RenderPid = spawn(fun() -> receive after infinity -> ok end end),
+    RenderPid = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     observer_cli_store:update(StorePid, 1, [{1, Listen}]),
     try
         observer_cli_test_io:with_input(
@@ -169,7 +173,9 @@ start_port_view_jump_test() ->
             fun() ->
                 Inet = #inet{cur_page = 1, pages = [{1, 1}]},
                 Opts = #view_opts{inet = Inet, auto_row = false},
-                ?assertEqual(quit, observer_cli_inet:start_port_view(StorePid, RenderPid, Opts, false))
+                ?assertEqual(
+                    quit, observer_cli_inet:start_port_view(StorePid, RenderPid, Opts, false)
+                )
             end
         )
     after
@@ -179,7 +185,9 @@ start_port_view_jump_test() ->
 start_port_view_auto_jump_test() ->
     {ok, Listen} = gen_tcp:listen(0, [binary, {active, false}]),
     StorePid = observer_cli_store:start(),
-    RenderPid = spawn(fun() -> receive after infinity -> ok end end),
+    RenderPid = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     observer_cli_store:update(StorePid, 1, [{2, Listen}]),
     try
         observer_cli_test_io:with_input(
@@ -187,7 +195,9 @@ start_port_view_auto_jump_test() ->
             fun() ->
                 Inet = #inet{cur_page = 1, pages = [{1, 1}]},
                 Opts = #view_opts{inet = Inet, auto_row = false},
-                ?assertEqual(quit, observer_cli_inet:start_port_view(StorePid, RenderPid, Opts, true))
+                ?assertEqual(
+                    quit, observer_cli_inet:start_port_view(StorePid, RenderPid, Opts, true)
+                )
             end
         )
     after

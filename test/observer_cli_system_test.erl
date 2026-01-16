@@ -25,7 +25,9 @@ start_manager_unknown_test() ->
     ).
 
 clean_test() ->
-    Pid = spawn(fun() -> receive after infinity -> ok end end),
+    Pid = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     Ref = erlang:monitor(process, Pid),
     observer_cli_system:clean([Pid]),
     receive
@@ -162,7 +164,10 @@ render_block_size_info_test() ->
     ?assert(string:find(lists:flatten(Lines), "Allocator Type") =/= nomatch),
     ?assertEqual(
         ["binary_alloc", "1 B", "3 B", "2 B", "4 B", "1", "2"],
-        [lists:flatten(Item) || Item <- observer_cli_system:get_alloc(binary_alloc, Curs, Maxes, STMCurs, STMMaxs)]
+        [
+            lists:flatten(Item)
+         || Item <- observer_cli_system:get_alloc(binary_alloc, Curs, Maxes, STMCurs, STMMaxs)
+        ]
     ).
 
 get_address_invalid_test() ->

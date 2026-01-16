@@ -6,7 +6,9 @@
 -include("observer_cli.hrl").
 
 start_quit_test() ->
-    Pid = spawn(fun() -> receive after infinity -> ok end end),
+    Pid = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     try
         ?assertEqual(true, run_start(["q\n"], Pid))
     after
@@ -14,7 +16,9 @@ start_quit_test() ->
     end.
 
 start_state_view_quit_test() ->
-    Pid = spawn(fun() -> receive after infinity -> ok end end),
+    Pid = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     try
         ?assertEqual(true, run_start(["S\n", "q\n"], Pid))
     after
@@ -22,7 +26,9 @@ start_state_view_quit_test() ->
     end.
 
 start_view_switch_test() ->
-    Pid = spawn(fun() -> receive after infinity -> ok end end),
+    Pid = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     try
         ?assertEqual(true, run_start(["M\n", "D\n", "C\n", "P\n", "1500\n", "q\n"], Pid))
     after
@@ -30,7 +36,9 @@ start_view_switch_test() ->
     end.
 
 start_home_action_test() ->
-    Pid = spawn(fun() -> receive after infinity -> ok end end),
+    Pid = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     try
         ?assertEqual(quit, run_start(["H\n", "q\n"], Pid))
     after
@@ -38,7 +46,9 @@ start_home_action_test() ->
     end.
 
 start_back_home_action_test() ->
-    Pid = spawn(fun() -> receive after infinity -> ok end end),
+    Pid = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     try
         ?assertEqual(quit, run_start(["B\n", "q\n"], Pid))
     after
@@ -46,7 +56,9 @@ start_back_home_action_test() ->
     end.
 
 start_back_plugin_action_test() ->
-    Pid = spawn(fun() -> receive after infinity -> ok end end),
+    Pid = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     try
         ?assertEqual(quit, run_start_type(plugin, ["B\n", "q\n"], Pid))
     after
@@ -136,18 +148,19 @@ render_process_info_test() ->
         {fullsweep_after, 3},
         {minor_gcs, 4}
     ],
-    [Title, Rows] = observer_cli_process:render_process_info(
-        self(),
-        "",
-        self(),
-        running,
-        false,
-        {mod, init, 1},
-        0,
-        10,
-        20,
-        GC
-    ),
+    ProcessView = #{
+        pid => self(),
+        registered_name => "",
+        group_leader => self(),
+        status => running,
+        trap_exit => false,
+        initial_call => {mod, init, 1},
+        message_queue_len => 0,
+        heap_size => 10,
+        total_heap_size => 20,
+        garbage_collection => GC
+    },
+    [Title, Rows] = observer_cli_process:render_process_info(ProcessView),
     ?assert(string:find(lists:flatten(Title), "Meta") =/= nomatch),
     ?assert(string:find(lists:flatten(Rows), "registered_name") =/= nomatch).
 
@@ -158,18 +171,19 @@ render_process_info_registered_test() ->
         {fullsweep_after, 3},
         {minor_gcs, 4}
     ],
-    [Title, Rows] = observer_cli_process:render_process_info(
-        self(),
-        test_reg,
-        self(),
-        running,
-        true,
-        {mod, init, 1},
-        5,
-        10,
-        20,
-        GC
-    ),
+    ProcessView = #{
+        pid => self(),
+        registered_name => test_reg,
+        group_leader => self(),
+        status => running,
+        trap_exit => true,
+        initial_call => {mod, init, 1},
+        message_queue_len => 5,
+        heap_size => 10,
+        total_heap_size => 20,
+        garbage_collection => GC
+    },
+    [Title, Rows] = observer_cli_process:render_process_info(ProcessView),
     ?assert(string:find(lists:flatten(Title), "Meta") =/= nomatch),
     ?assert(string:find(lists:flatten(Rows), "test_reg") =/= nomatch).
 
@@ -247,13 +261,17 @@ truncate_str_default_formatter_test() ->
     ?assert(is_list(Value)).
 
 render_worker_message_empty_test() ->
-    Target = spawn(fun() -> receive after infinity -> ok end end),
+    Target = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     Worker = spawn_worker(message, Target),
     stop_worker(Worker),
     exit(Target, kill).
 
 render_worker_message_with_messages_test() ->
-    Target = spawn(fun() -> receive after infinity -> ok end end),
+    Target = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     Target ! hello,
     Target ! world,
     Worker = spawn_worker(message, Target),
@@ -261,7 +279,9 @@ render_worker_message_with_messages_test() ->
     exit(Target, kill).
 
 render_worker_message_too_many_test() ->
-    Target = spawn(fun() -> receive after infinity -> ok end end),
+    Target = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     lists:foreach(fun(_) -> Target ! msg end, lists:seq(1, 10001)),
     Worker = spawn_worker(message, Target),
     stop_worker(Worker),
@@ -279,7 +299,9 @@ render_worker_message_undefined_test() ->
     stop_worker(Worker).
 
 render_worker_dict_empty_test() ->
-    Target = spawn(fun() -> receive after infinity -> ok end end),
+    Target = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     Worker = spawn_worker(dict, Target),
     stop_worker(Worker),
     exit(Target, kill).
@@ -287,7 +309,9 @@ render_worker_dict_empty_test() ->
 render_worker_dict_with_entries_test() ->
     Target = spawn(fun() ->
         put(test_key, test_value),
-        receive after infinity -> ok end
+        receive
+        after infinity -> ok
+        end
     end),
     Worker = spawn_worker(dict, Target),
     stop_worker(Worker),
@@ -333,7 +357,9 @@ render_worker_info_dead_test() ->
     stop_worker(Worker).
 
 render_worker_next_draw_actions_test() ->
-    Target = spawn(fun() -> receive after infinity -> ok end end),
+    Target = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     Worker = spawn_worker(info, Target),
     Worker ! {new_interval, 2000},
     Worker ! info_view,
@@ -380,6 +406,8 @@ deep_stack_level2() ->
     ok.
 
 deep_stack_level3() ->
-    receive after infinity -> ok end.
+    receive
+    after infinity -> ok
+    end.
 
 -endif.

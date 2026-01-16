@@ -151,7 +151,9 @@ application_helpers_test() ->
     end,
     ?assertEqual([helper_inc], observer_cli_escriptize:application_included(helper_app)),
     ?assertEqual([helper_mod], observer_cli_escriptize:application_modules(helper_app)),
-    ?assertEqual([kernel, stdlib, helper_dep], observer_cli_escriptize:applications([], helper_app)),
+    ?assertEqual(
+        [kernel, stdlib, helper_dep], observer_cli_escriptize:applications([], helper_app)
+    ),
     ?assertEqual(
         [helper_dep, helper_inc],
         lists:sort(observer_cli_escriptize:all_applications(helper_app))
@@ -179,8 +181,7 @@ run_unreachable_node_test() ->
     PrevCookie = erlang:get_cookie(),
     case WasAlive of
         true -> ok;
-        false ->
-            {ok, _} = net_kernel:start([observer_cli_test, shortnames])
+        false -> {ok, _} = net_kernel:start([observer_cli_test, shortnames])
     end,
     erlang:set_cookie(node(), CookieAtom),
     try
@@ -207,8 +208,7 @@ run_name_mode_mismatch_test() ->
     PrevCookie = erlang:get_cookie(),
     case WasAlive of
         true -> ok;
-        false ->
-            {ok, _} = net_kernel:start([observer_cli_test, shortnames])
+        false -> {ok, _} = net_kernel:start([observer_cli_test, shortnames])
     end,
     ActualMode =
         case net_kernel:longnames() of
@@ -219,7 +219,7 @@ run_name_mode_mismatch_test() ->
         case ActualMode of
             longnames -> {"target@host", shortnames};
             shortnames -> {"target@host.example", longnames}
-    end,
+        end,
     erlang:set_cookie(node(), CookieAtom),
     try
         Result =
@@ -230,10 +230,9 @@ run_name_mode_mismatch_test() ->
                 fun(_Node) -> ok end
             ),
         ?assertMatch(
-            {'EXIT',
-             {{net_kernel_start_failed,
-               {name_mode_mismatch, ExpectedMode, ActualMode, _}},
-              _}},
+            {'EXIT', {
+                {net_kernel_start_failed, {name_mode_mismatch, ExpectedMode, ActualMode, _}}, _
+            }},
             Result
         )
     after

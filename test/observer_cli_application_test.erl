@@ -34,8 +34,12 @@ update_app_stats_unknown_test() ->
     ?assertEqual({1, 3, 2, 1, "Unknown", "unknown"}, maps:get(no_group, Updated)).
 
 update_app_stats_group_leader_chain_test() ->
-    GroupLeader = spawn(fun() -> receive after infinity -> ok end end),
-    Child = spawn(fun() -> receive after infinity -> ok end end),
+    GroupLeader = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
+    Child = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     group_leader(GroupLeader, GroupLeader),
     group_leader(GroupLeader, Child),
     AllApps = #{

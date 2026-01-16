@@ -18,7 +18,10 @@ sheet_header() ->
     ].
 
 sheet_body(Prev) ->
-    {[
-        ["alpha", 1],
-        ["beta", 2]
-    ], Prev}.
+    {
+        [
+            ["alpha", 1],
+            ["beta", 2]
+        ],
+        Prev
+    }.

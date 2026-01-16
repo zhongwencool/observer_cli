@@ -24,7 +24,9 @@ start_manager_unknown_test() ->
     ).
 
 clean_test() ->
-    Pid = spawn(fun() -> receive after infinity -> ok end end),
+    Pid = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     Ref = erlang:monitor(process, Pid),
     observer_cli_help:clean([Pid]),
     receive

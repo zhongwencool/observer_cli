@@ -73,7 +73,11 @@ render_memory_process_line_error_logger_test() ->
     TempPid =
         case Prev of
             undefined ->
-                Pid = spawn(fun() -> receive stop -> ok end end),
+                Pid = spawn(fun() ->
+                    receive
+                        stop -> ok
+                    end
+                end),
                 true = register(error_logger, Pid),
                 Pid;
             _ ->
@@ -111,7 +115,9 @@ render_scheduler_usage_test() ->
 
 render_top_n_view_test() ->
     Pid1 = self(),
-    Pid2 = spawn(fun() -> receive after infinity -> ok end end),
+    Pid2 = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     Call1 = [test_name, {current_function, {lists, map, 2}}, {initial_call, {erlang, apply, 3}}],
     Call2 = [
         {registered_name, undefined},
@@ -142,7 +148,9 @@ render_top_n_view_test() ->
     {PidList1, Rows1, Rows2, Rows3, Rows4, Rows5}.
 
 get_top_n_info_translated_call_test() ->
-    Pid = spawn(fun() -> receive after infinity -> ok end end),
+    Pid = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     Call = [
         {registered_name, undefined},
         {current_function, {lists, map, 2}},
@@ -167,7 +175,9 @@ get_pid_info_test() ->
     ?assert(Val2 =/= "dead").
 
 get_pid_info_dead_test() ->
-    Pid = spawn(fun() -> receive after infinity -> ok end end),
+    Pid = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     Ref = erlang:monitor(process, Pid),
     exit(Pid, kill),
     receive

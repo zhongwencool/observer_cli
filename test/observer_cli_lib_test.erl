@@ -171,8 +171,12 @@ pipe_test() ->
     ?assertEqual(4, Result).
 
 exit_processes_test() ->
-    Pid1 = spawn(fun() -> receive after infinity -> ok end end),
-    Pid2 = spawn(fun() -> receive after infinity -> ok end end),
+    Pid1 = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
+    Pid2 = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
     observer_cli_lib:exit_processes([Pid1, Pid2]),
     ?assertEqual(false, is_process_alive(Pid1)),
     ?assertEqual(false, is_process_alive(Pid2)).

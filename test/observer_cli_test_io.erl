@@ -6,7 +6,8 @@ with_input(Inputs, Fun) when is_list(Inputs), is_function(Fun, 0) ->
     Pid = spawn(fun() -> io_server(Inputs) end),
     Old = group_leader(),
     group_leader(Pid, self()),
-    try Fun()
+    try
+        Fun()
     after
         group_leader(Old, self())
     end.

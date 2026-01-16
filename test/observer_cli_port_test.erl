@@ -81,32 +81,34 @@ render_last_line_test() ->
     ?assert(lists:member($q, Line)).
 
 render_port_info_test() ->
-    [Title, Rows] = observer_cli_port:render_port_info(
-        self(),
-        "id",
-        "name",
-        123,
-        10,
-        20,
-        30,
-        0,
-        connected
-    ),
+    PortView = #{
+        port => self(),
+        id => "id",
+        name => "name",
+        os_pid => 123,
+        input => 10,
+        output => 20,
+        memory => 30,
+        queue_size => 0,
+        connected => connected
+    },
+    [Title, Rows] = observer_cli_port:render_port_info(PortView),
     ?assert(string:find(lists:flatten(Title), "Attr") =/= nomatch),
     ?assert(string:find(lists:flatten(Rows), "port") =/= nomatch).
 
 render_port_info_queue_size_test() ->
-    [Title, Rows] = observer_cli_port:render_port_info(
-        self(),
-        "id",
-        "name",
-        123,
-        10,
-        20,
-        30,
-        1,
-        connected
-    ),
+    PortView = #{
+        port => self(),
+        id => "id",
+        name => "name",
+        os_pid => 123,
+        input => 10,
+        output => 20,
+        memory => 30,
+        queue_size => 1,
+        connected => connected
+    },
+    [Title, Rows] = observer_cli_port:render_port_info(PortView),
     ?assert(string:find(lists:flatten(Title), "Attr") =/= nomatch),
     ?assert(string:find(lists:flatten(Rows), "queue_size") =/= nomatch).
 

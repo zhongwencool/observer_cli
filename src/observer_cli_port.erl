@@ -9,7 +9,7 @@
     parse_cmd_str/1,
     addr_to_str/1,
     render_last_line/0,
-    render_port_info/9,
+    render_port_info/1,
     render_link_monitor/2,
     render_type_line/1,
     render_stats/1,
@@ -70,17 +70,18 @@ render_worker(Port, Interval, TimeRef) ->
             QueueSize = proplists:get_value(queue_size, MemoryUsed),
             Menu = render_menu(info, Interval),
 
-            Line1 = render_port_info(
-                Port,
-                Id,
-                Name,
-                OsPid,
-                Input,
-                Output,
-                Memory,
-                QueueSize,
-                Connected
-            ),
+            PortView = #{
+                port => Port,
+                id => Id,
+                name => Name,
+                os_pid => OsPid,
+                input => Input,
+                output => Output,
+                memory => Memory,
+                queue_size => QueueSize,
+                connected => Connected
+            },
+            Line1 = render_port_info(PortView),
             Line2 = render_link_monitor(Link, Monitors),
             Line3 = render_type_line(proplists:get_value(type, PortInfo)),
             LastLine = render_last_line(),
@@ -105,17 +106,17 @@ next_draw_view_2(TimeRef, Interval, Port) ->
             render_worker(Port, Interval, TimeRef)
     end.
 
-render_port_info(
-    Port,
-    Id,
-    Name,
-    OsPid,
-    Input,
-    Output,
-    Memory,
-    QueueSize,
-    Connected
-) ->
+render_port_info(#{
+    port := Port,
+    id := Id,
+    name := Name,
+    os_pid := OsPid,
+    input := Input,
+    output := Output,
+    memory := Memory,
+    queue_size := QueueSize,
+    connected := Connected
+}) ->
     QueueSizeColor =
         case QueueSize > 0 of
             true -> ?RED;
