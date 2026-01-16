@@ -26,9 +26,10 @@ jobs:
           rebar3-version: ${{matrix.rebar3}}
       - name: quality checks
         run: rebar3 check
-      - name: test coverage (OTP 28 only)
-        if: matrix.otp == '28'
-        run: rebar3 as test do eunit, covertool generate
+      - name: test coverage
+        run: |
+          epmd -daemon
+          rebar3 as test do eunit, covertool generate
       - name: Upload coverage reports to Codecov
         if: matrix.otp == '28'
         uses: codecov/codecov-action@v5

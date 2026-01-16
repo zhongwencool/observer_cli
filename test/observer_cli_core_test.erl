@@ -202,23 +202,33 @@ port_proc_info_warning_test() ->
     ?assertEqual(?RED, ProcWarning).
 
 display_unique_flag_label_false_test() ->
-    Prev = proc_lib:get_label(self()),
-    proc_lib:set_label(false),
-    try
-        Flag = observer_cli:display_unique_flag(123, {erlang, apply, 3}, self()),
-        ?assert(string:find(lists:flatten(Flag), "erlang:apply/3") =/= nomatch)
-    after
-        proc_lib:set_label(Prev)
+    case erlang:function_exported(proc_lib, get_label, 1) of
+        true ->
+            Prev = proc_lib:get_label(self()),
+            proc_lib:set_label(false),
+            try
+                Flag = observer_cli:display_unique_flag(123, {erlang, apply, 3}, self()),
+                ?assert(string:find(lists:flatten(Flag), "erlang:apply/3") =/= nomatch)
+            after
+                proc_lib:set_label(Prev)
+            end;
+        false ->
+            ok
     end.
 
 display_unique_flag_label_value_test() ->
-    Prev = proc_lib:get_label(self()),
-    proc_lib:set_label(my_label),
-    try
-        Flag = observer_cli:display_unique_flag(123, {erlang, apply, 3}, self()),
-        ?assert(string:find(lists:flatten(Flag), "my_label") =/= nomatch)
-    after
-        proc_lib:set_label(Prev)
+    case erlang:function_exported(proc_lib, get_label, 1) of
+        true ->
+            Prev = proc_lib:get_label(self()),
+            proc_lib:set_label(my_label),
+            try
+                Flag = observer_cli:display_unique_flag(123, {erlang, apply, 3}, self()),
+                ?assert(string:find(lists:flatten(Flag), "my_label") =/= nomatch)
+            after
+                proc_lib:set_label(Prev)
+            end;
+        false ->
+            ok
     end.
 
 node_stats_test() ->
