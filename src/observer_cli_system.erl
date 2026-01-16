@@ -10,6 +10,23 @@
 -export([start/1]).
 -export([clean/1]).
 
+-ifdef(TEST).
+-export([
+    fill_info/2,
+    to_list/1,
+    info_fields/0,
+    get_cachehit_info/2,
+    render_sys_info/1,
+    render_sys_info/4,
+    render_cache_hit_rates/2,
+    render_block_size_info/4,
+    get_alloc/5,
+    render_dist_node_info/1,
+    get_address/1,
+    render_worker/3
+]).
+-endif.
+
 -define(UTIL_ALLOCATORS, [
     binary_alloc,
     driver_alloc,

@@ -4,6 +4,11 @@
 
 -include("observer_cli.hrl").
 
+-ifdef(TEST).
+-export([normalize_key/1, header_lines/1, footer_lines/1, render_last_line/1]).
+
+-endif.
+
 %%--------------------------------------------------------------------
 %% @doc
 -spec init(

@@ -29,6 +29,10 @@
 -export([sbcs_to_mbcs/2]).
 -export([pipe/2]).
 
+-ifdef(TEST).
+-export([parse_cmd_str/1]).
+-endif.
+
 -spec uptime() -> list().
 uptime() ->
     {UpTime, _} = erlang:statistics(wall_clock),
@@ -162,31 +166,53 @@ to_str(Term) -> to_list(Term).
 
 -spec parse_cmd(view_opts(), atom(), list()) -> atom() | string() | tuple().
 parse_cmd(ViewOpts, Module, Args) ->
-    case to_list(io:get_line("")) of
-        "H\n" ->
+    case parse_cmd_str(to_list(io:get_line(""))) of
+        home_view ->
             apply(Module, clean, [Args]),
             observer_cli:start(ViewOpts);
-        "S\n" ->
+        system_view ->
             apply(Module, clean, [Args]),
             observer_cli_system:start(ViewOpts);
-        "A\n" ->
+        app_view ->
             apply(Module, clean, [Args]),
             observer_cli_application:start(ViewOpts);
-        "N\n" ->
+        inet_view ->
             apply(Module, clean, [Args]),
             observer_cli_inet:start(ViewOpts);
-        "M\n" ->
+        mnesia_view ->
             apply(Module, clean, [Args]),
             observer_cli_mnesia:start(ViewOpts);
-        "E\n" ->
+        ets_view ->
             apply(Module, clean, [Args]),
             observer_cli_ets:start(ViewOpts);
-        "D\n" ->
+        help_view ->
             apply(Module, clean, [Args]),
             observer_cli_help:start(ViewOpts);
-        "P\n" ->
+        plugin_view ->
             apply(Module, clean, [Args]),
             observer_cli_plugin:start(ViewOpts);
+        Action ->
+            Action
+    end.
+
+parse_cmd_str(Key) ->
+    case Key of
+        "H\n" ->
+            home_view;
+        "S\n" ->
+            system_view;
+        "A\n" ->
+            app_view;
+        "N\n" ->
+            inet_view;
+        "M\n" ->
+            mnesia_view;
+        "E\n" ->
+            ets_view;
+        "D\n" ->
+            help_view;
+        "P\n" ->
+            plugin_view;
         %% inet
         "ic\n" ->
             inet_count;

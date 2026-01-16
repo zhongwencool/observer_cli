@@ -15,6 +15,32 @@
 -export([start_plugin/0]).
 -export([clean/1]).
 
+-ifdef(TEST).
+-export([
+    render_system_line/2,
+    render_memory_process_line/3,
+    render_scheduler_usage/1,
+    render_top_n_view/5,
+    transform_seq/3,
+    process_bar_format_style/2,
+    warning_color/1,
+    format_atom_info/2,
+    get_refresh_prompt/4,
+    get_current_initial_call/1,
+    get_port_proc_info/2,
+    get_top_n_info/1,
+    display_unique_flag/3,
+    choose_name/1,
+    choose_call/2,
+    get_stable_system_info/0,
+    get_atom_status/0,
+    get_pid_info/2,
+    node_stats/2,
+    get_incremental_stats/1,
+    check_auto_row/0
+]).
+-endif.
+
 %% cpu >= this value will be highlight
 -define(CPU_ALARM_THRESHOLD, 0.8).
 %% port or process reach max_limit * 0.85 will be highlight

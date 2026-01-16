@@ -10,6 +10,29 @@
 
 -export([start/3]).
 
+-ifdef(TEST).
+-export([
+    parse_cmd_str/1,
+    chart_format/2,
+    replace_first_line/2,
+    render_process_info/10,
+    render_link_monitor/3,
+    render_reduction_memory/4,
+    render_menu/3,
+    render_last_line/0,
+    render_footer_line/2,
+    state_footer_text/1,
+    render_worker/8,
+    render_state/3,
+    state_nav/1,
+    state_title/1,
+    state_footer/2,
+    truncate_str/2,
+    format_mod/1,
+    format/1
+]).
+-endif.
+
 %% lists:foldl(fun(_X, Acc) -> queue:in('NaN', Acc) end, queue:new(), lists:seq(1, 5))
 -define(INIT_QUEUE, {['NaN', 'NaN', 'NaN', 'NaN'], ['NaN']}).
 
@@ -481,7 +504,10 @@ get_menu_title2(state, Menu) ->
     ].
 
 parse_cmd() ->
-    case observer_cli_lib:to_list(io:get_line("")) of
+    parse_cmd_str(observer_cli_lib:to_list(io:get_line(""))).
+
+parse_cmd_str(Key) ->
+    case Key of
         "q\n" ->
             quit;
         "Q\n" ->

@@ -7,6 +7,10 @@
 -export([start/1]).
 -export([clean/1]).
 
+-ifdef(TEST).
+-export([app_status/1, find_group_leader/1, update_app_stats/6]).
+-endif.
+
 %% API
 -define(LAST_LINE,
     "refresh: ~wms q(quit) Positive Number(set refresh interval time ms) F/B(forward/back) Current pages is ~w"

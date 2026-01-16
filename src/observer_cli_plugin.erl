@@ -4,6 +4,28 @@
 %% API
 -export([start/1]).
 
+-include("observer_cli.hrl").
+
+-ifdef(TEST).
+-export([
+    parse_cmd_str/1,
+    render_sheet_header/2,
+    render_sheet_body/8,
+    render_sheet/4,
+    render_menu/2,
+    get_sheet_width/1,
+    mix_content_width/3,
+    match_menu_shortcut/2,
+    match_sheet_shortcut/3,
+    init_config/1,
+    update_plugins/3,
+    maybe_shortcut/2,
+    render_attributes/2,
+    render_worker/6,
+    manager/3
+]).
+-endif.
+
 -callback attributes(PreState) -> {[Rows], NewState} when
     PreState :: any(),
     Rows :: #{
@@ -24,8 +46,6 @@
 -define(LAST_LINE,
     "refresh: ~wms q(quit) Positive Number(set refresh interval time ms) F/B(forward/back) Current pages is ~w"
 ).
-
--include("observer_cli.hrl").
 
 -spec start(ViewOpts) -> no_return() when ViewOpts :: view_opts().
 start(#view_opts{plug = Plugs, auto_row = AutoRow} = ViewOpts) ->
@@ -223,7 +243,10 @@ render_worker(
     end.
 
 parse_cmd() ->
-    case observer_cli_lib:to_list(io:get_line("")) of
+    parse_cmd_str(observer_cli_lib:to_list(io:get_line(""))).
+
+parse_cmd_str(Key) ->
+    case Key of
         "H\n" -> go_home;
         %% backward
         "B\n" -> page_up_top_n;

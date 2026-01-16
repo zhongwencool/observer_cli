@@ -8,6 +8,10 @@
 -export([start/1]).
 -export([clean/1]).
 
+-ifdef(TEST).
+-export([render_help/0, render_doc/1, render_worker/1]).
+-endif.
+
 -define(HELP_COLUMN_WIDTH, 85).
 
 -spec start(view_opts()) -> no_return().
