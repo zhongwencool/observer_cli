@@ -17,6 +17,7 @@
     applications/2,
     all_applications/1,
     run/3,
+    run/4,
     remote_load/1
 ]).
 -endif.
@@ -34,6 +35,9 @@ main(_Options) ->
     io:format("Usage: observer_cli TARGETNODE [TARGETCOOKIE REFRESHMS]~n").
 
 run(TargetNode, Cookie, Interval) ->
+    run(TargetNode, Cookie, Interval, fun remote_load/1).
+
+run(TargetNode, Cookie, Interval, RemoteLoadFun) ->
     {TargetNodeAtom, NameOpt} = resolve_target_name(TargetNode),
     LocalNode = random_local_node_name(),
     MyName =
@@ -43,7 +47,7 @@ run(TargetNode, Cookie, Interval) ->
         end,
     case net_kernel:start([MyName, NameOpt]) of
         {ok, _} -> ok;
-        {error, {already_started, _}} -> ok;
+        {error, {already_started, _}} -> ensure_net_kernel_name_mode(NameOpt);
         {error, Reason} -> erlang:error({net_kernel_start_failed, Reason})
     end,
     Start = fun() ->
@@ -51,24 +55,14 @@ run(TargetNode, Cookie, Interval) ->
         observer_cli:start(TargetNodeAtom, Options)
     end,
     {badrpc, _} = Start(),
-    remote_load(TargetNodeAtom),
-    maybe_wait_remote_stop(),
+    RemoteLoadFun(TargetNodeAtom),
+    maybe_wait_remote_stop(TargetNodeAtom),
     io:format("~p~n", [Start()]).
 
--ifdef(TEST).
-remote_load(Node) when Node =:= node() ->
-    ok;
-remote_load(Node) ->
-    case application:get_env(observer_cli, test_skip_remote_load, false) of
-        true -> ok;
-        false -> do_remote_load(Node)
-    end.
--else.
 remote_load(Node) when Node =:= node() ->
     ok;
 remote_load(Node) ->
     do_remote_load(Node).
--endif.
 
 do_remote_load(Node) ->
     application:load(observer_cli),
@@ -97,6 +91,22 @@ resolve_target_name(TargetNode) ->
             %% only a name without host given, assume shortname
             {ok, Host} = inet:gethostname(),
             {list_to_atom(Name ++ "@" ++ Host), shortnames}
+    end.
+
+ensure_net_kernel_name_mode(ExpectedMode) ->
+    ActualMode =
+        case net_kernel:longnames() of
+            true -> longnames;
+            false -> shortnames
+        end,
+    case ExpectedMode =:= ActualMode of
+        true ->
+            ok;
+        false ->
+            Hint = "use -name for longnames, -sname for shortnames",
+            erlang:error(
+                {net_kernel_start_failed, {name_mode_mismatch, ExpectedMode, ActualMode, Hint}}
+            )
     end.
 
 %%%===================================================================
@@ -146,18 +156,36 @@ maybe_stop_remote(App) ->
             ok
     end.
 
-maybe_wait_remote_stop() ->
+maybe_wait_remote_stop(Node) ->
     case application:get_env(observer_cli, test_stop_remote, false) of
-        true -> timer:sleep(100);
+        true -> wait_for_nodedown(Node);
         false -> ok
     end.
 -else.
 maybe_stop_remote(_App) ->
     ok.
 
-maybe_wait_remote_stop() ->
+maybe_wait_remote_stop(_Node) ->
     ok.
 -endif.
+
+wait_for_nodedown(Node) ->
+    net_kernel:monitor_nodes(true),
+    try
+        case lists:member(Node, nodes()) of
+            false ->
+                ok;
+            true ->
+                receive
+                    {nodedown, Node} -> ok;
+                    {nodedown, Node, _Reason} -> ok
+                after 5000 ->
+                    erlang:error({remote_node_stop_timeout, Node})
+                end
+        end
+    after
+        net_kernel:monitor_nodes(false)
+    end.
 
 application_included(Application) ->
     case application:get_key(Application, included_applications) of

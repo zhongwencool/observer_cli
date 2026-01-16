@@ -26,9 +26,15 @@ simple() ->
     less_server:stop(LessServer).
 
 start_link_default() ->
+    Lines = erlang:max(1, less_server:lines()),
     {ok, LessServer} = less_server:start_link("a\nb"),
 
-    ?assertEqual("a\nb\n", less_server:page(LessServer)),
+    Expected =
+        case Lines >= 2 of
+            true -> "a\nb\n";
+            false -> "a\n"
+        end,
+    ?assertEqual(Expected, less_server:page(LessServer)),
 
     less_server:stop(LessServer).
 

@@ -183,12 +183,60 @@ run_unreachable_node_test() ->
             {ok, _} = net_kernel:start([observer_cli_test, shortnames])
     end,
     erlang:set_cookie(node(), CookieAtom),
-    application:set_env(observer_cli, test_skip_remote_load, true),
     try
-        _ = catch observer_cli_escriptize:run("missing@invalid-host", CookieAtom, 1000),
+        _ =
+            catch observer_cli_escriptize:run(
+                "missing@invalid-host",
+                CookieAtom,
+                1000,
+                fun(_Node) -> ok end
+            ),
         ok
     after
-        application:unset_env(observer_cli, test_skip_remote_load),
+        erlang:set_cookie(node(), PrevCookie),
+        case WasAlive of
+            true -> ok;
+            false -> _ = net_kernel:stop()
+        end
+    end.
+
+run_name_mode_mismatch_test() ->
+    Cookie = "observer_cli_test_cookie",
+    CookieAtom = list_to_atom(Cookie),
+    WasAlive = erlang:is_alive(),
+    PrevCookie = erlang:get_cookie(),
+    case WasAlive of
+        true -> ok;
+        false ->
+            {ok, _} = net_kernel:start([observer_cli_test, shortnames])
+    end,
+    ActualMode =
+        case net_kernel:longnames() of
+            true -> longnames;
+            false -> shortnames
+        end,
+    {TargetNode, ExpectedMode} =
+        case ActualMode of
+            longnames -> {"target@host", shortnames};
+            shortnames -> {"target@host.example", longnames}
+    end,
+    erlang:set_cookie(node(), CookieAtom),
+    try
+        Result =
+            catch observer_cli_escriptize:run(
+                TargetNode,
+                CookieAtom,
+                1000,
+                fun(_Node) -> ok end
+            ),
+        ?assertMatch(
+            {'EXIT',
+             {{net_kernel_start_failed,
+               {name_mode_mismatch, ExpectedMode, ActualMode, _}},
+              _}},
+            Result
+        )
+    after
         erlang:set_cookie(node(), PrevCookie),
         case WasAlive of
             true -> ok;
