@@ -5,6 +5,10 @@
 -export([start/1]).
 -export([clean/1]).
 
+-ifdef(TEST).
+-export([get_table_list/2, with_storage_type/3]).
+-endif.
+
 -include("observer_cli.hrl").
 
 -define(LAST_LINE,

@@ -3,13 +3,14 @@
 # observer_cli
 
 [![Build Status](https://github.com/zhongwencool/observer_cli/workflows/ci/badge.svg)](https://github.com/zhongwencool/observer_cli/actions)
+[![codecov](https://codecov.io/gh/zhongwencool/observer_cli/branch/main/graph/badge.svg)](https://codecov.io/gh/zhongwencool/observer_cli)
 [![GitHub tag](https://img.shields.io/github/tag/zhongwencool/observer_cli.svg)](https://github.com/zhongwencool/observer_cli)
 [![MIT License](https://img.shields.io/hexpm/l/observer_cli.svg)](https://hex.pm/packages/observer_cli)
 [![Hex.pm Version](https://img.shields.io/hexpm/v/observer_cli.svg)](https://hex.pm/packages/observer_cli)
 [![Hex.pm Downloads](https://img.shields.io/hexpm/dt/observer_cli.svg)](https://hex.pm/packages/observer_cli)
 [![Hex Docs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/observer_cli/)
 
-Observer CLI is a library to be dropped into any beam nodes, to be used to assist DevOps  people diagnose problems in production nodes. Based on [recon](https://github.com/ferd/recon).
+Observer CLI is a library to be dropped into any BEAM nodes, to be used to help DevOps people diagnose problems in production nodes. Based on [recon](https://github.com/ferd/recon).
 
 <img src="https://github.com/zhongwencool/observer_cli/raw/main/docs/images/home.png" width="100%" alt="Home"> </img>
 
@@ -28,7 +29,7 @@ Observer CLI is a library to be dropped into any beam nodes, to be used to assis
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.8.5
+dep_observer_cli = hex 1.8.6
 ```
 
 ### Elixir
@@ -53,6 +54,7 @@ dep_observer_cli = hex 1.8.5
 rebar3 shell
 1> observer_cli:start().
 ```
+Tip: CI uses `rebar3 as ci compile` (warnings are treated as errors).
 ### Elixir
 ```elixir
 %% mix project
@@ -79,7 +81,7 @@ iex(1)> :observer_cli.start(:'target@host', :'magic_cookie')
 <!-- tabs-close -->
 
 > #### exclamation {: .info}
-> **ensure observer_cli application been loaded on target node.**
+> **ensure the observer_cli application has been loaded on the target node.**
 
 > #### tip {: .tip}
 > Pass `{interval, 3000}` (Erlang) or `interval: 3000` (Elixir) to sample every 3 seconds. The minimum refresh interval is 1000 ms.
@@ -100,7 +102,7 @@ iex(1)> :observer_cli.start(:'target@host', :'magic_cookie')
 
 The Home panel provides a comprehensive overview of your Erlang node:
 
-[`erlang:system_info/1`](http://erlang.org/doc/man/erlang.html#system_info-1) returns specified information about the current system by below item. When the ratio is greater than 85%, it becomes red.
+[`erlang:system_info/1`](http://erlang.org/doc/man/erlang.html#system_info-1) returns specified information about the current system in the items below. When the ratio is greater than 85%, it becomes red.
 
 | Metric             | Source/Limit              |
 |--------------------|---------------------------|
@@ -109,7 +111,7 @@ The Home panel provides a comprehensive overview of your Erlang node:
 | Atom Count         | atom_count/atom_limit     |
 
 * **process_limit**: `erl +P Number` sets the maximum number of simultaneously existing processes for this system if a Number is passed as value. Valid range for Number is [1024-134217727]. The default value is 262144.
-* **port_limit**: `erl +Q Number` sets the maximum number of simultaneously existing ports for this system if a Number is passed as value. Valid range for Number is [1024-134217727]. The default value used is normally 65536. However, if the runtime system is able to determine maximum amount of file descriptors that it is allowed to open and this value is larger than 65536, the chosen value will increased to a value larger or equal to the maximum amount of file descriptors that can be opened.
+* **port_limit**: `erl +Q Number` sets the maximum number of simultaneously existing ports for this system if a Number is passed as value. Valid range for Number is [1024-134217727]. The default value used is normally 65536. However, if the runtime system is able to determine maximum amount of file descriptors that it is allowed to open and this value is larger than 65536, the chosen value will be increased to a value larger than or equal to the maximum amount of file descriptors that can be opened.
 * **atom_limit**: `erl +t size` sets the maximum number of atoms the virtual machine can handle. Defaults to 1,048,576.
 
 [`ps`](https://man7.org/linux/man-pages/man1/ps.1.html) reports a snapshot of the BEAM OS process and feeds the system panel. Observer CLI samples four columns:
@@ -155,7 +157,7 @@ When looking for high memory usage, for example it's interesting to be able to l
 
 [`recon:proc_count/2`](http://ferd.github.io/recon/recon.html#proc_count-2) and [`recon:proc_window/3`](http://ferd.github.io/recon/recon.html#proc_window-3) are to be used when you require information about processes in a larger sense: biggest consumers of given process `memory`, `reductions`, `binary`, `total_heap_size`, `message_queue_len`, either absolutely or over a sliding time window, respectively.
 
-More detail about sliding time windows see [`recon:proc_window/3`](http://ferd.github.io/recon/recon.html#proc_window-3)
+For more detail about sliding time windows, see [`recon:proc_window/3`](http://ferd.github.io/recon/recon.html#proc_window-3)
 
 When an abnormal process is found, enter the suspected process sequence(Integer) then press `Enter` will use [`erlang:process_info/2`](http://erlang.org/doc/man/erlang.html#process_info-2) to show a lot of information available (which is safe to use in production) about processes.
 

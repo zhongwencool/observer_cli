@@ -4,7 +4,7 @@ defmodule ObserverCli.MixProject do
   def project do
     [
       app: :observer_cli,
-      version: "1.8.5",
+      version: "1.8.6",
       language: :erlang,
       description: "observer in shell",
       deps: [
@@ -19,8 +19,7 @@ defmodule ObserverCli.MixProject do
         # {:formatter, #{
         # :application => atom(), - Formatter application. observer_cli loads all it's modules to remote node.
         # :mod => module() - observer_cli_formatter implementation.
-        # }}
-        formatter: %{application: :observer_cli, mod: :observer_cli_formatter_default},
+        # }},
         # scheduler_usage: :enable, # default value is 'disable', uncomment to enable by default
         plugins: [
           # module       - Specific module implements plugin behavior. It's mandatory.

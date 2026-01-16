@@ -7,6 +7,10 @@
 -export([start/1]).
 -export([clean/1]).
 
+-ifdef(TEST).
+-export([app_status/1, find_group_leader/1, update_app_stats/6]).
+-endif.
+
 %% API
 -define(LAST_LINE,
     "refresh: ~wms q(quit) Positive Number(set refresh interval time ms) F/B(forward/back) Current pages is ~w"
@@ -291,7 +295,7 @@ app_status(Info) ->
     lists:foldl(
         fun({App, _RestartType, _Type, _From}, Acc) ->
             Version = get_version(App, Acc),
-            Acc#{App => {0, 0, 0, 0, "StartPFlase", Version}}
+            Acc#{App => {0, 0, 0, 0, "StartPFalse", Version}}
         end,
         R4,
         StartPFalse

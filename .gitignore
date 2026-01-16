@@ -18,3 +18,4 @@ log/
 .erlang.mk
 
 xrefr
+AGENTS.md

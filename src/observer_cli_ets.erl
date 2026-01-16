@@ -7,6 +7,10 @@
 -export([start/1]).
 -export([clean/1]).
 
+-ifdef(TEST).
+-export([get_ets_info/2, is_reg/1, unread/0]).
+-endif.
+
 -define(LAST_LINE,
     "q(quit) s(sort by size) m(sort by memory) pd/pu(page:down/up) F/B(forward/back)"
 ).
@@ -158,7 +162,7 @@ unread() ->
         0,
         0,
         [
-            %%it maybe die
+            %% it may have died
             {name, unread},
             {write_concurrency, unread},
             {read_concurrency, unread},

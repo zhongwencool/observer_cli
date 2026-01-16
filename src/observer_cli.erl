@@ -15,6 +15,30 @@
 -export([start_plugin/0]).
 -export([clean/1]).
 
+-ifdef(TEST).
+-export([
+    render_system_line/2,
+    render_memory_process_line/3,
+    render_scheduler_usage/1,
+    render_top_n_view/5,
+    transform_seq/3,
+    process_bar_format_style/2,
+    warning_color/1,
+    format_atom_info/2,
+    get_refresh_prompt/4,
+    get_current_initial_call/1,
+    get_port_proc_info/2,
+    get_top_n_info/1,
+    display_unique_flag/3,
+    get_stable_system_info/0,
+    get_atom_status/0,
+    get_pid_info/2,
+    node_stats/2,
+    get_incremental_stats/1,
+    check_auto_row/0
+]).
+-endif.
+
 %% cpu >= this value will be highlight
 -define(CPU_ALARM_THRESHOLD, 0.8).
 %% port or process reach max_limit * 0.85 will be highlight
@@ -548,7 +572,7 @@ render_top_n_view(memory, MemoryList, Num, Pages, Page) ->
     FormatFunc = fun(Item, {Acc, Acc1, Pos}) ->
         {Pid, MemVal, CurFun, NameOrCall} = get_top_n_info(Item),
         {Reductions, MsgQueueLen} = get_pid_info(Pid, [reductions, message_queue_len]),
-        Format = get_memory_format(ChoosePos, Pos),
+        Format = get_rank_format(memory, ChoosePos, Pos),
         R = io_lib:format(
             Format,
             [
@@ -578,7 +602,7 @@ render_top_n_view(binary_memory, MemoryList, Num, Pages, Page) ->
     FormatFunc = fun(Item, {Acc, Acc1, Pos}) ->
         {Pid, MemVal, CurFun, NameOrCall} = get_top_n_info(Item),
         {Reductions, MsgQueueLen} = get_pid_info(Pid, [reductions, message_queue_len]),
-        Format = get_memory_format(ChoosePos, Pos),
+        Format = get_rank_format(binary_memory, ChoosePos, Pos),
         R = io_lib:format(
             Format,
             [
@@ -608,7 +632,7 @@ render_top_n_view(reductions, ReductionList, Num, Pages, Page) ->
     FormatFunc = fun(Item, {Acc, Acc1, Pos}) ->
         {Pid, Reductions, CurFun, NameOrCall} = get_top_n_info(Item),
         {Memory, MsgQueueLen} = get_pid_info(Pid, [memory, message_queue_len]),
-        Format = get_reduction_format(ChoosePos, Pos),
+        Format = get_rank_format(reductions, ChoosePos, Pos),
         R = io_lib:format(
             Format,
             [
@@ -638,7 +662,7 @@ render_top_n_view(total_heap_size, HeapList, Num, Pages, Page) ->
     FormatFunc = fun(Item, {Acc, Acc1, Pos}) ->
         {Pid, HeapSize, CurFun, NameOrCall} = get_top_n_info(Item),
         {Reductions, MsgQueueLen} = get_pid_info(Pid, [reductions, message_queue_len]),
-        Format = get_memory_format(ChoosePos, Pos),
+        Format = get_rank_format(total_heap_size, ChoosePos, Pos),
         R = io_lib:format(
             Format,
             [
@@ -668,7 +692,7 @@ render_top_n_view(message_queue_len, MQLenList, Num, Pages, Page) ->
     FormatFunc = fun(Item, {Acc, Acc1, Pos}) ->
         {Pid, MQLen, CurFun, NameOrCall} = get_top_n_info(Item),
         {Reductions, Memory} = get_pid_info(Pid, [reductions, memory]),
-        Format = get_message_queue_format(ChoosePos, Pos),
+        Format = get_rank_format(message_queue_len, ChoosePos, Pos),
         R = io_lib:format(
             Format,
             [
@@ -693,20 +717,27 @@ top_n_rows(FormatFunc, Start, List) ->
 notify_pause_status() ->
     ?output("\e[31;1m PAUSE  INPUT (p, r/rr, b/bb, h/hh, m/mm) to resume or q to quit \e[0m~n").
 
-get_memory_format(Pos, Pos) ->
-    "|\e[42m~-3.3w|~-12.12s|~13.13s |~-45.45s|~14.14s| ~-9.9s|~-33.33s\e[49m|~n";
-get_memory_format(_Pos, _RankPos) ->
-    "|~-3.3w|~-12.12s|~13.13s |~-45.45s|~14.14s| ~-9.9s|~-33.33s|~n".
-
-get_reduction_format(Pos, Pos) ->
-    "|\e[42m~-3.3w|~-12.12s|~-15.15s|~-45.45s|~12.12s| ~-9.9s|~-34.34s\e[49m|~n";
-get_reduction_format(_Pos, _RankPos) ->
-    "|~-3.3w|~-12.12s|~-15.15s|~-45.45s|~12.12s| ~-9.9s|~-34.34s|~n".
-
-get_message_queue_format(Pos, Pos) ->
-    "|\e[42m~-3.3w|~-12.12s|~-11.11s|~-44.44s|~13.13s| ~-13.13s|~-34.34s\e[49m|~n";
-get_message_queue_format(_Pos, _RankPos) ->
-    "|~-3.3w|~-12.12s|~-11.11s|~-44.44s|~13.13s| ~-13.13s|~-34.34s|~n".
+get_rank_format(Type, Pos, RankPos) ->
+    MemSelected = "|\e[42m~-3.3w|~-12.12s|~13.13s |~-45.45s|~14.14s| ~-9.9s|~-33.33s\e[49m|~n",
+    MemNormal = "|~-3.3w|~-12.12s|~13.13s |~-45.45s|~14.14s| ~-9.9s|~-33.33s|~n",
+    RedSelected =
+        "|\e[42m~-3.3w|~-12.12s|~-15.15s|~-45.45s|~12.12s| ~-9.9s|~-34.34s\e[49m|~n",
+    RedNormal = "|~-3.3w|~-12.12s|~-15.15s|~-45.45s|~12.12s| ~-9.9s|~-34.34s|~n",
+    MqSelected =
+        "|\e[42m~-3.3w|~-12.12s|~-11.11s|~-44.44s|~13.13s| ~-13.13s|~-34.34s\e[49m|~n",
+    MqNormal = "|~-3.3w|~-12.12s|~-11.11s|~-44.44s|~13.13s| ~-13.13s|~-34.34s|~n",
+    {SelectedFormat, NormalFormat} =
+        case Type of
+            memory -> {MemSelected, MemNormal};
+            binary_memory -> {MemSelected, MemNormal};
+            total_heap_size -> {MemSelected, MemNormal};
+            reductions -> {RedSelected, RedNormal};
+            message_queue_len -> {MqSelected, MqNormal}
+        end,
+    case Pos =:= RankPos of
+        true -> SelectedFormat;
+        false -> NormalFormat
+    end.
 
 refresh_next_time(proc_count, Type, Interval) ->
     erlang:send_after(Interval, self(), {proc_count, Type});
@@ -833,7 +864,7 @@ get_atom_status() ->
 
 get_pid_info(Pid, Keys) ->
     case recon:info(Pid, Keys) of
-        undefined -> {"die", "die"};
+        undefined -> {"dead", "dead"};
         [{_, Val1}, {_, Val2}] -> {Val1, Val2}
     end.
 

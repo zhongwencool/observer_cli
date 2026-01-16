@@ -2,7 +2,7 @@
 
 -export([format/3]).
 
-%% Function for formating complex data structures: proplissts, lists, maps, tuples, ...
+%% Function for formatting complex data structures: proplists, lists, maps, tuples, ...
 -callback format(Pid :: pid(), Term :: term()) ->
     string().
 

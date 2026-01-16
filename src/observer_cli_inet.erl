@@ -7,6 +7,22 @@
 -export([start/1]).
 -export([clean/1]).
 
+-ifdef(TEST).
+-export([
+    trans_type/1,
+    trans_format/4,
+    get_menu_str/4,
+    title/3,
+    add_choose_color/3,
+    render_inet_rows/3,
+    render_io_rows/1,
+    inet_info/5,
+    getstat/2,
+    get_remote_ip/1,
+    start_port_view/4
+]).
+-endif.
+
 -define(LAST_LINE,
     "q(quit) ic(inet_count) iw(inet_window) rc(recv_cnt) ro(recv_oct)"
     " sc(send_cnt) so(send_oct) cnt oct 9(port 9 info) pd/pu(page:down/up)"

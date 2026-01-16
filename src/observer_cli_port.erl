@@ -4,6 +4,22 @@
 
 -export([start/2]).
 
+-ifdef(TEST).
+-export([
+    parse_cmd_str/1,
+    addr_to_str/1,
+    render_last_line/0,
+    render_port_info/1,
+    render_link_monitor/2,
+    render_type_line/1,
+    render_stats/1,
+    render_opts/1,
+    render_menu/2,
+    get_menu_title/1,
+    get_menu_title2/1
+]).
+-endif.
+
 -spec start(pid(), view_opts()) -> no_return().
 start(Port, Opts) ->
     #view_opts{port = RefreshMs} = Opts,
@@ -54,17 +70,18 @@ render_worker(Port, Interval, TimeRef) ->
             QueueSize = proplists:get_value(queue_size, MemoryUsed),
             Menu = render_menu(info, Interval),
 
-            Line1 = render_port_info(
-                Port,
-                Id,
-                Name,
-                OsPid,
-                Input,
-                Output,
-                Memory,
-                QueueSize,
-                Connected
-            ),
+            PortView = #{
+                port => Port,
+                id => Id,
+                name => Name,
+                os_pid => OsPid,
+                input => Input,
+                output => Output,
+                memory => Memory,
+                queue_size => QueueSize,
+                connected => Connected
+            },
+            Line1 = render_port_info(PortView),
             Line2 = render_link_monitor(Link, Monitors),
             Line3 = render_type_line(proplists:get_value(type, PortInfo)),
             LastLine = render_last_line(),
@@ -89,17 +106,17 @@ next_draw_view_2(TimeRef, Interval, Port) ->
             render_worker(Port, Interval, TimeRef)
     end.
 
-render_port_info(
-    Port,
-    Id,
-    Name,
-    OsPid,
-    Input,
-    Output,
-    Memory,
-    QueueSize,
-    Connected
-) ->
+render_port_info(#{
+    port := Port,
+    id := Id,
+    name := Name,
+    os_pid := OsPid,
+    input := Input,
+    output := Output,
+    memory := Memory,
+    queue_size := QueueSize,
+    connected := Connected
+}) ->
     QueueSizeColor =
         case QueueSize > 0 of
             true -> ?RED;
@@ -335,26 +352,30 @@ get_menu_title2(info) ->
     [?UNSELECT("Home(H)"), ?UNSELECT("Network(N)"), ?SELECT("Port Info(P)")].
 
 parse_cmd(ViewOpts, Pid) ->
-    case observer_cli_lib:to_list(io:get_line("")) of
-        "q\n" ->
-            quit;
-        "Q\n" ->
-            quit;
-        "P\n" ->
-            info_view;
-        "H\n" ->
+    case parse_cmd_str(observer_cli_lib:to_list(io:get_line(""))) of
+        home_view ->
             erlang:exit(Pid, stop),
             observer_cli:start(ViewOpts);
-        "N\n" ->
+        net_view ->
             erlang:exit(Pid, stop),
             observer_cli_inet:start(ViewOpts);
-        Number ->
-            observer_cli_lib:parse_integer(Number)
+        Action ->
+            Action
+    end.
+
+parse_cmd_str(Key) ->
+    case Key of
+        "q\n" -> quit;
+        "Q\n" -> quit;
+        "P\n" -> info_view;
+        "H\n" -> home_view;
+        "N\n" -> net_view;
+        Number -> observer_cli_lib:parse_integer(Number)
     end.
 
 output_die_view(Port, Interval) ->
     Menu = render_menu(info, Interval),
-    Line = io_lib:format("\e[31mPort(~p) has already die.\e[0m~n", [Port]),
+    Line = io_lib:format("\e[31mPort(~p) has already died.\e[0m~n", [Port]),
     LastLine = render_last_line(),
     ?output([?CURSOR_TOP, Menu, Line, LastLine]).
 
