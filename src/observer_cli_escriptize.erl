@@ -150,7 +150,7 @@ ensure_set_env(App, Env) ->
 maybe_stop_remote(App) ->
     case application:get_env(App, test_stop_remote, false) of
         true ->
-            spawn(fun() -> init:stop() end),
+            spawn(fun init:stop/0),
             ok;
         false ->
             ok

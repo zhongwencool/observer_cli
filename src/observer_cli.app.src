@@ -1,6 +1,6 @@
 {application, observer_cli, [
     {description, "Visualize Erlang Nodes On The Command Line"},
-    {vsn, "1.8.6"},
+    {vsn, "1.8.7"},
     {modules, [observer_cli]},
     {registered, []},
     {applications, [kernel, stdlib, recon]},

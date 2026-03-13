@@ -1,4 +1,9 @@
 # Changelog
+- 1.8.7
+  - Handle unchanged case in `net_kernel:set_net_ticktime`.
+  - Fix `rebar3 check` by updating the Elvis macro rule name to `macro_naming_convention`.
+  - Simplify `observer_cli_escriptize` test shutdown code by replacing an unnecessary anonymous function wrapper.
+
 - 1.8.6
   - Add external formatter support (dynamic loading/app env) and docs; formatter callback now receives pid.
   - Improve State view rendering by fixing redraw timers and infinite-loop edge cases.
