@@ -933,5 +933,7 @@ update_net_ticktime_from(Node) ->
         change_initiated ->
             ok;
         {ongoing_change_to, NetTickTime} ->
+            ok;
+        unchanged ->
             ok
     end.
