@@ -715,7 +715,7 @@ top_n_rows(FormatFunc, Start, List) ->
     {Row, PidList}.
 
 notify_pause_status() ->
-    ?output("\e[31;1m PAUSE  INPUT (p, r/rr, b/bb, h/hh, m/mm) to resume or q to quit \e[0m~n").
+    ?output("\e[31;1m PAUSE  INPUT (p, r/rr, b/bb, h/hh, m/mm) to resume or q to quit \e[0m\n").
 
 get_rank_format(Type, Pos, RankPos) ->
     MemSelected = "|\e[42m~-3.3w|~-12.12s|~13.13s |~-45.45s|~14.14s| ~-9.9s|~-33.33s\e[49m|~n",

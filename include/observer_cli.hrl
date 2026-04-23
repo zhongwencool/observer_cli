@@ -116,6 +116,6 @@
 
 -define('render'(_FA_), observer_cli_lib:render(_FA_)).
 -define('output'(_F_, _A_), io:format(iolist_to_binary(_F_), _A_)).
--define('output'(_L_), ?output(_L_, [])).
+-define('output'(_L_), io:put_chars(_L_)).
 
 -define(DEFAULT_FORMATTER, #{application => observer_cli, mod => observer_cli_formatter_default}).
