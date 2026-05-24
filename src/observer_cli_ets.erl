@@ -132,9 +132,7 @@ render_ets_info(Rows, CurPage, Attr) ->
     [Title | RowView].
 
 get_ets_info(Tab, Attr) ->
-    case catch ets:info(Tab) of
-        {'EXIT', _} ->
-            unread();
+    try ets:info(Tab) of
         undefined ->
             unread();
         Info when is_list(Info) ->
@@ -149,6 +147,9 @@ get_ets_info(Tab, Attr) ->
                 proplists:get_value(Attr, NewInfo),
                 NewInfo
             }
+    catch
+        _:_ ->
+            unread()
     end.
 
 is_reg(Owner) ->
