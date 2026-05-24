@@ -12,6 +12,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - otp: '29'
+            rebar3: '3.26'
           - otp: '28'
             rebar3: '3.24'
           - otp: '27'
@@ -31,7 +33,7 @@ jobs:
           epmd -daemon
           rebar3 as test do eunit, covertool generate
       - name: Upload coverage reports to Codecov
-        if: matrix.otp == '28'
+        if: matrix.otp == '29'
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
