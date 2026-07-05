@@ -236,7 +236,9 @@ collect_process_info(Pid) ->
             MessageQueueLen = proplists:get_value(message_queue_len, MemoryUsed),
             HeapSize = proplists:get_value(heap_size, MemoryUsed, 0) * WordSize,
             TotalHeapSize = proplists:get_value(total_heap_size, MemoryUsed, 0) * WordSize,
-            GarbageCollection = proplists:get_value(garbage_collection, MemoryUsed),
+            GarbageCollection = collect_process_gc(
+                proplists:get_value(garbage_collection, MemoryUsed)
+            ),
 
             Work = proplists:get_value(work, ProcessInfo),
             Reductions = proplists:get_value(reductions, Work),
@@ -262,6 +264,14 @@ collect_process_info(Pid) ->
                 memory => Memory
             }
     end.
+
+collect_process_gc(GarbageCollection) ->
+    #{
+        min_bin_vheap_size => proplists:get_value(min_bin_vheap_size, GarbageCollection),
+        min_heap_size => proplists:get_value(min_heap_size, GarbageCollection),
+        fullsweep_after => proplists:get_value(fullsweep_after, GarbageCollection),
+        minor_gcs => proplists:get_value(minor_gcs, GarbageCollection)
+    }.
 
 collect_process_messages(Pid) ->
     case erlang:process_info(Pid, message_queue_len) of
@@ -426,10 +436,10 @@ process_memory_fields(#{
 
 process_gc_fields(#{garbage_collection := GarbageCollection}) ->
     #{
-        min_bin_vheap_size => proplists:get_value(min_bin_vheap_size, GarbageCollection),
-        min_heap_size => proplists:get_value(min_heap_size, GarbageCollection),
-        fullsweep_after => proplists:get_value(fullsweep_after, GarbageCollection),
-        minor_gcs => integer_to_list(proplists:get_value(minor_gcs, GarbageCollection))
+        min_bin_vheap_size => maps:get(min_bin_vheap_size, GarbageCollection),
+        min_heap_size => maps:get(min_heap_size, GarbageCollection),
+        fullsweep_after => maps:get(fullsweep_after, GarbageCollection),
+        minor_gcs => integer_to_list(maps:get(minor_gcs, GarbageCollection))
     }.
 
 render_process_info_title([MetaW, MetaValueW, MemoryW, MemoryValueW, GcW, GcValueW]) ->

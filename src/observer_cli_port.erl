@@ -9,6 +9,7 @@
     parse_cmd_str/1,
     addr_to_str/1,
     collect_port_info/1,
+    collect_port_type/1,
     render_footer/0,
     render_port_sections/1,
     render_port_info/1,
@@ -85,8 +86,22 @@ collect_port_info(Port) ->
                 },
                 links => proplists:get_value(links, Signals),
                 monitors => proplists:get_value(monitors, Signals),
-                type => proplists:get_value(type, PortInfo)
+                type => collect_port_type(proplists:get_value(type, PortInfo))
             }
+    end.
+
+collect_port_type(Type) ->
+    #{
+        peername => port_type_value(peername, Type),
+        sockname => port_type_value(sockname, Type),
+        statistics => port_type_value(statistics, Type),
+        options => port_type_value(options, Type)
+    }.
+
+port_type_value(Key, Type) ->
+    case lists:keyfind(Key, 1, Type) of
+        {_, Value} -> Value;
+        false -> undefined
     end.
 
 next_draw_view(TimeRef, Interval, Port) ->
@@ -228,24 +243,16 @@ render_link_monitor(Link, Monitors) ->
         ?W(MonitorsStr, ValueW)
     ]).
 
-render_type_line(List) ->
+render_type_line(TypeDetail) ->
     [
-        render_socket_peer(List),
-        render_stats_section(List),
-        render_options_section(List)
+        render_socket_peer(TypeDetail),
+        render_stats_section(maps:get(statistics, TypeDetail)),
+        render_options_section(maps:get(options, TypeDetail))
     ].
 
-render_socket_peer(List) ->
-    PeerName =
-        case lists:keyfind(peername, 1, List) of
-            {_, Peer} -> addr_to_str(Peer);
-            false -> "undefined"
-        end,
-    SockName =
-        case lists:keyfind(sockname, 1, List) of
-            {_, Sock} -> addr_to_str(Sock);
-            false -> "undefined"
-        end,
+render_socket_peer(#{peername := Peer, sockname := Sock}) ->
+    PeerName = port_addr_to_str(Peer),
+    SockName = port_addr_to_str(Sock),
     [SockW, ArrowW, PeerW] = type_line_widths(),
     ?render([
         ?UNDERLINE,
@@ -254,17 +261,20 @@ render_socket_peer(List) ->
         ?W("            " ++ PeerName ++ "(peername)", PeerW)
     ]).
 
-render_stats_section(List) ->
-    case lists:keyfind(statistics, 1, List) of
-        {_, Stats} -> render_stats(Stats);
-        false -> []
-    end.
+port_addr_to_str(undefined) ->
+    "undefined";
+port_addr_to_str(Addr) ->
+    addr_to_str(Addr).
 
-render_options_section(List) ->
-    case lists:keyfind(options, 1, List) of
-        {_, Opts} -> render_opts(Opts);
-        false -> []
-    end.
+render_stats_section(undefined) ->
+    [];
+render_stats_section(Stats) ->
+    render_stats(Stats).
+
+render_options_section(undefined) ->
+    [];
+render_options_section(Opts) ->
+    render_opts(Opts).
 
 port_info_widths(Base) ->
     fill_last(observer_cli_lib:weighted_widths(Base, [0, 1, 0, 1, 0, 3]), wide_fill(5)).

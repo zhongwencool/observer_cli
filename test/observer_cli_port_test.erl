@@ -92,13 +92,24 @@ collect_port_info_test() ->
                 port := #{port := Listen},
                 links := _,
                 monitors := _,
-                type := _
+                type := #{peername := _, sockname := _, statistics := _, options := _}
             },
             Info
         )
     after
         gen_tcp:close(Listen)
     end.
+
+collect_port_type_test() ->
+    ?assertEqual(
+        #{
+            peername => undefined,
+            sockname => {{127, 0, 0, 1}, 4000},
+            statistics => undefined,
+            options => undefined
+        },
+        observer_cli_port:collect_port_type([{sockname, {{127, 0, 0, 1}, 4000}}])
+    ).
 
 render_port_info_test() ->
     PortView = #{
@@ -187,52 +198,11 @@ render_link_monitor_wide_alignment_test() ->
     ?assert(lists:all(fun(Row) -> Row =:= First end, Rest)).
 
 render_type_line_test() ->
-    Stats = [
-        {recv_oct, 1},
-        {recv_cnt, 2},
-        {recv_max, 3},
-        {recv_avg, 4},
-        {recv_dvi, 5},
-        {send_oct, 6},
-        {send_cnt, 7},
-        {send_max, 8},
-        {send_avg, 9},
-        {send_pend, 10}
-    ],
-    Opts = [
-        {active, false},
-        {broadcast, false},
-        {buffer, 0},
-        {delay_send, false},
-        {dontroute, false},
-        {exit_on_close, true},
-        {header, 0},
-        {high_watermark, 10},
-        {keepalive, false},
-        {linger, {false, 0}},
-        {low_watermark, 0},
-        {mode, binary},
-        {nodelay, false},
-        {packet, 0},
-        {packet_size, 0},
-        {priority, 0},
-        {recbuf, 0},
-        {reuseaddr, false},
-        {send_timeout, 0},
-        {sndbuf, 0}
-    ],
-    Line = observer_cli_port:render_type_line([
-        {peername, {{127, 0, 0, 1}, 4000}},
-        {sockname, {{0, 0, 0, 0}, 0}},
-        {statistics, Stats},
-        {options, Opts}
-    ]),
+    Line = observer_cli_port:render_type_line(type_fixture()),
     ?assert(string:find(lists:flatten(Line), "peername") =/= nomatch).
 
 render_type_line_missing_fields_test() ->
-    Line = observer_cli_port:render_type_line([
-        {sockname, {{127, 0, 0, 1}, 4000}}
-    ]),
+    Line = observer_cli_port:render_type_line(type_missing_fields_fixture()),
     ?assert(string:find(lists:flatten(Line), "sockname") =/= nomatch).
 
 render_type_line_wide_layout_test() ->
@@ -276,12 +246,7 @@ port_detail_golden_output_fragments_test() ->
                 observer_cli_port:render_menu(info, 1500),
                 observer_cli_port:render_port_info(port_view()),
                 observer_cli_port:render_link_monitor([self()], [{process, self()}]),
-                observer_cli_port:render_type_line([
-                    {peername, {{127, 0, 0, 1}, 4369}},
-                    {sockname, {{127, 0, 0, 1}, 58521}},
-                    {statistics, stats_fixture()},
-                    {options, opts_fixture()}
-                ]),
+                observer_cli_port:render_type_line(type_fixture()),
                 observer_cli_port:render_footer()
             ],
             observer_cli_test_io:assert_stable_fragments(Output, [
@@ -364,10 +329,7 @@ type_line_widths(Columns) ->
         Columns,
         [],
         fun() ->
-            Line = observer_cli_port:render_type_line([
-                {peername, {{127, 0, 0, 1}, 4000}},
-                {sockname, {{0, 0, 0, 0}, 0}}
-            ]),
+            Line = observer_cli_port:render_type_line(type_width_fixture()),
             observer_cli_test_io:column_widths(Line)
         end
     ).
@@ -415,12 +377,7 @@ port_info_page_line_widths(Columns) ->
                 observer_cli_port:render_menu(info, 1500),
                 observer_cli_port:render_port_info(port_view()),
                 observer_cli_port:render_link_monitor([self()], [{process, self()}]),
-                observer_cli_port:render_type_line([
-                    {peername, {{127, 0, 0, 1}, 4369}},
-                    {sockname, {{127, 0, 0, 1}, 58521}},
-                    {statistics, stats_fixture()},
-                    {options, opts_fixture()}
-                ]),
+                observer_cli_port:render_type_line(type_fixture()),
                 observer_cli_port:render_footer()
             ],
             {observer_cli_lib:layout_width(), observer_cli_test_io:line_widths(IoData)}
@@ -479,12 +436,21 @@ opts_fixture() ->
     ].
 
 type_fixture() ->
-    [
+    observer_cli_port:collect_port_type([
         {peername, {{127, 0, 0, 1}, 4369}},
         {sockname, {{127, 0, 0, 1}, 58521}},
         {statistics, stats_fixture()},
         {options, opts_fixture()}
-    ].
+    ]).
+
+type_missing_fields_fixture() ->
+    observer_cli_port:collect_port_type([{sockname, {{127, 0, 0, 1}, 4000}}]).
+
+type_width_fixture() ->
+    observer_cli_port:collect_port_type([
+        {peername, {{127, 0, 0, 1}, 4000}},
+        {sockname, {{0, 0, 0, 0}, 0}}
+    ]).
 
 unchanged_columns({BaseTitle, BaseRow}, {WideTitle, WideRow}, Columns) ->
     [

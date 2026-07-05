@@ -112,7 +112,7 @@ collect_process_info_test() ->
         Info = observer_cli_process:collect_process_info(Target),
         ?assertMatch(
             #{
-                process := #{pid := Target},
+                process := #{pid := Target, garbage_collection := #{minor_gcs := _}},
                 links := _,
                 monitors := _,
                 monitored_by := _,
@@ -262,12 +262,7 @@ replace_first_line_test() ->
     ?assertEqual("new\n", observer_cli_process:replace_first_line("only", "new")).
 
 render_process_info_test() ->
-    GC = [
-        {min_bin_vheap_size, 1},
-        {min_heap_size, 2},
-        {fullsweep_after, 3},
-        {minor_gcs, 4}
-    ],
+    GC = gc_view(),
     ProcessView = #{
         pid => self(),
         registered_name => "",
@@ -285,12 +280,7 @@ render_process_info_test() ->
     ?assert(string:find(lists:flatten(Rows), "registered_name") =/= nomatch).
 
 render_process_info_registered_test() ->
-    GC = [
-        {min_bin_vheap_size, 1},
-        {min_heap_size, 2},
-        {fullsweep_after, 3},
-        {minor_gcs, 4}
-    ],
+    GC = gc_view(),
     ProcessView = #{
         pid => self(),
         registered_name => test_reg,
@@ -743,12 +733,7 @@ process_info_page_line_widths(Columns) ->
     ).
 
 process_view() ->
-    GC = [
-        {min_bin_vheap_size, 1},
-        {min_heap_size, 2},
-        {fullsweep_after, 3},
-        {minor_gcs, 4}
-    ],
+    GC = gc_view(),
     #{
         pid => self(),
         registered_name => test_reg,
@@ -760,6 +745,14 @@ process_view() ->
         heap_size => 10,
         total_heap_size => 20,
         garbage_collection => GC
+    }.
+
+gc_view() ->
+    #{
+        min_bin_vheap_size => 1,
+        min_heap_size => 2,
+        fullsweep_after => 3,
+        minor_gcs => 4
     }.
 
 unchanged_columns({BaseTitle, BaseRow}, {WideTitle, WideRow}, Columns) ->
