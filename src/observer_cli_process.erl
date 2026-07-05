@@ -4,7 +4,11 @@
 
 -dialyzer([
     {nowarn_function, [
-        render_worker/8, render_reduction_memory/4, get_chart_format/1, chart_format/2
+        render_worker/8,
+        render_process_sections/3,
+        render_reduction_memory/4,
+        get_chart_format/1,
+        chart_format/2
     ]}
 ]).
 
@@ -20,11 +24,13 @@
     collect_process_state/1,
     chart_format/2,
     replace_first_line/2,
+    render_process_sections/3,
     render_process_info/1,
     render_process_messages/1,
     render_process_dictionary/1,
     render_process_stack/1,
     render_process_state/2,
+    render_stateless_view/4,
     render_link_monitor/3,
     render_reduction_memory/4,
     render_menu/3,
@@ -109,30 +115,18 @@ render_worker(info, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
         dead ->
             output_die_view(Pid, Type, Interval),
             next_draw_view(info, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid);
-        #{
-            process := ProcessView,
-            links := Link,
-            monitors := Monitors,
-            monitored_by := MonitoredBy,
-            reductions := Reductions,
-            memory := Memory
-        } ->
+        ProcessInfo ->
+            {NewRedQ, NewMemQ, Lines} = render_process_sections(ProcessInfo, RedQ, MemQ),
             Menu = render_menu(info, Type, Interval),
-            Line1 = render_process_info(ProcessView),
-            Line2 = render_link_monitor(Link, Monitors, MonitoredBy),
-            {NewRedQ, NewMemQ, Line3} = render_reduction_memory(Reductions, Memory, RedQ, MemQ),
             LastLine = render_footer(),
-
-            ?output([?CURSOR_TOP, Menu, Line1, Line2, Line3, LastLine]),
+            ?output([?CURSOR_TOP, Menu, Lines, LastLine]),
             next_draw_view(info, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ, ManagerPid)
     end;
 render_worker(message, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
     case collect_process_messages(Pid) of
         {ok, MessagesInfo} ->
             Line = render_process_messages(MessagesInfo),
-            Menu = render_menu(message, Type, Interval),
-            LastLine = render_footer(),
-            ?output([?CURSOR_TOP, Menu, Line, LastLine]),
+            ?output([?CURSOR_TOP, render_stateless_view(message, Type, Interval, Line)]),
             next_draw_view(message, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid);
         dead ->
             render_worker(
@@ -150,9 +144,7 @@ render_worker(dict, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
     case collect_process_dictionary(Pid) of
         {ok, DictionaryInfo} ->
             Line = render_process_dictionary(DictionaryInfo),
-            Menu = render_menu(dict, Type, Interval),
-            LastLine = render_footer(),
-            ?output([?CURSOR_TOP, Menu, Line, LastLine]),
+            ?output([?CURSOR_TOP, render_stateless_view(dict, Type, Interval, Line)]),
             next_draw_view(dict, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid);
         dead ->
             render_worker(
@@ -169,10 +161,9 @@ render_worker(dict, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
 render_worker(stack, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
     case collect_process_stack(Pid) of
         {ok, #{pid := Pid, stack := Stack}} ->
-            Menu = render_menu(stack, Type, Interval),
             Prompt = io_lib:format("erlang:process_info(~p, current_stacktrace).      ~n", [Pid]),
-            LastLine = render_footer(),
-            ?output([?CURSOR_TOP, Menu, Prompt, render_process_stack(Stack), LastLine]),
+            Line = [Prompt, render_process_stack(Stack)],
+            ?output([?CURSOR_TOP, render_stateless_view(stack, Type, Interval, Line)]),
             next_draw_view(stack, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid);
         dead ->
             render_worker(
@@ -195,6 +186,28 @@ render_worker(state, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
         error ->
             next_draw_view_2(state, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid)
     end.
+
+render_process_sections(
+    #{
+        process := ProcessView,
+        links := Link,
+        monitors := Monitors,
+        monitored_by := MonitoredBy,
+        reductions := Reductions,
+        memory := Memory
+    },
+    RedQ,
+    MemQ
+) ->
+    ProcessSection = render_process_info(ProcessView),
+    LinkSection = render_link_monitor(Link, Monitors, MonitoredBy),
+    {NewRedQ, NewMemQ, ReductionSection} = render_reduction_memory(Reductions, Memory, RedQ, MemQ),
+    {NewRedQ, NewMemQ, [ProcessSection, LinkSection, ReductionSection]}.
+
+render_stateless_view(View, Type, Interval, Line) ->
+    Menu = render_menu(View, Type, Interval),
+    LastLine = render_footer(),
+    [Menu, Line, LastLine].
 
 collect_process_info(Pid) ->
     ProcessInfo = recon:info(Pid),
@@ -363,81 +376,124 @@ next_draw_view_2(Status, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ, Manager
             render_worker(Status, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ, ManagerPid)
     end.
 
-render_process_info(#{
+render_process_info(ProcessView) ->
+    Meta = process_meta_fields(ProcessView),
+    Memory = process_memory_fields(ProcessView),
+    GC = process_gc_fields(ProcessView),
+    Widths = process_info_widths([16, 42, 16, 12, 18, 12]),
+    [
+        render_process_info_title(Widths),
+        render_process_info_rows(Meta, Memory, GC, Widths)
+    ].
+
+process_meta_fields(#{
     pid := Pid,
     registered_name := RegisteredName,
     group_leader := GroupLeader,
     status := Status,
-    trap_exit := TrapExit,
-    initial_call := InitialCall,
-    message_queue_len := MessageQueueLen,
-    heap_size := HeapSize,
-    total_heap_size := TotalHeapSize,
-    garbage_collection := GarbageCollection
+    initial_call := InitialCall
 }) ->
-    MinBinVHeapSize = proplists:get_value(min_bin_vheap_size, GarbageCollection),
-    MinHeapSize = proplists:get_value(min_heap_size, GarbageCollection),
-    FullSweepAfter = proplists:get_value(fullsweep_after, GarbageCollection),
-    MinorGcs = integer_to_list(proplists:get_value(minor_gcs, GarbageCollection)),
-
-    InitialCallStr = observer_cli_lib:mfa_to_list(InitialCall),
-    GroupLeaderStr = erlang:pid_to_list(GroupLeader),
     PidStr = erlang:pid_to_list(Pid),
     Name =
         case RegisteredName of
             "" -> PidStr;
             _ -> PidStr ++ "/" ++ erlang:atom_to_list(RegisteredName)
         end,
-    MessageQueueLenStr = erlang:integer_to_list(MessageQueueLen),
+    #{
+        registered_name => Name,
+        initial_call => observer_cli_lib:mfa_to_list(InitialCall),
+        group_leader => erlang:pid_to_list(GroupLeader),
+        status => Status
+    }.
+
+process_memory_fields(#{
+    message_queue_len := MessageQueueLen,
+    heap_size := HeapSize,
+    total_heap_size := TotalHeapSize,
+    trap_exit := TrapExit
+}) ->
     MessageQueueLenColor =
         case MessageQueueLen > 0 of
             true -> ?RED;
             false -> ?GREEN
         end,
-    [MetaW, MetaValueW, MemoryW, MemoryValueW, GcW, GcValueW] =
-        process_info_widths([16, 42, 16, 12, 18, 12]),
+    #{
+        message_queue_len => {erlang:integer_to_list(MessageQueueLen), MessageQueueLenColor},
+        heap_size => HeapSize,
+        total_heap_size => TotalHeapSize,
+        trap_exit => TrapExit
+    }.
 
-    [
-        ?render([
-            ?GRAY_BG,
-            ?W("Meta", MetaW),
-            ?W("Value", MetaValueW),
-            ?W("Memory Used", MemoryW),
-            ?W("Value", MemoryValueW),
-            ?W("Garbage Collection", GcW),
-            ?W("Value", GcValueW)
-        ]),
-        ?render([
-            ?W("registered_name", MetaW),
-            ?W(Name, MetaValueW),
-            ?W("msg_queue_len", MemoryW),
-            ?W2(MessageQueueLenColor, MessageQueueLenStr, MemoryValueW + 1),
-            " ",
-            ?W("min_bin_vheap_size", GcW),
-            ?W({byte, MinBinVHeapSize}, GcValueW),
-            ?NEW_LINE,
-            ?W("initial_call", MetaW),
-            ?W(InitialCallStr, MetaValueW),
-            ?W("heap_size", MemoryW),
-            ?W({byte, HeapSize}, MemoryValueW),
-            ?W("min_heap_size", GcW),
-            ?W({byte, MinHeapSize}, GcValueW),
-            ?NEW_LINE,
-            ?W("group_leader", MetaW),
-            ?W(GroupLeaderStr, MetaValueW),
-            ?W("total_heap_size", MemoryW),
-            ?W({byte, TotalHeapSize}, MemoryValueW),
-            ?W("fullsweep_after", GcW),
-            ?W(FullSweepAfter, GcValueW),
-            ?NEW_LINE,
-            ?W("status", MetaW),
-            ?W(Status, MetaValueW),
-            ?W("trap_exit", MemoryW),
-            ?W(TrapExit, MemoryValueW),
-            ?W("minor_gcs", GcW),
-            ?W(MinorGcs, GcValueW)
-        ])
-    ].
+process_gc_fields(#{garbage_collection := GarbageCollection}) ->
+    #{
+        min_bin_vheap_size => proplists:get_value(min_bin_vheap_size, GarbageCollection),
+        min_heap_size => proplists:get_value(min_heap_size, GarbageCollection),
+        fullsweep_after => proplists:get_value(fullsweep_after, GarbageCollection),
+        minor_gcs => integer_to_list(proplists:get_value(minor_gcs, GarbageCollection))
+    }.
+
+render_process_info_title([MetaW, MetaValueW, MemoryW, MemoryValueW, GcW, GcValueW]) ->
+    ?render([
+        ?GRAY_BG,
+        ?W("Meta", MetaW),
+        ?W("Value", MetaValueW),
+        ?W("Memory Used", MemoryW),
+        ?W("Value", MemoryValueW),
+        ?W("Garbage Collection", GcW),
+        ?W("Value", GcValueW)
+    ]).
+
+render_process_info_rows(Meta, Memory, GC, [
+    MetaW, MetaValueW, MemoryW, MemoryValueW, GcW, GcValueW
+]) ->
+    #{
+        registered_name := Name,
+        initial_call := InitialCallStr,
+        group_leader := GroupLeaderStr,
+        status := Status
+    } = Meta,
+    #{
+        message_queue_len := {MessageQueueLenStr, MessageQueueLenColor},
+        heap_size := HeapSize,
+        total_heap_size := TotalHeapSize,
+        trap_exit := TrapExit
+    } = Memory,
+    #{
+        min_bin_vheap_size := MinBinVHeapSize,
+        min_heap_size := MinHeapSize,
+        fullsweep_after := FullSweepAfter,
+        minor_gcs := MinorGcs
+    } = GC,
+    ?render([
+        ?W("registered_name", MetaW),
+        ?W(Name, MetaValueW),
+        ?W("msg_queue_len", MemoryW),
+        ?W2(MessageQueueLenColor, MessageQueueLenStr, MemoryValueW + 1),
+        " ",
+        ?W("min_bin_vheap_size", GcW),
+        ?W({byte, MinBinVHeapSize}, GcValueW),
+        ?NEW_LINE,
+        ?W("initial_call", MetaW),
+        ?W(InitialCallStr, MetaValueW),
+        ?W("heap_size", MemoryW),
+        ?W({byte, HeapSize}, MemoryValueW),
+        ?W("min_heap_size", GcW),
+        ?W({byte, MinHeapSize}, GcValueW),
+        ?NEW_LINE,
+        ?W("group_leader", MetaW),
+        ?W(GroupLeaderStr, MetaValueW),
+        ?W("total_heap_size", MemoryW),
+        ?W({byte, TotalHeapSize}, MemoryValueW),
+        ?W("fullsweep_after", GcW),
+        ?W(FullSweepAfter, GcValueW),
+        ?NEW_LINE,
+        ?W("status", MetaW),
+        ?W(Status, MetaValueW),
+        ?W("trap_exit", MemoryW),
+        ?W(TrapExit, MemoryValueW),
+        ?W("minor_gcs", GcW),
+        ?W(MinorGcs, GcValueW)
+    ]).
 
 render_link_monitor(Link, Monitors, MonitoredBy) ->
     LinkStr = [

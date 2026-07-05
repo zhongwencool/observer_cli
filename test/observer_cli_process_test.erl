@@ -385,6 +385,39 @@ render_info_page_wide_border_alignment_test() ->
     {LayoutWidth, LineWidths} = process_info_page_line_widths(205),
     ?assert(lists:all(fun(Width) -> Width =:= LayoutWidth end, LineWidths)).
 
+render_process_sections_test() ->
+    Q = queue:from_list([nan, nan, nan]),
+    Info = #{
+        process => process_view(),
+        links => [self()],
+        monitors => [{process, self()}],
+        monitored_by => [self()],
+        reductions => 10,
+        memory => 20
+    },
+    {NewRedQ, NewMemQ, [Process, Links, RedMem]} =
+        observer_cli_process:render_process_sections(Info, Q, Q),
+    {ExpectedRedQ, ExpectedMemQ, ExpectedRedMem} =
+        observer_cli_process:render_reduction_memory(10, 20, Q, Q),
+    ?assertEqual(observer_cli_process:render_process_info(process_view()), Process),
+    ?assertEqual(
+        observer_cli_process:render_link_monitor([self()], [{process, self()}], [self()]),
+        Links
+    ),
+    ?assertEqual(queue:to_list(ExpectedRedQ), queue:to_list(NewRedQ)),
+    ?assertEqual(queue:to_list(ExpectedMemQ), queue:to_list(NewMemQ)),
+    ?assertEqual(ExpectedRedMem, RedMem).
+
+render_stateless_view_test() ->
+    Output = observer_cli_process:render_stateless_view(message, home, 1500, "body\n"),
+    observer_cli_test_io:assert_stable_fragments(Output, [
+        "Home(H)",
+        "Messages(M)",
+        "Interval: 1500ms",
+        "body",
+        "q(quit)"
+    ]).
+
 process_detail_golden_output_fragments_test() ->
     observer_cli_test_io:with_geometry(
         24,
