@@ -17,6 +17,7 @@ required_modules_test_() ->
         {"application helpers fallback", fun application_helpers_fallback_test/0},
         {"parse args", fun parse_args_test/0},
         {"run args", fun run_args_test/0},
+        {"run args usage", fun run_args_usage/0},
         {"main usage", fun main_usage_test/0},
         {"remote load local", fun remote_load_local_test/0},
         {"remote load peer node", fun remote_load_peer_node_test/0},
@@ -200,7 +201,16 @@ parse_args_test() ->
         {ok, "target@host", test_cookie, 2000},
         observer_cli_escriptize:parse_args(["target@host", "test_cookie", "2000"])
     ),
-    ?assertEqual(usage, observer_cli_escriptize:parse_args([])).
+    ?assertEqual(usage, observer_cli_escriptize:parse_args([])),
+    ?assertEqual(usage, observer_cli_escriptize:parse_args(["target@host", "cookie"])),
+    ?assertEqual(
+        usage,
+        observer_cli_escriptize:parse_args(["target@host", "cookie", "2000", "extra"])
+    ),
+    ?assertError(
+        badarg,
+        observer_cli_escriptize:parse_args(["target@host", "cookie", "not-an-integer"])
+    ).
 
 run_args_test() ->
     ?assertEqual(
@@ -210,6 +220,26 @@ run_args_test() ->
             fun(TargetNode, Cookie, Interval) -> {ok, TargetNode, Cookie, Interval} end
         )
     ).
+
+run_args_usage() ->
+    Parent = self(),
+    ?assertEqual(
+        ok,
+        observer_cli_test_io:with_input(
+            [],
+            fun() ->
+                observer_cli_escriptize:run_args(
+                    ["target@host", "cookie"],
+                    fun(_TargetNode, _Cookie, _Interval) -> Parent ! run_called end
+                )
+            end
+        )
+    ),
+    receive
+        run_called -> ?assert(false)
+    after 0 ->
+        ok
+    end.
 
 main_usage_test() ->
     observer_cli_test_io:with_input(
@@ -293,9 +323,18 @@ remote_load_local_test() ->
 remote_load_peer_node_test() ->
     with_distribution(fun(_Cookie) ->
         {ok, Peer, Node} = peer:start_link(#{name => peer:random_name("observer_cli_remote")}),
+        Key = test_remote_load_env,
+        PrevEnv = application:get_env(observer_cli, Key),
+        ok = application:set_env(observer_cli, Key, copied_to_peer),
         try
-            ?assertEqual(ok, observer_cli_escriptize:remote_load(Node))
+            erpc:call(Node, application, unset_env, [observer_cli, Key]),
+            ?assertEqual(ok, observer_cli_escriptize:remote_load(Node)),
+            ?assertEqual(
+                {ok, copied_to_peer},
+                erpc:call(Node, application, get_env, [observer_cli, Key])
+            )
         after
+            restore_env(observer_cli, Key, PrevEnv),
             peer:stop(Peer)
         end
     end).
