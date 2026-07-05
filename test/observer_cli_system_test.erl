@@ -217,6 +217,35 @@ render_block_size_info_wide_layout_test() ->
     ?assertEqual([1], same_columns(Base, Wide, [1])),
     ?assertEqual([2, 3, 4, 5, 6, 7], wider_columns(Base, Wide, [2, 3, 4, 5, 6, 7])).
 
+system_golden_output_fragments_test() ->
+    observer_cli_test_io:with_geometry(
+        24,
+        201,
+        [],
+        fun() ->
+            Output = system_golden_output(),
+            observer_cli_test_io:assert_stable_fragments(Output, [
+                "System(S)",
+                "Interval: 1500ms",
+                "System/Architecture",
+                "CPU's and Threads",
+                "Memory Usag",
+                "Statistics",
+                "compiled for",
+                "Allocator Type",
+                "Current Mbcs",
+                "Max SbcsToMbcs",
+                "binary_alloc",
+                "IN|",
+                "Hits/Calls",
+                "HitRat",
+                "01|"
+            ]),
+            observer_cli_test_io:assert_ansi_boundaries(Output),
+            assert_system_golden_value_columns()
+        end
+    ).
+
 get_address_invalid_test() ->
     Info = [{address, #net_address{address = {foo, 1234}}}],
     Addr = observer_cli_system:get_address(Info),
@@ -285,6 +314,32 @@ render_dist_node_info_live_peer_test() ->
             peer:stop(Peer)
         end
     end).
+
+system_golden_output() ->
+    [
+        observer_cli_lib:render_menu(allocator, "Interval: 1500ms"),
+        observer_cli_system:render_sys_info(
+            system_fixture(), cpu_fixture(), memory_fixture(), statistics_fixture()
+        ),
+        observer_cli_system:render_block_size_info(
+            allocator_curs(), allocator_maxes(), allocator_sbcs_curs(), allocator_sbcs_maxes()
+        ),
+        observer_cli_system:render_cache_hit_rates(cache_hit_fixture(), 12),
+        observer_cli_lib:render_last_line("q(quit)")
+    ].
+
+assert_system_golden_value_columns() ->
+    {_, BaseSysRow, _} = sys_info_widths(80),
+    {_, WideSysRow, _} = sys_info_widths(201),
+    ?assertEqual([2, 4, 6, 9], wider_columns(BaseSysRow, WideSysRow, [2, 4, 6, 9])),
+    ?assertEqual(
+        [2, 3, 4, 5, 6, 7],
+        wider_columns(block_size_widths(80), block_size_widths(201), [2, 3, 4, 5, 6, 7])
+    ),
+    ?assertEqual(
+        [2, 5, 8, 11],
+        wider_columns(cache_hit_widths(80), cache_hit_widths(201), [2, 5, 8, 11])
+    ).
 
 with_distribution(Fun) ->
     WasAlive = erlang:is_alive(),

@@ -53,3 +53,30 @@ Validation:
 Skipped:
 
 - Manual terminal QA was not run because this slice adds deterministic golden output coverage and only adjusts reset/border padding to remove a stale redraw artifact; no navigation or runtime collection path changed.
+
+## 2026-07-06 System golden output tests
+
+Source issue: `#133`, updated `2026-07-05T12:39:22Z`
+Slice: Phase 0 checklist item 6 only
+
+Added `system_golden_output_fragments_test/0` for stable System rendering fragments:
+
+- selected System menu state and refresh interval text;
+- System/Architecture, CPU, Memory, Statistics, and compiled-for section grouping;
+- allocator block titles and a stable allocator row;
+- cache-hit grouping fragments for the four wide Hits/Calls groups;
+- wide-layout assertions that System value columns, allocator value columns, and cache Hits/Calls columns grow between base and wide terminal widths.
+
+Validation:
+
+- `rebar3 fmt` passed.
+- `rebar3 as test eunit --module=observer_cli_system_test` passed: 24 tests, 0 failures.
+- `rebar3 as test eunit --module=observer_cli_golden_test,observer_cli_system_test` passed: 27 tests, 0 failures.
+- `git diff --check` passed.
+- `rebar3 eunit` passed: 316 tests, 0 failures.
+- `rebar3 check` passed.
+- Known non-fatal baseline output remains: `observer_cli_process:render_state/3` logged the existing timeout warning during full EUnit.
+
+Skipped:
+
+- Manual terminal QA was not run because this slice adds deterministic System golden output coverage only; no runtime collection, navigation, or rendering behavior changed.
