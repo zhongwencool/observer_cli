@@ -400,7 +400,7 @@ process_detail_golden_output_fragments_test() ->
                 observer_cli_process:render_process_info(process_view()),
                 observer_cli_process:render_link_monitor([self()], [{process, self()}], [self()]),
                 RedMem,
-                observer_cli_process:render_last_line()
+                observer_cli_process:render_footer()
             ],
             observer_cli_test_io:assert_stable_fragments(Output, [
                 "Home(H)",
@@ -467,8 +467,8 @@ render_menu_plugin_test() ->
     Line = observer_cli_process:render_menu(info, plugin, 1500),
     ?assert(string:find(lists:flatten(Line), "Back(B)") =/= nomatch).
 
-render_last_line_test() ->
-    Line = observer_cli_process:render_last_line(),
+render_footer_test() ->
+    Line = observer_cli_process:render_footer(),
     ?assert(string:find(lists:flatten(Line), "q(quit)") =/= nomatch).
 
 state_title_test() ->
@@ -703,7 +703,7 @@ process_info_page_line_widths(Columns) ->
                 observer_cli_process:render_process_info(process_view()),
                 observer_cli_process:render_link_monitor([self()], [{process, self()}], [self()]),
                 RedMem,
-                observer_cli_process:render_last_line()
+                observer_cli_process:render_footer()
             ],
             {observer_cli_lib:layout_width(), observer_cli_test_io:line_widths(IoData)}
         end

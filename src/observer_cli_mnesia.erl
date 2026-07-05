@@ -79,8 +79,8 @@ render_worker(Interval, LastTimeRef, HideSystemTable, AutoRow, Attr, CurPage) ->
             integer_to_list(Interval) ++
             "ms" ++
             " HideSystemTable:" ++ atom_to_list(HideSystemTable),
-    Menu = observer_cli_lib:render_menu(mnesia, Text),
-    LastLine = observer_cli_lib:render_last_line(?LAST_LINE),
+    Menu = observer_cli_lib:render_top_menu(mnesia, Text),
+    LastLine = observer_cli_lib:render_footer(?LAST_LINE),
     case collect_mnesia_info(HideSystemTable, Attr) of
         {error, Reason} ->
             ErrInfo = io_lib:format("Mnesia Error   ~p~n", [Reason]),

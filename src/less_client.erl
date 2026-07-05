@@ -5,7 +5,7 @@
 -include("observer_cli.hrl").
 
 -ifdef(TEST).
--export([normalize_key/1, header_lines/1, footer_lines/1, render_last_line/1]).
+-export([normalize_key/1, header_lines/1, footer_lines/1, render_footer/1]).
 
 -endif.
 
@@ -111,14 +111,14 @@ handle_page({_LessServer, Header, Nav, Footer}, Page) ->
     ?output([Page]),
     maybe_output_footer(Footer, Nav).
 
-render_last_line(Nav) ->
+render_footer(Nav) ->
     PrevKey =
         case maps:is_key("B\n", Nav) of
             true -> "k(previous page)";
             false -> "B/k(previous page)"
         end,
     unicode:characters_to_binary(
-        observer_cli_lib:render_last_line(["q(quit) F/j(next page) ", PrevKey])
+        observer_cli_lib:render_footer(["q(quit) F/j(next page) ", PrevKey])
     ).
 
 header_lines(undefined) -> 0;
@@ -132,7 +132,7 @@ maybe_output_header(Header) ->
     ?output([Header]).
 
 maybe_output_footer(undefined, Nav) ->
-    ?output([render_last_line(Nav)]);
+    ?output([render_footer(Nav)]);
 maybe_output_footer(Footer, _Nav) ->
     ?output([Footer]).
 

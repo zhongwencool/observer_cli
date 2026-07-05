@@ -9,7 +9,7 @@
     parse_cmd_str/1,
     addr_to_str/1,
     collect_port_info/1,
-    render_last_line/0,
+    render_footer/0,
     render_port_info/1,
     render_link_monitor/2,
     render_type_line/1,
@@ -17,8 +17,7 @@
     render_opts/1,
     render_menu/2,
     output_die_view/2,
-    get_menu_title/1,
-    get_menu_title2/1
+    get_menu_title/1
 ]).
 -endif.
 
@@ -56,7 +55,7 @@ render_worker(Port, Interval, TimeRef) ->
             Line1 = render_port_info(PortView),
             Line2 = render_link_monitor(Link, Monitors),
             Line3 = render_type_line(Type),
-            LastLine = render_last_line(),
+            LastLine = render_footer(),
 
             ?output([?CURSOR_TOP, Menu, Line1, Line2, Line3, LastLine]),
             next_draw_view(TimeRef, Interval, Port)
@@ -389,22 +388,24 @@ fill_last([Last], Amount) ->
 fill_last([Width | Rest], Amount) ->
     [Width | fill_last(Rest, Amount)].
 
-render_last_line() ->
-    observer_cli_lib:render_last_line("q(quit)").
+render_footer() ->
+    observer_cli_lib:render_footer("q(quit)").
 
 render_menu(Type, Interval) ->
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
     Title = get_menu_title(Type),
     UpTime = observer_cli_lib:uptime(),
     TitleWidth = ?COLUMN + 41 - erlang:length(UpTime) + observer_cli_lib:layout_extra_width(),
-    ?render([?W([Title | Text], TitleWidth) | UpTime]).
+    observer_cli_lib:render_menu_header(Title, Text, TitleWidth).
 
 get_menu_title(Type) ->
-    [Home, Net, Port] = get_menu_title2(Type),
-    [Home, "|", Net, "|", Port].
-
-get_menu_title2(info) ->
-    [?UNSELECT("Home(H)"), ?UNSELECT("Network(N)"), ?SELECT("Port Info(P)")].
+    [
+        observer_cli_lib:menu_item(Type, home, "Home(H)"),
+        "|",
+        observer_cli_lib:menu_item(Type, network, "Network(N)"),
+        "|",
+        observer_cli_lib:menu_item(Type, info, "Port Info(P)")
+    ].
 
 parse_cmd(ViewOpts, Pid) ->
     case parse_cmd_str(observer_cli_lib:to_list(io:get_line(""))) of
@@ -430,8 +431,8 @@ parse_cmd_str(Key) ->
 
 output_die_view(Port, Interval) ->
     Menu = render_menu(info, Interval),
-    Line = io_lib:format("\e[31mPort(~p) has already died.\e[0m~n", [Port]),
-    LastLine = render_last_line(),
+    Line = [observer_cli_lib:ansi_red(io_lib:format("Port(~p) has already died.", [Port])), "\n"],
+    LastLine = render_footer(),
     ?output([?CURSOR_TOP, Menu, Line, LastLine]).
 
 addr_to_str({Addr, Port}) ->

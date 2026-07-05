@@ -22,7 +22,7 @@
     render_system_line/2, render_system_line/3,
     render_memory_process_line/3,
     render_scheduler_usage/1,
-    render_last_line/0,
+    render_footer/0,
     render_top_n_view/5, render_top_n_view/6,
     transform_seq/3,
     process_bar_format_style/2,
@@ -255,11 +255,11 @@ redraw_running(
     TopLen = ProcessRows * CurPage,
     TopList = collect_top_n(Func, Type, Interval, TopLen, IsFirstTime),
     Text = get_refresh_prompt(Func, Type, Interval, TopLen),
-    MenuLine = observer_cli_lib:render_menu(home, Text),
+    MenuLine = observer_cli_lib:render_top_menu(home, Text),
     SystemLine = render_system_line(PsCmd, element(1, StableInfo)),
     MemLine = render_memory_process_line(Diffs, element(2, StableInfo), Interval),
     {TopNList, RankLine} = render_top_n_view(Type, TopList, ProcessRows, RankPos, CurPage),
-    LastLine = render_last_line(),
+    LastLine = render_footer(),
     ?output([?CURSOR_TOP, MenuLine, SystemLine, MemLine, CPULine, RankLine, LastLine]),
 
     observer_cli_store:update(StorePid, ProcessRows, TopNList),
@@ -273,8 +273,8 @@ redraw_running(
             redraw_running(PsCmd, StorePid, Home, StableInfo, NewStats, TimeRef, AutoRow, false)
     end.
 
-render_last_line() ->
-    observer_cli_lib:render_last_line(?LAST_LINE).
+render_footer() ->
+    observer_cli_lib:render_footer(?LAST_LINE).
 
 render_system_line(PsCmd, StableInfo) ->
     render_system_line(PsCmd, StableInfo, get_atom_status()).
@@ -1051,8 +1051,7 @@ collect_top_n(_Func, Type, _Interval, Rows, _FirstTime) ->
     recon:proc_count(Type, Rows).
 
 connect_error(Prompt, Node) ->
-    Prop = <<?RED/binary, Prompt/binary, ?RESET/binary>>,
-    ?output(Prop, [Node]).
+    ?output(observer_cli_lib:ansi_red(Prompt), [Node]).
 
 start_process_view(
     StorePid,

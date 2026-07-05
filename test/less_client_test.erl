@@ -154,13 +154,13 @@ line_helpers_test() ->
     ?assertEqual(1, less_client:footer_lines(undefined)),
     ?assertEqual(1, less_client:footer_lines("F")).
 
-render_last_line_test() ->
-    Line = less_client:render_last_line(#{}),
+render_footer_test() ->
+    Line = less_client:render_footer(#{}),
     ?assert(is_binary(Line)),
     ?assertMatch({_, _}, binary:match(Line, <<"q(quit)">>)).
 
-render_last_line_with_back_test() ->
-    Line = less_client:render_last_line(#{"B\n" => prev}),
+render_footer_with_back_test() ->
+    Line = less_client:render_footer(#{"B\n" => prev}),
     ?assertMatch({_, _}, binary:match(Line, <<"k(previous page)">>)).
 
 -endif.

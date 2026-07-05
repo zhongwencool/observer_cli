@@ -28,7 +28,7 @@
     render_link_monitor/3,
     render_reduction_memory/4,
     render_menu/3,
-    render_last_line/0,
+    render_footer/0,
     state_footer_text/1,
     render_worker/8,
     render_state/3,
@@ -121,7 +121,7 @@ render_worker(info, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
             Line1 = render_process_info(ProcessView),
             Line2 = render_link_monitor(Link, Monitors, MonitoredBy),
             {NewRedQ, NewMemQ, Line3} = render_reduction_memory(Reductions, Memory, RedQ, MemQ),
-            LastLine = render_last_line(),
+            LastLine = render_footer(),
 
             ?output([?CURSOR_TOP, Menu, Line1, Line2, Line3, LastLine]),
             next_draw_view(info, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ, ManagerPid)
@@ -131,7 +131,7 @@ render_worker(message, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
         {ok, MessagesInfo} ->
             Line = render_process_messages(MessagesInfo),
             Menu = render_menu(message, Type, Interval),
-            LastLine = render_last_line(),
+            LastLine = render_footer(),
             ?output([?CURSOR_TOP, Menu, Line, LastLine]),
             next_draw_view(message, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid);
         dead ->
@@ -151,7 +151,7 @@ render_worker(dict, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
         {ok, DictionaryInfo} ->
             Line = render_process_dictionary(DictionaryInfo),
             Menu = render_menu(dict, Type, Interval),
-            LastLine = render_last_line(),
+            LastLine = render_footer(),
             ?output([?CURSOR_TOP, Menu, Line, LastLine]),
             next_draw_view(dict, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid);
         dead ->
@@ -171,7 +171,7 @@ render_worker(stack, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
         {ok, #{pid := Pid, stack := Stack}} ->
             Menu = render_menu(stack, Type, Interval),
             Prompt = io_lib:format("erlang:process_info(~p, current_stacktrace).      ~n", [Pid]),
-            LastLine = render_last_line(),
+            LastLine = render_footer(),
             ?output([?CURSOR_TOP, Menu, Prompt, render_process_stack(Stack), LastLine]),
             next_draw_view(stack, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid);
         dead ->
@@ -515,8 +515,8 @@ fill_last([Last], Amount) ->
 fill_last([Width | Rest], Amount) ->
     [Width | fill_last(Rest, Amount)].
 
-render_last_line() ->
-    observer_cli_lib:render_last_line("q(quit)").
+render_footer() ->
+    observer_cli_lib:render_footer("q(quit)").
 
 get_chart_format(Queue) ->
     List = queue:to_list(Queue),
@@ -536,7 +536,7 @@ render_menu(Type, Menu, Interval) ->
     Title = get_menu_title(Type, Menu),
     UpTime = observer_cli_lib:uptime(),
     TitleWidth = ?COLUMN + 104 - erlang:length(UpTime) + observer_cli_lib:layout_extra_width(),
-    ?render([?W([Title | Text], TitleWidth) | UpTime]).
+    observer_cli_lib:render_menu_header(Title, Text, TitleWidth).
 
 get_menu_title(Type, Menu) ->
     MenuStr =
@@ -544,54 +544,14 @@ get_menu_title(Type, Menu) ->
             home -> "Home(H)";
             plugin -> "Back(B)"
         end,
-    [Home, Process, Messages, Dict, Stack, State] = get_menu_title2(Type, MenuStr),
-    [Home, "|", Process, "|", Messages, "|", Dict, "|", Stack, "|", State, "|"].
-
-get_menu_title2(info, Menu) ->
-    [
-        ?UNSELECT(Menu),
-        ?SELECT("Process Info(P)"),
-        ?UNSELECT("Messages(M)"),
-        ?UNSELECT("Dictionary(D)"),
-        ?UNSELECT("Current Stack(C)"),
-        ?UNSELECT("State(S)")
-    ];
-get_menu_title2(message, Menu) ->
-    [
-        ?UNSELECT(Menu),
-        ?UNSELECT("Process Info(P)"),
-        ?SELECT("Messages(M)"),
-        ?UNSELECT("Dictionary(D)"),
-        ?UNSELECT("Current Stack(C)"),
-        ?UNSELECT("State(S)")
-    ];
-get_menu_title2(dict, Menu) ->
-    [
-        ?UNSELECT(Menu),
-        ?UNSELECT("Process Info(P)"),
-        ?UNSELECT("Messages(M)"),
-        ?SELECT("Dictionary(D)"),
-        ?UNSELECT("Current Stack(C)"),
-        ?UNSELECT("State(S)")
-    ];
-get_menu_title2(stack, Menu) ->
-    [
-        ?UNSELECT(Menu),
-        ?UNSELECT("Process Info(P)"),
-        ?UNSELECT("Messages(M)"),
-        ?UNSELECT("Dictionary(D)"),
-        ?SELECT("Current Stack(C)"),
-        ?UNSELECT("State(S)")
-    ];
-get_menu_title2(state, Menu) ->
-    [
-        ?UNSELECT(Menu),
-        ?UNSELECT("Process Info(P)"),
-        ?UNSELECT("Messages(M)"),
-        ?UNSELECT("Dictionary(D)"),
-        ?UNSELECT("Current Stack(C)"),
-        ?SELECT("State(S)")
-    ].
+    observer_cli_lib:menu_items(Type, [
+        {back, MenuStr},
+        {info, "Process Info(P)"},
+        {message, "Messages(M)"},
+        {dict, "Dictionary(D)"},
+        {stack, "Current Stack(C)"},
+        {state, "State(S)"}
+    ]).
 
 parse_cmd() ->
     parse_cmd_str(observer_cli_lib:to_list(io:get_line(""))).
@@ -624,8 +584,13 @@ parse_cmd_str(Key) ->
 render_state(Pid, Type, Interval) ->
     Menu = render_menu(state, Type, Interval),
     PromptRes = io_lib:format("recon:get_state(~p, 2500).                            ~n", [Pid]),
-    PromptBefore = io_lib:format("\e[32;1mWaiting recon:get_state(~p, 2500) return...\e[0m~n", [Pid]),
-    LastLine = render_last_line(),
+    PromptBefore = [
+        observer_cli_lib:ansi_green(
+            io_lib:format("Waiting recon:get_state(~p, 2500) return...", [Pid])
+        ),
+        "\n"
+    ],
+    LastLine = render_footer(),
     ?output([?CURSOR_TOP, Menu, PromptBefore]),
     try
         State = collect_process_state(Pid),
@@ -657,8 +622,8 @@ log_render_state_error(Class, Reason, Stacktrace, Pid, Type, Interval) ->
 
 output_die_view(Pid, Type, Interval) ->
     Menu = render_menu(info, Type, Interval),
-    Line = io_lib:format("\e[31mProcess(~p) has already died.\e[0m~n", [Pid]),
-    LastLine = render_last_line(),
+    Line = [observer_cli_lib:ansi_red(io_lib:format("Process(~p) has already died.", [Pid])), "\n"],
+    LastLine = render_footer(),
     ?output([?CURSOR_TOP, Menu, Line, LastLine]).
 
 print_with_less(Input, Menu, Nav, Footer) ->
@@ -692,7 +657,7 @@ replace_first_line(Line, NewLine) ->
     end.
 
 state_footer(_Menu, Nav) ->
-    observer_cli_lib:render_last_line(state_footer_text(Nav)).
+    observer_cli_lib:render_footer(state_footer_text(Nav)).
 
 state_footer_text(_Nav) ->
     "q(quit)    F/B(page forward/back)".

@@ -65,9 +65,9 @@ manager(ChildPid, #view_opts{ets = EtsOpts = #ets{cur_page = CurPage}} = ViewOpt
 render_worker(Interval, LastTimeRef, Attr, CurPage, AutoRow) ->
     TerminalRow = observer_cli_lib:get_terminal_rows(AutoRow),
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
-    Menu = observer_cli_lib:render_menu(ets, Text),
+    Menu = observer_cli_lib:render_top_menu(ets, Text),
     Ets = render_ets_info(erlang:max(0, TerminalRow - 4), CurPage, Attr),
-    LastLine = observer_cli_lib:render_last_line(?LAST_LINE),
+    LastLine = observer_cli_lib:render_footer(?LAST_LINE),
     ?output([?CURSOR_TOP, Menu, Ets, LastLine]),
     NextTimeRef = observer_cli_lib:next_redraw(LastTimeRef, Interval),
     receive

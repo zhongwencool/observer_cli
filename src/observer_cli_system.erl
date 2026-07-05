@@ -82,7 +82,7 @@ render_worker(Cmd, Interval, LastTimeRef) ->
     } = collect_system_info(Cmd),
     Sys = render_sys_info(SysInfo),
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
-    Menu = observer_cli_lib:render_menu(allocator, Text),
+    Menu = observer_cli_lib:render_top_menu(allocator, Text),
     BlockView = render_block_size_info(
         AverageBlockCurs,
         AverageBlockMaxes,
@@ -91,7 +91,7 @@ render_worker(Cmd, Interval, LastTimeRef) ->
     ),
     DistNodeView = render_dist_node_info(DistNodesInfo),
     HitView = render_cache_hit_rates(CacheHitInfo, erlang:length(CacheHitInfo)),
-    LastLine = observer_cli_lib:render_last_line("q(quit)"),
+    LastLine = observer_cli_lib:render_footer("q(quit)"),
     ?output([?CURSOR_TOP, Menu, Sys, BlockView, DistNodeView, HitView, LastLine]),
     NextTimeRef = observer_cli_lib:next_redraw(LastTimeRef, Interval),
     receive

@@ -82,10 +82,10 @@ render_worker(App, AutoRow) ->
     TerminalRow = observer_cli_lib:get_terminal_rows(AutoRow),
     Rows = erlang:max(TerminalRow - 5, 0),
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
-    Menu = observer_cli_lib:render_menu(app, Text),
+    Menu = observer_cli_lib:render_top_menu(app, Text),
     Info = render_app_info(Rows, CurPage, Type),
     LastText = io_lib:format(?LAST_LINE, [Interval, CurPage]),
-    LastLine = observer_cli_lib:render_last_line(LastText),
+    LastLine = observer_cli_lib:render_footer(LastText),
     ?output([?CURSOR_TOP, Menu, Info, LastLine]),
     erlang:send_after(Interval, self(), redraw),
     receive

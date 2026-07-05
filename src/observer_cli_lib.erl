@@ -11,21 +11,31 @@
 -export([to_percent/1]).
 -export([to_list/1]).
 -export([green/1]).
+-export([ansi_green/1]).
+-export([ansi_red/1]).
 -export([to_byte/1]).
 -export([mfa_to_list/1]).
 -export([render/1]).
 -export([next_redraw/2]).
 -export([flush_redraw_timer/1]).
 -export([render_menu/2]).
+-export([render_top_menu/2]).
+-export([render_menu_header/3]).
 -export([layout_width/0]).
 -export([layout_extra_width/0]).
 -export([weighted_widths/2]).
 -export([get_terminal_rows/1]).
 -export([select/1]).
 -export([unselect/1]).
+-export([selected_menu_item/1]).
+-export([unselected_menu_item/1]).
+-export([menu_item/3]).
+-export([menu_items/2]).
 -export([parse_integer/1]).
 -export([pad_rendered/1]).
 -export([render_last_line/1]).
+-export([render_footer/1]).
+-export([render_footer/2]).
 -export([exit_processes/1]).
 -export([update_page_pos/3]).
 -export([get_pos/4]).
@@ -76,23 +86,36 @@ get_menu_title(Selection, MnesiaTitle) ->
         {doc, "Doc(D)"},
         {plugin, "Plugin(P)"}
     ],
-    lists:map(
-        fun
-            ({_Key, ""}) -> unselect("");
-            ({Key, Value}) when Key =:= Selection -> select(Value) ++ "|";
-            ({_Key, Value}) -> unselect(Value) ++ "|"
-        end,
-        Options
-    ).
+    menu_items(Selection, Options).
 
 -spec select(string()) -> list().
-select(Title) -> [?RED_BG, Title, ?RESET_BG].
+select(Title) -> selected_menu_item(Title).
 
 -spec unselect(string()) -> list().
-unselect(Title) -> [?L_GRAY_BG, Title, ?RESET_BG].
+unselect(Title) -> unselected_menu_item(Title).
+
+-spec selected_menu_item(iodata()) -> iolist().
+selected_menu_item(Title) -> [?MENU_SELECTED_BG, Title, ?ANSI_RESET_BG].
+
+-spec unselected_menu_item(iodata()) -> iolist().
+unselected_menu_item(Title) -> [?MENU_UNSELECTED_BG, Title, ?ANSI_RESET_BG].
+
+-spec menu_item(term(), term(), iodata()) -> iolist().
+menu_item(Selection, Selection, Title) -> selected_menu_item(Title);
+menu_item(_Selection, _Key, Title) -> unselected_menu_item(Title).
+
+-spec menu_items(term(), [{term(), iodata()}]) -> iolist().
+menu_items(Selection, Items) ->
+    [menu_item(Selection, Key, Title) ++ "|" || {Key, Title} <- Items].
 
 -spec green(list()) -> list().
-green(String) -> "\e[32;1m" ++ String ++ "\e[0m".
+green(String) -> unicode:characters_to_list(iolist_to_binary(ansi_green(String))).
+
+-spec ansi_green(iodata()) -> iolist().
+ansi_green(Text) -> [?ANSI_BRIGHT_GREEN, Text, ?ANSI_RESET].
+
+-spec ansi_red(iodata()) -> iolist().
+ansi_red(Text) -> [?ANSI_RED, Text, ?ANSI_RESET].
 
 -spec to_byte(pos_integer()) -> list().
 %% byte
@@ -126,6 +149,10 @@ render(FA) ->
 
 -spec render_menu(atom(), string()) -> iolist().
 render_menu(Type, Text) ->
+    render_top_menu(Type, Text).
+
+-spec render_top_menu(atom(), string()) -> iolist().
+render_top_menu(Type, Text) ->
     MnesiaTitle =
         case ets:info(schema, owner) of
             undefined -> "";
@@ -134,7 +161,11 @@ render_menu(Type, Text) ->
     Title = get_menu_title(Type, MnesiaTitle),
     UpTime = uptime(),
     TitleWidth = ?COLUMN + 151 - erlang:length(UpTime) + layout_extra_width(),
-    ?render([?W([Title | Text], TitleWidth) | UpTime]).
+    render_menu_header(Title, Text, TitleWidth).
+
+-spec render_menu_header(iodata(), iodata(), pos_integer()) -> iolist().
+render_menu_header(Title, Text, TitleWidth) ->
+    ?render([?W([Title, Text], TitleWidth) | uptime()]).
 
 tidy_format_args([], _NeedLine, FAcc, AAcc) ->
     {FAcc, AAcc};
@@ -340,7 +371,15 @@ parse_integer(Number) ->
 
 -spec render_last_line(iodata()) -> list().
 render_last_line(Text) ->
-    ?render([?UNDERLINE, ?GRAY_BG, ?W(Text, layout_width() - 3)]).
+    render_footer(Text).
+
+-spec render_footer(iodata()) -> list().
+render_footer(Text) ->
+    render_footer(Text, layout_width() - 3).
+
+-spec render_footer(iodata(), pos_integer()) -> list().
+render_footer(Text, Width) ->
+    ?render([?ANSI_UNDERLINE, ?ANSI_INVERSE, ?W(Text, Width)]).
 
 -spec exit_processes(list()) -> ok.
 exit_processes(List) ->

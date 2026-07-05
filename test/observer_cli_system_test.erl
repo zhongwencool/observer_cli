@@ -325,7 +325,7 @@ system_golden_output() ->
             allocator_curs(), allocator_maxes(), allocator_sbcs_curs(), allocator_sbcs_maxes()
         ),
         observer_cli_system:render_cache_hit_rates(cache_hit_fixture(), 12),
-        observer_cli_lib:render_last_line("q(quit)")
+        observer_cli_lib:render_footer("q(quit)")
     ].
 
 assert_system_golden_value_columns() ->

@@ -16,7 +16,7 @@ golden_output_base_accepts_stable_fragments_test() ->
                     ?W2(?GRAY_BG, "Stable Title", 16),
                     ?W("Stable Footer", 18)
                 ]),
-                observer_cli_lib:render_last_line("q(quit) F/B(page forward/back)")
+                observer_cli_lib:render_footer("q(quit) F/B(page forward/back)")
             ],
             observer_cli_test_io:assert_stable_fragments(Output, [
                 "Stable Title",
@@ -41,7 +41,7 @@ home_golden_output_fragments_test() ->
             LayoutWidth = observer_cli_lib:layout_width(),
             Prompt = observer_cli:get_refresh_prompt(proc_count, memory, 1500, 10),
             Menu = observer_cli_lib:render_menu(home, Prompt),
-            Footer = observer_cli:render_last_line(),
+            Footer = observer_cli:render_footer(),
             {StableInfo, PortParallelism} = observer_cli:get_stable_system_info(),
             SystemLines = observer_cli:render_system_line(
                 "printf 'header\n 1 2\n'", StableInfo, {ok, 1000, 10}

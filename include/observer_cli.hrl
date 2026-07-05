@@ -91,18 +91,31 @@
 -define(CURSOR_TOP, <<"\e[H">>).
 -define(CLEAR, <<"\e[H\e[J">>).
 
--define(RESET_BG, <<"\e[49m">>).
--define(RESET, <<"\e[0m">>).
--define(GRAY_BG, <<"\e[7m">>).
--define(YELLOW, <<"\e[33m">>).
--define(RED, <<"\e[31m">>).
--define(L_RED, <<"\e[48m">>).
--define(GREEN, <<"\e[32;1m">>).
--define(L_GREEN, <<"\e[92m">>).
--define(CHOOSE_BG, <<"\e[42m">>).
--define(RED_BG, <<"\e[48;2;184;0;0m">>).
--define(L_GRAY_BG, <<"\e[48;2;80;80;80m">>).
--define(UNDERLINE, <<"\e[4m">>).
+-define(ANSI_RESET_BG, <<"\e[49m">>).
+-define(ANSI_RESET, <<"\e[0m">>).
+-define(ANSI_INVERSE, <<"\e[7m">>).
+-define(ANSI_YELLOW, <<"\e[33m">>).
+-define(ANSI_RED, <<"\e[31m">>).
+-define(ANSI_BRIGHT_GREEN, <<"\e[32;1m">>).
+-define(ANSI_BRIGHT_GREEN_2, <<"\e[92m">>).
+-define(ANSI_GREEN_BG, <<"\e[42m">>).
+-define(ANSI_LEGACY_RED_BG, <<"\e[48m">>).
+-define(ANSI_UNDERLINE, <<"\e[4m">>).
+-define(MENU_SELECTED_BG, <<"\e[48;2;184;0;0m">>).
+-define(MENU_UNSELECTED_BG, <<"\e[48;2;80;80;80m">>).
+
+-define(RESET_BG, ?ANSI_RESET_BG).
+-define(RESET, ?ANSI_RESET).
+-define(GRAY_BG, ?ANSI_INVERSE).
+-define(YELLOW, ?ANSI_YELLOW).
+-define(RED, ?ANSI_RED).
+-define(L_RED, ?ANSI_LEGACY_RED_BG).
+-define(GREEN, ?ANSI_BRIGHT_GREEN).
+-define(L_GREEN, ?ANSI_BRIGHT_GREEN_2).
+-define(CHOOSE_BG, ?ANSI_GREEN_BG).
+-define(RED_BG, ?MENU_SELECTED_BG).
+-define(L_GRAY_BG, ?MENU_UNSELECTED_BG).
+-define(UNDERLINE, ?ANSI_UNDERLINE).
 
 -define(NEW_LINE, "\e[0m\n|").
 -define(I, <<" | ">>).
@@ -111,8 +124,10 @@
 -define(W2(_C_, _A_, _W_), {width_color_2, _C_, _A_, _W_}).
 -define(W(_A_, _W_), {width, _A_, _W_}).
 
--define(SELECT(Text), observer_cli_lib:select(Text)).
--define(UNSELECT(Text), observer_cli_lib:unselect(Text)).
+-define(SELECTED_MENU_ITEM(Text), observer_cli_lib:selected_menu_item(Text)).
+-define(UNSELECTED_MENU_ITEM(Text), observer_cli_lib:unselected_menu_item(Text)).
+-define(SELECT(Text), ?SELECTED_MENU_ITEM(Text)).
+-define(UNSELECT(Text), ?UNSELECTED_MENU_ITEM(Text)).
 
 -define('render'(_FA_), observer_cli_lib:render(_FA_)).
 -define('output'(_F_, _A_), io:format(iolist_to_binary(_F_), _A_)).

@@ -6,19 +6,23 @@
 -include("observer_cli.hrl").
 
 select_unselect_test() ->
-    Selected = observer_cli_lib:select("Home"),
-    Unselected = observer_cli_lib:unselect("Home"),
+    Selected = observer_cli_lib:selected_menu_item("Home"),
+    Unselected = observer_cli_lib:unselected_menu_item("Home"),
     ?assert(string:find(lists:flatten(Selected), "Home") =/= nomatch),
-    ?assert(string:find(lists:flatten(Unselected), "Home") =/= nomatch).
+    ?assert(string:find(lists:flatten(Unselected), "Home") =/= nomatch),
+    ?assertEqual(Selected, observer_cli_lib:select("Home")),
+    ?assertEqual(Unselected, observer_cli_lib:unselect("Home")).
 
 render_menu_test() ->
     application:set_env(observer_cli, default_row_size, 20),
-    Line = observer_cli_lib:render_menu(home, "Test"),
-    ?assert(string:find(lists:flatten(Line), "Home") =/= nomatch).
+    Line = observer_cli_lib:render_top_menu(home, "Test"),
+    ?assert(string:find(lists:flatten(Line), "Home") =/= nomatch),
+    ?assertEqual(Line, observer_cli_lib:render_menu(home, "Test")).
 
-render_last_line_test() ->
-    Line = observer_cli_lib:render_last_line("q(quit)"),
-    ?assert(string:find(lists:flatten(Line), "q(quit)") =/= nomatch).
+render_footer_test() ->
+    Line = observer_cli_lib:render_footer("q(quit)"),
+    ?assert(string:find(lists:flatten(Line), "q(quit)") =/= nomatch),
+    ?assertEqual(Line, observer_cli_lib:render_last_line("q(quit)")).
 
 render_keeps_unicode_text_test() ->
     Line = observer_cli_lib:render([?W("中文", 10)]),
@@ -42,7 +46,7 @@ layout_width_uses_wide_terminal_test() ->
         fun() ->
             ?assertEqual(159, observer_cli_lib:layout_width()),
             ?assertEqual(
-                159, observer_cli_lib:visible_length(observer_cli_lib:render_last_line("q"))
+                159, observer_cli_lib:visible_length(observer_cli_lib:render_footer("q"))
             )
         end
     ).
@@ -104,6 +108,8 @@ to_list_test() ->
     ?assertEqual([1, 2], observer_cli_lib:to_list([1, 2])).
 
 green_test() ->
+    ?assertEqual(<<"\e[32;1mok\e[0m">>, iolist_to_binary(observer_cli_lib:ansi_green("ok"))),
+    ?assertEqual(<<"\e[31mfail\e[0m">>, iolist_to_binary(observer_cli_lib:ansi_red("fail"))),
     ?assertEqual("\e[32;1mok\e[0m", observer_cli_lib:green("ok")).
 
 to_byte_test() ->

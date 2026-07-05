@@ -79,8 +79,8 @@ parse_cmd_str_test() ->
 addr_to_str_test() ->
     ?assertEqual("127.0.0.1:4000", observer_cli_port:addr_to_str({{127, 0, 0, 1}, 4000})).
 
-render_last_line_test() ->
-    Line = lists:flatten(observer_cli_port:render_last_line()),
+render_footer_test() ->
+    Line = lists:flatten(observer_cli_port:render_footer()),
     ?assert(lists:member($q, Line)).
 
 collect_port_info_test() ->
@@ -263,7 +263,7 @@ port_detail_golden_output_fragments_test() ->
                     {statistics, stats_fixture()},
                     {options, opts_fixture()}
                 ]),
-                observer_cli_port:render_last_line()
+                observer_cli_port:render_footer()
             ],
             observer_cli_test_io:assert_stable_fragments(Output, [
                 "Home(H)",
@@ -402,7 +402,7 @@ port_info_page_line_widths(Columns) ->
                     {statistics, stats_fixture()},
                     {options, opts_fixture()}
                 ]),
-                observer_cli_port:render_last_line()
+                observer_cli_port:render_footer()
             ],
             {observer_cli_lib:layout_width(), observer_cli_test_io:line_widths(IoData)}
         end

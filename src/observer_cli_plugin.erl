@@ -264,7 +264,7 @@ render_worker(
                 PrevSheet
             ),
             LastText = io_lib:format(?LAST_LINE, [Interval, CurPage]),
-            LastLine = ?render([?UNDERLINE, ?GRAY_BG, ?W(LastText, SheetWidth + 4)]),
+            LastLine = observer_cli_lib:render_footer(LastText, SheetWidth + 4),
             ?output([?CURSOR_TOP, Menu, Labels, SheetLine, LastLine]),
             NextTimeRef = observer_cli_lib:next_redraw(LastTimeRef, Interval),
             receive
@@ -273,9 +273,9 @@ render_worker(
             end;
         error ->
             Menu = ?render([
-                ?UNDERLINE,
-                ?W(?UNSELECT("Home(H)"), 30),
-                ?W(?SELECT("EmptyPlugin"), 144)
+                ?ANSI_UNDERLINE,
+                ?W(observer_cli_lib:unselected_menu_item("Home(H)"), 30),
+                ?W(observer_cli_lib:selected_menu_item("EmptyPlugin"), 144)
             ]),
             ErrInfo =
                 "| No plugins found.\n|Please visit \"How to write your own plugin\" in readme.\n",
@@ -304,10 +304,10 @@ render_menu(#plug{cur_index = CurIndex, plugs = Plugs}, SheetWidth) ->
     Title = get_menu_title(CurIndex, Plugs, Num, []),
     [Time] = observer_cli_lib:uptime(),
     ?render([
-        ?UNDERLINE,
+        ?ANSI_UNDERLINE,
         ?W(
             [
-                ?UNSELECT("Home(H)"),
+                observer_cli_lib:unselected_menu_item("Home(H)"),
                 "|",
                 Title
             ],
@@ -319,7 +319,7 @@ render_menu(#plug{cur_index = CurIndex, plugs = Plugs}, SheetWidth) ->
 get_menu_title(CurIndex, Plugs, CurIndex, Acc) ->
     {ok, #{title := Title, shortcut := Shortcut}} = maps:find(CurIndex, Plugs),
     NewTitle = Title ++ "(" ++ Shortcut ++ ")",
-    NewAcc = [?SELECT(NewTitle), "|" | Acc],
+    NewAcc = [observer_cli_lib:menu_item(CurIndex, CurIndex, NewTitle), "|" | Acc],
     get_menu_title(CurIndex, Plugs, CurIndex - 1, NewAcc);
 get_menu_title(CurIndex, Plugs, Pos, Acc) ->
     case maps:find(Pos, Plugs) of
@@ -327,7 +327,7 @@ get_menu_title(CurIndex, Plugs, Pos, Acc) ->
             Acc;
         {ok, #{title := Title, shortcut := Shortcut}} ->
             NewTitle = Title ++ "(" ++ Shortcut ++ ")",
-            NewAcc = [?UNSELECT(NewTitle), "|" | Acc],
+            NewAcc = [observer_cli_lib:menu_item(CurIndex, Pos, NewTitle), "|" | Acc],
             get_menu_title(CurIndex, Plugs, Pos - 1, NewAcc)
     end.
 
