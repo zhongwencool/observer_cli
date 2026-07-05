@@ -150,34 +150,41 @@ shared_parse_cmd_str_test() ->
     ?assertEqual(page_down_top_n, observer_cli_command:parse_shared("PD\n")),
     ?assertEqual(page_up_top_n, observer_cli_command:parse_shared("B\n")),
     ?assertEqual(page_down_top_n, observer_cli_command:parse_shared("F\n")),
-    ?assertEqual({func, proc_count, memory}, observer_cli_command:parse_shared("m\n")),
-    ?assertEqual({func, proc_count, reductions}, observer_cli_command:parse_shared("r\n")),
-    ?assertEqual({func, proc_count, binary_memory}, observer_cli_command:parse_shared("b\n")),
-    ?assertEqual({func, proc_count, total_heap_size}, observer_cli_command:parse_shared("t\n")),
-    ?assertEqual({func, proc_count, message_queue_len}, observer_cli_command:parse_shared("mq\n")),
-    ?assertEqual({func, proc_window, reductions}, observer_cli_command:parse_shared("rr\n")),
-    ?assertEqual({func, proc_window, binary_memory}, observer_cli_command:parse_shared("bb\n")),
-    ?assertEqual({func, proc_window, total_heap_size}, observer_cli_command:parse_shared("tt\n")),
-    ?assertEqual({func, proc_window, memory}, observer_cli_command:parse_shared("mm\n")),
-    ?assertEqual(
-        {func, proc_window, message_queue_len}, observer_cli_command:parse_shared("mmq\n")
-    ),
-    ?assertEqual(jump, observer_cli_command:parse_shared("\n")),
     ?assertEqual(size, observer_cli_command:parse_shared("s\n")),
     ?assertEqual(hide, observer_cli_command:parse_shared("hide\n")),
-    ?assertEqual(scheduler_usage, observer_cli_command:parse_shared("`\n")),
-    ?assertEqual({new_interval, 1500}, observer_cli_command:parse_shared("1500")),
-    ?assertEqual({jump, 10}, observer_cli_command:parse_shared("10")),
-    ?assertEqual(quit, observer_cli_command:parse_shared({error, estale})),
-    ?assertEqual(
-        {go_to_pid, list_to_pid("<0.0.0>")},
-        observer_cli_command:parse_shared("<0.0.0>\n")
-    ),
-    ?assertEqual(
-        {go_to_pid, list_to_pid("<0.12.0>")},
-        observer_cli_command:parse_shared(">12\n")
-    ),
-    ?assertEqual(quit, observer_cli_command:parse_shared(">\n")).
+    ?assertEqual(quit, observer_cli_command:parse_shared({error, estale})).
+
+home_parse_cmd_str_test() ->
+    assert_shared_parse([
+        {"m\n", {func, proc_count, memory}},
+        {"r\n", {func, proc_count, reductions}},
+        {"b\n", {func, proc_count, binary_memory}},
+        {"t\n", {func, proc_count, total_heap_size}},
+        {"mq\n", {func, proc_count, message_queue_len}},
+        {"rr\n", {func, proc_window, reductions}},
+        {"bb\n", {func, proc_window, binary_memory}},
+        {"tt\n", {func, proc_window, total_heap_size}},
+        {"mm\n", {func, proc_window, memory}},
+        {"mmq\n", {func, proc_window, message_queue_len}},
+        {"\n", jump},
+        {"10", {jump, 10}},
+        {"oops\n", {input_str, "oops"}},
+        {"`\n", scheduler_usage},
+        {"<0.0.0>\n", {go_to_pid, list_to_pid("<0.0.0>")}},
+        {">12\n", {go_to_pid, list_to_pid("<0.12.0>")}},
+        {">\n", quit}
+    ]).
+
+assert_shared_parse(Cases) ->
+    lists:foreach(
+        fun({Command, Expected}) ->
+            ?assertEqual(Expected, observer_cli_command:parse_shared(Command))
+        end,
+        Cases
+    ).
+
+shared_parse_interval_test() ->
+    ?assertEqual({new_interval, 1500}, observer_cli_command:parse_shared("1500")).
 
 weighted_widths_edge_test() ->
     ?assertEqual([], observer_cli_lib:weighted_widths([], [])),
