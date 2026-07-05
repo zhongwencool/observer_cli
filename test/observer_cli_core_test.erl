@@ -47,6 +47,33 @@ collect_top_n_test() ->
     ?assert(is_list(WindowFirst)),
     ?assert(is_list(WindowNext)).
 
+collect_home_snapshot_test() ->
+    Home = #home{
+        interval = 1500,
+        func = proc_count,
+        type = memory,
+        cur_page = 1,
+        scheduler_usage = ?DISABLE
+    },
+    StableInfo = observer_cli:get_stable_system_info(),
+    LastStats = observer_cli:get_incremental_stats(?DISABLE),
+    {Snapshot, NewStats} =
+        observer_cli:collect_home_snapshot(
+            "printf 'header\\n 1 2\\n'", Home, StableInfo, LastStats, 15, true
+        ),
+    ?assert(maps:is_key(system_summary, Snapshot)),
+    ?assert(maps:is_key(memory_summary, Snapshot)),
+    ?assertEqual(undefined, maps:get(scheduler_usage, Snapshot)),
+    ?assertEqual(1, maps:get(process_rows, Snapshot)),
+    ?assert(is_list(maps:get(top_processes, Snapshot))),
+    ?assert(
+        lists:prefix(
+            "recon:proc_count(memory, 1)",
+            lists:flatten(maps:get(refresh_prompt, Snapshot))
+        )
+    ),
+    ?assertMatch({_, _, _, _, _}, NewStats).
+
 get_current_initial_call_test() ->
     Call = [
         {current_function, {lists, map, 2}},

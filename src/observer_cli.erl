@@ -38,6 +38,7 @@
     get_stable_system_info/0,
     get_atom_status/0,
     get_pid_info/2,
+    collect_home_snapshot/6,
     node_stats/2,
     get_incremental_stats/1,
     check_auto_row/0
@@ -241,28 +242,17 @@ redraw_running(
     #home{
         interval = Interval,
         func = Func,
-        type = Type,
-        pages = RankPos,
-        cur_page = CurPage,
-        scheduler_usage = SchUsage
+        type = Type
     } =
         Home,
     erlang:cancel_timer(LastTimeRef),
     TerminalRow = observer_cli_lib:get_terminal_rows(AutoRow),
-    {Diffs, Schedulers, NewStats} = node_stats(LastStats, SchUsage),
-    {CPURow, CPULine} = render_scheduler_usage(Schedulers),
-    ProcessRows = max(TerminalRow - 14 - CPURow, 0),
-    TopLen = ProcessRows * CurPage,
-    TopList = collect_top_n(Func, Type, Interval, TopLen, IsFirstTime),
-    Text = get_refresh_prompt(Func, Type, Interval, TopLen),
-    MenuLine = observer_cli_lib:render_top_menu(home, Text),
-    SystemLine = render_system_line(PsCmd, element(1, StableInfo)),
-    MemLine = render_memory_process_line(Diffs, element(2, StableInfo), Interval),
-    {TopNList, RankLine} = render_top_n_view(Type, TopList, ProcessRows, RankPos, CurPage),
-    LastLine = render_footer(),
-    ?output([?CURSOR_TOP, MenuLine, SystemLine, MemLine, CPULine, RankLine, LastLine]),
+    {Snapshot, NewStats} =
+        collect_home_snapshot(PsCmd, Home, StableInfo, LastStats, TerminalRow, IsFirstTime),
+    {TopNList, Lines} = render_home_snapshot(Home, Snapshot),
+    ?output([?CURSOR_TOP | Lines]),
 
-    observer_cli_store:update(StorePid, ProcessRows, TopNList),
+    observer_cli_store:update(StorePid, maps:get(process_rows, Snapshot), TopNList),
     TimeRef = refresh_next_time(Func, Type, Interval),
     receive
         quit ->
@@ -273,14 +263,74 @@ redraw_running(
             redraw_running(PsCmd, StorePid, Home, StableInfo, NewStats, TimeRef, AutoRow, false)
     end.
 
+collect_home_snapshot(PsCmd, Home, StableInfo, LastStats, TerminalRows, IsFirstTime) ->
+    #home{
+        interval = Interval,
+        scheduler_usage = SchUsage
+    } =
+        Home,
+    {Diffs, SchedulerUsage, NewStats} = node_stats(LastStats, SchUsage),
+    ProcessRows = max(
+        TerminalRows - 14 - scheduler_usage_rows(SchedulerUsage), 0
+    ),
+    ProcessRanking = collect_home_processes(Home, ProcessRows, IsFirstTime),
+    Runtime = sample_home_runtime(PsCmd, StableInfo, Diffs, SchedulerUsage, Interval),
+    {maps:merge(Runtime#{process_rows => ProcessRows}, ProcessRanking), NewStats}.
+
+sample_home_runtime(PsCmd, {StableInfo, PortParallelism}, Diffs, SchedulerUsage, Interval) ->
+    #{
+        system_summary => system_summary(PsCmd, StableInfo, get_atom_status()),
+        memory_summary => memory_process_summary(Diffs, PortParallelism, Interval),
+        scheduler_usage => SchedulerUsage
+    }.
+
+collect_home_processes(
+    #home{interval = Interval, func = Func, type = Type, cur_page = CurPage},
+    ProcessRows,
+    IsFirstTime
+) ->
+    TopLen = ProcessRows * CurPage,
+    #{
+        top_processes => collect_top_n(Func, Type, Interval, TopLen, IsFirstTime),
+        refresh_prompt => get_refresh_prompt(Func, Type, Interval, TopLen)
+    }.
+
+render_home_snapshot(Home, Snapshot) ->
+    #home{
+        type = Type,
+        pages = RankPos,
+        cur_page = CurPage
+    } =
+        Home,
+    ProcessRows = maps:get(process_rows, Snapshot),
+    TopList = maps:get(top_processes, Snapshot),
+    Text = maps:get(refresh_prompt, Snapshot),
+    {_, CPULine} = render_scheduler_usage(maps:get(scheduler_usage, Snapshot)),
+    {TopNList, RankLine} = render_top_n_view(Type, TopList, ProcessRows, RankPos, CurPage),
+    {
+        TopNList,
+        [
+            observer_cli_lib:render_top_menu(home, Text),
+            render_home_summary(maps:get(system_summary, Snapshot)),
+            render_home_summary(maps:get(memory_summary, Snapshot)),
+            CPULine,
+            RankLine,
+            render_footer()
+        ]
+    }.
+
 render_footer() ->
     observer_cli_lib:render_footer(?LAST_LINE).
+
+-ifdef(TEST).
 
 render_system_line(PsCmd, StableInfo) ->
     render_system_line(PsCmd, StableInfo, get_atom_status()).
 
 render_system_line(PsCmd, StableInfo, AtomStatus) ->
     render_home_summary(system_summary(PsCmd, StableInfo, AtomStatus)).
+
+-endif.
 
 system_summary(PsCmd, StableInfo, AtomStatus) ->
     {LeftLabelExtra, LeftValueExtra, MiddleLabelExtra, MiddleValueExtra, RightLabelExtra,
@@ -388,8 +438,12 @@ system_atom_summary_row(
         {ReductionsText, 24 + RightValueExtra}
     ]}.
 
+-ifdef(TEST).
+
 render_memory_process_line(MemSum, PortParallelism, Interval) ->
     render_home_summary(memory_process_summary(MemSum, PortParallelism, Interval)).
+
+-endif.
 
 memory_process_summary(MemSum, PortParallelism, Interval) ->
     {LeftLabelExtra, LeftValueExtra, MiddleLabelExtra, MiddleValueExtra, RightLabelExtra,
@@ -523,6 +577,23 @@ extra_bit(Rem, Pos) when Rem >= Pos ->
 extra_bit(_Rem, _Pos) ->
     0.
 
+scheduler_usage_rows(undefined) ->
+    0;
+scheduler_usage_rows(SchedulerUsage) ->
+    scheduler_usage_rows_by_count(erlang:length(SchedulerUsage)).
+
+scheduler_usage_rows_by_count(SchedulerNum) when SchedulerNum < 8 ->
+    ceil_div(SchedulerNum, 2);
+scheduler_usage_rows_by_count(SchedulerNum) when SchedulerNum =< 100 ->
+    ceil_div(SchedulerNum, 4);
+scheduler_usage_rows_by_count(SchedulerNum) ->
+    ceil_div(SchedulerNum, 10).
+
+ceil_div(0, _Divisor) ->
+    0;
+ceil_div(Number, Divisor) ->
+    (Number + Divisor - 1) div Divisor.
+
 render_scheduler_usage(undefined) ->
     {0, []};
 render_scheduler_usage(SchedulerUsage) ->
@@ -531,13 +602,7 @@ render_scheduler_usage(SchedulerUsage) ->
 
 %% < 8 core split 2 part
 render_scheduler_usage(SchedulerUsage, SchedulerNum) when SchedulerNum < 8 ->
-    Column =
-        case SchedulerNum rem 2 =:= 0 of
-            true ->
-                SchedulerNum div 2;
-            false ->
-                SchedulerNum div 2 + 1
-        end,
+    Column = scheduler_usage_rows_by_count(SchedulerNum),
     CPU =
         [
             begin
@@ -557,13 +622,7 @@ render_scheduler_usage(SchedulerUsage, SchedulerNum) when SchedulerNum < 8 ->
     {Column, pad_scheduler_lines(CPU)};
 %% 100 >= scheduler >= 8 split 4 part
 render_scheduler_usage(SchedulerUsage, SchedulerNum) when SchedulerNum =< 100 ->
-    Column =
-        case SchedulerNum rem 4 =:= 0 of
-            true ->
-                SchedulerNum div 4;
-            false ->
-                SchedulerNum div 4 + 1
-        end,
+    Column = scheduler_usage_rows_by_count(SchedulerNum),
     CPU =
         [
             begin
@@ -609,13 +668,7 @@ render_scheduler_usage(SchedulerUsage, SchedulerNum) when SchedulerNum =< 100 ->
     {Column, pad_scheduler_lines(CPU)};
 %% scheduler > 100 don't show process bar.
 render_scheduler_usage(SchedulerUsage, SchedulerNum) ->
-    Column =
-        case SchedulerNum rem 10 =:= 0 of
-            true ->
-                SchedulerNum div 10;
-            false ->
-                SchedulerNum div 10 + 1
-        end,
+    Column = scheduler_usage_rows_by_count(SchedulerNum),
     CPU =
         [
             begin
@@ -1096,22 +1149,28 @@ check_auto_row() ->
             false
     end.
 
-node_stats({LastIn, LastOut, LastGCs, LastWords, LastScheduleWall}, SchUsage) ->
-    New = {In, Out, GCs, Words, ScheduleWall} = get_incremental_stats(SchUsage),
+node_stats(LastStats, SchUsage) ->
+    New = get_incremental_stats(SchUsage),
+    {
+        io_gc_stats_diff(LastStats, New),
+        scheduler_usage_diff(LastStats, New),
+        New
+    }.
+
+io_gc_stats_diff({LastIn, LastOut, LastGCs, LastWords, _}, {In, Out, GCs, Words, _}) ->
     BytesInDiff = In - LastIn,
     BytesOutDiff = Out - LastOut,
     GCCountDiff = GCs - LastGCs,
     GCWordsDiff = Words - LastWords,
     {
-        {
-            [observer_cli_lib:to_byte(In), "/", observer_cli_lib:to_byte(BytesInDiff)],
-            [observer_cli_lib:to_byte(Out), "/", observer_cli_lib:to_byte(BytesOutDiff)],
-            [integer_to_list(GCs), "/", integer_to_list(GCCountDiff)],
-            [integer_to_list(Words), "/", integer_to_list(GCWordsDiff)]
-        },
-        recon_lib:scheduler_usage_diff(LastScheduleWall, ScheduleWall),
-        New
+        [observer_cli_lib:to_byte(In), "/", observer_cli_lib:to_byte(BytesInDiff)],
+        [observer_cli_lib:to_byte(Out), "/", observer_cli_lib:to_byte(BytesOutDiff)],
+        [integer_to_list(GCs), "/", integer_to_list(GCCountDiff)],
+        [integer_to_list(Words), "/", integer_to_list(GCWordsDiff)]
     }.
+
+scheduler_usage_diff({_, _, _, _, LastScheduleWall}, {_, _, _, _, ScheduleWall}) ->
+    recon_lib:scheduler_usage_diff(LastScheduleWall, ScheduleWall).
 
 get_incremental_stats(SchUsage) ->
     {{input, In}, {output, Out}} = erlang:statistics(io),
