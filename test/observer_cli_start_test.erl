@@ -5,6 +5,23 @@
 -include_lib("eunit/include/eunit.hrl").
 -include("observer_cli.hrl").
 
+phase0_smoke_behaviors_test() ->
+    ?assertEqual(quit, run_start(["q\n"])),
+    lists:foreach(
+        fun(Cmd) -> ?assertEqual(quit, run_start([Cmd, "q\n"])) end,
+        ["H\n", "S\n", "A\n", "N\n", "M\n", "E\n", "D\n", "P\n"]
+    ),
+    ?assertEqual(quit, run_start(["2000\n", "q\n"])),
+    ?assertEqual(quit, run_start(["F\n", "B\n", "q\n"])),
+    Target = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
+    try
+        ?assertEqual(true, run_start([pid_to_list(Target) ++ "\n", "q\n"]))
+    after
+        exit(Target, kill)
+    end.
+
 start_manager_branches_test() ->
     Inputs = ["p\n", "r\n", "bb\n", "tt\n", "mmq\n", "2000\n", "pd\n", "pu\n", "`\n", "x\n", "q\n"],
     with_trap_exit(fun() ->
@@ -119,5 +136,23 @@ with_trap_exit(Fun) ->
 remote_node() ->
     {ok, Host} = inet:gethostname(),
     list_to_atom("observer_cli_missing@" ++ Host).
+
+run_start(Inputs) ->
+    Parent = self(),
+    Ref = make_ref(),
+    Pid = spawn(fun() ->
+        process_flag(trap_exit, true),
+        Result = observer_cli_test_io:with_input(
+            Inputs,
+            fun() -> observer_cli:start(#view_opts{}) end
+        ),
+        Parent ! {Ref, Result}
+    end),
+    receive
+        {Ref, Result} -> Result
+    after 5000 ->
+        exit(Pid, kill),
+        timeout
+    end.
 
 -endif.
