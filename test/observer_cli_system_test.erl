@@ -145,7 +145,13 @@ render_sys_info_empty_ps_test() ->
     ?assert(string:find(lists:flatten(Line), "System/Architecture") =/= nomatch).
 
 collect_sys_info_test() ->
-    Info = observer_cli_system:collect_sys_info("printf 'header\\n 1 2 3 4\\n'"),
+    Cmd = "printf 'header\\n 1 2 3 4\\n'",
+    OsProcessInfo = observer_cli_system:collect_os_process_info(Cmd),
+    ?assertEqual("1%", proplists:get_value(ps_cpu, OsProcessInfo)),
+    ?assertEqual("2%", proplists:get_value(ps_mem, OsProcessInfo)),
+    ?assertEqual(3 * 1024, proplists:get_value(ps_rss, OsProcessInfo)),
+    ?assertEqual(4 * 1024, proplists:get_value(ps_vsz, OsProcessInfo)),
+    Info = observer_cli_system:collect_sys_info(Cmd),
     ?assertEqual("1%", proplists:get_value(ps_cpu, Info)),
     ?assertEqual("2%", proplists:get_value(ps_mem, Info)),
     ?assertEqual(3 * 1024, proplists:get_value(ps_rss, Info)),
@@ -153,26 +159,33 @@ collect_sys_info_test() ->
 
 collect_system_info_test() ->
     Info = observer_cli_system:collect_system_info("printf 'header\\n 1 2 3 4\\n'"),
-    ?assert(is_list(maps:get(cache_hit_info, Info))),
-    ?assert(is_list(maps:get(average_block_curs, Info))),
-    ?assert(is_list(maps:get(average_block_maxes, Info))),
-    ?assert(is_list(maps:get(sbcs_to_mbcs_curs, Info))),
-    ?assert(is_list(maps:get(sbcs_to_mbcs_maxes, Info))),
+    AllocatorInfo = maps:get(allocator_info, Info),
+    ?assert(is_list(maps:get(cache_hit_info, AllocatorInfo))),
+    ?assert(is_list(maps:get(average_block_curs, AllocatorInfo))),
+    ?assert(is_list(maps:get(average_block_maxes, AllocatorInfo))),
+    ?assert(is_list(maps:get(sbcs_to_mbcs_curs, AllocatorInfo))),
+    ?assert(is_list(maps:get(sbcs_to_mbcs_maxes, AllocatorInfo))),
+    ?assertEqual("1%", proplists:get_value(ps_cpu, maps:get(os_process_info, Info))),
+    ?assertEqual(undefined, proplists:get_value(ps_cpu, maps:get(sys_info, Info))),
     ?assert(is_list(maps:get(sys_info, Info))),
     ?assert(is_list(maps:get(dist_nodes_info, Info))).
 
 render_system_sections_test() ->
-    SysInfo = observer_cli_system:collect_sys_info("printf 'header\\n 1 2 3 4\\n'"),
+    FullSysInfo = observer_cli_system:collect_sys_info("printf 'header\\n 1 2 3 4\\n'"),
+    {OsProcessInfo, SysInfo} = split_os_process_info(FullSysInfo),
     [Sys, Allocator, DistNodes, CacheHit] = observer_cli_system:render_system_sections(#{
+        os_process_info => OsProcessInfo,
         sys_info => SysInfo,
-        average_block_curs => allocator_curs(),
-        average_block_maxes => allocator_maxes(),
-        sbcs_to_mbcs_curs => allocator_sbcs_curs(),
-        sbcs_to_mbcs_maxes => allocator_sbcs_maxes(),
-        dist_nodes_info => [],
-        cache_hit_info => cache_hit_fixture()
+        allocator_info => #{
+            average_block_curs => allocator_curs(),
+            average_block_maxes => allocator_maxes(),
+            sbcs_to_mbcs_curs => allocator_sbcs_curs(),
+            sbcs_to_mbcs_maxes => allocator_sbcs_maxes(),
+            cache_hit_info => cache_hit_fixture()
+        },
+        dist_nodes_info => []
     }),
-    ?assertEqual(observer_cli_system:render_sys_info(SysInfo), Sys),
+    ?assertEqual(observer_cli_system:render_sys_info(FullSysInfo), Sys),
     ?assertEqual(
         observer_cli_system:render_block_size_info(
             allocator_curs(), allocator_maxes(), allocator_sbcs_curs(), allocator_sbcs_maxes()
@@ -327,8 +340,9 @@ render_dist_node_info_live_peer_test() ->
     with_distribution(fun() ->
         {ok, Peer, Node} = peer:start_link(#{name => peer:random_name("observer_cli_sys")}),
         try
-            {ok, NodesInfo} = net_kernel:nodes_info(),
             ?assertMatch([_ | _], ets:lookup(sys_dist, Node)),
+            NodesInfo = observer_cli_system:collect_distribution_info(),
+            ?assertMatch([_ | _], NodesInfo),
             Lines = observer_cli_system:render_dist_node_info(NodesInfo),
             ?assert(string:find(lists:flatten(Lines), "%") =/= nomatch)
         after
@@ -505,14 +519,22 @@ statistics_fixture() ->
 
 dist_node_fixture() ->
     [
-        {'very_long_fake_node_for_layout@127.0.0.1', [
-            {state, connected},
-            {type, normal},
-            {address, #net_address{address = {{127, 0, 0, 1}, 1234}}},
-            {in, 1},
-            {out, 2}
-        ]}
+        {'very_long_fake_node_for_layout@127.0.0.1', #{
+            queue_size => 1,
+            queue_limit => 1024,
+            address => "127.0.0.1:1234",
+            in => 1,
+            out => 2,
+            type => normal,
+            state => connected
+        }}
     ].
+
+split_os_process_info(SysInfo) ->
+    lists:partition(
+        fun({Key, _}) -> lists:member(Key, [ps_cpu, ps_mem, ps_rss, ps_vsz]) end,
+        SysInfo
+    ).
 
 ensure_sys_dist() ->
     case ets:info(sys_dist, owner) of

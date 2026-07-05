@@ -12,6 +12,8 @@
 
 -ifdef(TEST).
 -export([
+    collect_distribution_info/0,
+    collect_os_process_info/1,
     collect_system_info/1,
     collect_sys_info/1,
     fill_info/2,
@@ -85,6 +87,21 @@ render_worker(Cmd, Interval, LastTimeRef) ->
     end.
 
 collect_system_info(Cmd) ->
+    {OsProcessInfo, SysInfo} = split_os_process_info(collect_sys_info(Cmd)),
+    #{
+        os_process_info => OsProcessInfo,
+        sys_info => SysInfo,
+        allocator_info => collect_allocator_info(),
+        dist_nodes_info => collect_distribution_info()
+    }.
+
+split_os_process_info(SysInfo) ->
+    lists:partition(
+        fun({Key, _}) -> lists:member(Key, [ps_cpu, ps_mem, ps_rss, ps_vsz]) end,
+        SysInfo
+    ).
+
+collect_allocator_info() ->
     #{
         cache_hit_info => recon_alloc:cache_hit_rates(),
         average_block_curs => recon_alloc:average_block_sizes(current),
@@ -92,9 +109,7 @@ collect_system_info(Cmd) ->
         sbcs_to_mbcs_curs =>
             observer_cli_lib:sbcs_to_mbcs(?UTIL_ALLOCATORS, recon_alloc:sbcs_to_mbcs(current)),
         sbcs_to_mbcs_maxes =>
-            observer_cli_lib:sbcs_to_mbcs(?UTIL_ALLOCATORS, recon_alloc:sbcs_to_mbcs(max)),
-        sys_info => collect_sys_info(Cmd),
-        dist_nodes_info => get_dist_nodes_info()
+            observer_cli_lib:sbcs_to_mbcs(?UTIL_ALLOCATORS, recon_alloc:sbcs_to_mbcs(max))
     }.
 
 render_system_sections(SystemInfo) ->
@@ -105,14 +120,16 @@ render_system_sections(SystemInfo) ->
         render_cache_hit_section(SystemInfo)
     ].
 
-render_system_info_section(#{sys_info := SysInfo}) ->
-    render_sys_info(SysInfo).
+render_system_info_section(#{os_process_info := OsProcessInfo, sys_info := SysInfo}) ->
+    render_sys_info(OsProcessInfo ++ SysInfo).
 
 render_allocator_section(#{
-    average_block_curs := AverageBlockCurs,
-    average_block_maxes := AverageBlockMaxes,
-    sbcs_to_mbcs_curs := SbcsToMbcsCurs,
-    sbcs_to_mbcs_maxes := SbcsToMbcsMaxs
+    allocator_info := #{
+        average_block_curs := AverageBlockCurs,
+        average_block_maxes := AverageBlockMaxes,
+        sbcs_to_mbcs_curs := SbcsToMbcsCurs,
+        sbcs_to_mbcs_maxes := SbcsToMbcsMaxs
+    }
 }) ->
     render_block_size_info(
         AverageBlockCurs,
@@ -124,19 +141,31 @@ render_allocator_section(#{
 render_distribution_node_section(#{dist_nodes_info := DistNodesInfo}) ->
     render_dist_node_info(DistNodesInfo).
 
-render_cache_hit_section(#{cache_hit_info := CacheHitInfo}) ->
+render_cache_hit_section(#{allocator_info := #{cache_hit_info := CacheHitInfo}}) ->
     render_cache_hit_rates(CacheHitInfo, erlang:length(CacheHitInfo)).
 
-get_dist_nodes_info() ->
+collect_distribution_info() ->
     case ets:info(sys_dist, size) of
         undefined ->
             [];
         0 ->
             [];
         _ ->
+            Limit = erlang:system_info(dist_buf_busy_limit),
             {ok, DistNodesInfo} = net_kernel:nodes_info(),
-            DistNodesInfo
+            [collect_distribution_node_info(DistNodeInfo, Limit) || DistNodeInfo <- DistNodesInfo]
     end.
+
+collect_distribution_node_info({Node, Info}, Limit) ->
+    {Node, #{
+        queue_size => get_dist_queue_size(Node),
+        queue_limit => Limit,
+        address => get_address(Info),
+        in => proplists:get_value(in, Info),
+        out => proplists:get_value(out, Info),
+        type => proplists:get_value(type, Info),
+        state => proplists:get_value(state, Info)
+    }}.
 
 render_dist_node_info([]) ->
     [];
@@ -154,18 +183,17 @@ render_dist_node_info(DistNodesInfo) ->
         ?W("Type", TypeW),
         ?W("State", StateW)
     ]),
-    Limit = erlang:system_info(dist_buf_busy_limit),
-    LimitStr = integer_to_list(Limit),
     View = lists:map(
         fun({Node, Info}) ->
-            State = proplists:get_value(state, Info),
-            Type = proplists:get_value(type, Info),
-            Address = get_address(Info),
-            In = proplists:get_value(in, Info),
-            Out = proplists:get_value(out, Info),
-            QueueSize = get_dist_queue_size(Node),
+            State = maps:get(state, Info),
+            Type = maps:get(type, Info),
+            Address = maps:get(address, Info),
+            In = maps:get(in, Info),
+            Out = maps:get(out, Info),
+            QueueSize = maps:get(queue_size, Info),
+            Limit = maps:get(queue_limit, Info),
             QueueSizeStr = observer_cli_lib:to_list(QueueSize),
-            QueueSizeLimitStr = QueueSizeStr ++ "/" ++ LimitStr,
+            QueueSizeLimitStr = QueueSizeStr ++ "/" ++ integer_to_list(Limit),
             Percent =
                 case is_integer(QueueSize) of
                     true ->
@@ -380,7 +408,7 @@ render_sys_info(SysInfo) ->
     render_sys_info(System, CPU, Memory, Statistics).
 
 collect_sys_info(Cmd) ->
-    sys_info(Cmd).
+    collect_os_process_info(Cmd) ++ collect_runtime_info().
 
 render_sys_info(System, CPU, Memory, Statistics) ->
     [
@@ -473,7 +501,22 @@ sys_info_row_widths() ->
 compiled_for_widths() ->
     observer_cli_lib:weighted_widths([22, 111], [0, 1]).
 
-sys_info(Cmd) ->
+collect_os_process_info(Cmd) ->
+    [_, CmdValue | _] = string:split(os:cmd(Cmd), "\n", all),
+    [CpuPsV, MemPsV, RssPsV, VszPsV] =
+        case lists:filter(fun(Y) -> Y =/= [] end, string:split(CmdValue, " ", all)) of
+            [] -> ["--", "--", "--", "--"];
+            [V1, V2, V3, V4] -> [V1, V2, list_to_integer(V3) * 1024, list_to_integer(V4) * 1024]
+        end,
+
+    [
+        {ps_cpu, CpuPsV ++ "%"},
+        {ps_mem, MemPsV ++ "%"},
+        {ps_rss, RssPsV},
+        {ps_vsz, VszPsV}
+    ].
+
+collect_runtime_info() ->
     MemInfo =
         try erlang:memory() of
             Mem -> Mem
@@ -487,19 +530,8 @@ sys_info(Cmd) ->
             enabled -> SchedulersOnline;
             _ -> 1
         end,
-    [_, CmdValue | _] = string:split(os:cmd(Cmd), "\n", all),
-    [CpuPsV, MemPsV, RssPsV, VszPsV] =
-        case lists:filter(fun(Y) -> Y =/= [] end, string:split(CmdValue, " ", all)) of
-            [] -> ["--", "--", "--", "--"];
-            [V1, V2, V3, V4] -> [V1, V2, list_to_integer(V3) * 1024, list_to_integer(V4) * 1024]
-        end,
-
     {{_, Input}, {_, Output}} = erlang:statistics(io),
     [
-        {ps_cpu, CpuPsV ++ "%"},
-        {ps_mem, MemPsV ++ "%"},
-        {ps_rss, RssPsV},
-        {ps_vsz, VszPsV},
         {io_input, Input},
         {io_output, Output},
 
