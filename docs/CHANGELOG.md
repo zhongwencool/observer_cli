@@ -1,4 +1,9 @@
 # Changelog
+- 2.0.0 (draft)
+  - Preserve normal user-visible CLI behavior while the internals are reorganized for 2.0.
+  - Introduce plugin API breaking changes for custom plugin authors; use the explicit 2.0 callback shapes in `docs/plugin.md`.
+  - Keep the future AI-friendly snapshot direction internal for now: collected Erlang terms/maps feed TUI rendering, and no public JSON/term CLI is shipped in this draft.
+
 - 1.8.8
   - Automatically adapt terminal layout width across Home, Application, ETS, Mnesia, Network, Process, Port, System, and less footers.
   - Reorganize Doc help shortcuts into clearer command groups.

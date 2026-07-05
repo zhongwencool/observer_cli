@@ -20,6 +20,20 @@ Observer CLI is a library to be dropped into any BEAM nodes, to be used to help 
 
 ---
 
+## 2.0 draft note
+
+The 2.0 work preserves normal user-visible CLI behavior: pages, navigation,
+sorting, pagination, refresh interval, process/port drill-down, remote
+monitoring, and escript startup should stay compatible.
+
+Custom plugin authors should plan for 2.0 breaking API changes; the migration
+path is documented in [the plugin guide](docs/plugin.md). Users without custom
+plugins should not see built-in page behavior change.
+
+Future AI-friendly machine-readable snapshots should read collected Erlang
+terms/maps before terminal rendering. This draft keeps that seam clean; it does
+not add a JSON or Erlang-term CLI mode.
+
 ## Installation
 
 <!-- tabs-open -->
