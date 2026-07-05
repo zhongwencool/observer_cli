@@ -132,6 +132,25 @@ render_port_info_queue_size_test() ->
     ?assert(string:find(lists:flatten(Title), "Attr") =/= nomatch),
     ?assert(string:find(lists:flatten(Rows), "queue_size") =/= nomatch).
 
+render_port_sections_test() ->
+    Type = type_fixture(),
+    Detail = #{
+        port => port_view(),
+        links => [self()],
+        monitors => [{process, self()}],
+        type => Type
+    },
+    Expected = [
+        observer_cli_port:render_port_info(port_view()),
+        observer_cli_port:render_link_monitor([self()], [{process, self()}]),
+        observer_cli_port:render_socket_peer(Type),
+        observer_cli_port:render_stats(stats_fixture()),
+        observer_cli_port:render_opts(opts_fixture())
+    ],
+    ?assertEqual(
+        lists:flatten(Expected), lists:flatten(observer_cli_port:render_port_sections(Detail))
+    ).
+
 render_port_info_wide_layout_test() ->
     Base = port_info_widths(80),
     Wide = port_info_widths(180),
@@ -457,6 +476,14 @@ opts_fixture() ->
         {reuseaddr, false},
         {send_timeout, 0},
         {sndbuf, 0}
+    ].
+
+type_fixture() ->
+    [
+        {peername, {{127, 0, 0, 1}, 4369}},
+        {sockname, {{127, 0, 0, 1}, 58521}},
+        {statistics, stats_fixture()},
+        {options, opts_fixture()}
     ].
 
 unchanged_columns({BaseTitle, BaseRow}, {WideTitle, WideRow}, Columns) ->

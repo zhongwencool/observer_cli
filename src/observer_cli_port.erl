@@ -10,9 +10,11 @@
     addr_to_str/1,
     collect_port_info/1,
     render_footer/0,
+    render_port_sections/1,
     render_port_info/1,
     render_link_monitor/2,
     render_type_line/1,
+    render_socket_peer/1,
     render_stats/1,
     render_opts/1,
     render_menu/2,
@@ -50,14 +52,12 @@ render_worker(Port, Interval, TimeRef) ->
         dead ->
             output_die_view(Port, Interval),
             next_draw_view(TimeRef, Interval, Port);
-        #{port := PortView, links := Link, monitors := Monitors, type := Type} ->
+        PortDetail ->
             Menu = render_menu(info, Interval),
-            Line1 = render_port_info(PortView),
-            Line2 = render_link_monitor(Link, Monitors),
-            Line3 = render_type_line(Type),
+            Lines = render_port_sections(PortDetail),
             LastLine = render_footer(),
 
-            ?output([?CURSOR_TOP, Menu, Line1, Line2, Line3, LastLine]),
+            ?output([?CURSOR_TOP, Menu, Lines, LastLine]),
             next_draw_view(TimeRef, Interval, Port)
     end.
 
@@ -105,7 +105,22 @@ next_draw_view_2(TimeRef, Interval, Port) ->
             render_worker(Port, Interval, TimeRef)
     end.
 
-render_port_info(#{
+render_port_sections(#{port := PortView, links := Link, monitors := Monitors, type := Type}) ->
+    [
+        render_port_info(PortView),
+        render_link_monitor(Link, Monitors),
+        render_type_line(Type)
+    ].
+
+render_port_info(PortView) ->
+    Fields = port_attr_value_fields(PortView),
+    Widths = port_info_widths([18, 20, 18, 20, 19, 21]),
+    [
+        render_port_info_title(Widths),
+        render_port_info_rows(Fields, Widths)
+    ].
+
+port_attr_value_fields(#{
     port := Port,
     id := Id,
     name := Name,
@@ -121,43 +136,66 @@ render_port_info(#{
             true -> ?RED;
             false -> ?GREEN
         end,
-    [Attr1W, Value1W, Attr2W, Value2W, Attr3W, Value3W] =
-        port_info_widths([18, 20, 18, 20, 19, 21]),
-    Title =
-        ?render([
-            ?GRAY_BG,
-            ?W("Attr", Attr1W),
-            ?W("Value", Value1W),
-            ?W("Attr", Attr2W),
-            ?W("Value", Value2W),
-            ?W("Attr", Attr3W),
-            ?W("Value", Value3W)
-        ]),
-    Rows =
-        ?render([
-            ?W("port", Attr1W),
-            ?W(Port, Value1W),
-            ?W("id", Attr2W),
-            ?W(Id, Value2W),
-            ?W("name", Attr3W),
-            ?W(Name, Value3W),
-            ?NEW_LINE,
-            ?W("queue_size", Attr1W),
-            ?W2(QueueSizeColor, QueueSize, Value1W + 1),
-            " ",
-            ?W("input", Attr2W),
-            ?W({byte, Input}, Value2W),
-            ?W("output", Attr3W),
-            ?W({byte, Output}, Value3W),
-            ?NEW_LINE,
-            ?W("connected", Attr1W),
-            ?W(Connected, Value1W),
-            ?W("memory", Attr2W),
-            ?W({byte, Memory}, Value2W),
-            ?W("os_pid", Attr3W),
-            ?W(OsPid, Value3W)
-        ]),
-    [Title, Rows].
+    #{
+        port => Port,
+        id => Id,
+        name => Name,
+        os_pid => OsPid,
+        input => Input,
+        output => Output,
+        memory => Memory,
+        queue_size => {QueueSize, QueueSizeColor},
+        connected => Connected
+    }.
+
+render_port_info_title([Attr1W, Value1W, Attr2W, Value2W, Attr3W, Value3W]) ->
+    ?render([
+        ?GRAY_BG,
+        ?W("Attr", Attr1W),
+        ?W("Value", Value1W),
+        ?W("Attr", Attr2W),
+        ?W("Value", Value2W),
+        ?W("Attr", Attr3W),
+        ?W("Value", Value3W)
+    ]).
+
+render_port_info_rows(
+    #{
+        port := Port,
+        id := Id,
+        name := Name,
+        os_pid := OsPid,
+        input := Input,
+        output := Output,
+        memory := Memory,
+        queue_size := {QueueSize, QueueSizeColor},
+        connected := Connected
+    },
+    [Attr1W, Value1W, Attr2W, Value2W, Attr3W, Value3W]
+) ->
+    ?render([
+        ?W("port", Attr1W),
+        ?W(Port, Value1W),
+        ?W("id", Attr2W),
+        ?W(Id, Value2W),
+        ?W("name", Attr3W),
+        ?W(Name, Value3W),
+        ?NEW_LINE,
+        ?W("queue_size", Attr1W),
+        ?W2(QueueSizeColor, QueueSize, Value1W + 1),
+        " ",
+        ?W("input", Attr2W),
+        ?W({byte, Input}, Value2W),
+        ?W("output", Attr3W),
+        ?W({byte, Output}, Value3W),
+        ?NEW_LINE,
+        ?W("connected", Attr1W),
+        ?W(Connected, Value1W),
+        ?W("memory", Attr2W),
+        ?W({byte, Memory}, Value2W),
+        ?W("os_pid", Attr3W),
+        ?W(OsPid, Value3W)
+    ]).
 
 render_link_monitor(Link, Monitors) ->
     LinkStr = [
@@ -191,6 +229,13 @@ render_link_monitor(Link, Monitors) ->
     ]).
 
 render_type_line(List) ->
+    [
+        render_socket_peer(List),
+        render_stats_section(List),
+        render_options_section(List)
+    ].
+
+render_socket_peer(List) ->
     PeerName =
         case lists:keyfind(peername, 1, List) of
             {_, Peer} -> addr_to_str(Peer);
@@ -202,21 +247,23 @@ render_type_line(List) ->
             false -> "undefined"
         end,
     [SockW, ArrowW, PeerW] = type_line_widths(),
-    Line1 =
-        ?render([
-            ?UNDERLINE,
-            ?W("            " ++ SockName ++ "(sockname)", SockW),
-            ?W("<=============>", ArrowW),
-            ?W("            " ++ PeerName ++ "(peername)", PeerW)
-        ]),
-    Line2 =
-        case lists:keyfind(statistics, 1, List) of
-            {_, Stats} -> [Line1, render_stats(Stats)];
-            false -> Line1
-        end,
+    ?render([
+        ?UNDERLINE,
+        ?W("            " ++ SockName ++ "(sockname)", SockW),
+        ?W("<=============>", ArrowW),
+        ?W("            " ++ PeerName ++ "(peername)", PeerW)
+    ]).
+
+render_stats_section(List) ->
+    case lists:keyfind(statistics, 1, List) of
+        {_, Stats} -> render_stats(Stats);
+        false -> []
+    end.
+
+render_options_section(List) ->
     case lists:keyfind(options, 1, List) of
-        {_, Opts} -> Line2 ++ [render_opts(Opts)];
-        false -> Line2
+        {_, Opts} -> render_opts(Opts);
+        false -> []
     end.
 
 port_info_widths(Base) ->
