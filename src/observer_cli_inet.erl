@@ -61,8 +61,7 @@ manager(StorePid, RenderPid, ViewOpts = #view_opts{inet = InetOpts}) ->
             NewInet = InetOpts#inet{interval = NewInterval},
             manager(StorePid, RenderPid, ViewOpts#view_opts{inet = NewInet});
         Func when Func =:= inet_count; Func =:= inet_window ->
-            clean([StorePid, RenderPid]),
-            start(ViewOpts#view_opts{inet = InetOpts#inet{func = Func}});
+            restart(StorePid, RenderPid, ViewOpts#view_opts{inet = InetOpts#inet{func = Func}});
         Type when
             Type =:= recv_cnt;
             Type =:= recv_oct;
@@ -71,8 +70,7 @@ manager(StorePid, RenderPid, ViewOpts = #view_opts{inet = InetOpts}) ->
             Type =:= cnt;
             Type =:= oct
         ->
-            clean([StorePid, RenderPid]),
-            start(ViewOpts#view_opts{inet = InetOpts#inet{type = Type}});
+            restart(StorePid, RenderPid, ViewOpts#view_opts{inet = InetOpts#inet{type = Type}});
         {jump, NewPos} ->
             NewPages = observer_cli_lib:update_page_pos(CurPage, NewPos, Pages),
             NewInetOpts = InetOpts#inet{pages = NewPages},
@@ -80,18 +78,31 @@ manager(StorePid, RenderPid, ViewOpts = #view_opts{inet = InetOpts}) ->
         jump ->
             start_port_view(StorePid, RenderPid, ViewOpts, true);
         page_down_top_n ->
-            NewPage = observer_cli_lib:next_page(CurPage, 1),
-            NewPages = observer_cli_lib:update_page_pos(StorePid, NewPage, Pages),
-            clean([StorePid, RenderPid]),
-            start(ViewOpts#view_opts{inet = InetOpts#inet{cur_page = NewPage, pages = NewPages}});
+            restart_page(StorePid, RenderPid, ViewOpts, CurPage, 1);
         page_up_top_n ->
-            NewPage = observer_cli_lib:next_page(CurPage, -1),
-            NewPages = observer_cli_lib:update_page_pos(StorePid, NewPage, Pages),
-            clean([StorePid, RenderPid]),
-            start(ViewOpts#view_opts{inet = InetOpts#inet{cur_page = NewPage, pages = NewPages}});
+            restart_page(StorePid, RenderPid, ViewOpts, CurPage, -1);
         _ ->
             manager(StorePid, RenderPid, ViewOpts)
     end.
+
+restart_page(
+    StorePid,
+    RenderPid,
+    ViewOpts = #view_opts{inet = InetOpts = #inet{pages = Pages}},
+    CurPage,
+    Delta
+) ->
+    NewPage = observer_cli_lib:next_page(CurPage, Delta),
+    NewPages = observer_cli_lib:update_page_pos(StorePid, NewPage, Pages),
+    restart(StorePid, RenderPid, ViewOpts#view_opts{
+        inet = InetOpts#inet{
+            cur_page = NewPage, pages = NewPages
+        }
+    }).
+
+restart(StorePid, RenderPid, ViewOpts) ->
+    clean([StorePid, RenderPid]),
+    start(ViewOpts).
 
 render_worker(StorePid, InetOpt, LastTimeRef, Count, LastIO, AutoRow) ->
     #inet{func = Function, type = Type, interval = Interval, cur_page = CurPage} = InetOpt,
