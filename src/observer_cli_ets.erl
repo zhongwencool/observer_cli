@@ -9,7 +9,13 @@
 
 -ifdef(TEST).
 -export([
-    collect_ets_info/1, get_ets_info/2, is_reg/1, render_ets_info/3, render_ets_info/4, unread/0
+    collect_ets_info/1,
+    collect_ets_render_info/3,
+    get_ets_info/2,
+    is_reg/1,
+    render_ets_info/3,
+    render_ets_info/4,
+    unread/0
 ]).
 -endif.
 
@@ -64,9 +70,11 @@ manager(ChildPid, #view_opts{ets = EtsOpts = #ets{cur_page = CurPage}} = ViewOpt
 
 render_worker(Interval, LastTimeRef, Attr, CurPage, AutoRow) ->
     TerminalRow = observer_cli_lib:get_terminal_rows(AutoRow),
+    Rows = erlang:max(0, TerminalRow - 4),
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
     Menu = observer_cli_lib:render_top_menu(ets, Text),
-    Ets = render_ets_info(erlang:max(0, TerminalRow - 4), CurPage, Attr),
+    EtsInfo = collect_ets_render_info(Rows, CurPage, Attr),
+    Ets = render_ets_info(EtsInfo, Attr),
     LastLine = observer_cli_lib:render_footer(?LAST_LINE),
     ?output([?CURSOR_TOP, Menu, Ets, LastLine]),
     NextTimeRef = observer_cli_lib:next_redraw(LastTimeRef, Interval),
@@ -75,15 +83,14 @@ render_worker(Interval, LastTimeRef, Attr, CurPage, AutoRow) ->
         _ -> render_worker(Interval, NextTimeRef, Attr, CurPage, AutoRow)
     end.
 
-render_ets_info(Rows, CurPage, Attr) ->
-    render_ets_info(collect_ets_info(Attr), Rows, CurPage, Attr).
-
 collect_ets_info(Attr) ->
     [get_ets_info(Tab, Attr) || Tab <- ets:all()].
 
-render_ets_info(AllEts, Rows, CurPage, Attr) ->
+collect_ets_render_info(Rows, CurPage, Attr) ->
+    observer_cli_lib:sublist(collect_ets_info(Attr), Rows, CurPage).
+
+render_ets_info({_StartPos, SortEts}, Attr) ->
     WordSize = erlang:system_info(wordsize),
-    {_StartPos, SortEts} = observer_cli_lib:sublist(AllEts, Rows, CurPage),
     {MemColor, SizeColor} =
         case Attr of
             memory -> {?RED_BG, ?GRAY_BG};
@@ -144,6 +151,14 @@ render_ets_info(AllEts, Rows, CurPage, Attr) ->
      || {_, _, Ets} <- SortEts
     ],
     [Title | RowView].
+
+-ifdef(TEST).
+render_ets_info(Rows, CurPage, Attr) ->
+    render_ets_info(collect_ets_render_info(Rows, CurPage, Attr), Attr).
+
+render_ets_info(AllEts, Rows, CurPage, Attr) ->
+    render_ets_info(observer_cli_lib:sublist(AllEts, Rows, CurPage), Attr).
+-endif.
 
 ets_title_widths() ->
     observer_cli_lib:weighted_widths(

@@ -6,7 +6,12 @@
 -export([clean/1]).
 
 -ifdef(TEST).
--export([collect_mnesia_info/2, render_mnesia/4, with_storage_type/3]).
+-export([
+    collect_mnesia_info/2,
+    collect_mnesia_render_info/4,
+    render_mnesia/4,
+    with_storage_type/3
+]).
 -endif.
 
 -include("observer_cli.hrl").
@@ -81,12 +86,12 @@ render_worker(Interval, LastTimeRef, HideSystemTable, AutoRow, Attr, CurPage) ->
             " HideSystemTable:" ++ atom_to_list(HideSystemTable),
     Menu = observer_cli_lib:render_top_menu(mnesia, Text),
     LastLine = observer_cli_lib:render_footer(?LAST_LINE),
-    case collect_mnesia_info(HideSystemTable, Attr) of
+    case collect_mnesia_render_info(HideSystemTable, Attr, Rows, CurPage) of
         {error, Reason} ->
             ErrInfo = io_lib:format("Mnesia Error   ~p~n", [Reason]),
             ?output([?CURSOR_TOP, Menu, ErrInfo, LastLine]);
-        MnesiaList ->
-            Info = render_mnesia(MnesiaList, Attr, Rows, CurPage),
+        MnesiaInfo ->
+            Info = render_mnesia(MnesiaInfo, Attr),
             ?output([?CURSOR_TOP, Menu, Info, LastLine])
     end,
     TimeRef = observer_cli_lib:next_redraw(LastTimeRef, Interval),
@@ -101,8 +106,13 @@ render_worker(Interval, LastTimeRef, HideSystemTable, AutoRow, Attr, CurPage) ->
             render_worker(Interval, TimeRef, HideSystemTable, AutoRow, Attr, CurPage)
     end.
 
-render_mnesia(MnesiaList, Attr, Rows, CurPage) ->
-    {_StartPos, SortMnesia} = observer_cli_lib:sublist(MnesiaList, Rows, CurPage),
+collect_mnesia_render_info(HideSys, Attr, Rows, CurPage) ->
+    case collect_mnesia_info(HideSys, Attr) of
+        {error, _Reason} = Error -> Error;
+        MnesiaList -> observer_cli_lib:sublist(MnesiaList, Rows, CurPage)
+    end.
+
+render_mnesia({_StartPos, SortMnesia}, Attr) ->
     {MemColor, SizeColor} =
         case Attr of
             memory -> {?RED_BG, ?GRAY_BG};
@@ -163,6 +173,11 @@ render_mnesia(MnesiaList, Attr, Rows, CurPage) ->
      || {_, _, Mnesia} <- SortMnesia
     ],
     [Title | View].
+
+-ifdef(TEST).
+render_mnesia(MnesiaList, Attr, Rows, CurPage) ->
+    render_mnesia(observer_cli_lib:sublist(MnesiaList, Rows, CurPage), Attr).
+-endif.
 
 mnesia_title_widths() ->
     observer_cli_lib:weighted_widths(

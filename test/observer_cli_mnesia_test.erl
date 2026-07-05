@@ -38,6 +38,10 @@ collect_mnesia_info_error_test() ->
     mnesia:stop(),
     ?assertMatch({error, _}, observer_cli_mnesia:collect_mnesia_info(false, memory)).
 
+collect_mnesia_render_info_error_test() ->
+    mnesia:stop(),
+    ?assertMatch({error, _}, observer_cli_mnesia:collect_mnesia_render_info(false, memory, 10, 1)).
+
 collect_mnesia_info_running_test() ->
     Dir = filename:join(["test", "tmp", "mnesia"]),
     setup_mnesia(Dir),
@@ -61,6 +65,27 @@ collect_mnesia_info_running_test() ->
         cleanup_mnesia(Dir)
     end.
 
+collect_mnesia_render_info_hides_system_tables_test() ->
+    Dir = filename:join(["test", "tmp", "mnesia_hidden"]),
+    setup_mnesia(Dir),
+    try
+        {atomic, ok} =
+            mnesia:create_table(test_table, [{attributes, [id, value]}, {ram_copies, [node()]}]),
+        {atomic, ok} =
+            mnesia:create_table(user, [{attributes, [id, value]}, {ram_copies, [node()]}]),
+        ok = mnesia:wait_for_tables([test_table, user], 5000),
+        {1, HiddenRows} = observer_cli_mnesia:collect_mnesia_render_info(true, memory, 1000, 1),
+        {1, VisibleRows} = observer_cli_mnesia:collect_mnesia_render_info(false, memory, 1000, 1),
+        HiddenNames = mnesia_row_names(HiddenRows),
+        VisibleNames = mnesia_row_names(VisibleRows),
+        ?assert(lists:member(test_table, HiddenNames)),
+        ?assertEqual(false, lists:member(user, HiddenNames)),
+        ?assert(lists:member(user, VisibleNames)),
+        ?assertEqual(false, lists:member(schema, VisibleNames))
+    after
+        cleanup_mnesia(Dir)
+    end.
+
 render_mnesia_wide_layout_test() ->
     Base = mnesia_row_widths(80),
     Wide = mnesia_row_widths(180),
@@ -71,6 +96,14 @@ render_mnesia_size_sort_header_test() ->
     [Title, _Row] = observer_cli_mnesia:render_mnesia([mnesia_fixture()], size, 10, 1),
     Text = lists:flatten(Title),
     ?assert(string:find(Text, "Size") =/= nomatch).
+
+render_mnesia_preserves_sorted_page_test() ->
+    Small = mnesia_fixture(small_mnesia_table, 1024, 1),
+    Big = mnesia_fixture(big_mnesia_table, 2048, 4),
+    [_Title, Row] = observer_cli_mnesia:render_mnesia([Small, Big], size, 1, 1),
+    Text = lists:flatten(Row),
+    ?assert(string:find(Text, "big_mnesia_table") =/= nomatch),
+    ?assertEqual(nomatch, string:find(Text, "small_mnesia_table")).
 
 mnesia_row_widths(Columns) ->
     observer_cli_test_io:with_geometry(
@@ -86,13 +119,16 @@ mnesia_row_widths(Columns) ->
     ).
 
 mnesia_fixture() ->
+    mnesia_fixture(very_long_mnesia_table_name_for_layout, 1024, 1).
+
+mnesia_fixture(Name, Memory, Size) ->
     {
         0,
-        0,
+        Size,
         [
-            {name, very_long_mnesia_table_name_for_layout},
-            {memory, 1024},
-            {size, 1},
+            {name, Name},
+            {memory, Memory},
+            {size, Size},
             {type, set},
             {storage, ram_copies},
             {owner, self()},
@@ -100,6 +136,9 @@ mnesia_fixture() ->
             {reg_name, very_long_registered_name_for_layout}
         ]
     }.
+
+mnesia_row_names(Rows) ->
+    [proplists:get_value(name, Tab) || {_, _, Tab} <- Rows].
 
 unchanged_columns({BaseTitle, BaseRow}, {WideTitle, WideRow}, Columns) ->
     [
