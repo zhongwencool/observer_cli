@@ -280,6 +280,9 @@ render_system_line(PsCmd, StableInfo) ->
     render_system_line(PsCmd, StableInfo, get_atom_status()).
 
 render_system_line(PsCmd, StableInfo, AtomStatus) ->
+    render_home_summary(system_summary(PsCmd, StableInfo, AtomStatus)).
+
+system_summary(PsCmd, StableInfo, AtomStatus) ->
     {LeftLabelExtra, LeftValueExtra, MiddleLabelExtra, MiddleValueExtra, RightLabelExtra,
         RightValueExtra} = home_summary_extras(),
     [Version, SysVersion, ProcLimit, PortLimit, EtsLimit] = StableInfo,
@@ -307,62 +310,88 @@ render_system_line(PsCmd, StableInfo, AtomStatus) ->
             _ ->
                 ["--", "--"]
         end,
-    Title =
-        ?render([
-            ?W(SysVersion, observer_cli_lib:layout_width() - 3),
-            ?NEW_LINE,
-            ?GRAY_BG,
-            ?W("System", 10 + LeftLabelExtra),
-            ?W("Count/Limit", 21 + LeftValueExtra),
-            ?W("System", 25 + MiddleLabelExtra),
-            ?W("Status", 21 + MiddleValueExtra),
-            ?W("Stat Info", 20 + RightLabelExtra),
-            ?W("Size", 25 + RightValueExtra)
-        ]),
-    Row1 =
-        ?render([
-            ?W("Proc Count", 10 + LeftLabelExtra),
-            ?W2(ProcWarning, ProcCount, 22 + LeftValueExtra),
-            ?W(" Version", 26 + MiddleLabelExtra),
-            ?W(Version, 21 + MiddleValueExtra),
-            ?W("Active Task", 20 + RightLabelExtra),
-            ?W(ActiveTask, 25 + RightValueExtra),
-            ?NEW_LINE,
-            ?W("Port Count", 10 + LeftLabelExtra),
-            ?W2(PortWarning, PortCount, 22 + LeftValueExtra),
-            ?W(" ps -o pcpu", 26 + MiddleLabelExtra),
-            ?W([CpuPsV, "%"], 21 + MiddleValueExtra),
-            ?W("Context Switch", 20 + RightLabelExtra),
-            ?W(ContextSwitch, 24 + RightValueExtra)
-        ]),
     {Reds, AddReds} = Reductions,
-    Row2 =
-        case AtomStatus of
-            {ok, AtomLimit, AtomCount} ->
-                {AtomWarning, Atom} = format_atom_info(AtomLimit, AtomCount),
-                ?render([
-                    ?UNDERLINE,
-                    ?W("Atom Count", 10 + LeftLabelExtra),
-                    ?W2(AtomWarning, Atom, 22 + LeftValueExtra),
-                    ?W(" ps -o pmem", 26 + MiddleLabelExtra),
-                    ?W([MemPsV, "%"], 21 + MiddleValueExtra),
-                    ?W("Reds(Total/SinceLastCall)", 20 + RightLabelExtra),
-                    ?W([integer_to_list(Reds), "/", integer_to_list(AddReds)], 24 + RightValueExtra)
-                ]);
-            {error, unsupported} ->
-                ?render([
-                    ?UNDERLINE,
-                    ?W("Ets Limit", 10 + LeftLabelExtra),
-                    ?W(EtsLimit, 21 + LeftValueExtra),
-                    ?W(" ps -o pmem", 25 + MiddleLabelExtra),
-                    ?W([MemPsV, "%"], 21 + MiddleValueExtra),
-                    ?W("Reductions", 20 + RightLabelExtra),
-                    ?W([integer_to_list(Reds), "/", integer_to_list(AddReds)], 24 + RightValueExtra)
-                ])
-        end,
-    [Title, Row1, Row2].
+    ReductionsText = [integer_to_list(Reds), "/", integer_to_list(AddReds)],
+    [
+        [
+            {normal, [{SysVersion, observer_cli_lib:layout_width() - 3}]},
+            {?GRAY_BG, [
+                {"System", 10 + LeftLabelExtra},
+                {"Count/Limit", 21 + LeftValueExtra},
+                {"System", 25 + MiddleLabelExtra},
+                {"Status", 21 + MiddleValueExtra},
+                {"Stat Info", 20 + RightLabelExtra},
+                {"Size", 25 + RightValueExtra}
+            ]}
+        ],
+        [
+            {normal, [
+                {"Proc Count", 10 + LeftLabelExtra},
+                {ProcWarning, ProcCount, 22 + LeftValueExtra},
+                {" Version", 26 + MiddleLabelExtra},
+                {Version, 21 + MiddleValueExtra},
+                {"Active Task", 20 + RightLabelExtra},
+                {ActiveTask, 25 + RightValueExtra}
+            ]},
+            {normal, [
+                {"Port Count", 10 + LeftLabelExtra},
+                {PortWarning, PortCount, 22 + LeftValueExtra},
+                {" ps -o pcpu", 26 + MiddleLabelExtra},
+                {[CpuPsV, "%"], 21 + MiddleValueExtra},
+                {"Context Switch", 20 + RightLabelExtra},
+                {ContextSwitch, 24 + RightValueExtra}
+            ]}
+        ],
+        [
+            system_atom_summary_row(
+                AtomStatus,
+                EtsLimit,
+                MemPsV,
+                ReductionsText,
+                {LeftLabelExtra, LeftValueExtra, MiddleLabelExtra, MiddleValueExtra,
+                    RightLabelExtra, RightValueExtra}
+            )
+        ]
+    ].
+
+system_atom_summary_row(
+    {ok, AtomLimit, AtomCount},
+    _EtsLimit,
+    MemPsV,
+    ReductionsText,
+    {LeftLabelExtra, LeftValueExtra, MiddleLabelExtra, MiddleValueExtra, RightLabelExtra,
+        RightValueExtra}
+) ->
+    {AtomWarning, Atom} = format_atom_info(AtomLimit, AtomCount),
+    {?UNDERLINE, [
+        {"Atom Count", 10 + LeftLabelExtra},
+        {AtomWarning, Atom, 22 + LeftValueExtra},
+        {" ps -o pmem", 26 + MiddleLabelExtra},
+        {[MemPsV, "%"], 21 + MiddleValueExtra},
+        {"Reds(Total/SinceLastCall)", 20 + RightLabelExtra},
+        {ReductionsText, 24 + RightValueExtra}
+    ]};
+system_atom_summary_row(
+    {error, unsupported},
+    EtsLimit,
+    MemPsV,
+    ReductionsText,
+    {LeftLabelExtra, LeftValueExtra, MiddleLabelExtra, MiddleValueExtra, RightLabelExtra,
+        RightValueExtra}
+) ->
+    {?UNDERLINE, [
+        {"Ets Limit", 10 + LeftLabelExtra},
+        {EtsLimit, 21 + LeftValueExtra},
+        {" ps -o pmem", 25 + MiddleLabelExtra},
+        {[MemPsV, "%"], 21 + MiddleValueExtra},
+        {"Reductions", 20 + RightLabelExtra},
+        {ReductionsText, 24 + RightValueExtra}
+    ]}.
 
 render_memory_process_line(MemSum, PortParallelism, Interval) ->
+    render_home_summary(memory_process_summary(MemSum, PortParallelism, Interval)).
+
+memory_process_summary(MemSum, PortParallelism, Interval) ->
     {LeftLabelExtra, LeftValueExtra, MiddleLabelExtra, MiddleValueExtra, RightLabelExtra,
         RightValueExtra} = home_summary_extras(),
     RunQ = erlang:statistics(run_queue),
@@ -395,54 +424,84 @@ render_memory_process_line(MemSum, PortParallelism, Interval) ->
     BinMemPercent = observer_cli_lib:to_percent(BinMem / TotalMem),
     CodeMemPercent = observer_cli_lib:to_percent(CodeMem / TotalMem),
     EtsMemPercent = observer_cli_lib:to_percent(EtsMem / TotalMem),
+    [
+        [
+            {?GRAY_BG, [
+                {"Mem Type", 10 + LeftLabelExtra},
+                {"Size", 21 + LeftValueExtra},
+                {"Mem Type", 25 + MiddleLabelExtra},
+                {"Size", 21 + MiddleValueExtra},
+                {["IO/GC:(", integer_to_binary(Interval), "ms)"], 20 + RightLabelExtra},
+                {"Total/Increments", 25 + RightValueExtra}
+            ]}
+        ],
+        [
+            {normal, [
+                {"Total", 10 + LeftLabelExtra},
+                {{byte, TotalMem}, 12},
+                {"100.0%", 6 + LeftValueExtra},
+                {"Binary", 25 + MiddleLabelExtra},
+                {{byte, BinMem}, 12},
+                {BinMemPercent, 6 + MiddleValueExtra},
+                {"IO Output", 20 + RightLabelExtra},
+                {BytesOut, 25 + RightValueExtra}
+            ]},
+            {normal, [
+                {"Process", 10 + LeftLabelExtra},
+                {{byte, ProcMem}, 12},
+                {ProcMemPercent, 6 + LeftValueExtra},
+                {"Code", 25 + MiddleLabelExtra},
+                {{byte, CodeMem}, 12},
+                {CodeMemPercent, 6 + MiddleValueExtra},
+                {"IO Input", 20 + RightLabelExtra},
+                {BytesIn, 25 + RightValueExtra}
+            ]},
+            {normal, [
+                {"Atom", 10 + LeftLabelExtra},
+                {{byte, AtomMem}, 12},
+                {AtomMemPercent, 6 + LeftValueExtra},
+                {"Port Parallelism (+spp)", 25 + MiddleLabelExtra},
+                {PortParallelism, 21 + MiddleValueExtra},
+                {"Gc Count", 20 + RightLabelExtra},
+                {GcCount, 25 + RightValueExtra}
+            ]},
+            {normal, [
+                {"Ets/" ++ erlang:integer_to_list(EtsLen), 10 + LeftLabelExtra},
+                {{byte, EtsMem}, 12},
+                {EtsMemPercent, 6 + LeftValueExtra},
+                {LogKey, 25 + MiddleLabelExtra},
+                {Queue, 21 + MiddleValueExtra},
+                {"Gc Words Reclaimed", 20 + RightLabelExtra},
+                {GcWordsReclaimed, 24 + RightValueExtra}
+            ]}
+        ]
+    ].
 
-    Title =
-        ?render([
-            ?GRAY_BG,
-            ?W("Mem Type", 10 + LeftLabelExtra),
-            ?W("Size", 21 + LeftValueExtra),
-            ?W("Mem Type", 25 + MiddleLabelExtra),
-            ?W("Size", 21 + MiddleValueExtra),
-            ?W(["IO/GC:(", integer_to_binary(Interval), "ms)"], 20 + RightLabelExtra),
-            ?W("Total/Increments", 25 + RightValueExtra)
-        ]),
-    Row =
-        ?render([
-            ?W("Total", 10 + LeftLabelExtra),
-            ?W({byte, TotalMem}, 12),
-            ?W("100.0%", 6 + LeftValueExtra),
-            ?W("Binary", 25 + MiddleLabelExtra),
-            ?W({byte, BinMem}, 12),
-            ?W(BinMemPercent, 6 + MiddleValueExtra),
-            ?W("IO Output", 20 + RightLabelExtra),
-            ?W(BytesOut, 25 + RightValueExtra),
-            ?NEW_LINE,
-            ?W("Process", 10 + LeftLabelExtra),
-            ?W({byte, ProcMem}, 12),
-            ?W(ProcMemPercent, 6 + LeftValueExtra),
-            ?W("Code", 25 + MiddleLabelExtra),
-            ?W({byte, CodeMem}, 12),
-            ?W(CodeMemPercent, 6 + MiddleValueExtra),
-            ?W("IO Input", 20 + RightLabelExtra),
-            ?W(BytesIn, 25 + RightValueExtra),
-            ?NEW_LINE,
-            ?W("Atom", 10 + LeftLabelExtra),
-            ?W({byte, AtomMem}, 12),
-            ?W(AtomMemPercent, 6 + LeftValueExtra),
-            ?W("Port Parallelism (+spp)", 25 + MiddleLabelExtra),
-            ?W(PortParallelism, 21 + MiddleValueExtra),
-            ?W("Gc Count", 20 + RightLabelExtra),
-            ?W(GcCount, 25 + RightValueExtra),
-            ?NEW_LINE,
-            ?W("Ets/" ++ erlang:integer_to_list(EtsLen), 10 + LeftLabelExtra),
-            ?W({byte, EtsMem}, 12),
-            ?W(EtsMemPercent, 6 + LeftValueExtra),
-            ?W(LogKey, 25 + MiddleLabelExtra),
-            ?W(Queue, 21 + MiddleValueExtra),
-            ?W("Gc Words Reclaimed", 20 + RightLabelExtra),
-            ?W(GcWordsReclaimed, 24 + RightValueExtra)
-        ]),
-    [Title, Row].
+render_home_summary(Blocks) ->
+    [render_home_summary_block(Block) || Block <- Blocks].
+
+render_home_summary_block(Rows) ->
+    ?render(join_home_summary_rows(Rows)).
+
+join_home_summary_rows([]) ->
+    [];
+join_home_summary_rows([Row]) ->
+    render_home_summary_row(Row);
+join_home_summary_rows([Row | Rows]) ->
+    render_home_summary_row(Row) ++ [?NEW_LINE | join_home_summary_rows(Rows)].
+
+render_home_summary_row({normal, Cells}) ->
+    render_home_summary_cells(Cells);
+render_home_summary_row({Style, Cells}) ->
+    [Style | render_home_summary_cells(Cells)].
+
+render_home_summary_cells(Cells) ->
+    [render_home_summary_cell(Cell) || Cell <- Cells].
+
+render_home_summary_cell({Value, Width}) ->
+    ?W(Value, Width);
+render_home_summary_cell({Color, Value, Width}) ->
+    ?W2(Color, Value, Width).
 
 home_summary_extras() ->
     Extra = observer_cli_lib:layout_extra_width(observer_cli_lib:layout_base_width() + 1),
