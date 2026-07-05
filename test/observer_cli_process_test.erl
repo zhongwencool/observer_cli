@@ -110,9 +110,29 @@ collect_process_info_test() ->
         end end),
     try
         Info = observer_cli_process:collect_process_info(Target),
+        ?assertEqual(
+            lists:sort([links, memory, monitored_by, monitors, process, reductions]),
+            lists:sort(maps:keys(Info))
+        ),
         ?assertMatch(
             #{
-                process := #{pid := Target, garbage_collection := #{minor_gcs := _}},
+                process := #{
+                    pid := Target,
+                    registered_name := _,
+                    group_leader := _,
+                    status := _,
+                    trap_exit := _,
+                    initial_call := _,
+                    message_queue_len := _,
+                    heap_size := _,
+                    total_heap_size := _,
+                    garbage_collection := #{
+                        min_bin_vheap_size := _,
+                        min_heap_size := _,
+                        fullsweep_after := _,
+                        minor_gcs := _
+                    }
+                },
                 links := _,
                 monitors := _,
                 monitored_by := _,
@@ -120,7 +140,17 @@ collect_process_info_test() ->
                 memory := _
             },
             Info
-        )
+        ),
+        Process = maps:get(process, Info),
+        ?assert(is_pid(maps:get(group_leader, Process))),
+        ?assert(is_integer(maps:get(message_queue_len, Process))),
+        ?assert(is_integer(maps:get(heap_size, Process))),
+        ?assert(is_integer(maps:get(total_heap_size, Process))),
+        ?assert(is_integer(maps:get(memory, Info))),
+        ?assert(is_integer(maps:get(reductions, Info))),
+        ?assert(is_list(maps:get(links, Info))),
+        ?assert(is_list(maps:get(monitors, Info))),
+        ?assert(is_list(maps:get(monitored_by, Info)))
     after
         exit(Target, kill)
     end.

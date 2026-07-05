@@ -50,10 +50,20 @@ collect_mnesia_info_running_test() ->
             mnesia:create_table(test_table, [{attributes, [id, value]}, {ram_copies, [node()]}]),
         ok = mnesia:wait_for_tables([test_table], 5000),
         List = observer_cli_mnesia:collect_mnesia_info(true, memory),
+        [CollectedRow] = [
+            Row
+         || Row = {_, _, Tab} <- List,
+            proplists:get_value(name, Tab) =:= test_table
+        ],
+        {0, SortValue, Tab} = CollectedRow,
+        ?assertEqual(proplists:get_value(memory, Tab), SortValue),
+        ?assertEqual(test_table, proplists:get_value(name, Tab)),
+        ?assertEqual(ram_copies, proplists:get_value(storage, Tab)),
+        ?assert(is_pid(proplists:get_value(owner, Tab))),
         ?assert(
-            lists:any(
-                fun({_, _, Tab}) -> proplists:get_value(name, Tab) =:= test_table end,
-                List
+            lists:all(
+                fun(Key) -> proplists:is_defined(Key, Tab) end,
+                [name, owner, size, reg_name, type, memory, index, fixed, compressed, storage]
             )
         ),
         Tab0 = [{name, test_table}],

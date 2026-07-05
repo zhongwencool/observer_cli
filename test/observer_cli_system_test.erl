@@ -159,16 +159,57 @@ collect_sys_info_test() ->
 
 collect_system_info_test() ->
     Info = observer_cli_system:collect_system_info("printf 'header\\n 1 2 3 4\\n'"),
+    ?assertEqual(
+        lists:sort([allocator_info, dist_nodes_info, os_process_info, sys_info]),
+        lists:sort(maps:keys(Info))
+    ),
     AllocatorInfo = maps:get(allocator_info, Info),
+    ?assertEqual(
+        lists:sort([
+            average_block_curs,
+            average_block_maxes,
+            cache_hit_info,
+            sbcs_to_mbcs_curs,
+            sbcs_to_mbcs_maxes
+        ]),
+        lists:sort(maps:keys(AllocatorInfo))
+    ),
     ?assert(is_list(maps:get(cache_hit_info, AllocatorInfo))),
     ?assert(is_list(maps:get(average_block_curs, AllocatorInfo))),
     ?assert(is_list(maps:get(average_block_maxes, AllocatorInfo))),
     ?assert(is_list(maps:get(sbcs_to_mbcs_curs, AllocatorInfo))),
     ?assert(is_list(maps:get(sbcs_to_mbcs_maxes, AllocatorInfo))),
-    ?assertEqual("1%", proplists:get_value(ps_cpu, maps:get(os_process_info, Info))),
-    ?assertEqual(undefined, proplists:get_value(ps_cpu, maps:get(sys_info, Info))),
-    ?assert(is_list(maps:get(sys_info, Info))),
-    ?assert(is_list(maps:get(dist_nodes_info, Info))).
+    OsProcessInfo = maps:get(os_process_info, Info),
+    SysInfo = maps:get(sys_info, Info),
+    DistNodesInfo = maps:get(dist_nodes_info, Info),
+    ?assertEqual(
+        lists:sort([ps_cpu, ps_mem, ps_rss, ps_vsz]),
+        lists:sort([Key || {Key, _} <- OsProcessInfo])
+    ),
+    ?assertEqual("1%", proplists:get_value(ps_cpu, OsProcessInfo)),
+    ?assertEqual(undefined, proplists:get_value(ps_cpu, SysInfo)),
+    ?assert(lists:keymember(otp_release, 1, SysInfo)),
+    ?assert(lists:keymember(schedulers_online, 1, SysInfo)),
+    ?assert(lists:keymember(io_input, 1, SysInfo)),
+    ?assert(is_list(DistNodesInfo)),
+    [
+        ?assertMatch(
+            {
+                _Node,
+                #{
+                    queue_size := _,
+                    queue_limit := _,
+                    address := _,
+                    in := _,
+                    out := _,
+                    type := _,
+                    state := _
+                }
+            },
+            Row
+        )
+     || Row <- DistNodesInfo
+    ].
 
 render_system_sections_test() ->
     FullSysInfo = observer_cli_system:collect_sys_info("printf 'header\\n 1 2 3 4\\n'"),

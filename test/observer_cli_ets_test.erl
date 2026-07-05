@@ -70,10 +70,27 @@ collect_ets_render_info_test() ->
         RowsToRender = erlang:length(ets:all()),
         {Start, Rows} = observer_cli_ets:collect_ets_render_info(RowsToRender, 1, size),
         ?assertEqual(1, Start),
+        [CollectedRow | _] = [
+            Row
+         || Row = {_, _, Info} <- Rows,
+            proplists:get_value(name, Info) =:= TabName
+        ],
+        {0, SortValue, Info} = CollectedRow,
+        ?assertEqual(proplists:get_value(size, Info), SortValue),
         ?assert(
-            lists:any(
-                fun({_, _, Info}) -> proplists:get_value(name, Info) =:= TabName end,
-                Rows
+            lists:all(
+                fun(Key) -> proplists:is_defined(Key, Info) end,
+                [
+                    name,
+                    size,
+                    memory,
+                    type,
+                    protection,
+                    keypos,
+                    write_concurrency,
+                    read_concurrency,
+                    owner
+                ]
             )
         )
     after

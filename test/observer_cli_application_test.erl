@@ -87,6 +87,22 @@ collect_app_info_legacy_list_test() ->
         exit(Child, kill)
     end.
 
+collect_app_info_structure_test() ->
+    Info = observer_cli_application:collect_app_info(),
+    ?assert(is_map(Info)),
+    ?assert(maps:is_key(no_group, Info)),
+    ?assert(lists:all(fun app_info_entry/1, maps:to_list(Info))).
+
+app_info_entry({_App, {Count, Memory, Reductions, MsgQueueLen, Status, Version}}) ->
+    is_integer(Count) andalso Count >= 0 andalso
+        is_integer(Memory) andalso Memory >= 0 andalso
+        is_integer(Reductions) andalso Reductions >= 0 andalso
+        is_integer(MsgQueueLen) andalso MsgQueueLen >= 0 andalso
+        is_list(Status) andalso
+        is_list(Version);
+app_info_entry(_) ->
+    false.
+
 app_render_info_sorting_test() ->
     AppInfo = #{
         high_app => {3, 30, 300, 2, "Started", "1.0"},

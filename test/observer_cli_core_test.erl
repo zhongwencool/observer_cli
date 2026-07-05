@@ -61,8 +61,19 @@ collect_home_snapshot_test() ->
         observer_cli:collect_home_snapshot(
             "printf 'header\\n 1 2\\n'", Home, StableInfo, LastStats, 15, true
         ),
-    ?assert(maps:is_key(system_summary, Snapshot)),
-    ?assert(maps:is_key(memory_summary, Snapshot)),
+    ?assertEqual(
+        lists:sort([
+            memory_summary,
+            process_rows,
+            refresh_prompt,
+            scheduler_usage,
+            system_summary,
+            top_processes
+        ]),
+        lists:sort(maps:keys(Snapshot))
+    ),
+    ?assertMatch([[{_, _} | _] | _], maps:get(system_summary, Snapshot)),
+    ?assertMatch([[{_, _} | _] | _], maps:get(memory_summary, Snapshot)),
     ?assertEqual(undefined, maps:get(scheduler_usage, Snapshot)),
     ?assertEqual(1, maps:get(process_rows, Snapshot)),
     ?assert(is_list(maps:get(top_processes, Snapshot))),

@@ -87,15 +87,52 @@ collect_port_info_test() ->
     {ok, Listen} = gen_tcp:listen(0, [binary, {active, false}]),
     try
         Info = observer_cli_port:collect_port_info(Listen),
+        ?assertEqual(
+            lists:sort([links, monitors, port, type]),
+            lists:sort(maps:keys(Info))
+        ),
         ?assertMatch(
             #{
-                port := #{port := Listen},
+                port := #{
+                    port := Listen,
+                    id := _,
+                    name := _,
+                    os_pid := _,
+                    input := _,
+                    output := _,
+                    memory := _,
+                    queue_size := _,
+                    connected := _
+                },
                 links := _,
                 monitors := _,
                 type := #{peername := _, sockname := _, statistics := _, options := _}
             },
             Info
-        )
+        ),
+        Port = maps:get(port, Info),
+        ?assertEqual(
+            lists:sort([
+                connected,
+                id,
+                input,
+                memory,
+                name,
+                os_pid,
+                output,
+                port,
+                queue_size
+            ]),
+            lists:sort(maps:keys(Port))
+        ),
+        ?assertEqual(
+            lists:sort([options, peername, sockname, statistics]),
+            lists:sort(maps:keys(maps:get(type, Info)))
+        ),
+        ?assert(is_integer(maps:get(input, Port))),
+        ?assert(is_integer(maps:get(output, Port))),
+        ?assert(is_integer(maps:get(memory, Port))),
+        ?assert(is_integer(maps:get(queue_size, Port)))
     after
         gen_tcp:close(Listen)
     end.

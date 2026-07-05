@@ -95,6 +95,22 @@ collect_inet_render_info_test() ->
                 peer := _
             },
             Row
+        ),
+        ?assertEqual(
+            lists:sort([
+                choose_pos,
+                input,
+                memory,
+                output,
+                peer,
+                port,
+                pos,
+                queue_size,
+                type1,
+                type2,
+                value
+            ]),
+            lists:sort(maps:keys(Row))
         )
     after
         gen_tcp:close(Listen)
