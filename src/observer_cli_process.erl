@@ -32,6 +32,7 @@
     state_footer_text/1,
     render_worker/8,
     render_state/3,
+    output_die_view/3,
     state_nav/1,
     state_title/1,
     state_footer/2,

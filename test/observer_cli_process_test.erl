@@ -377,6 +377,70 @@ render_info_page_wide_border_alignment_test() ->
     {LayoutWidth, LineWidths} = process_info_page_line_widths(205),
     ?assert(lists:all(fun(Width) -> Width =:= LayoutWidth end, LineWidths)).
 
+process_detail_golden_output_fragments_test() ->
+    observer_cli_test_io:with_geometry(
+        24,
+        205,
+        [],
+        fun() ->
+            Q = queue:from_list([nan, nan, nan]),
+            {_RedQ, _MemQ, RedMem} = observer_cli_process:render_reduction_memory(
+                10, 20, Q, Q
+            ),
+            Output = [
+                observer_cli_process:render_menu(info, home, 1500),
+                observer_cli_process:render_process_info(process_view()),
+                observer_cli_process:render_link_monitor([self()], [{process, self()}], [self()]),
+                RedMem,
+                observer_cli_process:render_last_line()
+            ],
+            observer_cli_test_io:assert_stable_fragments(Output, [
+                "Home(H)",
+                "Process Info(P)",
+                "Messages(M)",
+                "Dictionary(D)",
+                "Current Stack(C)",
+                "State(S)",
+                "Interval: 1500ms",
+                "Meta",
+                "Memory Used",
+                "Garbage Collection",
+                "registered_name",
+                "msg_queue_len",
+                "minor_gcs",
+                "Links(1)",
+                "Monitors(1)",
+                "MonitoredBy(1)",
+                "Reductions:",
+                "Memory:",
+                "q(quit)"
+            ]),
+            observer_cli_test_io:assert_ansi_boundaries(Output)
+        end
+    ).
+
+process_dead_golden_output_fragments_test() ->
+    Target = spawn(fun() -> ok end),
+    Ref = erlang:monitor(process, Target),
+    receive
+        {'DOWN', Ref, process, Target, _} -> ok
+    after 1000 ->
+        ok
+    end,
+    {_Result, Output} = observer_cli_test_io:capture_with_geometry(
+        24,
+        205,
+        [],
+        fun() -> observer_cli_process:output_die_view(Target, home, 1500) end
+    ),
+    observer_cli_test_io:assert_stable_fragments(Output, [
+        "Process Info(P)",
+        "Process(",
+        "has already died.",
+        "q(quit)"
+    ]),
+    observer_cli_test_io:assert_ansi_boundaries(Output).
+
 render_menu_test() ->
     Line = observer_cli_process:render_menu(info, home, 1500),
     ?assert(string:find(lists:flatten(Line), "Interval: 1500ms") =/= nomatch).

@@ -80,3 +80,27 @@ Validation:
 Skipped:
 
 - Manual terminal QA was not run because this slice adds deterministic System golden output coverage only; no runtime collection, navigation, or rendering behavior changed.
+
+## 2026-07-06 Process / Port detail golden output tests
+
+Source issue: `#133`, updated `2026-07-05T12:39:22Z`
+Slice: Phase 0 checklist item 7 only
+
+Added Process and Port detail golden output fragments:
+
+- Process detail menu/title fragments, meta/memory/GC section titles, footer, links/monitors/monitored-by sections, reductions/memory chart labels, and dead-process message.
+- Port detail menu/title fragments, attr/value titles, footer, links/monitors sections, socket peer/sock labels, stats/options labels, and dead-port message.
+- Direct prerequisite kept test-only: the shared test IO helper can now capture rendered output, and Process/Port dead-view functions are exported only under `TEST` so the existing dead-object messages are asserted without changing runtime behavior.
+
+Validation:
+
+- `rebar3 fmt` passed.
+- `rebar3 as test eunit --module=observer_cli_process_test,observer_cli_port_test,observer_cli_golden_test` passed: 86 tests, 0 failures.
+- `git diff --check` passed.
+- `rebar3 eunit` passed: 320 tests, 0 failures.
+- `rebar3 check` passed.
+- Known non-fatal baseline output remains: `observer_cli_process:render_state/3` logged the existing timeout warning during EUnit.
+
+Skipped:
+
+- Manual terminal QA was not run because this slice only adds deterministic Process/Port golden output coverage and a test-only capture helper; no runtime CLI rendering behavior changed.

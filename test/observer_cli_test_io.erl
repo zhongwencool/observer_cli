@@ -3,6 +3,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -export([assert_ansi_boundaries/1, assert_stable_fragments/2]).
+-export([capture_with_geometry/4]).
 -export([column_widths/1, line_column_widths/1, line_widths/1, plain/1]).
 -export([with_geometry/4, with_input/2]).
 
@@ -28,47 +29,67 @@ with_input(Inputs, Fun) when is_list(Inputs), is_function(Fun, 0) ->
     with_geometry(24, 80, Inputs, Fun).
 
 with_geometry(Rows, Columns, Inputs, Fun) when is_list(Inputs), is_function(Fun, 0) ->
+    {Result, _Output} = capture_with_geometry(Rows, Columns, Inputs, Fun),
+    Result.
+
+capture_with_geometry(Rows, Columns, Inputs, Fun) when is_list(Inputs), is_function(Fun, 0) ->
     Owner = self(),
-    Pid = spawn(fun() -> io_server(Rows, Columns, Inputs, Owner, #{}) end),
+    Pid = spawn(fun() -> io_server(Rows, Columns, Inputs, Owner, #{}, []) end),
     Old = group_leader(),
     group_leader(Pid, self()),
     try
-        Fun()
+        Result = Fun(),
+        Ref = make_ref(),
+        Pid ! {collect_output, self(), Ref},
+        Output =
+            receive
+                {Ref, Captured} -> Captured
+            after 1000 ->
+                exit(capture_timeout)
+            end,
+        {Result, Output}
     after
         group_leader(Old, self()),
         Pid ! stop_when_idle
     end.
 
-io_server(Rows, Columns, Inputs, Owner, Clients) ->
+io_server(Rows, Columns, Inputs, Owner, Clients, Output) ->
     receive
         stop ->
             ok;
         stop_when_idle ->
-            drain_io_server(Rows, Columns, Inputs, Owner, Clients);
+            drain_io_server(Rows, Columns, Inputs, Owner, Clients, Output);
+        {collect_output, From, Ref} ->
+            From ! {Ref, lists:reverse(Output)},
+            io_server(Rows, Columns, Inputs, Owner, Clients, Output);
         {'DOWN', Ref, process, Pid, _} ->
-            io_server(Rows, Columns, Inputs, Owner, drop_client(Pid, Ref, Clients));
+            io_server(Rows, Columns, Inputs, Owner, drop_client(Pid, Ref, Clients), Output);
         {io_request, From, ReplyAs, Request} ->
             NextClients = track_client(From, Owner, Clients),
-            {Reply, NextInputs} = handle_request(Request, Rows, Columns, Inputs),
+            {Reply, NextInputs, NextOutput} = handle_request(
+                Request, Rows, Columns, Inputs, Output
+            ),
             From ! {io_reply, ReplyAs, Reply},
-            io_server(Rows, Columns, NextInputs, Owner, NextClients)
+            io_server(Rows, Columns, NextInputs, Owner, NextClients, NextOutput)
     end.
 
-drain_io_server(Rows, Columns, Inputs, Owner, Clients) ->
+drain_io_server(Rows, Columns, Inputs, Owner, Clients, Output) ->
     receive
         stop ->
             ok;
         {'DOWN', Ref, process, Pid, _} ->
-            drain_io_server(Rows, Columns, Inputs, Owner, drop_client(Pid, Ref, Clients));
+            drain_io_server(Rows, Columns, Inputs, Owner, drop_client(Pid, Ref, Clients), Output);
         {io_request, From, ReplyAs, Request} ->
             NextClients = track_client(From, Owner, Clients),
-            {Reply, NextInputs} = handle_request(Request, Rows, Columns, Inputs),
+            {Reply, NextInputs, NextOutput} = handle_request(
+                Request, Rows, Columns, Inputs, Output
+            ),
             From ! {io_reply, ReplyAs, Reply},
-            drain_io_server(Rows, Columns, NextInputs, Owner, NextClients)
+            drain_io_server(Rows, Columns, NextInputs, Owner, NextClients, NextOutput)
     after 100 ->
         case maps:size(Clients) of
             0 -> ok;
-            _ -> drain_io_server(Rows, Columns, Inputs, Owner, Clients)
+            _ -> drain_io_server(Rows, Columns, Inputs, Owner, Clients, Output)
         end
     end.
 
@@ -86,30 +107,30 @@ drop_client(Pid, Ref, Clients) ->
         _ -> Clients
     end.
 
-handle_request({get_line, _Enc, _Prompt}, _Rows, _Columns, Inputs) ->
+handle_request({get_line, _Enc, _Prompt}, _Rows, _Columns, Inputs, Output) ->
     case Inputs of
-        [Line | Rest] -> {Line, Rest};
-        [] -> {eof, []}
+        [Line | Rest] -> {Line, Rest, Output};
+        [] -> {eof, [], Output}
     end;
-handle_request({get_chars, _Enc, _Prompt, N}, _Rows, _Columns, Inputs) ->
+handle_request({get_chars, _Enc, _Prompt, N}, _Rows, _Columns, Inputs, Output) ->
     case Inputs of
-        [Line | Rest] -> {lists:sublist(Line, N), Rest};
-        [] -> {eof, []}
+        [Line | Rest] -> {lists:sublist(Line, N), Rest, Output};
+        [] -> {eof, [], Output}
     end;
-handle_request({put_chars, _Enc, _Chars}, _Rows, _Columns, Inputs) ->
-    {ok, Inputs};
-handle_request({put_chars, _Chars}, _Rows, _Columns, Inputs) ->
-    {ok, Inputs};
-handle_request({setopts, _Opts}, _Rows, _Columns, Inputs) ->
-    {ok, Inputs};
-handle_request({getopts, _Opts}, Rows, Columns, Inputs) ->
-    {{ok, [{rows, Rows}, {columns, Columns}]}, Inputs};
-handle_request({get_geometry, rows}, Rows, _Columns, Inputs) ->
-    {Rows, Inputs};
-handle_request({get_geometry, columns}, _Rows, Columns, Inputs) ->
-    {Columns, Inputs};
-handle_request(_Request, _Rows, _Columns, Inputs) ->
-    {ok, Inputs}.
+handle_request({put_chars, _Enc, Chars}, _Rows, _Columns, Inputs, Output) ->
+    {ok, Inputs, [Chars | Output]};
+handle_request({put_chars, Chars}, _Rows, _Columns, Inputs, Output) ->
+    {ok, Inputs, [Chars | Output]};
+handle_request({setopts, _Opts}, _Rows, _Columns, Inputs, Output) ->
+    {ok, Inputs, Output};
+handle_request({getopts, _Opts}, Rows, Columns, Inputs, Output) ->
+    {{ok, [{rows, Rows}, {columns, Columns}]}, Inputs, Output};
+handle_request({get_geometry, rows}, Rows, _Columns, Inputs, Output) ->
+    {Rows, Inputs, Output};
+handle_request({get_geometry, columns}, _Rows, Columns, Inputs, Output) ->
+    {Columns, Inputs, Output};
+handle_request(_Request, _Rows, _Columns, Inputs, Output) ->
+    {ok, Inputs, Output}.
 
 column_widths(IoData) ->
     [First | _] = line_column_widths(IoData),

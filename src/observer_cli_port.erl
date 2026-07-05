@@ -16,6 +16,7 @@
     render_stats/1,
     render_opts/1,
     render_menu/2,
+    output_die_view/2,
     get_menu_title/1,
     get_menu_title2/1
 ]).

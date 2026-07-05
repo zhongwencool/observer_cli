@@ -244,6 +244,65 @@ render_info_page_wide_border_alignment_test() ->
     {LayoutWidth, LineWidths} = port_info_page_line_widths(205),
     ?assert(lists:all(fun(Width) -> Width =:= LayoutWidth end, LineWidths)).
 
+port_detail_golden_output_fragments_test() ->
+    observer_cli_test_io:with_geometry(
+        24,
+        205,
+        [],
+        fun() ->
+            Output = [
+                observer_cli_port:render_menu(info, 1500),
+                observer_cli_port:render_port_info(port_view()),
+                observer_cli_port:render_link_monitor([self()], [{process, self()}]),
+                observer_cli_port:render_type_line([
+                    {peername, {{127, 0, 0, 1}, 4369}},
+                    {sockname, {{127, 0, 0, 1}, 58521}},
+                    {statistics, stats_fixture()},
+                    {options, opts_fixture()}
+                ]),
+                observer_cli_port:render_last_line()
+            ],
+            observer_cli_test_io:assert_stable_fragments(Output, [
+                "Home(H)",
+                "Network(N)",
+                "Port Info(P)",
+                "Interval: 1500ms",
+                "Attr",
+                "Value",
+                "queue_size",
+                "connected",
+                "Links(1)",
+                "Monitors(1)",
+                "sockname",
+                "peername",
+                "recv_cnt",
+                "send_pend",
+                "Option",
+                "mode",
+                "packet",
+                "q(quit)"
+            ]),
+            observer_cli_test_io:assert_ansi_boundaries(Output)
+        end
+    ).
+
+port_dead_golden_output_fragments_test() ->
+    {ok, Listen} = gen_tcp:listen(0, [binary, {active, false}]),
+    ok = gen_tcp:close(Listen),
+    {_Result, Output} = observer_cli_test_io:capture_with_geometry(
+        24,
+        205,
+        [],
+        fun() -> observer_cli_port:output_die_view(Listen, 1500) end
+    ),
+    observer_cli_test_io:assert_stable_fragments(Output, [
+        "Port Info(P)",
+        "Port(",
+        "has already died.",
+        "q(quit)"
+    ]),
+    observer_cli_test_io:assert_ansi_boundaries(Output).
+
 render_menu_test() ->
     Line = observer_cli_port:render_menu(info, 1000),
     ?assert(string:find(lists:flatten(Line), "Interval: 1000ms") =/= nomatch).
