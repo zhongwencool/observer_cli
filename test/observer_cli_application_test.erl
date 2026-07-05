@@ -87,6 +87,24 @@ collect_app_info_legacy_list_test() ->
         exit(Child, kill)
     end.
 
+app_render_info_sorting_test() ->
+    AppInfo = #{
+        high_app => {3, 30, 300, 2, "Started", "1.0"},
+        low_app => {1, 10, 100, 0, "Started", "1.0"},
+        mid_app => {2, 20, 200, 1, "Loaded", "1.0"}
+    },
+    ?assertEqual(
+        {1, [
+            {0, {3, "Started"}, [high_app, 3, 30, 300, 2, "Started", "1.0"]},
+            {0, {2, "Loaded"}, [mid_app, 2, 20, 200, 1, "Loaded", "1.0"]}
+        ]},
+        observer_cli_application:app_render_info(AppInfo, 2, 1, {proc_count, 1})
+    ),
+    ?assertEqual(
+        {3, [{0, {1, "Started"}, [low_app, 1, 10, 100, 0, "Started", "1.0"]}]},
+        observer_cli_application:app_render_info(AppInfo, 2, 2, {proc_count, 1})
+    ).
+
 start_quit_test() ->
     observer_cli_test_io:with_input(
         ["q\n"],

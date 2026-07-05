@@ -12,7 +12,9 @@
     app_status/1,
     collect_app_info/0,
     collect_app_info/4,
+    collect_app_render_info/3,
     find_group_leader/1,
+    app_render_info/4,
     render_app_info/3,
     update_app_stats/6
 ]).
@@ -83,7 +85,8 @@ render_worker(App, AutoRow) ->
     Rows = erlang:max(TerminalRow - 5, 0),
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
     Menu = observer_cli_lib:render_top_menu(app, Text),
-    Info = render_app_info(Rows, CurPage, Type),
+    AppInfo = collect_app_render_info(Rows, CurPage, Type),
+    Info = render_app_info(AppInfo, Type),
     LastText = io_lib:format(?LAST_LINE, [Interval, CurPage]),
     LastLine = observer_cli_lib:render_footer(LastText),
     ?output([?CURSOR_TOP, Menu, Info, LastLine]),
@@ -93,14 +96,19 @@ render_worker(App, AutoRow) ->
         redraw -> render_worker(App, AutoRow)
     end.
 
-render_app_info(Row, CurPage, {Type, N}) ->
-    List = [
+collect_app_render_info(Row, CurPage, Type) ->
+    app_render_info(collect_app_info(), Row, CurPage, Type).
+
+app_render_info(AppInfo, Row, CurPage, {_Type, N}) ->
+    Rows = [
         begin
             {0, {element(N, I), S}, [App, C, M, R, Q, S, V]}
         end
-     || {App, I = {C, M, R, Q, S, V}} <- maps:to_list(collect_app_info())
+     || {App, I = {C, M, R, Q, S, V}} <- maps:to_list(AppInfo)
     ],
-    {StartPos, SortList} = observer_cli_lib:sublist(List, Row, CurPage),
+    observer_cli_lib:sublist(Rows, Row, CurPage).
+
+render_app_info({StartPos, SortList}, {Type, _N}) ->
     InitColor = [
         {memory, ?GRAY_BG},
         {proc_count, ?GRAY_BG},
@@ -164,6 +172,11 @@ render_app_info(Row, CurPage, {Type, N}) ->
         SortList
     ),
     [Title | lists:reverse(View)].
+
+-ifdef(TEST).
+render_app_info(Row, CurPage, Type) ->
+    render_app_info(collect_app_render_info(Row, CurPage, Type), Type).
+-endif.
 
 app_title_widths() ->
     observer_cli_lib:weighted_widths(
