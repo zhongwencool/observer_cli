@@ -22,6 +22,7 @@
     render_system_line/2, render_system_line/3,
     render_memory_process_line/3,
     render_scheduler_usage/1,
+    render_last_line/0,
     render_top_n_view/5, render_top_n_view/6,
     transform_seq/3,
     process_bar_format_style/2,
@@ -258,7 +259,7 @@ redraw_running(
     SystemLine = render_system_line(PsCmd, element(1, StableInfo)),
     MemLine = render_memory_process_line(Diffs, element(2, StableInfo), Interval),
     {TopNList, RankLine} = render_top_n_view(Type, TopList, ProcessRows, RankPos, CurPage),
-    LastLine = observer_cli_lib:render_last_line(?LAST_LINE),
+    LastLine = render_last_line(),
     ?output([?CURSOR_TOP, MenuLine, SystemLine, MemLine, CPULine, RankLine, LastLine]),
 
     observer_cli_store:update(StorePid, ProcessRows, TopNList),
@@ -271,6 +272,9 @@ redraw_running(
         {Func, Type} ->
             redraw_running(PsCmd, StorePid, Home, StableInfo, NewStats, TimeRef, AutoRow, false)
     end.
+
+render_last_line() ->
+    observer_cli_lib:render_last_line(?LAST_LINE).
 
 render_system_line(PsCmd, StableInfo) ->
     render_system_line(PsCmd, StableInfo, get_atom_status()).

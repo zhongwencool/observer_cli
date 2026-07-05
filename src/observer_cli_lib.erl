@@ -383,15 +383,29 @@ pad_line(Line) ->
 
 trim_border_space(Line) ->
     Reset = ?RESET,
-    Suffix = <<$|, $\s, Reset/binary>>,
-    case take_suffix(Line, Suffix) of
-        {Body, _} -> <<Body/binary, $|, Reset/binary>>;
-        false -> Line
+    case take_suffix(Line, <<Reset/binary, $\s, $|>>) of
+        {Body, _} ->
+            <<Body/binary, Reset/binary, $|>>;
+        false ->
+            Suffix = <<$|, $\s, Reset/binary>>,
+            case take_suffix(Line, Suffix) of
+                {Body, _} -> <<Body/binary, $|, Reset/binary>>;
+                false -> Line
+            end
     end.
 
 border_parts(Line) ->
     Reset = ?RESET,
+    ResetBeforeBorderSuffix = <<Reset/binary, $|>>,
     ResetSuffix = <<$|, Reset/binary>>,
+    case take_suffix(Line, ResetBeforeBorderSuffix) of
+        {Body, Suffix} ->
+            {Body, Suffix};
+        false ->
+            border_parts(Line, ResetSuffix)
+    end.
+
+border_parts(Line, ResetSuffix) ->
     case take_suffix(Line, <<"|">>) of
         {Body, Suffix} ->
             {Body, Suffix};
