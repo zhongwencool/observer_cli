@@ -246,6 +246,37 @@ render_top_n_view_test() ->
     erlang:exit(Pid2, kill),
     {PidList1, Rows1, Rows2, Rows3, Rows4, Rows5}.
 
+render_top_n_view_type_columns_test() ->
+    Pid = self(),
+    Call = [
+        {registered_name, undefined},
+        {current_function, {lists, map, 2}},
+        {initial_call, {erlang, apply, 3}}
+    ],
+    Items = [{Pid, 1000, Call}],
+    LayoutWidth = observer_cli_lib:layout_base_width(),
+    Cases = [
+        {memory, LayoutWidth, ["Memory", "Reductions", "MsgQueue"]},
+        {binary_memory, LayoutWidth, ["BinMemory", "Reductions", "MsgQueue"]},
+        {reductions, LayoutWidth + 1, ["Reductions", "Memory", "MsgQueue"]},
+        {total_heap_size, LayoutWidth, ["TotalHeapSize", "Reductions", "MsgQueue"]},
+        {message_queue_len, LayoutWidth, ["MsgQueue", "Memory", "Reductions"]}
+    ],
+    lists:foreach(
+        fun({Type, TitleWidth, Fragments}) ->
+            {_, [Title, Row]} = observer_cli:render_top_n_view(
+                Type, Items, 1, [{1, 1}], 1, LayoutWidth
+            ),
+            observer_cli_test_io:assert_stable_fragments(
+                [Title],
+                ["No | Pid", "Name|>Label|>Initial Call", "Current Function" | Fragments]
+            ),
+            ?assertEqual(TitleWidth, observer_cli_lib:visible_length(Title)),
+            ?assertEqual(LayoutWidth, observer_cli_lib:visible_length(Row))
+        end,
+        Cases
+    ).
+
 render_top_n_view_wide_layout_test() ->
     Pid = self(),
     Call = [

@@ -708,174 +708,130 @@ transform_seq(Seq, Column, Total) ->
 render_top_n_view(Type, List, Num, Pages, Page) ->
     render_top_n_view(Type, List, Num, Pages, Page, observer_cli_lib:layout_width()).
 
-render_top_n_view(memory, MemoryList, Num, Pages, Page, LayoutWidth) ->
-    {NameWidth, CurrentTitleWidth, CurrentWidth} = top_n_text_widths(45, 32, 33, LayoutWidth),
-    Title =
-        ?render([
-            ?W2(?GRAY_BG, "No | Pid", 16),
-            ?W2(?RED_BG, "     Memory", 14),
-            ?W(?GRAY_BG, "Name|>Label|>Initial Call", NameWidth),
-            ?W(?GRAY_BG, "    Reductions", 14),
-            ?W(?GRAY_BG, " MsgQueue", 10),
-            ?W(?GRAY_BG, "Current Function", CurrentTitleWidth)
-        ]),
-    {Start, ChoosePos} =
-        observer_cli_lib:get_pos(Page, Num, Pages, erlang:length(MemoryList)),
+render_top_n_view(Type, List, Num, Pages, Page, LayoutWidth) ->
+    Spec = top_n_spec(Type),
+    #{text_widths := {NameBaseWidth, CurrentTitleBaseWidth, CurrentBaseWidth}} = Spec,
+    {NameWidth, CurrentTitleWidth, CurrentWidth} =
+        top_n_text_widths(NameBaseWidth, CurrentTitleBaseWidth, CurrentBaseWidth, LayoutWidth),
+    Title = render_top_n_title(Spec, NameWidth, CurrentTitleWidth),
+    {Start, ChoosePos} = observer_cli_lib:get_pos(Page, Num, Pages, erlang:length(List)),
     FormatFunc =
         fun(Item, {Acc, Acc1, Pos}) ->
-            {Pid, MemVal, CurFun, NameOrCall} = get_top_n_info(Item),
-            {Reductions, MsgQueueLen} = get_pid_info(Pid, [reductions, message_queue_len]),
-            Format = get_rank_format(memory, ChoosePos, Pos, NameWidth, CurrentWidth),
-            R = io_lib:format(
-                Format,
-                [
-                    Pos,
-                    erlang:pid_to_list(Pid),
-                    observer_cli_lib:to_byte(MemVal),
-                    NameOrCall,
-                    observer_cli_lib:to_list(Reductions),
-                    observer_cli_lib:to_list(MsgQueueLen),
-                    CurFun
-                ]
+            {Pid, Row} = render_top_n_row(
+                Type, Spec, Item, ChoosePos, Pos, NameWidth, CurrentWidth
             ),
-            {[R | Acc], [{Pos, Pid} | Acc1], Pos + 1}
+            {[Row | Acc], [{Pos, Pid} | Acc1], Pos + 1}
         end,
-    {Rows, PidList} = top_n_rows(FormatFunc, Start, lists:sublist(MemoryList, Start, Num)),
-    {PidList, [Title | lists:reverse(Rows)]};
-render_top_n_view(binary_memory, MemoryList, Num, Pages, Page, LayoutWidth) ->
-    {NameWidth, CurrentTitleWidth, CurrentWidth} = top_n_text_widths(45, 32, 33, LayoutWidth),
-    Title =
-        ?render([
-            ?W2(?GRAY_BG, "No | Pid", 16),
-            ?W2(?RED_BG, "  BinMemory", 14),
-            ?W(?GRAY_BG, "Name|>Label|>Initial Call", NameWidth),
-            ?W(?GRAY_BG, "    Reductions", 14),
-            ?W(?GRAY_BG, " MsgQueue", 10),
-            ?W(?GRAY_BG, "Current Function", CurrentTitleWidth)
-        ]),
-    {Start, ChoosePos} =
-        observer_cli_lib:get_pos(Page, Num, Pages, erlang:length(MemoryList)),
-    FormatFunc =
-        fun(Item, {Acc, Acc1, Pos}) ->
-            {Pid, MemVal, CurFun, NameOrCall} = get_top_n_info(Item),
-            {Reductions, MsgQueueLen} = get_pid_info(Pid, [reductions, message_queue_len]),
-            Format = get_rank_format(binary_memory, ChoosePos, Pos, NameWidth, CurrentWidth),
-            R = io_lib:format(
-                Format,
-                [
-                    Pos,
-                    pid_to_list(Pid),
-                    observer_cli_lib:to_byte(MemVal),
-                    NameOrCall,
-                    observer_cli_lib:to_list(Reductions),
-                    observer_cli_lib:to_list(MsgQueueLen),
-                    CurFun
-                ]
-            ),
-            {[R | Acc], [{Pos, Pid} | Acc1], Pos + 1}
-        end,
-    {Rows, PidList} = top_n_rows(FormatFunc, Start, lists:sublist(MemoryList, Start, Num)),
-    {PidList, [Title | lists:reverse(Rows)]};
-render_top_n_view(reductions, ReductionList, Num, Pages, Page, LayoutWidth) ->
-    {NameWidth, CurrentTitleWidth, CurrentWidth} = top_n_text_widths(45, 33, 34, LayoutWidth),
-    Title =
-        ?render([
-            ?W2(?GRAY_BG, "No | Pid", 16),
-            ?W2(?RED_BG, "   Reductions", 15),
-            ?W(?GRAY_BG, "Name|>Label|>Initial Call", NameWidth),
-            ?W(?GRAY_BG, "      Memory", 13),
-            ?W(?GRAY_BG, " MsgQueue", 10),
-            ?W(?GRAY_BG, "Current Function", CurrentTitleWidth)
-        ]),
-    {Start, ChoosePos} =
-        observer_cli_lib:get_pos(Page, Num, Pages, erlang:length(ReductionList)),
-    FormatFunc =
-        fun(Item, {Acc, Acc1, Pos}) ->
-            {Pid, Reductions, CurFun, NameOrCall} = get_top_n_info(Item),
-            {Memory, MsgQueueLen} = get_pid_info(Pid, [memory, message_queue_len]),
-            Format = get_rank_format(reductions, ChoosePos, Pos, NameWidth, CurrentWidth),
-            R = io_lib:format(
-                Format,
-                [
-                    Pos,
-                    pid_to_list(Pid),
-                    observer_cli_lib:to_list(Reductions),
-                    NameOrCall,
-                    observer_cli_lib:to_byte(Memory),
-                    observer_cli_lib:to_list(MsgQueueLen),
-                    CurFun
-                ]
-            ),
-            {[R | Acc], [{Pos, Pid} | Acc1], Pos + 1}
-        end,
-    {Rows, PidList} = top_n_rows(FormatFunc, Start, lists:sublist(ReductionList, Start, Num)),
-    {PidList, [Title | lists:reverse(Rows)]};
-render_top_n_view(total_heap_size, HeapList, Num, Pages, Page, LayoutWidth) ->
-    {NameWidth, CurrentTitleWidth, CurrentWidth} = top_n_text_widths(45, 32, 33, LayoutWidth),
-    Title =
-        ?render([
-            ?W2(?GRAY_BG, "No | Pid", 16),
-            ?W2(?RED_BG, " TotalHeapSize", 14),
-            ?W(?GRAY_BG, "Name|>Label|>Initial Call", NameWidth),
-            ?W(?GRAY_BG, "    Reductions", 14),
-            ?W(?GRAY_BG, " MsgQueue", 10),
-            ?W(?GRAY_BG, "Current Function", CurrentTitleWidth)
-        ]),
-    {Start, ChoosePos} = observer_cli_lib:get_pos(Page, Num, Pages, erlang:length(HeapList)),
-    FormatFunc =
-        fun(Item, {Acc, Acc1, Pos}) ->
-            {Pid, HeapSize, CurFun, NameOrCall} = get_top_n_info(Item),
-            {Reductions, MsgQueueLen} = get_pid_info(Pid, [reductions, message_queue_len]),
-            Format = get_rank_format(total_heap_size, ChoosePos, Pos, NameWidth, CurrentWidth),
-            R = io_lib:format(
-                Format,
-                [
-                    Pos,
-                    pid_to_list(Pid),
-                    observer_cli_lib:to_byte(HeapSize),
-                    NameOrCall,
-                    observer_cli_lib:to_list(Reductions),
-                    observer_cli_lib:to_list(MsgQueueLen),
-                    CurFun
-                ]
-            ),
-            {[R | Acc], [{Pos, Pid} | Acc1], Pos + 1}
-        end,
-    {Rows, PidList} = top_n_rows(FormatFunc, Start, lists:sublist(HeapList, Start, Num)),
-    {PidList, [Title | lists:reverse(Rows)]};
-render_top_n_view(message_queue_len, MQLenList, Num, Pages, Page, LayoutWidth) ->
-    {NameWidth, CurrentTitleWidth, CurrentWidth} = top_n_text_widths(44, 33, 34, LayoutWidth),
-    Title =
-        ?render([
-            ?W2(?GRAY_BG, "No | Pid", 16),
-            ?W2(?RED_BG, " MsgQueue", 11),
-            ?W(?GRAY_BG, "Name|>Label|>Initial Call", NameWidth),
-            ?W(?GRAY_BG, "      Memory", 13),
-            ?W(?GRAY_BG, "    Reductions", 14),
-            ?W(?GRAY_BG, "Current Function", CurrentTitleWidth)
-        ]),
-    {Start, ChoosePos} = observer_cli_lib:get_pos(Page, Num, Pages, erlang:length(MQLenList)),
-    FormatFunc =
-        fun(Item, {Acc, Acc1, Pos}) ->
-            {Pid, MQLen, CurFun, NameOrCall} = get_top_n_info(Item),
-            {Reductions, Memory} = get_pid_info(Pid, [reductions, memory]),
-            Format = get_rank_format(message_queue_len, ChoosePos, Pos, NameWidth, CurrentWidth),
-            R = io_lib:format(
-                Format,
-                [
-                    Pos,
-                    pid_to_list(Pid),
-                    observer_cli_lib:to_list(MQLen),
-                    NameOrCall,
-                    observer_cli_lib:to_byte(Memory),
-                    observer_cli_lib:to_list(Reductions),
-                    CurFun
-                ]
-            ),
-            {[R | Acc], [{Pos, Pid} | Acc1], Pos + 1}
-        end,
-    {Rows, PidList} = top_n_rows(FormatFunc, Start, lists:sublist(MQLenList, Start, Num)),
+    {Rows, PidList} = top_n_rows(FormatFunc, Start, lists:sublist(List, Start, Num)),
     {PidList, [Title | lists:reverse(Rows)]}.
+
+top_n_spec(memory) ->
+    #{
+        text_widths => {45, 32, 33},
+        metric_columns => [
+            {"     Memory", 14},
+            {"    Reductions", 14},
+            {" MsgQueue", 10}
+        ],
+        row_formats => {"~13.13s ", "~14.14s", " ~-9.9s"}
+    };
+top_n_spec(binary_memory) ->
+    #{
+        text_widths => {45, 32, 33},
+        metric_columns => [
+            {"  BinMemory", 14},
+            {"    Reductions", 14},
+            {" MsgQueue", 10}
+        ],
+        row_formats => {"~13.13s ", "~14.14s", " ~-9.9s"}
+    };
+top_n_spec(reductions) ->
+    #{
+        text_widths => {45, 33, 34},
+        metric_columns => [
+            {"   Reductions", 15},
+            {"      Memory", 13},
+            {" MsgQueue", 10}
+        ],
+        row_formats => {"~-15.15s", "~12.12s", " ~-9.9s"}
+    };
+top_n_spec(total_heap_size) ->
+    #{
+        text_widths => {45, 32, 33},
+        metric_columns => [
+            {" TotalHeapSize", 14},
+            {"    Reductions", 14},
+            {" MsgQueue", 10}
+        ],
+        row_formats => {"~13.13s ", "~14.14s", " ~-9.9s"}
+    };
+top_n_spec(message_queue_len) ->
+    #{
+        text_widths => {44, 33, 34},
+        metric_columns => [
+            {" MsgQueue", 11},
+            {"      Memory", 13},
+            {"    Reductions", 14}
+        ],
+        row_formats => {"~-11.11s", "~13.13s", " ~-13.13s"}
+    }.
+
+render_top_n_title(Spec, NameWidth, CurrentTitleWidth) ->
+    #{
+        metric_columns := [
+            {ValueTitle, ValueWidth},
+            {MiddleTitle, MiddleWidth},
+            {RightTitle, RightWidth}
+        ]
+    } = Spec,
+    ?render([
+        ?W2(?GRAY_BG, "No | Pid", 16),
+        ?W2(?RED_BG, ValueTitle, ValueWidth),
+        ?W(?GRAY_BG, "Name|>Label|>Initial Call", NameWidth),
+        ?W(?GRAY_BG, MiddleTitle, MiddleWidth),
+        ?W(?GRAY_BG, RightTitle, RightWidth),
+        ?W(?GRAY_BG, "Current Function", CurrentTitleWidth)
+    ]).
+
+render_top_n_row(Type, Spec, Item, ChoosePos, Pos, NameWidth, CurrentWidth) ->
+    {Pid, Val, CurFun, NameOrCall} = get_top_n_info(Item),
+    {Value, Middle, Right} = top_n_row_values(Type, Pid, Val),
+    Format = get_rank_format(Spec, ChoosePos, Pos, NameWidth, CurrentWidth),
+    Row = io_lib:format(
+        Format,
+        [
+            Pos,
+            erlang:pid_to_list(Pid),
+            Value,
+            NameOrCall,
+            Middle,
+            Right,
+            CurFun
+        ]
+    ),
+    {Pid, Row}.
+
+top_n_row_values(reductions, Pid, Reductions) ->
+    {Memory, MsgQueueLen} = get_pid_info(Pid, [memory, message_queue_len]),
+    {
+        observer_cli_lib:to_list(Reductions),
+        observer_cli_lib:to_byte(Memory),
+        observer_cli_lib:to_list(MsgQueueLen)
+    };
+top_n_row_values(message_queue_len, Pid, MQLen) ->
+    {Reductions, Memory} = get_pid_info(Pid, [reductions, memory]),
+    {
+        observer_cli_lib:to_list(MQLen),
+        observer_cli_lib:to_byte(Memory),
+        observer_cli_lib:to_list(Reductions)
+    };
+top_n_row_values(_Type, Pid, Bytes) ->
+    {Reductions, MsgQueueLen} = get_pid_info(Pid, [reductions, message_queue_len]),
+    {
+        observer_cli_lib:to_byte(Bytes),
+        observer_cli_lib:to_list(Reductions),
+        observer_cli_lib:to_list(MsgQueueLen)
+    }.
 
 top_n_rows(FormatFunc, Start, List) ->
     {Row, PidList, _} = lists:foldl(FormatFunc, {[], [], Start}, List),
@@ -893,21 +849,11 @@ notify_pause_status() ->
         "or q to quit \e[0m\n"
     ).
 
-get_rank_format(Type, Pos, RankPos, NameWidth, CurrentWidth) ->
+get_rank_format(Spec, ChoosePos, Pos, NameWidth, CurrentWidth) ->
+    #{row_formats := {ValueFormat, MiddleFormat, RightFormat}} = Spec,
     {SelectedFormat, NormalFormat} =
-        case Type of
-            memory ->
-                rank_format("~13.13s ", "~14.14s", " ~-9.9s", NameWidth, CurrentWidth);
-            binary_memory ->
-                rank_format("~13.13s ", "~14.14s", " ~-9.9s", NameWidth, CurrentWidth);
-            total_heap_size ->
-                rank_format("~13.13s ", "~14.14s", " ~-9.9s", NameWidth, CurrentWidth);
-            reductions ->
-                rank_format("~-15.15s", "~12.12s", " ~-9.9s", NameWidth, CurrentWidth);
-            message_queue_len ->
-                rank_format("~-11.11s", "~13.13s", " ~-13.13s", NameWidth, CurrentWidth)
-        end,
-    case Pos =:= RankPos of
+        rank_format(ValueFormat, MiddleFormat, RightFormat, NameWidth, CurrentWidth),
+    case Pos =:= ChoosePos of
         true ->
             SelectedFormat;
         false ->
