@@ -29,17 +29,14 @@ render_keeps_unicode_text_test() ->
     ?assert(string:find(Line, "中文") =/= nomatch).
 
 layout_width_keeps_base_width_test() ->
-    observer_cli_test_io:with_geometry(
-        24,
-        80,
-        [],
-        fun() ->
-            ?assertEqual(observer_cli_lib:layout_base_width(), observer_cli_lib:layout_width()),
-            ?assertEqual(0, observer_cli_lib:layout_extra_width())
-        end
-    ).
+    BaseWidth = observer_cli_lib:layout_base_width(),
+    [
+        assert_layout_width(Columns, BaseWidth, 0)
+     || Columns <- [20, 80, BaseWidth, BaseWidth + 1]
+    ].
 
 layout_width_uses_wide_terminal_test() ->
+    BaseWidth = observer_cli_lib:layout_base_width(),
     observer_cli_test_io:with_geometry(
         24,
         160,
@@ -47,9 +44,21 @@ layout_width_uses_wide_terminal_test() ->
         fun() ->
             ?assertEqual(159, observer_cli_lib:layout_width()),
             ?assertEqual(20, observer_cli_lib:layout_extra_width()),
+            ?assertEqual(20, observer_cli_lib:layout_extra_width(159, BaseWidth)),
             ?assertEqual(
                 159, observer_cli_lib:visible_length(observer_cli_lib:render_footer("q"))
             )
+        end
+    ).
+
+assert_layout_width(Columns, ExpectedWidth, ExpectedExtra) ->
+    observer_cli_test_io:with_geometry(
+        24,
+        Columns,
+        [],
+        fun() ->
+            ?assertEqual(ExpectedWidth, observer_cli_lib:layout_width()),
+            ?assertEqual(ExpectedExtra, observer_cli_lib:layout_extra_width())
         end
     ).
 
@@ -246,11 +255,53 @@ pagination_command_cases() ->
 
 weighted_widths_edge_test() ->
     ?assertEqual([], observer_cli_lib:weighted_widths([], [])),
-    ?assertEqual([10, 20], observer_cli_lib:weighted_widths([10, 20], [0, 0])).
+    ?assertEqual([10, 20], observer_cli_lib:weighted_widths([10, 20], [0, 0])),
+    observer_cli_test_io:with_geometry(
+        24,
+        150,
+        [],
+        fun() ->
+            ?assertEqual([14, 26, 30], observer_cli_lib:weighted_widths([10, 20, 30], [1, 2, 0]))
+        end
+    ).
 
 pad_rendered_plain_text_test() ->
     ?assertEqual([], observer_cli_lib:pad_rendered("")),
     ?assertEqual("plain", observer_cli_lib:pad_rendered("plain")).
+
+pad_rendered_boundary_lines_test() ->
+    observer_cli_test_io:with_geometry(
+        24,
+        160,
+        [],
+        fun() ->
+            LayoutWidth = observer_cli_lib:layout_width(),
+            FullLine = ["|", lists:duplicate(LayoutWidth - 2, $x), "|"],
+            ?assertEqual(
+                unicode:characters_to_binary(FullLine),
+                unicode:characters_to_binary(observer_cli_lib:pad_rendered(FullLine))
+            ),
+
+            UnicodeLine = <<"|中文|"/utf8>>,
+            UnicodePadded = observer_cli_lib:pad_rendered(UnicodeLine),
+            ?assertNotEqual(nomatch, binary:match(to_binary(UnicodePadded), <<"中文"/utf8>>)),
+            ?assertEqual(LayoutWidth, observer_cli_lib:visible_length(UnicodePadded)),
+            ?assertEqual(2, border_count(UnicodePadded)),
+
+            AnsiLine = ["|", observer_cli_lib:ansi_green("ok"), "|"],
+            AnsiPadded = observer_cli_lib:pad_rendered(AnsiLine),
+            observer_cli_test_io:assert_ansi_boundaries(AnsiPadded),
+            ?assertEqual(4, observer_cli_lib:visible_length(AnsiLine)),
+            ?assertEqual(LayoutWidth, observer_cli_lib:visible_length(AnsiPadded)),
+            ?assertEqual(2, border_count(AnsiPadded))
+        end
+    ).
+
+to_binary(IoData) ->
+    unicode:characters_to_binary(IoData).
+
+border_count(IoData) ->
+    length(binary:matches(to_binary(IoData), <<"|">>)).
 
 update_page_pos_test() ->
     Pages = [{1, 1}],
