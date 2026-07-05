@@ -37,16 +37,28 @@ start(Port, Opts) ->
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 manager(RenderPid, Opts) ->
-    case parse_cmd(Opts, RenderPid) of
-        quit ->
-            erlang:send(RenderPid, quit);
-        {new_interval, NewInterval} ->
-            erlang:send(RenderPid, {new_interval, NewInterval}),
-            manager(RenderPid, Opts#view_opts{port = NewInterval});
-        ViewAction ->
-            erlang:send(RenderPid, ViewAction),
-            manager(RenderPid, Opts)
-    end.
+    handle_action(parse_cmd(), RenderPid, Opts).
+
+handle_action(quit, RenderPid, _Opts) ->
+    erlang:send(RenderPid, quit);
+handle_action({new_interval, NewInterval}, RenderPid, Opts) ->
+    erlang:send(RenderPid, {new_interval, NewInterval}),
+    manager(RenderPid, Opts#view_opts{port = NewInterval});
+handle_action(home_view, RenderPid, Opts) ->
+    open_home(RenderPid, Opts);
+handle_action(net_view, RenderPid, Opts) ->
+    open_network(RenderPid, Opts);
+handle_action(ViewAction, RenderPid, Opts) ->
+    erlang:send(RenderPid, ViewAction),
+    manager(RenderPid, Opts).
+
+open_home(RenderPid, Opts) ->
+    erlang:exit(RenderPid, stop),
+    observer_cli:start(Opts).
+
+open_network(RenderPid, Opts) ->
+    erlang:exit(RenderPid, stop),
+    observer_cli_inet:start(Opts).
 
 render_worker(Port, Interval, TimeRef) ->
     case collect_port_info(Port) of
@@ -466,17 +478,8 @@ get_menu_title(Type) ->
         observer_cli_lib:menu_item(Type, info, "Port Info(P)")
     ].
 
-parse_cmd(ViewOpts, Pid) ->
-    case parse_cmd_str(observer_cli_lib:to_list(io:get_line(""))) of
-        home_view ->
-            erlang:exit(Pid, stop),
-            observer_cli:start(ViewOpts);
-        net_view ->
-            erlang:exit(Pid, stop),
-            observer_cli_inet:start(ViewOpts);
-        Action ->
-            Action
-    end.
+parse_cmd() ->
+    parse_cmd_str(observer_cli_lib:to_list(io:get_line(""))).
 
 parse_cmd_str(Key) ->
     case Key of

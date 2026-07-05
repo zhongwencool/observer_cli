@@ -85,20 +85,25 @@ handle_action(
     NewOpt = Opts#view_opts{process = ProcOpts#process{interval = NewInterval}},
     manager(RenderPid, Type, Pid, NewOpt);
 handle_action(home, RenderPid, _Type, _Pid, Opts) ->
-    erlang:exit(RenderPid, stop),
-    observer_cli:start(Opts);
+    open_home(RenderPid, Opts);
 handle_action(back, RenderPid, home, _Pid, Opts) ->
-    erlang:exit(RenderPid, stop),
-    observer_cli:start(Opts);
+    open_home(RenderPid, Opts);
 handle_action(back, RenderPid, plugin, _Pid, Opts) ->
-    erlang:exit(RenderPid, stop),
-    observer_cli_plugin:start(Opts);
+    open_plugin(RenderPid, Opts);
 handle_action(state_view, RenderPid, Type, Pid, Opts) ->
     erlang:send(RenderPid, state_view),
     wait_for_state_view(RenderPid, Type, Pid, Opts);
 handle_action(ViewAction, RenderPid, Type, Pid, Opts) ->
     erlang:send(RenderPid, ViewAction),
     manager(RenderPid, Type, Pid, Opts).
+
+open_plugin(RenderPid, Opts) ->
+    erlang:exit(RenderPid, stop),
+    observer_cli_plugin:start(Opts).
+
+open_home(RenderPid, Opts) ->
+    erlang:exit(RenderPid, stop),
+    observer_cli:start(Opts).
 
 wait_for_state_view(RenderPid, Type, Pid, Opts) ->
     receive
