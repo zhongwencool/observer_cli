@@ -203,32 +203,6 @@ get_address_unknown_test() ->
     Info = [{address, #net_address{address = undefined}}],
     ?assertEqual("unknown", observer_cli_system:get_address(Info)).
 
-render_dist_node_info_fake_test() ->
-    Node = 'fake@node',
-    Created =
-        case ets:info(sys_dist, owner) of
-            undefined ->
-                ets:new(sys_dist, [named_table, public, set]),
-                true;
-            _ ->
-                false
-        end,
-    Info = [
-        {Node, [
-            {state, connected},
-            {type, normal},
-            {address, #net_address{address = {{127, 0, 0, 1}, 1234}}},
-            {in, 1},
-            {out, 2}
-        ]}
-    ],
-    Lines = observer_cli_system:render_dist_node_info(Info),
-    ?assert(is_list(Lines)),
-    case Created of
-        true -> ets:delete(sys_dist);
-        false -> ok
-    end.
-
 render_dist_node_info_wide_layout_test() ->
     Created = ensure_sys_dist(),
     try

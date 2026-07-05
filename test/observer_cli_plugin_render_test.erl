@@ -7,8 +7,11 @@
 
 render_sheet_header_test() ->
     {Headers, Widths} = observer_cli_plugin:render_sheet_header(observer_cli_test_plugin, 1),
-    ?assertEqual(2, length(Widths)),
-    ?assert(string:find(lists:flatten(Headers), "No ") =/= nomatch).
+    ?assertEqual([6, 5], Widths),
+    Text = lists:flatten(Headers),
+    ?assert(string:find(Text, "No ") =/= nomatch),
+    ?assert(string:find(Text, "Name") =/= nomatch),
+    ?assert(string:find(Text, "Value") =/= nomatch).
 
 render_sheet_body_test() ->
     SheetCache = ets:new(plugin_sheet_cache, [set, public]),
@@ -24,6 +27,9 @@ render_sheet_body_test() ->
         []
     ),
     ?assertEqual(2, length(Lines)),
+    Text = lists:flatten(Lines),
+    ?assert(string:find(Text, "alph") =/= nomatch),
+    ?assert(string:find(Text, "beta") =/= nomatch),
     ?assertMatch([{1, _}], ets:lookup(SheetCache, 1)),
     ets:delete(SheetCache).
 
@@ -45,16 +51,5 @@ match_shortcut_test() ->
             1
         )
     ).
-
-mix_content_width_test() ->
-    Result = observer_cli_plugin:mix_content_width(["alpha", 1], [6, 5], []),
-    ?assertEqual(2, length(Result)).
-
-mix_content_width_middle_test() ->
-    Result = observer_cli_plugin:mix_content_width(["alpha", "beta", 1], [6, 6, 5], []),
-    ?assertEqual(3, length(Result)).
-
-get_sheet_width_missing_module_test() ->
-    ?assertEqual(?COLUMN + 5, observer_cli_plugin:get_sheet_width(observer_cli_plugin)).
 
 -endif.

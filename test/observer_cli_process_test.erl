@@ -87,7 +87,7 @@ truncate_str_formatter_fallback_test() ->
     application:set_env(observer_cli, formatter, #{mod => missing_formatter}),
     try
         Value = observer_cli_process:truncate_str(self(), #{test => ok}),
-        ?assert(is_list(Value))
+        ?assert(lists:prefix("Process: ", Value))
     after
         restore_formatter_env(Prev)
     end.
@@ -307,7 +307,7 @@ chart_format_branch_test() ->
 
 truncate_str_default_formatter_test() ->
     Value = observer_cli_process:truncate_str(self(), #{test => ok}),
-    ?assert(is_list(Value)).
+    ?assert(lists:prefix("Process: ", Value)).
 
 render_worker_message_empty_test() ->
     Target = spawn(fun() -> receive

@@ -90,14 +90,16 @@ manager(ChildPid, SheetCache, ViewOpts) ->
     #view_opts{plug = PlugOpts = #plug{cur_index = CurIndex, plugs = Plugs}} = ViewOpts,
     case parse_cmd() of
         quit ->
+            observer_cli_lib:exit_processes([ChildPid]),
             ets:delete(SheetCache),
-            erlang:send(ChildPid, quit);
+            quit;
         go_home ->
             observer_cli_lib:exit_processes([ChildPid]),
             ets:delete(SheetCache),
             observer_cli:start(ViewOpts);
         {new_interval, NewMs} ->
             observer_cli_lib:exit_processes([ChildPid]),
+            ets:delete(SheetCache),
             NewPlugs = update_plugins(CurIndex, Plugs, #{interval => NewMs}),
             start(ViewOpts#view_opts{plug = PlugOpts#plug{plugs = NewPlugs}});
         page_down_top_n ->
@@ -106,6 +108,7 @@ manager(ChildPid, SheetCache, ViewOpts) ->
             NewPage = max(CurPage + 1, 1),
             NewPlugs = update_plugins(CurIndex, Plugs, #{cur_page => NewPage}),
             observer_cli_lib:exit_processes([ChildPid]),
+            ets:delete(SheetCache),
             start(ViewOpts#view_opts{plug = PlugOpts#plug{plugs = NewPlugs}});
         page_up_top_n ->
             CurPlugs = maps:get(CurIndex, Plugs),
@@ -113,6 +116,7 @@ manager(ChildPid, SheetCache, ViewOpts) ->
             NewPage = max(CurPage - 1, 1),
             NewPlugs = update_plugins(CurIndex, Plugs, #{cur_page => NewPage}),
             observer_cli_lib:exit_processes([ChildPid]),
+            ets:delete(SheetCache),
             start(ViewOpts#view_opts{plug = PlugOpts#plug{plugs = NewPlugs}});
         {jump, CurRow} ->
             CurPlugs = maps:get(CurIndex, Plugs),
@@ -155,10 +159,12 @@ manager(ChildPid, SheetCache, ViewOpts) ->
             case maybe_shortcut(Cmd, ViewOpts) of
                 {ok, menu, Index} ->
                     observer_cli_lib:exit_processes([ChildPid]),
+                    ets:delete(SheetCache),
                     start(ViewOpts#view_opts{plug = PlugOpts#plug{cur_index = Index}});
                 {ok, sheet, SortColumn} ->
                     NewPlugs = update_plugins(CurIndex, Plugs, #{sort_column => SortColumn}),
                     observer_cli_lib:exit_processes([ChildPid]),
+                    ets:delete(SheetCache),
                     start(ViewOpts#view_opts{plug = PlugOpts#plug{plugs = NewPlugs}});
                 {error, _} ->
                     manager(ChildPid, SheetCache, ViewOpts)
