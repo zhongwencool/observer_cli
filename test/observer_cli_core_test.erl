@@ -315,6 +315,21 @@ render_top_n_view_type_columns_test() ->
         Cases
     ).
 
+select_home_process_test() ->
+    StorePid = observer_cli_store:start(),
+    Pid1 = spawn(fun wait_forever/0),
+    Pid2 = spawn(fun wait_forever/0),
+    try
+        observer_cli_store:update(StorePid, 2, [{2, Pid1}, {3, Pid2}]),
+        ExactOpts = #view_opts{home = #home{cur_page = 1, pages = [{1, 2}]}},
+        FallbackOpts = #view_opts{home = #home{cur_page = 1, pages = [{1, 1}]}},
+        ?assertEqual({ok, Pid1}, observer_cli:select_home_process(StorePid, ExactOpts, false)),
+        ?assertEqual(error, observer_cli:select_home_process(StorePid, FallbackOpts, false)),
+        ?assertEqual({ok, Pid2}, observer_cli:select_home_process(StorePid, FallbackOpts, true))
+    after
+        observer_cli_lib:exit_processes([StorePid, Pid1, Pid2])
+    end.
+
 render_top_n_view_wide_layout_test() ->
     Pid = self(),
     Call = [
@@ -452,5 +467,11 @@ plain(IoData) ->
             [global, {return, binary}]
         )
     ).
+
+wait_forever() ->
+    receive
+    after infinity ->
+        ok
+    end.
 
 -endif.

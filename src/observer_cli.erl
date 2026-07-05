@@ -41,7 +41,8 @@
     collect_home_snapshot/6,
     node_stats/2,
     get_incremental_stats/1,
-    check_auto_row/0
+    check_auto_row/0,
+    select_home_process/3
 ]).
 
 -endif.
@@ -136,65 +137,110 @@ rpc_start(Node, Interval) ->
     end.
 
 manager(StorePid, RenderPid, Opts, LastSchWallFlag) ->
+    Resource = home_resource(RenderPid, StorePid, LastSchWallFlag, Opts),
+    Action = observer_cli_lib:parse_cmd(Opts, ?MODULE, Resource),
+    handle_home_action(Action, StorePid, RenderPid, Opts, LastSchWallFlag, Resource).
+
+home_resource(RenderPid, StorePid, LastSchWallFlag, #view_opts{
+    home = #home{scheduler_usage = SchUsage}
+}) ->
+    [RenderPid, StorePid, LastSchWallFlag, SchUsage].
+
+handle_home_action(
+    quit,
+    StorePid,
+    RenderPid,
     #view_opts{
         home =
-            Home =
-                #home{
-                    cur_page = CurPage,
-                    pages = Pages,
-                    scheduler_usage = SchUsage
-                }
-    } =
-        Opts,
-    Resource = [RenderPid, StorePid, LastSchWallFlag, SchUsage],
-    case observer_cli_lib:parse_cmd(Opts, ?MODULE, Resource) of
-        quit ->
-            erlang:unlink(RenderPid),
-            erlang:send(RenderPid, quit),
-            set_scheduler_wall_time(LastSchWallFlag, SchUsage),
-            observer_cli_lib:exit_processes([StorePid]),
-            quit;
-        pause_or_resume ->
-            erlang:send(RenderPid, pause_or_resume),
-            manager(StorePid, RenderPid, Opts, LastSchWallFlag);
-        {new_interval, NewInterval} ->
-            clean(Resource),
-            start(Opts#view_opts{home = Home#home{interval = NewInterval}});
-        scheduler_usage ->
-            NewSchUsage =
-                case SchUsage of
-                    ?DISABLE ->
-                        ?ENABLE;
-                    ?ENABLE ->
-                        ?DISABLE
-                end,
-            clean(Resource),
-            start(Opts#view_opts{home = Home#home{scheduler_usage = NewSchUsage}});
-        {jump, NewPos} ->
-            NewPages = observer_cli_lib:update_page_pos(CurPage, NewPos, Pages),
-            NewOpts = Opts#view_opts{home = Home#home{pages = NewPages}},
-            start_process_view(StorePid, RenderPid, NewOpts, LastSchWallFlag, false);
-        jump ->
-            start_process_view(StorePid, RenderPid, Opts, LastSchWallFlag, true);
-        {func, Func, Type} ->
-            clean(Resource),
-            start(Opts#view_opts{home = Home#home{func = Func, type = Type}});
-        page_down_top_n ->
-            NewPage = observer_cli_lib:next_page(CurPage, 1),
-            NewPages = observer_cli_lib:update_page_pos(StorePid, NewPage, Pages),
-            clean(Resource),
-            start(Opts#view_opts{home = Home#home{cur_page = NewPage, pages = NewPages}});
-        page_up_top_n ->
-            NewPage = observer_cli_lib:next_page(CurPage, -1),
-            NewPages = observer_cli_lib:update_page_pos(StorePid, NewPage, Pages),
-            clean(Resource),
-            start(Opts#view_opts{home = Home#home{cur_page = NewPage, pages = NewPages}});
-        {go_to_pid, Pid} ->
-            clean(Resource),
-            observer_cli_process:start(home, Pid, Opts);
-        _ ->
-            manager(StorePid, RenderPid, Opts, LastSchWallFlag)
+            #home{
+                scheduler_usage = SchUsage
+            }
+    },
+    LastSchWallFlag,
+    _Resource
+) ->
+    erlang:unlink(RenderPid),
+    erlang:send(RenderPid, quit),
+    set_scheduler_wall_time(LastSchWallFlag, SchUsage),
+    observer_cli_lib:exit_processes([StorePid]),
+    quit;
+handle_home_action(pause_or_resume, StorePid, RenderPid, Opts, LastSchWallFlag, _Resource) ->
+    erlang:send(RenderPid, pause_or_resume),
+    manager(StorePid, RenderPid, Opts, LastSchWallFlag);
+handle_home_action(
+    {new_interval, NewInterval},
+    _StorePid,
+    _RenderPid,
+    Opts = #view_opts{home = Home},
+    _LastSchWallFlag,
+    Resource
+) ->
+    restart_home(Opts#view_opts{home = Home#home{interval = NewInterval}}, Resource);
+handle_home_action(
+    scheduler_usage,
+    _StorePid,
+    _RenderPid,
+    Opts = #view_opts{home = Home},
+    _LastSchWallFlag,
+    Resource
+) ->
+    #home{scheduler_usage = SchUsage} = Home,
+    NewSchUsage = toggle_scheduler_usage(SchUsage),
+    restart_home(Opts#view_opts{home = Home#home{scheduler_usage = NewSchUsage}}, Resource);
+handle_home_action(
+    {jump, NewPos},
+    StorePid,
+    RenderPid,
+    Opts = #view_opts{
+        home =
+            Home = #home{
+                cur_page = CurPage,
+                pages = Pages
+            }
+    },
+    LastSchWallFlag,
+    Resource
+) ->
+    NewPages = observer_cli_lib:update_page_pos(CurPage, NewPos, Pages),
+    NewOpts = Opts#view_opts{home = Home#home{pages = NewPages}},
+    start_process_view(StorePid, RenderPid, NewOpts, LastSchWallFlag, Resource, false);
+handle_home_action(jump, StorePid, RenderPid, Opts, LastSchWallFlag, Resource) ->
+    start_process_view(StorePid, RenderPid, Opts, LastSchWallFlag, Resource, true);
+handle_home_action(
+    {func, Func, Type},
+    _StorePid,
+    _RenderPid,
+    Opts = #view_opts{home = Home},
+    _LastSchWallFlag,
+    Resource
+) ->
+    restart_home(Opts#view_opts{home = Home#home{func = Func, type = Type}}, Resource);
+handle_home_action(page_down_top_n, StorePid, _RenderPid, Opts, _LastSchWallFlag, Resource) ->
+    restart_home_page(1, StorePid, Opts, Resource);
+handle_home_action(page_up_top_n, StorePid, _RenderPid, Opts, _LastSchWallFlag, Resource) ->
+    restart_home_page(-1, StorePid, Opts, Resource);
+handle_home_action({go_to_pid, Pid}, _StorePid, _RenderPid, Opts, _LastSchWallFlag, Resource) ->
+    open_process_view(Pid, Opts, Resource);
+handle_home_action(_Action, StorePid, RenderPid, Opts, LastSchWallFlag, _Resource) ->
+    manager(StorePid, RenderPid, Opts, LastSchWallFlag).
+
+toggle_scheduler_usage(SchUsage) ->
+    case SchUsage of
+        ?DISABLE ->
+            ?ENABLE;
+        ?ENABLE ->
+            ?DISABLE
     end.
+
+restart_home_page(Delta, StorePid, Opts = #view_opts{home = Home}, Resource) ->
+    #home{cur_page = CurPage, pages = Pages} = Home,
+    NewPage = observer_cli_lib:next_page(CurPage, Delta),
+    NewPages = observer_cli_lib:update_page_pos(StorePid, NewPage, Pages),
+    restart_home(Opts#view_opts{home = Home#home{cur_page = NewPage, pages = NewPages}}, Resource).
+
+restart_home(Opts, Resource) ->
+    clean(Resource),
+    start(Opts).
 
 render_worker(PsCmd, Manager, Home = #home{scheduler_usage = SchUsage}, AutoRow) ->
     ?output(?CLEAR),
@@ -1114,27 +1160,37 @@ connect_error(Prompt, Node) ->
 start_process_view(
     StorePid,
     RenderPid,
-    Opts = #view_opts{home = Home},
+    Opts,
     LastSchWallFlag,
+    Resource,
     AutoJump
 ) ->
+    case select_home_process(StorePid, Opts, AutoJump) of
+        {ok, ChoosePid} ->
+            open_process_view(ChoosePid, Opts, Resource);
+        error ->
+            manager(StorePid, RenderPid, Opts, LastSchWallFlag)
+    end.
+
+select_home_process(StorePid, #view_opts{home = Home}, AutoJump) ->
     #home{
         cur_page = CurPage,
-        pages = Pages,
-        scheduler_usage = SchUsage
+        pages = Pages
     } =
         Home,
     {_, CurPos} = lists:keyfind(CurPage, 1, Pages),
     case observer_cli_store:lookup_pos(StorePid, CurPos) of
         {CurPos, ChoosePid} ->
-            clean([RenderPid, StorePid, LastSchWallFlag, SchUsage]),
-            observer_cli_process:start(home, ChoosePid, Opts);
+            {ok, ChoosePid};
         {_, ChoosePid} when AutoJump ->
-            clean([RenderPid, StorePid, LastSchWallFlag, SchUsage]),
-            observer_cli_process:start(home, ChoosePid, Opts);
+            {ok, ChoosePid};
         _ ->
-            manager(StorePid, RenderPid, Opts, LastSchWallFlag)
+            error
     end.
+
+open_process_view(Pid, Opts, Resource) ->
+    clean(Resource),
+    observer_cli_process:start(home, Pid, Opts).
 
 set_scheduler_wall_time(_Flag, ?DISABLE) ->
     false;
