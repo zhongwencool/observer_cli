@@ -5,7 +5,6 @@
 
 %% API
 -export([start/1]).
--export([clean/1]).
 
 -ifdef(TEST).
 -export([
@@ -43,9 +42,6 @@ start(#view_opts{inet = InetOpt, auto_row = AutoRow} = ViewOpts) ->
         end
     ),
     manager(StorePid, RenderPid, ViewOpts).
-
--spec clean(list()) -> ok.
-clean(Pids) -> observer_cli_lib:exit_processes(Pids).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
@@ -101,7 +97,7 @@ restart_page(
     }).
 
 restart(StorePid, RenderPid, ViewOpts) ->
-    clean([StorePid, RenderPid]),
+    observer_cli_lib:exit_processes([StorePid, RenderPid]),
     start(ViewOpts).
 
 render_worker(StorePid, InetOpt, LastTimeRef, Count, LastIO, AutoRow) ->
@@ -361,10 +357,10 @@ start_port_view(StorePid, RenderPid, Opts = #view_opts{inet = InetOpt}, AutoJump
     {_, CurPos} = lists:keyfind(CurPage, 1, Pages),
     case observer_cli_store:lookup_pos(StorePid, CurPos) of
         {CurPos, ChoosePort} ->
-            clean([StorePid, RenderPid]),
+            observer_cli_lib:exit_processes([StorePid, RenderPid]),
             observer_cli_port:start(ChoosePort, Opts);
         {_, ChoosePort} when AutoJump ->
-            clean([StorePid, RenderPid]),
+            observer_cli_lib:exit_processes([StorePid, RenderPid]),
             observer_cli_port:start(ChoosePort, Opts);
         _ ->
             manager(StorePid, RenderPid, Opts)

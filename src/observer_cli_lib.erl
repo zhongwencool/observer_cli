@@ -207,32 +207,37 @@ to_str(Term) -> to_list(Term).
 parse_cmd(ViewOpts, Module, Args) ->
     case observer_cli_command:parse_shared(to_list(io:get_line(""))) of
         home_view ->
-            apply(Module, clean, [Args]),
+            clean_before_route(Module, Args),
             observer_cli:start(ViewOpts);
         system_view ->
-            apply(Module, clean, [Args]),
+            clean_before_route(Module, Args),
             observer_cli_system:start(ViewOpts);
         app_view ->
-            apply(Module, clean, [Args]),
+            clean_before_route(Module, Args),
             observer_cli_application:start(ViewOpts);
         inet_view ->
-            apply(Module, clean, [Args]),
+            clean_before_route(Module, Args),
             observer_cli_inet:start(ViewOpts);
         mnesia_view ->
-            apply(Module, clean, [Args]),
+            clean_before_route(Module, Args),
             observer_cli_mnesia:start(ViewOpts);
         ets_view ->
-            apply(Module, clean, [Args]),
+            clean_before_route(Module, Args),
             observer_cli_ets:start(ViewOpts);
         help_view ->
-            apply(Module, clean, [Args]),
+            clean_before_route(Module, Args),
             observer_cli_help:start(ViewOpts);
         plugin_view ->
-            apply(Module, clean, [Args]),
+            clean_before_route(Module, Args),
             observer_cli_plugin:start(ViewOpts);
         Action ->
             Action
     end.
+
+clean_before_route(observer_cli, Args) ->
+    observer_cli:clean(Args);
+clean_before_route(_Module, Args) ->
+    exit_processes(Args).
 
 -spec next_redraw(reference() | ?INIT_TIME_REF, pos_integer()) -> reference().
 next_redraw(LastTimeRef, Interval) ->

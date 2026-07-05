@@ -24,18 +24,6 @@ start_manager_unknown_test() ->
         end
     ).
 
-clean_test() ->
-    Pid = spawn(fun() -> receive
-        after infinity -> ok
-        end end),
-    Ref = erlang:monitor(process, Pid),
-    observer_cli_system:clean([Pid]),
-    receive
-        {'DOWN', Ref, process, Pid, _} -> ok
-    after 1000 ->
-        ok
-    end.
-
 info_fields_test() ->
     {Info, Stat} = observer_cli_system:info_fields(),
     ?assertEqual(2, length(Info)),

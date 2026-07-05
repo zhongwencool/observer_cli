@@ -8,7 +8,6 @@
 
 %% API
 -export([start/1]).
--export([clean/1]).
 
 -ifdef(TEST).
 -export([
@@ -54,9 +53,6 @@ start(#view_opts{sys = #system{interval = Interval}} = ViewOpts) ->
         render_worker(Cmd, Interval, ?INIT_TIME_REF)
     end),
     manager(Pid, ViewOpts).
-
--spec clean(list()) -> ok.
-clean(Pids) -> observer_cli_lib:exit_processes(Pids).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private

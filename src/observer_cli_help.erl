@@ -6,7 +6,6 @@
 
 %% API
 -export([start/1]).
--export([clean/1]).
 
 -ifdef(TEST).
 -export([render_help/0, render_doc/1, render_worker/1]).
@@ -26,9 +25,6 @@ start(#view_opts{help = #help{interval = Interval}} = ViewOpts) ->
         render_worker(Interval)
     end),
     manager(ChildPid, ViewOpts).
-
--spec clean(list()) -> ok.
-clean(Pids) -> observer_cli_lib:exit_processes(Pids).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private

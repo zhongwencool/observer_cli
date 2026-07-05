@@ -3,7 +3,6 @@
 
 %% API
 -export([start/1]).
--export([clean/1]).
 
 -ifdef(TEST).
 -export([
@@ -39,9 +38,6 @@ start(
     end),
     manager(Pid, HomeOpts).
 
--spec clean(list()) -> ok.
-clean(Pids) -> observer_cli_lib:exit_processes(Pids).
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -75,7 +71,7 @@ restart_page(ChildPid, HomeOpts = #view_opts{db = DBOpts}, CurPage, Delta) ->
     restart(ChildPid, HomeOpts#view_opts{db = DBOpts#db{cur_page = NewPage}}).
 
 restart(ChildPid, HomeOpts) ->
-    clean([ChildPid]),
+    observer_cli_lib:exit_processes([ChildPid]),
     start(HomeOpts).
 
 render_worker(Interval, LastTimeRef, HideSystemTable, AutoRow, Attr, CurPage) ->

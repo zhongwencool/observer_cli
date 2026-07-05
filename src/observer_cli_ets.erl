@@ -5,7 +5,6 @@
 
 %% API
 -export([start/1]).
--export([clean/1]).
 
 -ifdef(TEST).
 -export([
@@ -36,9 +35,6 @@ start(
     end),
     manager(Pid, ViewOpts).
 
--spec clean(list()) -> ok.
-clean(Pids) -> observer_cli_lib:exit_processes(Pids).
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -66,7 +62,7 @@ restart_page(ChildPid, ViewOpts = #view_opts{ets = EtsOpts}, CurPage, Delta) ->
     restart(ChildPid, ViewOpts#view_opts{ets = EtsOpts#ets{cur_page = NewPage}}).
 
 restart(ChildPid, ViewOpts) ->
-    clean([ChildPid]),
+    observer_cli_lib:exit_processes([ChildPid]),
     start(ViewOpts).
 
 render_worker(Interval, LastTimeRef, Attr, CurPage, AutoRow) ->

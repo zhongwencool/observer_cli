@@ -87,19 +87,42 @@ parse_cmd_top_menu_routes_test() ->
      || Cmd <- ["H\n", "S\n", "A\n", "N\n", "M\n", "E\n", "D\n", "P\n"]
     ].
 
+parse_cmd_top_menu_exits_plain_pids_test() ->
+    Pid = spawn(fun wait_forever/0),
+    route_shared_command("D\n", ?MODULE, [Pid]),
+    assert_dead(Pid).
+
+parse_cmd_top_menu_keeps_home_cleanup_test() ->
+    RenderPid = spawn(fun wait_forever/0),
+    StorePid = spawn(fun wait_forever/0),
+    route_shared_command("D\n", observer_cli, [RenderPid, StorePid, false, ?DISABLE]),
+    assert_dead(RenderPid),
+    assert_dead(StorePid).
+
 route_shared_command(Cmd) ->
+    route_shared_command(Cmd, observer_cli_help, []).
+
+route_shared_command(Cmd, Module, Args) ->
     PrevTrap = process_flag(trap_exit, true),
     try
         observer_cli_test_io:with_input(
             [Cmd, "q\n"],
             fun() ->
                 Opts = #view_opts{auto_row = false},
-                ?assertEqual(quit, observer_cli_lib:parse_cmd(Opts, observer_cli_help, []))
+                ?assertEqual(quit, observer_cli_lib:parse_cmd(Opts, Module, Args))
             end
         )
     after
         process_flag(trap_exit, PrevTrap)
     end.
+
+wait_forever() ->
+    receive
+    after infinity -> ok
+    end.
+
+assert_dead(Pid) ->
+    ?assertEqual(false, erlang:is_process_alive(Pid)).
 
 to_percent_test() ->
     ?assertEqual("05.00%", lists:flatten(observer_cli_lib:to_percent(0.05))),

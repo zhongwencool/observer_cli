@@ -5,7 +5,6 @@
 
 %% API
 -export([start/1]).
--export([clean/1]).
 
 -ifdef(TEST).
 -export([
@@ -40,9 +39,6 @@ start(#view_opts{app = App, auto_row = AutoRow} = ViewOpts) ->
     end),
     manager(Pid, ViewOpts).
 
--spec clean(list()) -> ok.
-clean(Pids) -> observer_cli_lib:exit_processes(Pids).
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -75,7 +71,7 @@ restart_page(Pid, Opts = #view_opts{app = App}, CurPage, Delta) ->
     restart(Pid, Opts#view_opts{app = App#app{cur_page = NewPage}}).
 
 restart(Pid, Opts) ->
-    clean([Pid]),
+    observer_cli_lib:exit_processes([Pid]),
     start(Opts).
 
 render_worker(App, AutoRow) ->
