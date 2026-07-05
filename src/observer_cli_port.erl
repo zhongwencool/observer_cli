@@ -420,8 +420,7 @@ parse_cmd(ViewOpts, Pid) ->
 
 parse_cmd_str(Key) ->
     case Key of
-        "q\n" -> quit;
-        "Q\n" -> quit;
+        Cmd when Cmd =:= "q\n"; Cmd =:= "Q\n" -> quit;
         "P\n" -> info_view;
         "H\n" -> home_view;
         "N\n" -> net_view;

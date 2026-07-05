@@ -598,9 +598,7 @@ parse_cmd() ->
 
 parse_cmd_str(Key) ->
     case Key of
-        "q\n" ->
-            quit;
-        "Q\n" ->
+        Cmd when Cmd =:= "q\n"; Cmd =:= "Q\n" ->
             quit;
         "P\n" ->
             info_view;

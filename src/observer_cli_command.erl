@@ -42,27 +42,11 @@ parse_shared(Key) ->
             cnt;
         "oct\n" ->
             oct;
-        "q\n" ->
+        Cmd when Cmd =:= "q\n"; Cmd =:= "Q\n" ->
             quit;
-        "Q\n" ->
-            quit;
-        %% backward
-        "pu\n" ->
+        Cmd when Cmd =:= "pu\n"; Cmd =:= "PU\n"; Cmd =:= "B\n" ->
             page_up_top_n;
-        %% forward
-        "pd\n" ->
-            page_down_top_n;
-        %% backward
-        "PU\n" ->
-            page_up_top_n;
-        %% forward
-        "PD\n" ->
-            page_down_top_n;
-        %% backward
-        "B\n" ->
-            page_up_top_n;
-        %% forward
-        "F\n" ->
+        Cmd when Cmd =:= "pd\n"; Cmd =:= "PD\n"; Cmd =:= "F\n" ->
             page_down_top_n;
         %% home
         "p\n" ->
@@ -95,9 +79,7 @@ parse_shared(Key) ->
             hide;
         "`\n" ->
             scheduler_usage;
-        [$< | PidStr] ->
-            to_pid(PidStr);
-        [$> | PidStr] ->
+        [PidMark | PidStr] when PidMark =:= $<; PidMark =:= $> ->
             to_pid(PidStr);
         %% {error, estale}|{error, terminated}
         {error, _Reason} ->
