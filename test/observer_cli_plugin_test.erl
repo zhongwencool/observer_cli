@@ -31,7 +31,8 @@ init_config_from_env_test() ->
             ?assertEqual(1500, maps:get(interval, Conf)),
             ?assertEqual(1, maps:get(cur_page, Conf)),
             ?assertEqual(1, maps:get(cur_row, Conf)),
-            ?assertEqual(2, maps:get(sort_column, Conf)),
+            ?assertEqual(value, maps:get(sort, Conf)),
+            ?assertEqual(false, maps:is_key(sort_column, Conf)),
             ?assertEqual(
                 observer_cli_plugin:get_sheet_width(observer_cli_test_plugin),
                 maps:get(sheet_width, Conf)
@@ -64,7 +65,7 @@ maybe_shortcut_menu_test() ->
 maybe_shortcut_sheet_test() ->
     Plug = #plug{cur_index = 1, plugs = #{1 => #{module => observer_cli_test_plugin}}},
     Opts = #view_opts{plug = Plug},
-    ?assertEqual({ok, sheet, 1}, observer_cli_plugin:maybe_shortcut("N", Opts)).
+    ?assertEqual({ok, sheet, name}, observer_cli_plugin:maybe_shortcut("N", Opts)).
 
 maybe_shortcut_missing_index_test() ->
     Plug = #plug{cur_index = 1, plugs = #{}},
@@ -111,12 +112,12 @@ start_jump_action_test() ->
     ChildPid = spawn(fun() -> receive
         after infinity -> ok
         end end),
-    ets:insert(SheetCache, {2, [skip, target]}),
+    ets:insert(SheetCache, {2, #{cells => #{name => "target"}, handle => target}}),
     Plug = #plug{
         cur_index = 1,
         plugs = #{
             1 => #{
-                handler => {fun(Item) -> Item =:= target end, observer_cli_test_handler},
+                handler => observer_cli_test_handler,
                 cur_row => 1
             }
         }
@@ -152,12 +153,12 @@ start_jump_default_row_test() ->
     ChildPid = spawn(fun() -> receive
         after infinity -> ok
         end end),
-    ets:insert(SheetCache, {1, [item]}),
+    ets:insert(SheetCache, {1, #{cells => #{name => "item"}, handle => item}}),
     Plug = #plug{
         cur_index = 1,
         plugs = #{
             1 => #{
-                handler => {fun(_Item) -> true end, observer_cli_test_handler},
+                handler => observer_cli_test_handler,
                 cur_row => 1
             }
         }
@@ -183,12 +184,12 @@ start_jump_no_match_test() ->
     ChildPid = spawn(fun() -> receive
         after infinity -> ok
         end end),
-    ets:insert(SheetCache, {1, [item]}),
+    ets:insert(SheetCache, {1, #{cells => #{name => "item"}}}),
     Plug = #plug{
         cur_index = 1,
         plugs = #{
             1 => #{
-                handler => {fun(_Item) -> false end, observer_cli_test_handler},
+                handler => observer_cli_test_handler,
                 cur_row => 1
             }
         }
@@ -231,7 +232,7 @@ manager_jump_missing_row_test() ->
         cur_index = 1,
         plugs = #{
             1 => #{
-                handler => {fun(_Item) -> true end, observer_cli_test_handler},
+                handler => observer_cli_test_handler,
                 cur_row => 1
             }
         }
@@ -261,7 +262,7 @@ manager_default_jump_missing_row_test() ->
         cur_index = 1,
         plugs = #{
             1 => #{
-                handler => {fun(_Item) -> true end, observer_cli_test_handler},
+                handler => observer_cli_test_handler,
                 cur_row => 1
             }
         }
@@ -287,12 +288,12 @@ manager_default_jump_no_match_test() ->
     ChildPid = spawn(fun() -> receive
         after infinity -> ok
         end end),
-    ets:insert(SheetCache, {1, [item]}),
+    ets:insert(SheetCache, {1, #{cells => #{name => "item"}}}),
     Plug = #plug{
         cur_index = 1,
         plugs = #{
             1 => #{
-                handler => {fun(_Item) -> false end, observer_cli_test_handler},
+                handler => observer_cli_test_handler,
                 cur_row => 1
             }
         }
@@ -383,7 +384,7 @@ render_worker_configured_plugin_test() ->
                 interval => 1000,
                 cur_page => 1,
                 cur_row => 1,
-                sort_column => 1,
+                sort => name,
                 sheet_width => SheetWidth
             }
         }

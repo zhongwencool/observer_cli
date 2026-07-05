@@ -49,7 +49,7 @@ retained_missing_callback_policy_test() ->
     ),
     SheetCache = ets:new(plugin_compat_missing_callbacks, [set, public]),
     try
-        Plug = #{module => missing_plugin_module, sort_column => 1, cur_page => 1, cur_row => 1},
+        Plug = #{module => missing_plugin_module, sort => name, cur_page => 1, cur_row => 1},
         ?assertEqual({[], []}, observer_cli_plugin:render_sheet(1, Plug, SheetCache, []))
     after
         ets:delete(SheetCache)

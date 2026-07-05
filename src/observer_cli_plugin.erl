@@ -26,22 +26,29 @@
 ]).
 -endif.
 
--callback attributes(PreState) -> {[Rows], NewState} when
+-callback attributes(PreState) -> #{rows := [Rows], state := NewState} when
     PreState :: any(),
-    Rows :: #{
-        content => string() | integer() | {byte, pos_integer()},
-        width => pos_integer(),
-        color => binary()
-    },
+    Rows :: [attr_cell()],
     NewState :: any().
 
--callback sheet_header() -> [SheetHeader] when
-    SheetHeader :: #{title => string(), width => pos_integer(), shortcut => string()}.
+-callback sheet_header() -> #{columns := [SheetHeader], default_sort := atom()} when
+    SheetHeader :: #{
+        id := atom(),
+        title := string(),
+        width := pos_integer(),
+        shortcut => string()
+    }.
 
--callback sheet_body(PreState) -> {SheetBody, NewState} when
+-callback sheet_body(PreState) -> #{rows := [SheetBody], state := NewState} when
     PreState :: any(),
-    SheetBody :: list(),
+    SheetBody :: #{cells := map(), handle => term()},
     NewState :: any().
+
+-type attr_cell() :: #{
+    content => string() | integer() | {byte, pos_integer()} | {percent, float()},
+    width => pos_integer(),
+    color => binary()
+}.
 
 -define(LAST_LINE,
     "refresh: ~wms q(quit) Positive Number(set refresh interval time ms) F/B(forward/back) Current pages is ~w"
@@ -65,19 +72,8 @@ init_config(#plug{plugs = []}) ->
     application:ensure_all_started(observer_cli),
     Plugs = application:get_env(observer_cli, plugins, []),
     {_, NewPlugs} = lists:foldl(
-        fun(M = #{module := Mod}, {Index, Acc}) ->
-            SheetWidth = get_sheet_width(Mod),
-            Config = maps:merge(
-                #{
-                    cur_page => 1,
-                    cur_row => 1,
-                    sort_column => 2,
-                    interval => 1500,
-                    sheet_width => SheetWidth
-                },
-                M
-            ),
-            {Index + 1, maps:put(Index, Config, Acc)}
+        fun(M = #{module := _Mod}, {Index, Acc}) ->
+            {Index + 1, maps:put(Index, init_plugin_config(M), Acc)}
         end,
         {1, #{}},
         Plugs
@@ -85,6 +81,24 @@ init_config(#plug{plugs = []}) ->
     #plug{cur_index = 1, plugs = NewPlugs};
 init_config(Plugs) ->
     Plugs.
+
+init_plugin_config(Config) ->
+    Defaults = #{
+        cur_page => 1,
+        cur_row => 1,
+        interval => 1500,
+        sheet_width => observer_cli_lib:layout_base_width()
+    },
+    WithDefaults = maps:merge(Defaults, Config),
+    #{module := Mod} = WithDefaults,
+    try
+        Header = plugin_header(Mod),
+        Migrated = observer_cli_plugin_compat:migrate_config(WithDefaults, Header),
+        maps:put(sheet_width, get_sheet_width(Mod), Migrated)
+    catch
+        error:undef ->
+            WithDefaults
+    end.
 
 manager(ChildPid, SheetCache, ViewOpts) ->
     #view_opts{plug = PlugOpts = #plug{cur_index = CurIndex, plugs = Plugs}} = ViewOpts,
@@ -116,8 +130,8 @@ manager(ChildPid, SheetCache, ViewOpts) ->
                     observer_cli_lib:exit_processes([ChildPid]),
                     ets:delete(SheetCache),
                     start(ViewOpts#view_opts{plug = PlugOpts#plug{cur_index = Index}});
-                {ok, sheet, SortColumn} ->
-                    NewPlugs = update_plugins(CurIndex, Plugs, #{sort_column => SortColumn}),
+                {ok, sheet, Sort} ->
+                    NewPlugs = update_plugins(CurIndex, Plugs, #{sort => Sort}),
                     observer_cli_lib:exit_processes([ChildPid]),
                     ets:delete(SheetCache),
                     start(ViewOpts#view_opts{plug = PlugOpts#plug{plugs = NewPlugs}});
@@ -149,37 +163,36 @@ jump_current_row(ChildPid, SheetCache, ViewOpts) ->
 jump_row(ChildPid, SheetCache, ViewOpts, CurRow, SaveRow) ->
     case current_plugin(ViewOpts) of
         {ok, CurIndex, Plugs, CurPlugs} ->
-            {Filter, Handler} = maps:get(handler, CurPlugs, {fun is_pid/1, observer_cli_process}),
             maybe_start_row(ChildPid, SheetCache, ViewOpts, CurIndex, Plugs, {
-                CurRow, SaveRow, Filter, Handler
+                CurPlugs, CurRow, SaveRow
             });
         error ->
             manager(ChildPid, SheetCache, ViewOpts)
     end.
 
 maybe_start_row(
-    ChildPid, SheetCache, ViewOpts, CurIndex, Plugs, {CurRow, SaveRow, Filter, Handler}
+    ChildPid, SheetCache, ViewOpts, CurIndex, Plugs, {CurPlugs, CurRow, SaveRow}
 ) ->
     case ets:lookup(SheetCache, CurRow) of
-        [{CurRow, Items}] ->
+        [{CurRow, Row}] ->
             start_first_match(ChildPid, SheetCache, ViewOpts, CurIndex, Plugs, {
-                Items, CurRow, SaveRow, Filter, Handler
+                CurPlugs, Row, CurRow, SaveRow
             });
         _ ->
             manager(ChildPid, SheetCache, ViewOpts)
     end.
 
 start_first_match(
-    ChildPid, SheetCache, ViewOpts, CurIndex, Plugs, {Items, CurRow, SaveRow, Filter, Handler}
+    ChildPid, SheetCache, ViewOpts, CurIndex, Plugs, {CurPlugs, Row, CurRow, SaveRow}
 ) ->
-    case [I || I <- Items, Filter(I)] of
-        [ChooseItem | _] ->
+    case observer_cli_plugin_compat:resolve_handler(CurPlugs, Row) of
+        {Handler, ChooseItem} ->
             observer_cli_lib:exit_processes([ChildPid]),
             ets:delete(SheetCache),
             Handler:start(
                 plugin, ChooseItem, view_opts_with_row(ViewOpts, CurIndex, Plugs, CurRow, SaveRow)
             );
-        [] ->
+        none ->
             manager(ChildPid, SheetCache, ViewOpts)
     end.
 
@@ -219,8 +232,8 @@ maybe_shortcut(Cmd, ViewOpts) ->
             case maps:find(CurIndex, Plugs) of
                 {ok, #{module := CurMod}} ->
                     try
-                        case match_sheet_shortcut(Cmd, CurMod:sheet_header(), 1) of
-                            {ok, Index} -> {ok, sheet, Index};
+                        case match_sheet_shortcut(Cmd, plugin_header(CurMod), 1) of
+                            {ok, Sort} -> {ok, sheet, Sort};
                             {error, _Reason} = Err -> Err
                         end
                     catch
@@ -240,9 +253,14 @@ match_menu_shortcut(Cmd, [{Index, Plug} | Plugs]) ->
         _ -> match_menu_shortcut(Cmd, Plugs)
     end.
 
-match_sheet_shortcut(_Cmd, [], _Index) -> {error, not_found};
-match_sheet_shortcut(Shortcut, [#{shortcut := Shortcut} | _], Index) -> {ok, Index};
-match_sheet_shortcut(Cmd, [_ | T], Index) -> match_sheet_shortcut(Cmd, T, Index + 1).
+match_sheet_shortcut(_Cmd, [], _Index) ->
+    {error, not_found};
+match_sheet_shortcut(Cmd, #{columns := Columns}, Index) ->
+    match_sheet_shortcut(Cmd, Columns, Index);
+match_sheet_shortcut(Shortcut, [#{shortcut := Shortcut, id := Id} | _], _Index) ->
+    {ok, Id};
+match_sheet_shortcut(Cmd, [_ | T], Index) ->
+    match_sheet_shortcut(Cmd, T, Index + 1).
 
 render_worker(
     LastTimeRef,
@@ -333,7 +351,8 @@ get_menu_title(CurIndex, Plugs, Pos, Acc) ->
 
 render_attributes(#{module := Module}, PrevAttrs) ->
     try
-        {DiffAttrs, NewAttrs} = Module:attributes(PrevAttrs),
+        #{rows := DiffAttrs, state := NewAttrs} =
+            observer_cli_plugin_compat:normalize_attributes(Module:attributes(PrevAttrs)),
         Render = [
             begin
                 L = [
@@ -363,20 +382,21 @@ render_attributes(#{module := Module}, PrevAttrs) ->
 
 render_sheet(Rows, Plug, SheetCache, PrevSheet) ->
     #{
-        sort_column := SortColumn,
         cur_page := CurPage,
         cur_row := CurRow,
         module := Module
     } = Plug,
     try
-        {Headers, Widths} = render_sheet_header(Module, SortColumn),
+        Header = plugin_header(Module),
+        Sort = maps:get(sort, Plug, maps:get(default_sort, Header)),
+        {Headers, Columns} = render_sheet_header(Module, Sort),
         {Body, NewSheet} = render_sheet_body(
             Module,
             CurPage,
             CurRow,
             Rows,
-            SortColumn,
-            Widths,
+            Sort,
+            Columns,
             SheetCache,
             PrevSheet
         ),
@@ -386,12 +406,13 @@ render_sheet(Rows, Plug, SheetCache, PrevSheet) ->
             {[], []}
     end.
 
-render_sheet_header(Module, SortRow) ->
-    SheetHeader = Module:sheet_header(),
-    {Headers, Widths, _} = lists:foldl(
+render_sheet_header(Module, Sort) when is_atom(Module) ->
+    render_sheet_header(plugin_header(Module), Sort);
+render_sheet_header(#{columns := SheetHeader}, Sort) ->
+    {Headers, Columns, _} = lists:foldl(
         fun(
-            #{title := Header, width := Width} = H,
-            {HeaderAcc, WidthAcc, Index}
+            #{id := Id, title := Header, width := Width} = H,
+            {HeaderAcc, ColumnAcc, Index}
         ) ->
             Title =
                 case maps:get(shortcut, H, "") of
@@ -399,24 +420,26 @@ render_sheet_header(Module, SortRow) ->
                     Shortcut -> Header ++ "(" ++ Shortcut ++ ")"
                 end,
             Line =
-                case Index =:= SortRow of
+                case Id =:= Sort of
                     true -> [?UNDERLINE, ?W2(?RED_BG, Title, Width) | HeaderAcc];
                     false -> [?UNDERLINE, ?W2(?GRAY_BG, Title, Width) | HeaderAcc]
                 end,
-            {Line, [Width | WidthAcc], Index - 1}
+            {Line, [#{id => Id, width => Width} | ColumnAcc], Index - 1}
         end,
         {[], [], length(SheetHeader)},
         lists:reverse(SheetHeader)
     ),
-    {?render([?W2(?GRAY_BG, "No ", 3) | Headers]), Widths}.
+    {?render([?W2(?GRAY_BG, "No ", 3) | Headers]), Columns}.
 
-render_sheet_body(Module, CurPage, CurRow, Rows, SortRow, Widths, SheetCache, PrevSheet) ->
-    {Diff, NewSheet} = Module:sheet_body(PrevSheet),
-    DataSet = lists:map(fun(I) -> {0, lists:nth(SortRow, I), I} end, Diff),
+render_sheet_body(Module, CurPage, CurRow, Rows, Sort, Columns, SheetCache, PrevSheet) ->
+    #{rows := Diff, state := NewSheet} =
+        observer_cli_plugin_compat:normalize_sheet_body(Module:sheet_body(PrevSheet)),
+    DataSet = lists:map(fun(Row) -> {0, sheet_cell(Sort, Row), Row} end, Diff),
+    Widths = column_widths(Columns),
     {StartAt, SortData} = observer_cli_lib:sublist(DataSet, Rows, CurPage),
     {Line, _} = lists:foldl(
         fun({_, _, Item}, {List, Pos}) ->
-            L = mix_content_width(Item, Widths, []),
+            L = mix_content_width(row_cells(Item, Columns), Widths, []),
             ets:insert(SheetCache, {Pos, Item}),
             case CurRow =:= Pos of
                 false -> {[?render([?W(Pos, 2) | L])] ++ List, Pos + 1};
@@ -427,6 +450,25 @@ render_sheet_body(Module, CurPage, CurRow, Rows, SortRow, Widths, SheetCache, Pr
         SortData
     ),
     {lists:reverse(Line), NewSheet}.
+
+row_cells(#{cells := Cells}, Columns) ->
+    [maps:get(Id, Cells, "") || #{id := Id} <- Columns].
+
+sheet_cell(Id, #{cells := Cells}) ->
+    maps:get(Id, Cells, "").
+
+column_widths(Columns) ->
+    [Width || #{width := Width} <- Columns].
+
+plugin_header(Module) ->
+    observer_cli_plugin_compat:normalize_sheet_header(Module:sheet_header()).
+
+sheet_width(#{columns := Columns}) ->
+    Width = lists:foldl(fun(#{width := W}, Acc) -> Acc + W + 1 end, 1, Columns),
+    case Width > 1 of
+        true -> Width - 2;
+        false -> observer_cli_lib:layout_base_width()
+    end.
 
 mix_content_width([], _, Acc) ->
     lists:reverse(Acc);
@@ -445,11 +487,7 @@ mix_content_width([I | IRest], [W | WRest], Acc) ->
 
 get_sheet_width(Mod) ->
     try
-        Width = lists:foldl(fun(#{width := W}, Acc) -> Acc + W + 1 end, 1, Mod:sheet_header()),
-        case Width > 1 of
-            true -> Width - 2;
-            false -> observer_cli_lib:layout_base_width()
-        end
+        sheet_width(plugin_header(Mod))
     catch
         error:undef ->
             observer_cli_lib:layout_base_width()

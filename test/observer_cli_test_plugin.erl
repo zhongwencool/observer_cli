@@ -9,19 +9,22 @@ attributes(State) ->
             #{content => {percent, 0.5}, width => 6}
         ]
     ],
-    {Labels, State}.
+    #{rows => Labels, state => State}.
 
 sheet_header() ->
-    [
-        #{title => "Name", width => 6, shortcut => "N"},
-        #{title => "Value", width => 5}
-    ].
+    #{
+        columns => [
+            #{id => name, title => "Name", width => 6, shortcut => "N"},
+            #{id => value, title => "Value", width => 5}
+        ],
+        default_sort => value
+    }.
 
 sheet_body(Prev) ->
-    {
-        [
-            ["alpha", 1],
-            ["beta", 2]
+    #{
+        rows => [
+            #{cells => #{name => "alpha", value => 1}},
+            #{cells => #{name => "beta", value => 2}}
         ],
-        Prev
+        state => Prev
     }.

@@ -6,8 +6,8 @@
 -include("observer_cli.hrl").
 
 render_sheet_header_test() ->
-    {Headers, Widths} = observer_cli_plugin:render_sheet_header(observer_cli_test_plugin, 1),
-    ?assertEqual([6, 5], Widths),
+    {Headers, Columns} = observer_cli_plugin:render_sheet_header(observer_cli_test_plugin, name),
+    ?assertEqual([#{id => name, width => 6}, #{id => value, width => 5}], Columns),
     Text = lists:flatten(Headers),
     ?assert(string:find(Text, "No ") =/= nomatch),
     ?assert(string:find(Text, "Name") =/= nomatch),
@@ -15,14 +15,14 @@ render_sheet_header_test() ->
 
 render_sheet_body_test() ->
     SheetCache = ets:new(plugin_sheet_cache, [set, public]),
-    {_, Widths} = observer_cli_plugin:render_sheet_header(observer_cli_test_plugin, 1),
+    {_, Columns} = observer_cli_plugin:render_sheet_header(observer_cli_test_plugin, name),
     {Lines, _NewSheet} = observer_cli_plugin:render_sheet_body(
         observer_cli_test_plugin,
         1,
         1,
         2,
-        1,
-        Widths,
+        name,
+        Columns,
         SheetCache,
         []
     ),
@@ -33,26 +33,26 @@ render_sheet_body_test() ->
     ?assertMatch([{1, _}], ets:lookup(SheetCache, 1)),
     ets:delete(SheetCache).
 
-render_sheet_body_sort_column_test() ->
+render_sheet_body_sort_test() ->
     SheetCache = ets:new(plugin_sheet_cache_sort, [set, public]),
-    {_, Widths} = observer_cli_plugin:render_sheet_header(observer_cli_test_plugin, 2),
+    {_, Columns} = observer_cli_plugin:render_sheet_header(observer_cli_test_plugin, value),
     {_Lines, _NewSheet} = observer_cli_plugin:render_sheet_body(
         observer_cli_test_plugin,
         1,
         1,
         2,
-        2,
-        Widths,
+        value,
+        Columns,
         SheetCache,
         []
     ),
-    ?assertEqual([{1, ["beta", 2]}], ets:lookup(SheetCache, 1)),
-    ?assertEqual([{2, ["alpha", 1]}], ets:lookup(SheetCache, 2)),
+    ?assertMatch([{1, #{cells := #{name := "beta", value := 2}}}], ets:lookup(SheetCache, 1)),
+    ?assertMatch([{2, #{cells := #{name := "alpha", value := 1}}}], ets:lookup(SheetCache, 2)),
     ets:delete(SheetCache).
 
 render_sheet_undef_test() ->
     SheetCache = ets:new(plugin_sheet_cache_undef, [set, public]),
-    Plug = #{module => missing_plugin_module, sort_column => 1, cur_page => 1, cur_row => 1},
+    Plug = #{module => missing_plugin_module, sort => name, cur_page => 1, cur_row => 1},
     ?assertEqual({[], []}, observer_cli_plugin:render_sheet(1, Plug, SheetCache, [])),
     ets:delete(SheetCache).
 
@@ -77,7 +77,7 @@ match_shortcut_test() ->
     ?assertEqual({ok, 2}, observer_cli_plugin:match_menu_shortcut("B", Plugs)),
     ?assertEqual({error, not_found}, observer_cli_plugin:match_menu_shortcut("Z", Plugs)),
     ?assertEqual(
-        {ok, 1},
+        {ok, name},
         observer_cli_plugin:match_sheet_shortcut(
             "N",
             observer_cli_test_plugin:sheet_header(),
