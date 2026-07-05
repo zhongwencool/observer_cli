@@ -73,6 +73,33 @@ collect_inet_info_test() ->
     ?assert(is_list(observer_cli_inet:collect_inet_info(inet_count, recv_cnt, 0, 1500, 0))),
     ?assert(is_list(observer_cli_inet:collect_inet_info(inet_window, recv_cnt, 0, 1500, 0))).
 
+collect_inet_render_info_test() ->
+    {ok, Listen} = gen_tcp:listen(0, [binary, {active, false}]),
+    Opts = #inet{type = cnt, cur_page = 1, pages = [{1, 1}]},
+    try
+        [Row] = observer_cli_inet:collect_inet_render_info(
+            [{Listen, 1, [{recv_cnt, 2}, {send_cnt, 3}]}], 1, Opts
+        ),
+        ?assertMatch(
+            #{
+                pos := 1,
+                choose_pos := 1,
+                port := Listen,
+                value := 1,
+                type1 := 2,
+                type2 := 3,
+                input := _,
+                output := _,
+                queue_size := _,
+                memory := _,
+                peer := _
+            },
+            Row
+        )
+    after
+        gen_tcp:close(Listen)
+    end.
+
 render_inet_rows_empty_test() ->
     Opts = #inet{func = inet_count, type = cnt, cur_page = 1, pages = [{1, 1}]},
     {PortList, Rows} = observer_cli_inet:render_inet_rows([], 5, Opts),
@@ -83,10 +110,11 @@ render_inet_rows_cnt_test() ->
     {ok, Listen} = gen_tcp:listen(0, [binary, {active, false}]),
     Opts = #inet{type = cnt, cur_page = 1, pages = [{1, 1}]},
     try
+        InetInfo = observer_cli_inet:collect_inet_render_info(
+            [{Listen, 1, [{recv_cnt, 2}, {send_cnt, 3}]}], 1, Opts
+        ),
         {PortList, Rows} =
-            observer_cli_inet:render_inet_rows(
-                [{Listen, 1, [{recv_cnt, 2}, {send_cnt, 3}]}], 1, Opts
-            ),
+            observer_cli_inet:render_inet_rows(InetInfo, 1, Opts),
         ?assertEqual(1, length(PortList)),
         ?assertEqual(2, length(Rows))
     after
@@ -100,7 +128,8 @@ render_inet_rows_non_cnt_test() ->
     {ok, Server} = gen_tcp:accept(Listen),
     Opts = #inet{type = recv_cnt, cur_page = 1, pages = [{1, 1}]},
     try
-        {PortList, Rows} = observer_cli_inet:render_inet_rows([{Server, 1, []}], 1, Opts),
+        InetInfo = observer_cli_inet:collect_inet_render_info([{Server, 1, []}], 1, Opts),
+        {PortList, Rows} = observer_cli_inet:render_inet_rows(InetInfo, 1, Opts),
         ?assertEqual(1, length(PortList)),
         ?assertEqual(2, length(Rows))
     after
@@ -116,7 +145,8 @@ render_inet_rows_octet_stat_test() ->
     {ok, Server} = gen_tcp:accept(Listen),
     Opts = #inet{type = recv_oct, cur_page = 1, pages = [{1, 1}]},
     try
-        {PortList, Rows} = observer_cli_inet:render_inet_rows([{Server, 1, []}], 1, Opts),
+        InetInfo = observer_cli_inet:collect_inet_render_info([{Server, 1, []}], 1, Opts),
+        {PortList, Rows} = observer_cli_inet:render_inet_rows(InetInfo, 1, Opts),
         ?assertEqual(1, length(PortList)),
         ?assert(string:find(lists:flatten(Rows), "recv_oct") =/= nomatch)
     after
@@ -129,7 +159,8 @@ render_inet_rows_non_integer_packet_test() ->
     Port = open_port({spawn, "cat"}, [binary]),
     Opts = #inet{type = recv_cnt, cur_page = 1, pages = [{1, 1}]},
     try
-        {PortList, Rows} = observer_cli_inet:render_inet_rows([{Port, 1, []}], 1, Opts),
+        InetInfo = observer_cli_inet:collect_inet_render_info([{Port, 1, []}], 1, Opts),
+        {PortList, Rows} = observer_cli_inet:render_inet_rows(InetInfo, 1, Opts),
         ?assertEqual(1, length(PortList)),
         ?assertEqual(2, length(Rows))
     after
@@ -170,6 +201,18 @@ get_remote_ip_success_test() ->
 render_io_rows_test() ->
     {Row, _} = observer_cli_inet:render_io_rows({0, 0}),
     ?assert(string:find(lists:flatten(Row), "Byte Input") =/= nomatch).
+
+collect_io_info_test() ->
+    {Info, {In, Out}} = observer_cli_inet:collect_io_info({0, 0}),
+    ?assertMatch(
+        #{
+            input_delta := In,
+            output_delta := Out,
+            total_input := In,
+            total_output := Out
+        },
+        Info
+    ).
 
 render_io_rows_wide_layout_test() ->
     Base = io_row_widths(80),
@@ -286,7 +329,8 @@ inet_row_widths(Server, Columns) ->
         [],
         fun() ->
             Opts = #inet{type = recv_cnt, cur_page = 1, pages = [{1, 1}]},
-            {_, [Title, Row]} = observer_cli_inet:render_inet_rows([{Server, 1, []}], 1, Opts),
+            InetInfo = observer_cli_inet:collect_inet_render_info([{Server, 1, []}], 1, Opts),
+            {_, [Title, Row]} = observer_cli_inet:render_inet_rows(InetInfo, 1, Opts),
             {observer_cli_test_io:column_widths(Title), observer_cli_test_io:column_widths(Row)}
         end
     ).
