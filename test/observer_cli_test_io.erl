@@ -1,7 +1,28 @@
 -module(observer_cli_test_io).
 
+-include_lib("eunit/include/eunit.hrl").
+
+-export([assert_ansi_boundaries/1, assert_stable_fragments/2]).
 -export([column_widths/1, line_column_widths/1, line_widths/1, plain/1]).
 -export([with_geometry/4, with_input/2]).
+
+assert_stable_fragments(IoData, Fragments) ->
+    Text = plain(IoData),
+    lists:foreach(
+        fun(Fragment) ->
+            ?assertNotEqual(nomatch, string:find(Text, Fragment))
+        end,
+        Fragments
+    ).
+
+assert_ansi_boundaries(IoData) ->
+    Bin = unicode:characters_to_binary(IoData),
+    ?assertEqual(nomatch, binary:match(Bin, <<"\e[0m |">>)),
+    ?assertEqual(nomatch, binary:match(strip_valid_ansi(Bin), <<"\e">>)),
+    case has_sgr(Bin) of
+        true -> ?assertNotEqual(nomatch, binary:match(Bin, <<"\e[0m">>));
+        false -> ok
+    end.
 
 with_input(Inputs, Fun) when is_list(Inputs), is_function(Fun, 0) ->
     with_geometry(24, 80, Inputs, Fun).
@@ -105,13 +126,14 @@ line_widths(IoData) ->
 
 plain(IoData) ->
     binary_to_list(
-        re:replace(
-            unicode:characters_to_binary(IoData),
-            <<"\e\\[[0-9;]*[A-Za-z]">>,
-            <<>>,
-            [global, {return, binary}]
-        )
+        strip_valid_ansi(unicode:characters_to_binary(IoData))
     ).
+
+strip_valid_ansi(Bin) ->
+    re:replace(Bin, <<"\e\\[[0-9;]*[A-Za-z]">>, <<>>, [global, {return, binary}]).
+
+has_sgr(Bin) ->
+    re:run(Bin, <<"\e\\[[0-9;]*m">>, [{capture, none}]) =:= match.
 
 non_empty_lines(IoData) ->
     [Line || Line <- string:split(plain(IoData), "\n", all), Line =/= ""].
