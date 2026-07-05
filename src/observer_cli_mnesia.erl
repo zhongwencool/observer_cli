@@ -6,7 +6,7 @@
 -export([clean/1]).
 
 -ifdef(TEST).
--export([get_table_list/2, render_mnesia/4, with_storage_type/3]).
+-export([collect_mnesia_info/2, render_mnesia/4, with_storage_type/3]).
 -endif.
 
 -include("observer_cli.hrl").
@@ -81,7 +81,7 @@ render_worker(Interval, LastTimeRef, HideSystemTable, AutoRow, Attr, CurPage) ->
             " HideSystemTable:" ++ atom_to_list(HideSystemTable),
     Menu = observer_cli_lib:render_menu(mnesia, Text),
     LastLine = observer_cli_lib:render_last_line(?LAST_LINE),
-    case get_table_list(HideSystemTable, Attr) of
+    case collect_mnesia_info(HideSystemTable, Attr) of
         {error, Reason} ->
             ErrInfo = io_lib:format("Mnesia Error   ~p~n", [Reason]),
             ?output([?CURSOR_TOP, Menu, ErrInfo, LastLine]);
@@ -209,7 +209,7 @@ mnesia_tables() ->
         user
     ].
 
-get_table_list(HideSys, Attr) ->
+collect_mnesia_info(HideSys, Attr) ->
     Owner = ets:info(schema, owner),
     case Owner of
         undefined -> {error, "Mnesia is not running on: " ++ atom_to_list(node())};

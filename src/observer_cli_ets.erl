@@ -8,7 +8,9 @@
 -export([clean/1]).
 
 -ifdef(TEST).
--export([get_ets_info/2, is_reg/1, render_ets_info/3, unread/0]).
+-export([
+    collect_ets_info/1, get_ets_info/2, is_reg/1, render_ets_info/3, render_ets_info/4, unread/0
+]).
 -endif.
 
 -define(LAST_LINE,
@@ -74,12 +76,12 @@ render_worker(Interval, LastTimeRef, Attr, CurPage, AutoRow) ->
     end.
 
 render_ets_info(Rows, CurPage, Attr) ->
-    AllEts = [
-        begin
-            get_ets_info(Tab, Attr)
-        end
-     || Tab <- ets:all()
-    ],
+    render_ets_info(collect_ets_info(Attr), Rows, CurPage, Attr).
+
+collect_ets_info(Attr) ->
+    [get_ets_info(Tab, Attr) || Tab <- ets:all()].
+
+render_ets_info(AllEts, Rows, CurPage, Attr) ->
     WordSize = erlang:system_info(wordsize),
     {_StartPos, SortEts} = observer_cli_lib:sublist(AllEts, Rows, CurPage),
     {MemColor, SizeColor} =

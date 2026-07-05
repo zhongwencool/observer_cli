@@ -12,6 +12,8 @@
 
 -ifdef(TEST).
 -export([
+    collect_system_info/1,
+    collect_sys_info/1,
     fill_info/2,
     to_list/1,
     info_fields/0,
@@ -69,15 +71,16 @@ manager(Pid, #view_opts{sys = AllocatorOpts} = ViewOpts) ->
     end.
 
 render_worker(Cmd, Interval, LastTimeRef) ->
-    CacheHitInfo = recon_alloc:cache_hit_rates(),
-    AverageBlockCurs = recon_alloc:average_block_sizes(current),
-    AverageBlockMaxes = recon_alloc:average_block_sizes(max),
-    SbcsToMbcsCurs = observer_cli_lib:sbcs_to_mbcs(
-        ?UTIL_ALLOCATORS,
-        recon_alloc:sbcs_to_mbcs(current)
-    ),
-    SbcsToMbcsMaxs = observer_cli_lib:sbcs_to_mbcs(?UTIL_ALLOCATORS, recon_alloc:sbcs_to_mbcs(max)),
-    Sys = render_sys_info(Cmd),
+    #{
+        cache_hit_info := CacheHitInfo,
+        average_block_curs := AverageBlockCurs,
+        average_block_maxes := AverageBlockMaxes,
+        sbcs_to_mbcs_curs := SbcsToMbcsCurs,
+        sbcs_to_mbcs_maxes := SbcsToMbcsMaxs,
+        sys_info := SysInfo,
+        dist_nodes_info := DistNodesInfo
+    } = collect_system_info(Cmd),
+    Sys = render_sys_info(SysInfo),
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
     Menu = observer_cli_lib:render_menu(allocator, Text),
     BlockView = render_block_size_info(
@@ -86,7 +89,6 @@ render_worker(Cmd, Interval, LastTimeRef) ->
         SbcsToMbcsCurs,
         SbcsToMbcsMaxs
     ),
-    DistNodesInfo = get_dist_nodes_info(),
     DistNodeView = render_dist_node_info(DistNodesInfo),
     HitView = render_cache_hit_rates(CacheHitInfo, erlang:length(CacheHitInfo)),
     LastLine = observer_cli_lib:render_last_line("q(quit)"),
@@ -97,6 +99,19 @@ render_worker(Cmd, Interval, LastTimeRef) ->
         {new_interval, NewInterval} -> render_worker(Cmd, NewInterval, NextTimeRef);
         redraw -> render_worker(Cmd, Interval, NextTimeRef)
     end.
+
+collect_system_info(Cmd) ->
+    #{
+        cache_hit_info => recon_alloc:cache_hit_rates(),
+        average_block_curs => recon_alloc:average_block_sizes(current),
+        average_block_maxes => recon_alloc:average_block_sizes(max),
+        sbcs_to_mbcs_curs =>
+            observer_cli_lib:sbcs_to_mbcs(?UTIL_ALLOCATORS, recon_alloc:sbcs_to_mbcs(current)),
+        sbcs_to_mbcs_maxes =>
+            observer_cli_lib:sbcs_to_mbcs(?UTIL_ALLOCATORS, recon_alloc:sbcs_to_mbcs(max)),
+        sys_info => collect_sys_info(Cmd),
+        dist_nodes_info => get_dist_nodes_info()
+    }.
 
 get_dist_nodes_info() ->
     case ets:info(sys_dist, size) of
@@ -340,8 +355,7 @@ get_alloc(Key, Curs, Maxes, STMCurs, STMMaxes) ->
         proplists:get_value(Key, STMMaxes)
     ].
 
-render_sys_info(Cmd) ->
-    SysInfo = sys_info(Cmd),
+render_sys_info(SysInfo) ->
     {Info, Stat} = info_fields(),
     SystemAndCPU = fill_info(Info, SysInfo),
     MemAndStatistics = fill_info(Stat, SysInfo),
@@ -350,6 +364,9 @@ render_sys_info(Cmd) ->
     {_, _, Memory} = lists:keyfind("Memory Usage", 1, MemAndStatistics),
     {_, _, Statistics} = lists:keyfind("Statistics", 1, MemAndStatistics),
     render_sys_info(System, CPU, Memory, Statistics).
+
+collect_sys_info(Cmd) ->
+    sys_info(Cmd).
 
 render_sys_info(System, CPU, Memory, Statistics) ->
     [

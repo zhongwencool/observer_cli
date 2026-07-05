@@ -33,8 +33,21 @@ render_sheet_body_test() ->
     ?assertMatch([{1, _}], ets:lookup(SheetCache, 1)),
     ets:delete(SheetCache).
 
+render_sheet_undef_test() ->
+    SheetCache = ets:new(plugin_sheet_cache_undef, [set, public]),
+    Plug = #{module => missing_plugin_module, sort_column => 1, cur_page => 1, cur_row => 1},
+    ?assertEqual({[], []}, observer_cli_plugin:render_sheet(1, Plug, SheetCache, [])),
+    ets:delete(SheetCache).
+
+mix_content_width_middle_test() ->
+    Cells = observer_cli_plugin:mix_content_width(["alpha", 2, <<"omega">>], [7, 5, 8], []),
+    Text = lists:flatten(observer_cli_lib:render(Cells)),
+    ?assert(string:find(Text, "alpha") =/= nomatch),
+    ?assert(string:find(Text, "omega") =/= nomatch).
+
 get_sheet_width_test() ->
-    ?assertEqual(12, observer_cli_plugin:get_sheet_width(observer_cli_test_plugin)).
+    ?assertEqual(12, observer_cli_plugin:get_sheet_width(observer_cli_test_plugin)),
+    ?assertEqual(?COLUMN + 5, observer_cli_plugin:get_sheet_width(missing_plugin_module)).
 
 match_shortcut_test() ->
     Plugs = [
@@ -50,6 +63,10 @@ match_shortcut_test() ->
             observer_cli_test_plugin:sheet_header(),
             1
         )
+    ),
+    ?assertEqual(
+        {error, not_found},
+        observer_cli_plugin:match_sheet_shortcut("Z", observer_cli_test_plugin:sheet_header(), 1)
     ).
 
 -endif.

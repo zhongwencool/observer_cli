@@ -14,6 +14,7 @@
     get_menu_str/4,
     title/3,
     add_choose_color/3,
+    collect_inet_info/5,
     render_inet_rows/3,
     render_io_rows/1,
     inet_info/5,
@@ -96,7 +97,7 @@ render_worker(StorePid, InetOpt, LastTimeRef, Count, LastIO, AutoRow) ->
     Text = get_menu_str(Function, Type, Interval, Row),
     Menu = observer_cli_lib:render_menu(inet, Text),
     TopLen = Row * CurPage,
-    InetList = inet_info(Function, Type, TopLen, Interval, Count),
+    InetList = collect_inet_info(Function, Type, TopLen, Interval, Count),
     {IORows, NewIO} = render_io_rows(LastIO),
     {PortList, InetRows} = render_inet_rows(InetList, TopLen, InetOpt),
     LastLine = observer_cli_lib:render_last_line(?LAST_LINE),
@@ -256,6 +257,9 @@ get_menu_str(inet_count, Type, Interval, Rows) ->
     io_lib:format("recon:inet_count(~p, ~w) Interval:~wms", [Type, Rows, Interval]);
 get_menu_str(inet_window, Type, Interval, Rows) ->
     io_lib:format("recon:inet_window(~p, ~w, ~w) Interval:~wms", [Type, Rows, Interval, Interval]).
+
+collect_inet_info(Function, Type, Num, Ms, Count) ->
+    inet_info(Function, Type, Num, Ms, Count).
 
 inet_info(inet_count, Type, Num, _, _) -> recon:inet_count(Type, Num);
 inet_info(inet_window, Type, Num, _, 0) -> recon:inet_count(Type, Num);

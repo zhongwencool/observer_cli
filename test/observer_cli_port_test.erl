@@ -80,6 +80,23 @@ render_last_line_test() ->
     Line = lists:flatten(observer_cli_port:render_last_line()),
     ?assert(lists:member($q, Line)).
 
+collect_port_info_test() ->
+    {ok, Listen} = gen_tcp:listen(0, [binary, {active, false}]),
+    try
+        Info = observer_cli_port:collect_port_info(Listen),
+        ?assertMatch(
+            #{
+                port := #{port := Listen},
+                links := _,
+                monitors := _,
+                type := _
+            },
+            Info
+        )
+    after
+        gen_tcp:close(Listen)
+    end.
+
 render_port_info_test() ->
     PortView = #{
         port => self(),

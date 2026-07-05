@@ -10,6 +10,8 @@
 -ifdef(TEST).
 -export([
     required_modules/1,
+    parse_args/1,
+    run_args/2,
     resolve_target_name/1,
     random_local_node_name/0,
     application_included/1,
@@ -25,14 +27,23 @@
 %% @doc escript main
 -spec main(list()) -> 'ok'.
 
-main([TargetNode]) ->
-    run(TargetNode, undefined, 1500);
-main([TargetNode, Cookie, Interval]) ->
-    CookieAtom = list_to_atom(Cookie),
-    IntervalInt = list_to_integer(Interval),
-    run(TargetNode, CookieAtom, IntervalInt);
-main(_Options) ->
-    io:format("Usage: observer_cli TARGETNODE [TARGETCOOKIE REFRESHMS]~n").
+main(Options) ->
+    run_args(Options, fun run/3).
+
+run_args(Options, RunFun) ->
+    case parse_args(Options) of
+        {ok, TargetNode, Cookie, Interval} ->
+            RunFun(TargetNode, Cookie, Interval);
+        usage ->
+            io:format("Usage: observer_cli TARGETNODE [TARGETCOOKIE REFRESHMS]~n")
+    end.
+
+parse_args([TargetNode]) ->
+    {ok, TargetNode, undefined, 1500};
+parse_args([TargetNode, Cookie, Interval]) ->
+    {ok, TargetNode, list_to_atom(Cookie), list_to_integer(Interval)};
+parse_args(_Options) ->
+    usage.
 
 run(TargetNode, Cookie, Interval) ->
     run(TargetNode, Cookie, Interval, fun remote_load/1).
@@ -150,7 +161,8 @@ ensure_set_env(App, Env) ->
 maybe_stop_remote(App) ->
     case application:get_env(App, test_stop_remote, false) of
         true ->
-            spawn(fun init:stop/0),
+            StopFun = application:get_env(App, test_stop_remote_fun, fun init:stop/0),
+            spawn(StopFun),
             ok;
         false ->
             ok

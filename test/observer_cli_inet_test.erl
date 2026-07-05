@@ -69,6 +69,10 @@ add_choose_color_test() ->
     ?assertEqual(?CHOOSE_BG, hd(Chosen)),
     ?assertEqual(Row, observer_cli_inet:add_choose_color(1, 2, Row)).
 
+collect_inet_info_test() ->
+    ?assert(is_list(observer_cli_inet:collect_inet_info(inet_count, recv_cnt, 0, 1500, 0))),
+    ?assert(is_list(observer_cli_inet:collect_inet_info(inet_window, recv_cnt, 0, 1500, 0))).
+
 render_inet_rows_empty_test() ->
     Opts = #inet{func = inet_count, type = cnt, cur_page = 1, pages = [{1, 1}]},
     {PortList, Rows} = observer_cli_inet:render_inet_rows([], 5, Opts),
@@ -99,6 +103,22 @@ render_inet_rows_non_cnt_test() ->
         {PortList, Rows} = observer_cli_inet:render_inet_rows([{Server, 1, []}], 1, Opts),
         ?assertEqual(1, length(PortList)),
         ?assertEqual(2, length(Rows))
+    after
+        gen_tcp:close(Client),
+        gen_tcp:close(Server),
+        gen_tcp:close(Listen)
+    end.
+
+render_inet_rows_octet_stat_test() ->
+    {ok, Listen} = gen_tcp:listen(0, [binary, {active, false}, {reuseaddr, true}]),
+    {ok, Port} = inet:port(Listen),
+    {ok, Client} = gen_tcp:connect({127, 0, 0, 1}, Port, [binary, {active, false}]),
+    {ok, Server} = gen_tcp:accept(Listen),
+    Opts = #inet{type = recv_oct, cur_page = 1, pages = [{1, 1}]},
+    try
+        {PortList, Rows} = observer_cli_inet:render_inet_rows([{Server, 1, []}], 1, Opts),
+        ?assertEqual(1, length(PortList)),
+        ?assert(string:find(lists:flatten(Rows), "recv_oct") =/= nomatch)
     after
         gen_tcp:close(Client),
         gen_tcp:close(Server),
@@ -226,6 +246,26 @@ start_port_view_auto_jump_test() ->
         )
     after
         gen_tcp:close(Listen)
+    end.
+
+start_port_view_missing_row_test() ->
+    StorePid = observer_cli_store:start(),
+    RenderPid = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
+    try
+        observer_cli_test_io:with_input(
+            ["q\n"],
+            fun() ->
+                Inet = #inet{cur_page = 1, pages = [{1, 1}]},
+                Opts = #view_opts{inet = Inet, auto_row = false},
+                ?assertEqual(
+                    quit, observer_cli_inet:start_port_view(StorePid, RenderPid, Opts, false)
+                )
+            end
+        )
+    after
+        observer_cli_lib:exit_processes([StorePid, RenderPid])
     end.
 
 io_row_widths(Columns) ->

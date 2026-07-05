@@ -51,12 +51,16 @@ fill_info_test() ->
     Fields = [
         {dynamic, dyn},
         {"A", a},
+        {"Attr", bold, a},
         {"B", {bytes, b}},
+        {"AttrBytes", bold, {bytes, b}},
         {"Group", [{"A2", a}]}
     ],
     Result = observer_cli_system:fill_info(Fields, Data),
     ?assertEqual({"Dyn", 2}, lists:nth(1, Result)),
-    ?assertEqual({"A", 1}, lists:nth(2, Result)).
+    ?assertEqual({"A", 1}, lists:nth(2, Result)),
+    ?assertEqual({"Attr", bold, 1}, lists:nth(3, Result)),
+    ?assertEqual({"AttrBytes", bold, {bytes, 1024}}, lists:nth(5, Result)).
 
 fill_info_undefined_test() ->
     Data = [{present, 1}],
@@ -135,8 +139,27 @@ render_sys_info_wide_layout_test() ->
     ?assert(lists:nth(2, WideCompile) > lists:nth(2, BaseCompile)).
 
 render_sys_info_empty_ps_test() ->
-    Line = observer_cli_system:render_sys_info("printf 'header\\n'"),
+    Line = observer_cli_system:render_sys_info(
+        observer_cli_system:collect_sys_info("printf 'header\\n'")
+    ),
     ?assert(string:find(lists:flatten(Line), "System/Architecture") =/= nomatch).
+
+collect_sys_info_test() ->
+    Info = observer_cli_system:collect_sys_info("printf 'header\\n 1 2 3 4\\n'"),
+    ?assertEqual("1%", proplists:get_value(ps_cpu, Info)),
+    ?assertEqual("2%", proplists:get_value(ps_mem, Info)),
+    ?assertEqual(3 * 1024, proplists:get_value(ps_rss, Info)),
+    ?assertEqual(4 * 1024, proplists:get_value(ps_vsz, Info)).
+
+collect_system_info_test() ->
+    Info = observer_cli_system:collect_system_info("printf 'header\\n 1 2 3 4\\n'"),
+    ?assert(is_list(maps:get(cache_hit_info, Info))),
+    ?assert(is_list(maps:get(average_block_curs, Info))),
+    ?assert(is_list(maps:get(average_block_maxes, Info))),
+    ?assert(is_list(maps:get(sbcs_to_mbcs_curs, Info))),
+    ?assert(is_list(maps:get(sbcs_to_mbcs_maxes, Info))),
+    ?assert(is_list(maps:get(sys_info, Info))),
+    ?assert(is_list(maps:get(dist_nodes_info, Info))).
 
 render_cache_hit_rates_test() ->
     CacheHitInfo = [
@@ -225,6 +248,57 @@ render_worker_redraw_test() ->
         {'DOWN', Ref, process, Pid, _} -> ok
     after 1000 ->
         ok
+    end.
+
+render_worker_empty_sys_dist_test() ->
+    case ets:info(sys_dist, owner) of
+        undefined ->
+            ets:new(sys_dist, [named_table, public, set]),
+            try
+                Cmd = "printf 'header\\n 1 2 3 4\\n'",
+                Pid = spawn(fun() ->
+                    observer_cli_system:render_worker(Cmd, 1, ?INIT_TIME_REF)
+                end),
+                Ref = erlang:monitor(process, Pid),
+                Pid ! quit,
+                receive
+                    {'DOWN', Ref, process, Pid, _} -> ok
+                after 1000 ->
+                    ok
+                end
+            after
+                ets:delete(sys_dist)
+            end;
+        _ ->
+            ok
+    end.
+
+render_dist_node_info_live_peer_test() ->
+    with_distribution(fun() ->
+        {ok, Peer, Node} = peer:start_link(#{name => peer:random_name("observer_cli_sys")}),
+        try
+            {ok, NodesInfo} = net_kernel:nodes_info(),
+            ?assertMatch([_ | _], ets:lookup(sys_dist, Node)),
+            Lines = observer_cli_system:render_dist_node_info(NodesInfo),
+            ?assert(string:find(lists:flatten(Lines), "%") =/= nomatch)
+        after
+            peer:stop(Peer)
+        end
+    end).
+
+with_distribution(Fun) ->
+    WasAlive = erlang:is_alive(),
+    case WasAlive of
+        true ->
+            Fun();
+        false ->
+            Name = list_to_atom(peer:random_name("observer_cli_sys_origin")),
+            {ok, _} = net_kernel:start([Name, shortnames]),
+            try
+                Fun()
+            after
+                net_kernel:stop()
+            end
     end.
 
 sys_info_widths(Columns) ->

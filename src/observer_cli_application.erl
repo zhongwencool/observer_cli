@@ -8,7 +8,14 @@
 -export([clean/1]).
 
 -ifdef(TEST).
--export([app_status/1, find_group_leader/1, render_app_info/3, update_app_stats/6]).
+-export([
+    app_status/1,
+    collect_app_info/0,
+    collect_app_info/4,
+    find_group_leader/1,
+    render_app_info/3,
+    update_app_stats/6
+]).
 -endif.
 
 %% API
@@ -17,7 +24,7 @@
 ).
 
 %% erlang:processes_iterator/0 is not exported before OTP 27
--dialyzer([{nowarn_function, [app_info/0, app_info_iter/4]}]).
+-dialyzer([{nowarn_function, [collect_app_info/0, app_info_iter/4]}]).
 -ignore_xref({erlang, processes_iterator, 0}).
 -ignore_xref({erlang, processes_next, 1}).
 
@@ -91,7 +98,7 @@ render_app_info(Row, CurPage, {Type, N}) ->
         begin
             {0, {element(N, I), S}, [App, C, M, R, Q, S, V]}
         end
-     || {App, I = {C, M, R, Q, S, V}} <- maps:to_list(app_info())
+     || {App, I = {C, M, R, Q, S, V}} <- maps:to_list(collect_app_info())
     ],
     {StartPos, SortList} = observer_cli_lib:sublist(List, Row, CurPage),
     InitColor = [
@@ -170,7 +177,7 @@ app_row_widths() ->
         [0, 4, 0, 0, 1, 0, 0, 4]
     ).
 
-app_info() ->
+collect_app_info() ->
     Info = application:info(),
     AllApps = app_status(Info),
     Leaders = leader_info(Info),
@@ -180,6 +187,11 @@ app_info() ->
         false ->
             app_info(AllApps, Leaders, erlang:processes(), self())
     end.
+
+-ifdef(TEST).
+collect_app_info(AllApps, Leaders, Processes, Self) ->
+    app_info(AllApps, Leaders, Processes, Self).
+-endif.
 
 app_info_iter(AllApps, Leaders, Iter, Self) ->
     case erlang:processes_next(Iter) of

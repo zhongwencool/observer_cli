@@ -103,58 +103,13 @@ manager(ChildPid, SheetCache, ViewOpts) ->
             NewPlugs = update_plugins(CurIndex, Plugs, #{interval => NewMs}),
             start(ViewOpts#view_opts{plug = PlugOpts#plug{plugs = NewPlugs}});
         page_down_top_n ->
-            CurPlugs = maps:get(CurIndex, Plugs),
-            CurPage = maps:get(cur_page, CurPlugs),
-            NewPage = max(CurPage + 1, 1),
-            NewPlugs = update_plugins(CurIndex, Plugs, #{cur_page => NewPage}),
-            observer_cli_lib:exit_processes([ChildPid]),
-            ets:delete(SheetCache),
-            start(ViewOpts#view_opts{plug = PlugOpts#plug{plugs = NewPlugs}});
+            update_page(ChildPid, SheetCache, ViewOpts, 1);
         page_up_top_n ->
-            CurPlugs = maps:get(CurIndex, Plugs),
-            CurPage = maps:get(cur_page, CurPlugs),
-            NewPage = max(CurPage - 1, 1),
-            NewPlugs = update_plugins(CurIndex, Plugs, #{cur_page => NewPage}),
-            observer_cli_lib:exit_processes([ChildPid]),
-            ets:delete(SheetCache),
-            start(ViewOpts#view_opts{plug = PlugOpts#plug{plugs = NewPlugs}});
+            update_page(ChildPid, SheetCache, ViewOpts, -1);
         {jump, CurRow} ->
-            CurPlugs = maps:get(CurIndex, Plugs),
-            {Filter, Handler} = maps:get(handler, CurPlugs, {fun is_pid/1, observer_cli_process}),
-            case ets:lookup(SheetCache, CurRow) of
-                [{CurRow, Items}] ->
-                    case [I || I <- Items, Filter(I)] of
-                        [ChooseItem | _] ->
-                            observer_cli_lib:exit_processes([ChildPid]),
-                            ets:delete(SheetCache),
-                            NewPlugs = update_plugins(CurIndex, Plugs, #{cur_row => CurRow}),
-                            NewViewOpts = ViewOpts#view_opts{
-                                plug = PlugOpts#plug{plugs = NewPlugs}
-                            },
-                            Handler:start(plugin, ChooseItem, NewViewOpts);
-                        [] ->
-                            manager(ChildPid, SheetCache, ViewOpts)
-                    end;
-                _ ->
-                    manager(ChildPid, SheetCache, ViewOpts)
-            end;
+            jump_row(ChildPid, SheetCache, ViewOpts, CurRow, true);
         jump ->
-            CurPlugs = maps:get(CurIndex, Plugs),
-            CurRow = maps:get(cur_row, CurPlugs, observer_cli_process),
-            {Filter, Handler} = maps:get(handler, CurPlugs, {fun is_pid/1, observer_cli_process}),
-            case ets:lookup(SheetCache, CurRow) of
-                [{CurRow, Items}] ->
-                    case [I || I <- Items, Filter(I)] of
-                        [ChooseItem | _] ->
-                            observer_cli_lib:exit_processes([ChildPid]),
-                            ets:delete(SheetCache),
-                            Handler:start(plugin, ChooseItem, ViewOpts);
-                        [] ->
-                            manager(ChildPid, SheetCache, ViewOpts)
-                    end;
-                _ ->
-                    manager(ChildPid, SheetCache, ViewOpts)
-            end;
+            jump_current_row(ChildPid, SheetCache, ViewOpts);
         {input_str, Cmd} ->
             case maybe_shortcut(Cmd, ViewOpts) of
                 {ok, menu, Index} ->
@@ -171,10 +126,89 @@ manager(ChildPid, SheetCache, ViewOpts) ->
             end
     end.
 
+update_page(ChildPid, SheetCache, ViewOpts, Delta) ->
+    case current_plugin(ViewOpts) of
+        {ok, CurIndex, Plugs, CurPlugs} ->
+            CurPage = maps:get(cur_page, CurPlugs),
+            NewPage = max(CurPage + Delta, 1),
+            NewPlugs = update_plugins(CurIndex, Plugs, #{cur_page => NewPage}),
+            restart_with_plugins(ChildPid, SheetCache, ViewOpts, NewPlugs);
+        error ->
+            manager(ChildPid, SheetCache, ViewOpts)
+    end.
+
+jump_current_row(ChildPid, SheetCache, ViewOpts) ->
+    case current_plugin(ViewOpts) of
+        {ok, _CurIndex, _Plugs, CurPlugs} ->
+            CurRow = maps:get(cur_row, CurPlugs, observer_cli_process),
+            jump_row(ChildPid, SheetCache, ViewOpts, CurRow, false);
+        error ->
+            manager(ChildPid, SheetCache, ViewOpts)
+    end.
+
+jump_row(ChildPid, SheetCache, ViewOpts, CurRow, SaveRow) ->
+    case current_plugin(ViewOpts) of
+        {ok, CurIndex, Plugs, CurPlugs} ->
+            {Filter, Handler} = maps:get(handler, CurPlugs, {fun is_pid/1, observer_cli_process}),
+            maybe_start_row(ChildPid, SheetCache, ViewOpts, CurIndex, Plugs, {
+                CurRow, SaveRow, Filter, Handler
+            });
+        error ->
+            manager(ChildPid, SheetCache, ViewOpts)
+    end.
+
+maybe_start_row(
+    ChildPid, SheetCache, ViewOpts, CurIndex, Plugs, {CurRow, SaveRow, Filter, Handler}
+) ->
+    case ets:lookup(SheetCache, CurRow) of
+        [{CurRow, Items}] ->
+            start_first_match(ChildPid, SheetCache, ViewOpts, CurIndex, Plugs, {
+                Items, CurRow, SaveRow, Filter, Handler
+            });
+        _ ->
+            manager(ChildPid, SheetCache, ViewOpts)
+    end.
+
+start_first_match(
+    ChildPid, SheetCache, ViewOpts, CurIndex, Plugs, {Items, CurRow, SaveRow, Filter, Handler}
+) ->
+    case [I || I <- Items, Filter(I)] of
+        [ChooseItem | _] ->
+            observer_cli_lib:exit_processes([ChildPid]),
+            ets:delete(SheetCache),
+            Handler:start(
+                plugin, ChooseItem, view_opts_with_row(ViewOpts, CurIndex, Plugs, CurRow, SaveRow)
+            );
+        [] ->
+            manager(ChildPid, SheetCache, ViewOpts)
+    end.
+
+view_opts_with_row(ViewOpts, CurIndex, Plugs, CurRow, true) ->
+    #view_opts{plug = PlugOpts} = ViewOpts,
+    NewPlugs = update_plugins(CurIndex, Plugs, #{cur_row => CurRow}),
+    ViewOpts#view_opts{plug = PlugOpts#plug{plugs = NewPlugs}};
+view_opts_with_row(ViewOpts, _CurIndex, _Plugs, _CurRow, false) ->
+    ViewOpts.
+
+restart_with_plugins(ChildPid, SheetCache, #view_opts{plug = PlugOpts} = ViewOpts, NewPlugs) ->
+    observer_cli_lib:exit_processes([ChildPid]),
+    ets:delete(SheetCache),
+    start(ViewOpts#view_opts{plug = PlugOpts#plug{plugs = NewPlugs}}).
+
+current_plugin(#view_opts{plug = #plug{cur_index = CurIndex, plugs = Plugs}}) ->
+    case maps:find(CurIndex, Plugs) of
+        {ok, CurPlugs} -> {ok, CurIndex, Plugs, CurPlugs};
+        error -> error
+    end.
+
 update_plugins(CurIndex, Lists, UpdateItems) ->
-    CurPlugs = maps:get(CurIndex, Lists),
-    NewPlugs = maps:merge(CurPlugs, UpdateItems),
-    maps:put(CurIndex, NewPlugs, Lists).
+    case maps:find(CurIndex, Lists) of
+        {ok, CurPlugs} ->
+            NewPlugs = maps:merge(CurPlugs, UpdateItems),
+            maps:put(CurIndex, NewPlugs, Lists);
+        error ->
+            Lists
+    end.
 
 maybe_shortcut(Cmd, ViewOpts) ->
     #view_opts{plug = #plug{cur_index = CurIndex, plugs = Plugs}} = ViewOpts,

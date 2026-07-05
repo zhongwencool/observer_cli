@@ -8,6 +8,7 @@
 -export([
     parse_cmd_str/1,
     addr_to_str/1,
+    collect_port_info/1,
     render_last_line/0,
     render_port_info/1,
     render_link_monitor/2,
@@ -45,49 +46,47 @@ manager(RenderPid, Opts) ->
     end.
 
 render_worker(Port, Interval, TimeRef) ->
-    PortInfo = recon:port_info(Port),
-    Meta = proplists:get_value(meta, PortInfo),
-    case lists:member(undefined, Meta) of
-        true ->
+    case collect_port_info(Port) of
+        dead ->
             output_die_view(Port, Interval),
             next_draw_view(TimeRef, Interval, Port);
-        false ->
-            Id = proplists:get_value(id, Meta),
-            Name = proplists:get_value(name, Meta),
-            OsPid = proplists:get_value(os_pid, Meta),
-
-            Signals = proplists:get_value(signals, PortInfo),
-            Link = proplists:get_value(links, Signals),
-            Monitors = proplists:get_value(monitors, Signals),
-            Connected = proplists:get_value(connected, Signals),
-
-            IO = proplists:get_value(io, PortInfo),
-            Input = proplists:get_value(input, IO),
-            Output = proplists:get_value(output, IO),
-
-            MemoryUsed = proplists:get_value(memory_used, PortInfo),
-            Memory = proplists:get_value(memory, MemoryUsed),
-            QueueSize = proplists:get_value(queue_size, MemoryUsed),
+        #{port := PortView, links := Link, monitors := Monitors, type := Type} ->
             Menu = render_menu(info, Interval),
-
-            PortView = #{
-                port => Port,
-                id => Id,
-                name => Name,
-                os_pid => OsPid,
-                input => Input,
-                output => Output,
-                memory => Memory,
-                queue_size => QueueSize,
-                connected => Connected
-            },
             Line1 = render_port_info(PortView),
             Line2 = render_link_monitor(Link, Monitors),
-            Line3 = render_type_line(proplists:get_value(type, PortInfo)),
+            Line3 = render_type_line(Type),
             LastLine = render_last_line(),
 
             ?output([?CURSOR_TOP, Menu, Line1, Line2, Line3, LastLine]),
             next_draw_view(TimeRef, Interval, Port)
+    end.
+
+collect_port_info(Port) ->
+    PortInfo = recon:port_info(Port),
+    Meta = proplists:get_value(meta, PortInfo),
+    case lists:member(undefined, Meta) of
+        true ->
+            dead;
+        false ->
+            Signals = proplists:get_value(signals, PortInfo),
+            IO = proplists:get_value(io, PortInfo),
+            MemoryUsed = proplists:get_value(memory_used, PortInfo),
+            #{
+                port => #{
+                    port => Port,
+                    id => proplists:get_value(id, Meta),
+                    name => proplists:get_value(name, Meta),
+                    os_pid => proplists:get_value(os_pid, Meta),
+                    input => proplists:get_value(input, IO),
+                    output => proplists:get_value(output, IO),
+                    memory => proplists:get_value(memory, MemoryUsed),
+                    queue_size => proplists:get_value(queue_size, MemoryUsed),
+                    connected => proplists:get_value(connected, Signals)
+                },
+                links => proplists:get_value(links, Signals),
+                monitors => proplists:get_value(monitors, Signals),
+                type => proplists:get_value(type, PortInfo)
+            }
     end.
 
 next_draw_view(TimeRef, Interval, Port) ->

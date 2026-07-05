@@ -52,6 +52,41 @@ update_app_stats_group_leader_chain_test() ->
     exit(Child, kill),
     exit(GroupLeader, kill).
 
+collect_app_info_legacy_list_test() ->
+    Child = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
+    Dead = spawn(fun() -> ok end),
+    DeadRef = erlang:monitor(process, Dead),
+    receive
+        {'DOWN', DeadRef, process, Dead, _} -> ok
+    after 1000 ->
+        erlang:error(dead_process_still_alive)
+    end,
+    {group_leader, Leader} = erlang:process_info(Child, group_leader),
+    AllApps = #{
+        app1 => {0, 0, 0, 0, "Started", "1.0"},
+        no_group => {0, 0, 0, 0, "Unknown", "unknown"}
+    },
+    try
+        Found = observer_cli_application:collect_app_info(
+            AllApps, #{Leader => app1}, [self(), Dead, Child], self()
+        ),
+        {AppCount, AppMemory, AppReds, _AppMsgQ, "Started", "1.0"} = maps:get(app1, Found),
+        ?assertEqual(1, AppCount),
+        ?assert(AppMemory > 0),
+        ?assert(AppReds >= 0),
+
+        Unknown = observer_cli_application:collect_app_info(AllApps, #{}, [Child], self()),
+        {UnknownCount, UnknownMemory, UnknownReds, _UnknownMsgQ, "Unknown", "unknown"} =
+            maps:get(no_group, Unknown),
+        ?assertEqual(1, UnknownCount),
+        ?assert(UnknownMemory > 0),
+        ?assert(UnknownReds >= 0)
+    after
+        exit(Child, kill)
+    end.
+
 start_quit_test() ->
     observer_cli_test_io:with_input(
         ["q\n"],

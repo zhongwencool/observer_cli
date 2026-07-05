@@ -66,6 +66,26 @@ parse_cmd_quit_test() ->
         end
     ).
 
+parse_cmd_top_menu_routes_test() ->
+    [
+        route_shared_command(Cmd)
+     || Cmd <- ["H\n", "S\n", "A\n", "N\n", "M\n", "E\n", "D\n", "P\n"]
+    ].
+
+route_shared_command(Cmd) ->
+    PrevTrap = process_flag(trap_exit, true),
+    try
+        observer_cli_test_io:with_input(
+            [Cmd, "q\n"],
+            fun() ->
+                Opts = #view_opts{auto_row = false},
+                ?assertEqual(quit, observer_cli_lib:parse_cmd(Opts, observer_cli_help, []))
+            end
+        )
+    after
+        process_flag(trap_exit, PrevTrap)
+    end.
+
 to_percent_test() ->
     ?assertEqual("05.00%", lists:flatten(observer_cli_lib:to_percent(0.05))),
     ?assertEqual("50.00%", lists:flatten(observer_cli_lib:to_percent(0.5))),
@@ -150,7 +170,20 @@ parse_cmd_str_test() ->
     ?assertEqual(
         {go_to_pid, list_to_pid("<0.0.0>")},
         observer_cli_lib:parse_cmd_str("<0.0.0>\n")
-    ).
+    ),
+    ?assertEqual(
+        {go_to_pid, list_to_pid("<0.12.0>")},
+        observer_cli_lib:parse_cmd_str(">12\n")
+    ),
+    ?assertEqual(quit, observer_cli_lib:parse_cmd_str(">\n")).
+
+weighted_widths_edge_test() ->
+    ?assertEqual([], observer_cli_lib:weighted_widths([], [])),
+    ?assertEqual([10, 20], observer_cli_lib:weighted_widths([10, 20], [0, 0])).
+
+pad_rendered_plain_text_test() ->
+    ?assertEqual([], observer_cli_lib:pad_rendered("")),
+    ?assertEqual("plain", observer_cli_lib:pad_rendered("plain")).
 
 update_page_pos_test() ->
     Pages = [{1, 1}],
@@ -172,7 +205,8 @@ sublist_test() ->
     Items = [{0, 2, a}, {0, 5, b}, {0, 1, c}],
     {Start, List} = observer_cli_lib:sublist(Items, 2, 1),
     ?assertEqual(1, Start),
-    ?assertEqual(2, length(List)).
+    ?assertEqual(2, length(List)),
+    ?assertEqual({7, []}, observer_cli_lib:sublist(Items, 2, 4)).
 
 sbcs_to_mbcs_test() ->
     TypeList = [binary_alloc, driver_alloc],

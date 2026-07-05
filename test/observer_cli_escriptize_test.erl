@@ -12,10 +12,18 @@ required_modules_test_() ->
         {"resolve target name", fun resolve_target_name_test/0},
         {"random local node name", fun random_local_node_name_test/0},
         {"ensure set env", fun ensure_set_env_test/0},
+        {"ensure set env stop remote fun", fun ensure_set_env_stop_remote_fun_test/0},
         {"application helpers", fun application_helpers_test/0},
         {"application helpers fallback", fun application_helpers_fallback_test/0},
+        {"parse args", fun parse_args_test/0},
+        {"run args", fun run_args_test/0},
         {"main usage", fun main_usage_test/0},
         {"remote load local", fun remote_load_local_test/0},
+        {"remote load peer node", fun remote_load_peer_node_test/0},
+        {"run starts distribution", fun run_starts_distribution_test/0},
+        {"run waits for missing node", fun run_waits_for_missing_node_test/0},
+        {"run waits for stopped peer", fun run_waits_for_stopped_peer_test/0},
+        {"run name mode mismatch", fun run_name_mode_mismatch_test/0},
         {"run unreachable node", {timeout, 20000, fun run_unreachable_node_test/0}}
     ].
 
@@ -118,6 +126,23 @@ ensure_set_env_test() ->
     ?assertEqual(1, application:get_env(test_env_app, sample, undefined)),
     application:unset_env(test_env_app, sample).
 
+ensure_set_env_stop_remote_fun_test() ->
+    Parent = self(),
+    StopFun = fun() -> Parent ! stop_remote_called end,
+    application:set_env(test_stop_app, test_stop_remote, true),
+    application:set_env(test_stop_app, test_stop_remote_fun, StopFun),
+    try
+        ?assertEqual(ok, observer_cli_escriptize:ensure_set_env(test_stop_app, [{sample, 1}])),
+        receive
+            stop_remote_called -> ok
+        after 1000 ->
+            ?assert(false)
+        end
+    after
+        application:unset_env(test_stop_app, test_stop_remote),
+        application:unset_env(test_stop_app, test_stop_remote_fun)
+    end.
+
 application_helpers_test() ->
     _ = application:unload(helper_inc),
     _ = application:unload(helper_app),
@@ -165,6 +190,26 @@ application_helpers_fallback_test() ->
     ?assertEqual([], observer_cli_escriptize:application_included(unknown_app)),
     ?assertEqual([], observer_cli_escriptize:application_modules(unknown_app)),
     ?assertEqual([], observer_cli_escriptize:applications([], unknown_app)).
+
+parse_args_test() ->
+    ?assertEqual(
+        {ok, "target@host", undefined, 1500},
+        observer_cli_escriptize:parse_args(["target@host"])
+    ),
+    ?assertEqual(
+        {ok, "target@host", test_cookie, 2000},
+        observer_cli_escriptize:parse_args(["target@host", "test_cookie", "2000"])
+    ),
+    ?assertEqual(usage, observer_cli_escriptize:parse_args([])).
+
+run_args_test() ->
+    ?assertEqual(
+        {ok, "target@host", test_cookie, 2000},
+        observer_cli_escriptize:run_args(
+            ["target@host", "test_cookie", "2000"],
+            fun(TargetNode, Cookie, Interval) -> {ok, TargetNode, Cookie, Interval} end
+        )
+    ).
 
 main_usage_test() ->
     observer_cli_test_io:with_input(
@@ -226,8 +271,7 @@ run_name_mode_mismatch_test() ->
             catch observer_cli_escriptize:run(
                 TargetNode,
                 CookieAtom,
-                1000,
-                fun(_Node) -> ok end
+                1000
             ),
         ?assertMatch(
             {'EXIT', {
@@ -245,5 +289,126 @@ run_name_mode_mismatch_test() ->
 
 remote_load_local_test() ->
     ?assertEqual(ok, observer_cli_escriptize:remote_load(node())).
+
+remote_load_peer_node_test() ->
+    with_distribution(fun(_Cookie) ->
+        {ok, Peer, Node} = peer:start_link(#{name => peer:random_name("observer_cli_remote")}),
+        try
+            ?assertEqual(ok, observer_cli_escriptize:remote_load(Node))
+        after
+            peer:stop(Peer)
+        end
+    end).
+
+run_starts_distribution_test() ->
+    WasAlive = erlang:is_alive(),
+    case WasAlive of
+        true ->
+            ok;
+        false ->
+            Cookie = observer_cli_run_start_cookie,
+            PrevCookie = erlang:get_cookie(),
+            try
+                ?assertEqual(
+                    ok,
+                    observer_cli_test_io:with_input(
+                        [],
+                        fun() ->
+                            observer_cli_escriptize:run(
+                                "missing@invalid-host",
+                                Cookie,
+                                1000,
+                                fun(_Node) -> ok end
+                            )
+                        end
+                    )
+                )
+            after
+                erlang:set_cookie(node(), PrevCookie),
+                net_kernel:stop()
+            end
+    end.
+
+run_waits_for_missing_node_test() ->
+    with_distribution(fun(Cookie) ->
+        PrevStopEnv = application:get_env(observer_cli, test_stop_remote),
+        ok = application:set_env(observer_cli, test_stop_remote, true),
+        try
+            ?assertEqual(
+                ok,
+                observer_cli_test_io:with_input(
+                    [],
+                    fun() ->
+                        observer_cli_escriptize:run(
+                            "missing@invalid-host",
+                            Cookie,
+                            1000,
+                            fun(_Node) -> ok end
+                        )
+                    end
+                )
+            )
+        after
+            restore_env(observer_cli, test_stop_remote, PrevStopEnv)
+        end
+    end).
+
+run_waits_for_stopped_peer_test() ->
+    with_distribution(fun(Cookie) ->
+        {ok, Peer, Node} = peer:start_link(#{name => peer:random_name("observer_cli_run")}),
+        PrevStopEnv = application:get_env(observer_cli, test_stop_remote),
+        ok = application:set_env(observer_cli, test_stop_remote, true),
+        try
+            ?assertEqual(
+                ok,
+                observer_cli_test_io:with_input(
+                    [],
+                    fun() ->
+                        observer_cli_escriptize:run(
+                            atom_to_list(Node),
+                            Cookie,
+                            1000,
+                            fun(_Node) ->
+                                spawn(fun() ->
+                                    timer:sleep(50),
+                                    peer:stop(Peer)
+                                end),
+                                ok
+                            end
+                        )
+                    end
+                )
+            )
+        after
+            restore_env(observer_cli, test_stop_remote, PrevStopEnv),
+            try peer:stop(Peer) of
+                _ -> ok
+            catch
+                _:_ -> ok
+            end
+        end
+    end).
+
+with_distribution(Fun) ->
+    WasAlive = erlang:is_alive(),
+    PrevCookie = erlang:get_cookie(),
+    case WasAlive of
+        true ->
+            Fun(PrevCookie);
+        false ->
+            Name = list_to_atom(peer:random_name("observer_cli_origin")),
+            {ok, _} = net_kernel:start([Name, shortnames]),
+            try
+                Fun(erlang:get_cookie())
+            after
+                erlang:set_cookie(node(), PrevCookie),
+                net_kernel:stop()
+            end
+    end.
+
+restore_env(App, Key, {ok, Value}) ->
+    application:set_env(App, Key, Value);
+restore_env(App, Key, undefined) ->
+    application:unset_env(App, Key).
 
 -endif.

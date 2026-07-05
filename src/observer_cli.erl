@@ -19,7 +19,7 @@
 -ifdef(TEST).
 
 -export([
-    render_system_line/2,
+    render_system_line/2, render_system_line/3,
     render_memory_process_line/3,
     render_scheduler_usage/1,
     render_top_n_view/5, render_top_n_view/6,
@@ -27,7 +27,9 @@
     process_bar_format_style/2,
     warning_color/1,
     format_atom_info/2,
+    accept_net_ticktime_result/2,
     get_refresh_prompt/4,
+    collect_top_n/5,
     get_current_initial_call/1,
     get_port_proc_info/2,
     get_top_n_info/1,
@@ -250,7 +252,7 @@ redraw_running(
     {CPURow, CPULine} = render_scheduler_usage(Schedulers),
     ProcessRows = max(TerminalRow - 14 - CPURow, 0),
     TopLen = ProcessRows * CurPage,
-    TopList = get_top_n(Func, Type, Interval, TopLen, IsFirstTime),
+    TopList = collect_top_n(Func, Type, Interval, TopLen, IsFirstTime),
     Text = get_refresh_prompt(Func, Type, Interval, TopLen),
     MenuLine = observer_cli_lib:render_menu(home, Text),
     SystemLine = render_system_line(PsCmd, element(1, StableInfo)),
@@ -271,12 +273,14 @@ redraw_running(
     end.
 
 render_system_line(PsCmd, StableInfo) ->
+    render_system_line(PsCmd, StableInfo, get_atom_status()).
+
+render_system_line(PsCmd, StableInfo, AtomStatus) ->
     {LeftLabelExtra, LeftValueExtra, MiddleLabelExtra, MiddleValueExtra, RightLabelExtra,
         RightValueExtra} = home_summary_extras(),
     [Version, SysVersion, ProcLimit, PortLimit, EtsLimit] = StableInfo,
     ActiveTask = erlang:statistics(total_active_tasks),
     {ContextSwitch, _} = erlang:statistics(context_switches),
-    AtomStatus = get_atom_status(),
     Reductions = erlang:statistics(reductions),
     {PortWarning, ProcWarning, PortCount, ProcCount} =
         get_port_proc_info(PortLimit, ProcLimit),
@@ -349,7 +353,7 @@ render_system_line(PsCmd, StableInfo) ->
                     ?W(" ps -o pmem", 25 + MiddleLabelExtra),
                     ?W([MemPsV, "%"], 21 + MiddleValueExtra),
                     ?W("Reductions", 20 + RightLabelExtra),
-                    ?W(Reductions, 24 + RightValueExtra)
+                    ?W([integer_to_list(Reds), "/", integer_to_list(AddReds)], 24 + RightValueExtra)
                 ])
         end,
     [Title, Row1, Row2].
@@ -396,7 +400,7 @@ render_memory_process_line(MemSum, PortParallelism, Interval) ->
             ?W("Mem Type", 25 + MiddleLabelExtra),
             ?W("Size", 21 + MiddleValueExtra),
             ?W(["IO/GC:(", integer_to_binary(Interval), "ms)"], 20 + RightLabelExtra),
-            ?W("Total/Increments", 24 + RightValueExtra)
+            ?W("Total/Increments", 25 + RightValueExtra)
         ]),
     Row =
         ?render([
@@ -1037,9 +1041,9 @@ get_pid_info(Pid, Keys) ->
             {Val1, Val2}
     end.
 
-get_top_n(proc_window, Type, Interval, Rows, IsFirstTime) when not IsFirstTime ->
+collect_top_n(proc_window, Type, Interval, Rows, IsFirstTime) when not IsFirstTime ->
     recon:proc_window(Type, Rows, Interval);
-get_top_n(_Func, Type, _Interval, Rows, _FirstTime) ->
+collect_top_n(_Func, Type, _Interval, Rows, _FirstTime) ->
     recon:proc_count(Type, Rows).
 
 connect_error(Prompt, Node) ->
@@ -1115,11 +1119,11 @@ get_incremental_stats(SchUsage) ->
 
 update_net_ticktime_from(Node) ->
     NetTickTime = rpc:call(Node, net_kernel, get_net_ticktime, []),
-    case net_kernel:set_net_ticktime(NetTickTime) of
-        change_initiated ->
-            ok;
-        {ongoing_change_to, NetTickTime} ->
-            ok;
-        unchanged ->
-            ok
-    end.
+    accept_net_ticktime_result(net_kernel:set_net_ticktime(NetTickTime), NetTickTime).
+
+accept_net_ticktime_result(change_initiated, _NetTickTime) ->
+    ok;
+accept_net_ticktime_result({ongoing_change_to, NetTickTime}, NetTickTime) ->
+    ok;
+accept_net_ticktime_result(unchanged, _NetTickTime) ->
+    ok.

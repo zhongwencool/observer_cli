@@ -34,18 +34,18 @@ start_manager_branches_test() ->
         cleanup_mnesia(Dir)
     end.
 
-get_table_list_error_test() ->
+collect_mnesia_info_error_test() ->
     mnesia:stop(),
-    ?assertMatch({error, _}, observer_cli_mnesia:get_table_list(false, memory)).
+    ?assertMatch({error, _}, observer_cli_mnesia:collect_mnesia_info(false, memory)).
 
-get_table_list_running_test() ->
+collect_mnesia_info_running_test() ->
     Dir = filename:join(["test", "tmp", "mnesia"]),
     setup_mnesia(Dir),
     try
         {atomic, ok} =
             mnesia:create_table(test_table, [{attributes, [id, value]}, {ram_copies, [node()]}]),
         ok = mnesia:wait_for_tables([test_table], 5000),
-        List = observer_cli_mnesia:get_table_list(true, memory),
+        List = observer_cli_mnesia:collect_mnesia_info(true, memory),
         ?assert(
             lists:any(
                 fun({_, _, Tab}) -> proplists:get_value(name, Tab) =:= test_table end,
@@ -66,6 +66,11 @@ render_mnesia_wide_layout_test() ->
     Wide = mnesia_row_widths(180),
     ?assertEqual([2, 3, 4, 7], unchanged_columns(Base, Wide, [2, 3, 4, 7])),
     ?assertEqual([1, 5, 6, 8], wider_columns(Base, Wide, [1, 5, 6, 8])).
+
+render_mnesia_size_sort_header_test() ->
+    [Title, _Row] = observer_cli_mnesia:render_mnesia([mnesia_fixture()], size, 10, 1),
+    Text = lists:flatten(Title),
+    ?assert(string:find(Text, "Size") =/= nomatch).
 
 mnesia_row_widths(Columns) ->
     observer_cli_test_io:with_geometry(

@@ -48,6 +48,21 @@ unread_test() ->
     {_, _, Info} = observer_cli_ets:unread(),
     ?assertEqual(unread, proplists:get_value(name, Info)).
 
+collect_ets_info_test() ->
+    TabName = collect_ets_table,
+    ets:new(TabName, [named_table, public, set]),
+    try
+        Collected = observer_cli_ets:collect_ets_info(size),
+        ?assert(
+            lists:any(
+                fun({_, _, Info}) -> proplists:get_value(name, Info) =:= TabName end,
+                Collected
+            )
+        )
+    after
+        ets:delete(TabName)
+    end.
+
 render_ets_info_wide_layout_test() ->
     TabName = wide_layout_ets_table,
     ets:new(TabName, [named_table, public, set]),

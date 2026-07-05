@@ -97,6 +97,118 @@ restore_formatter_env({ok, Formatter}) ->
 restore_formatter_env(undefined) ->
     application:unset_env(observer_cli, formatter).
 
+collect_process_info_test() ->
+    Target = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
+    try
+        Info = observer_cli_process:collect_process_info(Target),
+        ?assertMatch(
+            #{
+                process := #{pid := Target},
+                links := _,
+                monitors := _,
+                monitored_by := _,
+                reductions := _,
+                memory := _
+            },
+            Info
+        )
+    after
+        exit(Target, kill)
+    end.
+
+collect_process_info_dead_test() ->
+    Target = spawn(fun() -> ok end),
+    Ref = erlang:monitor(process, Target),
+    receive
+        {'DOWN', Ref, process, Target, _} -> ok
+    after 1000 ->
+        ok
+    end,
+    ?assertEqual(dead, observer_cli_process:collect_process_info(Target)).
+
+collect_process_messages_empty_test() ->
+    Target = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
+    try
+        {ok, Info} = observer_cli_process:collect_process_messages(Target),
+        ?assertMatch(#{pid := Target, message_queue_len := 0, messages := []}, Info),
+        Line = observer_cli_process:render_process_messages(Info),
+        ?assert(string:find(lists:flatten(Line), "No messages") =/= nomatch)
+    after
+        exit(Target, kill)
+    end.
+
+collect_process_messages_with_messages_test() ->
+    Target = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
+    try
+        Target ! hello,
+        {ok, Info} = observer_cli_process:collect_process_messages(Target),
+        ?assertMatch(#{pid := Target, message_queue_len := 1, messages := [hello]}, Info),
+        Line = observer_cli_process:render_process_messages(Info),
+        ?assert(string:find(lists:flatten(Line), "Message Len:1") =/= nomatch),
+        ?assert(string:find(lists:flatten(Line), "hello") =/= nomatch)
+    after
+        exit(Target, kill)
+    end.
+
+collect_process_dictionary_test() ->
+    Parent = self(),
+    Target = spawn(fun() ->
+        put(observer_cli_test_key, observer_cli_test_value),
+        Parent ! ready,
+        receive
+        after infinity -> ok
+        end
+    end),
+    receive
+        ready -> ok
+    after 1000 ->
+        exit(timeout)
+    end,
+    try
+        {ok, Info} = observer_cli_process:collect_process_dictionary(Target),
+        ?assertMatch(#{pid := Target, dictionary := _}, Info),
+        ?assertEqual(
+            observer_cli_test_value,
+            proplists:get_value(observer_cli_test_key, maps:get(dictionary, Info))
+        ),
+        Line = observer_cli_process:render_process_dictionary(Info),
+        ?assert(string:find(lists:flatten(Line), "dictionary_len") =/= nomatch),
+        ?assert(string:find(lists:flatten(Line), "observer_cli_test_key") =/= nomatch)
+    after
+        exit(Target, kill)
+    end.
+
+collect_process_stack_test() ->
+    {ok, Info} = observer_cli_process:collect_process_stack(self()),
+    ?assertMatch(#{pid := _, stack := [_ | _]}, Info).
+
+render_process_stack_test() ->
+    Line = observer_cli_process:render_process_stack([
+        {observer_cli_process_test, render_process_stack_test, 0, [
+            {file, "observer_cli_process_test.erl"}, {line, 1}
+        ]}
+    ]),
+    ?assert(string:find(lists:flatten(Line), "observer_cli_process_test") =/= nomatch),
+    ?assert(string:find(lists:flatten(Line), "observer_cli_process_test.erl:1") =/= nomatch).
+
+collect_process_state_test() ->
+    Pid = whereis(application_controller),
+    ?assert(is_pid(Pid)),
+    _State = observer_cli_process:collect_process_state(Pid),
+    ok.
+
+render_process_state_test() ->
+    Line = observer_cli_process:render_process_state(self(), #{state => ok}),
+    Text = lists:flatten(Line),
+    ?assert(string:find(Text, "recon:get_state") =/= nomatch),
+    ?assert(string:find(Text, "state") =/= nomatch).
+
 run_start(Inputs, Pid) ->
     run_start_type(home, Inputs, Pid).
 

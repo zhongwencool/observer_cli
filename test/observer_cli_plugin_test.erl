@@ -11,6 +11,12 @@ start_configured_plugin_quit_test() ->
 start_configured_plugin_navigation_test() ->
     ?assertEqual(quit, run_plugin_inputs(["F\n", "B\n", "1500\n", "q\n"])).
 
+start_configured_plugin_go_home_test() ->
+    ?assertEqual(quit, run_plugin_inputs(["H\n", "q\n"])).
+
+start_configured_plugin_shortcuts_test() ->
+    ?assertEqual(quit, run_plugin_inputs(["N\n", "T\n", "q\n"])).
+
 init_config_from_env_test() ->
     Plugins = [#{module => observer_cli_test_plugin, shortcut => "T", title => "Test"}],
     with_plugins_env(
@@ -49,6 +55,16 @@ maybe_shortcut_missing_index_test() ->
     Opts = #view_opts{plug = Plug},
     ?assertEqual({error, not_found}, observer_cli_plugin:maybe_shortcut("N", Opts)).
 
+maybe_shortcut_sheet_not_found_test() ->
+    Plug = #plug{cur_index = 1, plugs = #{1 => #{module => observer_cli_test_plugin}}},
+    Opts = #view_opts{plug = Plug},
+    ?assertEqual({error, not_found}, observer_cli_plugin:maybe_shortcut("Z", Opts)).
+
+maybe_shortcut_undef_header_test() ->
+    Plug = #plug{cur_index = 1, plugs = #{1 => #{module => missing_plugin_module}}},
+    Opts = #view_opts{plug = Plug},
+    ?assertEqual({error, not_found}, observer_cli_plugin:maybe_shortcut("Z", Opts)).
+
 render_attributes_test() ->
     {Lines, Count, _State} = observer_cli_plugin:render_attributes(
         #{module => observer_cli_test_plugin},
@@ -58,6 +74,12 @@ render_attributes_test() ->
     Text = lists:flatten(Lines),
     ?assert(string:find(Text, "Name") =/= nomatch),
     ?assert(string:find(Text, "50.00%") =/= nomatch).
+
+render_attributes_undef_test() ->
+    ?assertEqual(
+        {[], 0, prev},
+        observer_cli_plugin:render_attributes(#{module => missing_plugin_module}, prev)
+    ).
 
 parse_cmd_str_test() ->
     ?assertEqual(go_home, observer_cli_plugin:parse_cmd_str("H\n")),
@@ -204,6 +226,67 @@ manager_jump_missing_row_test() ->
         exit(ChildPid, kill)
     end.
 
+manager_default_jump_missing_row_test() ->
+    SheetCache = ets:new(test_sheet_cache_default_jump_missing, [set, public]),
+    ChildPid = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
+    Plug = #plug{
+        cur_index = 1,
+        plugs = #{
+            1 => #{
+                handler => {fun(_Item) -> true end, observer_cli_test_handler},
+                cur_row => 1
+            }
+        }
+    },
+    Opts = #view_opts{plug = Plug},
+    try
+        observer_cli_test_io:with_input(
+            ["\n", "q\n"],
+            fun() ->
+                ?assertEqual(quit, observer_cli_plugin:manager(ChildPid, SheetCache, Opts))
+            end
+        )
+    after
+        case ets:info(SheetCache) of
+            undefined -> ok;
+            _ -> ets:delete(SheetCache)
+        end,
+        exit(ChildPid, kill)
+    end.
+
+manager_default_jump_no_match_test() ->
+    SheetCache = ets:new(test_sheet_cache_default_jump_nomatch, [set, public]),
+    ChildPid = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
+    ets:insert(SheetCache, {1, [item]}),
+    Plug = #plug{
+        cur_index = 1,
+        plugs = #{
+            1 => #{
+                handler => {fun(_Item) -> false end, observer_cli_test_handler},
+                cur_row => 1
+            }
+        }
+    },
+    Opts = #view_opts{plug = Plug},
+    try
+        observer_cli_test_io:with_input(
+            ["\n", "q\n"],
+            fun() ->
+                ?assertEqual(quit, observer_cli_plugin:manager(ChildPid, SheetCache, Opts))
+            end
+        )
+    after
+        case ets:info(SheetCache) of
+            undefined -> ok;
+            _ -> ets:delete(SheetCache)
+        end,
+        exit(ChildPid, kill)
+    end.
+
 manager_input_str_not_found_test() ->
     SheetCache = ets:new(test_sheet_cache_input_str, [set, public]),
     ChildPid = spawn(fun() -> receive
@@ -225,6 +308,71 @@ manager_input_str_not_found_test() ->
         end,
         exit(ChildPid, kill)
     end.
+
+manager_empty_plugin_inputs_test() ->
+    SheetCache = ets:new(test_sheet_cache_empty_inputs, [set, public]),
+    ChildPid = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
+    Plug = #plug{cur_index = 1, plugs = #{}},
+    Opts = #view_opts{plug = Plug},
+    try
+        observer_cli_test_io:with_input(
+            ["F\n", "B\n", "1500\n", "1\n", "\n", "q\n"],
+            fun() ->
+                ?assertEqual(quit, observer_cli_plugin:manager(ChildPid, SheetCache, Opts))
+            end
+        )
+    after
+        case ets:info(SheetCache) of
+            undefined -> ok;
+            _ -> ets:delete(SheetCache)
+        end,
+        exit(ChildPid, kill)
+    end.
+
+render_worker_empty_plugin_test() ->
+    SheetCache = ets:new(test_sheet_cache_empty_render, [set, public]),
+    try
+        ?assertEqual(
+            ok,
+            observer_cli_plugin:render_worker(
+                ?INIT_TIME_REF, #plug{plugs = #{}}, false, SheetCache, [], []
+            )
+        )
+    after
+        ets:delete(SheetCache)
+    end.
+
+render_worker_configured_plugin_test() ->
+    SheetCache = ets:new(test_sheet_cache_render, [set, public]),
+    SheetWidth = observer_cli_plugin:get_sheet_width(observer_cli_test_plugin),
+    Plug = #plug{
+        cur_index = 1,
+        plugs = #{
+            1 => #{
+                module => observer_cli_test_plugin,
+                title => "Test",
+                shortcut => "T",
+                interval => 1000,
+                cur_page => 1,
+                cur_row => 1,
+                sort_column => 1,
+                sheet_width => SheetWidth
+            }
+        }
+    },
+    Pid = spawn(fun() ->
+        observer_cli_plugin:render_worker(?INIT_TIME_REF, Plug, false, SheetCache, undefined, [])
+    end),
+    Ref = erlang:monitor(process, Pid),
+    Pid ! quit,
+    receive
+        {'DOWN', Ref, process, Pid, normal} -> ok
+    after 1000 ->
+        erlang:error(render_worker_not_stopped)
+    end,
+    ets:delete(SheetCache).
 
 run_plugin_inputs(Inputs) ->
     Plugins = [

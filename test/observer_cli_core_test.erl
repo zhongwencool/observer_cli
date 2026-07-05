@@ -39,6 +39,14 @@ get_refresh_prompt_test() ->
     ?assert(lists:prefix("recon:proc_count", Count)),
     ?assert(lists:prefix("recon:proc_window", Window)).
 
+collect_top_n_test() ->
+    Count = observer_cli:collect_top_n(proc_count, memory, 1500, 1, true),
+    WindowFirst = observer_cli:collect_top_n(proc_window, memory, 1, 1, true),
+    WindowNext = observer_cli:collect_top_n(proc_window, memory, 1, 1, false),
+    ?assert(is_list(Count)),
+    ?assert(is_list(WindowFirst)),
+    ?assert(is_list(WindowNext)).
+
 get_current_initial_call_test() ->
     Call = [
         {current_function, {lists, map, 2}},
@@ -54,11 +62,22 @@ render_system_line_test() ->
     Line = observer_cli:render_system_line(PsCmd, StableInfo),
     ?assert(string:find(lists:flatten(Line), "System") =/= nomatch).
 
+render_system_line_unsupported_atom_status_test() ->
+    PsCmd = "printf 'header\\n 1 2\\n'",
+    {StableInfo, _} = observer_cli:get_stable_system_info(),
+    Line = observer_cli:render_system_line(PsCmd, StableInfo, {error, unsupported}),
+    ?assert(string:find(lists:flatten(Line), "Ets Limit") =/= nomatch).
+
 render_system_line_missing_output_test() ->
     PsCmd = "printf ''",
     {StableInfo, _} = observer_cli:get_stable_system_info(),
     Line = observer_cli:render_system_line(PsCmd, StableInfo),
     ?assert(string:find(lists:flatten(Line), "ps -o pcpu") =/= nomatch).
+
+accept_net_ticktime_result_test() ->
+    ?assertEqual(ok, observer_cli:accept_net_ticktime_result(change_initiated, 60)),
+    ?assertEqual(ok, observer_cli:accept_net_ticktime_result({ongoing_change_to, 60}, 60)),
+    ?assertEqual(ok, observer_cli:accept_net_ticktime_result(unchanged, 60)).
 
 render_memory_process_line_test() ->
     MemSum = {1, 2, 3, 4},
@@ -113,6 +132,10 @@ render_home_summary_wide_layout_test() ->
             [MemTitle | _] = MemLines,
             ?assertEqual(
                 observer_cli_lib:layout_width(), hd(home_summary_line_lengths(SystemTitle))
+            ),
+            ?assertEqual(
+                nomatch,
+                binary:match(unicode:characters_to_binary(MemTitle), <<"\e[0m |">>)
             ),
             ?assertEqual([15, 26, 30, 25, 25, 31], home_summary_widths(SystemTitle)),
             ?assertEqual([15, 26, 30, 25, 25, 31], home_summary_widths(MemTitle)),

@@ -97,6 +97,17 @@ start_scheduler_usage_toggle_test() ->
         )
     end).
 
+start_numeric_jump_without_row_test() ->
+    with_trap_exit(fun() ->
+        observer_cli_test_io:with_input(
+            ["1\n", "q\n"],
+            fun() ->
+                Opts = #view_opts{},
+                ?assertEqual(quit, observer_cli:start(Opts))
+            end
+        )
+    end).
+
 with_trap_exit(Fun) ->
     PrevTrap = process_flag(trap_exit, true),
     try
