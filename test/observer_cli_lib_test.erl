@@ -186,6 +186,56 @@ assert_shared_parse(Cases) ->
 shared_parse_interval_test() ->
     ?assertEqual({new_interval, 1500}, observer_cli_command:parse_shared("1500")).
 
+network_command_parse_test() ->
+    assert_shared_parse([
+        {"ic\n", inet_count},
+        {"iw\n", inet_window},
+        {"rc\n", recv_cnt},
+        {"ro\n", recv_oct},
+        {"sc\n", send_cnt},
+        {"so\n", send_oct},
+        {"cnt\n", cnt},
+        {"oct\n", oct},
+        {"1500", {new_interval, 1500}},
+        {"q\n", quit},
+        {"Q\n", quit},
+        {{error, terminated}, quit}
+        | pagination_command_cases()
+    ]).
+
+ets_mnesia_command_parse_test() ->
+    assert_shared_parse([
+        {"s\n", size},
+        {"m\n", {func, proc_count, memory}},
+        {"hide\n", hide},
+        {"1500", {new_interval, 1500}},
+        {"q\n", quit},
+        {"Q\n", quit}
+        | pagination_command_cases()
+    ]).
+
+application_command_parse_test() ->
+    assert_shared_parse([
+        {"p\n", pause_or_resume},
+        {"r\n", {func, proc_count, reductions}},
+        {"m\n", {func, proc_count, memory}},
+        {"mq\n", {func, proc_count, message_queue_len}},
+        {"1500", {new_interval, 1500}},
+        {"q\n", quit},
+        {"Q\n", quit}
+        | pagination_command_cases()
+    ]).
+
+pagination_command_cases() ->
+    [
+        {"pd\n", page_down_top_n},
+        {"pu\n", page_up_top_n},
+        {"PD\n", page_down_top_n},
+        {"PU\n", page_up_top_n},
+        {"F\n", page_down_top_n},
+        {"B\n", page_up_top_n}
+    ].
+
 weighted_widths_edge_test() ->
     ?assertEqual([], observer_cli_lib:weighted_widths([], [])),
     ?assertEqual([10, 20], observer_cli_lib:weighted_widths([10, 20], [0, 0])).
