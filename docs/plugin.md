@@ -1,6 +1,8 @@
 # How to write your own plugin?
 
-Observer CLI exposes a small behaviour (`observer_cli_plugin`) that lets you present custom metrics alongside the built-in views. This guide walks through the required configuration and each callback so you can build your own panels quickly.
+Observer CLI exposes a small behaviour (`observer_cli_plugin`) that lets you present custom metrics alongside the built-in views. The 2.0 plugin API is explicit: headers declare stable column ids, rows return maps keyed by those ids, and row drill-down uses an explicit `handle` value.
+
+Maintaining a 1.x plugin? Start with [1.x to 2.0 migration](#4-1-x-to-2-0-migration), then use the callback examples below as the target shape.
 
 ## 1. Register the plugin module
 
@@ -13,12 +15,13 @@ Add a `plugins` entry to the Observer CLI environment (for example in `mix.exs` 
     title => "XPlug",
     shortcut => "X",
     interval => 1600,
-    sort_column => 3},
+    sort => memory},
   #{module => observer_cli_plug_behaviour_y,
     title => "YPlug",
     shortcut => "Y",
     interval => 2000,
-    sort_column => 3}
+    sort => reductions,
+    handler => observer_cli_plug_item_behaviour_y}
  ]}.
 ```
 
@@ -28,8 +31,8 @@ Add a `plugins` entry to the Observer CLI environment (for example in `mix.exs` 
 - `title` - label rendered in the menu bar (required).
 - `shortcut` - single key used to jump to the plugin (required).
 - `interval` - refresh rate in milliseconds (optional, defaults to `1500`).
-- `sort_column` - index used when sorting the sheet (optional, defaults to `2`).
-- `handler` - tuple `{PredicateFun, Module}` for custom row handling (optional, see [Custom handlers](#4-custom-handlers)).
+- `sort` - column id used when sorting the sheet (optional, defaults to `default_sort` from `sheet_header/0`).
+- `handler` - module used for custom row handling (optional, see [Custom handlers](#3-custom-handlers)).
 
 The default entry point is still the `HOME` view (`observer_cli:start()`). To boot straight into plugin mode expose a shim:
 
@@ -47,12 +50,8 @@ The behaviour defines three callbacks.
 ### `attributes/1`
 
 ```erlang
--callback attributes(PrevState) -> {[Rows], NewState} when
-    Rows :: [
-        #{content => string() | integer() | {byte, pos_integer()} | {percent, float()},
-          width   => pos_integer(),
-          color   => binary()}
-    ],
+-callback attributes(PrevState) -> #{rows := Rows, state := NewState} when
+    Rows :: [[attr_cell()]],
     NewState :: any().
 ```
 
@@ -78,7 +77,7 @@ attributes(PrevState) ->
             #{content => {byte, 2034 * 220}, width => 14}
         ]
     ],
-    {Attrs, PrevState}.
+    #{rows => Attrs, state => PrevState}.
 ```
 
 Rendered banner:
@@ -92,23 +91,25 @@ Rendered banner:
 ### `sheet_header/0`
 
 ```erlang
--callback sheet_header() -> [SheetHeader] when
-    SheetHeader :: #{title => string(),
-                     width => pos_integer(),
-                     shortcut => string()}.
+-callback sheet_header() -> #{columns := Columns, default_sort := ColumnId} when
+    Columns :: [#{id := atom(), title := string(), width := pos_integer()}],
+    ColumnId :: atom().
 ```
 
-Defines the tabular columns shown underneath the banner. Shortcuts let the user sort the sheet by pressing the letter.
+Defines the tabular columns shown underneath the banner. Each column needs a stable `id`; shortcuts let the user sort the sheet by pressing the letter. `default_sort` must be one of the declared column ids.
 
 ```erlang
 sheet_header() ->
-    [
-        #{title => "Pid", width => 15},
-        #{title => "Register", width => 20},
-        #{title => "Memory", width => 20, shortcut => "S"},
-        #{title => "Reductions", width => 23, shortcut => "R"},
-        #{title => "Message Queue Len", width => 23, shortcut => "Q"}
-    ].
+    #{
+        columns => [
+            #{id => pid, title => "Pid", width => 15},
+            #{id => register, title => "Register", width => 20},
+            #{id => memory, title => "Memory", width => 20, shortcut => "S"},
+            #{id => reductions, title => "Reductions", width => 23, shortcut => "R"},
+            #{id => message_queue_len, title => "Message Queue Len", width => 23, shortcut => "Q"}
+        ],
+        default_sort => memory
+    }.
 ```
 
 Result:
@@ -120,10 +121,12 @@ Result:
 ### `sheet_body/1`
 
 ```erlang
--callback sheet_body(PrevState) -> {[SheetBody], NewState}.
+-callback sheet_body(PrevState) -> #{rows := Rows, state := NewState} when
+    Rows :: [#{cells := #{atom() => term()}, handle => term()}],
+    NewState :: any().
 ```
 
-Return the table rows. Each row is a list; Observer CLI paginates automatically (PageDown/PageUp or `F/B` keys).
+Return the table rows. `cells` is displayed in the order declared by `sheet_header/0`; missing cells render as empty and extra cells are ignored. `handle` is optional, but it is required when the row should open a detail view.
 
 ```erlang
 sheet_body(PrevState) ->
@@ -134,17 +137,20 @@ sheet_body(PrevState) ->
                     [] -> [];
                     {_, Name} -> Name
                 end,
-            [
-                Pid,
-                Register,
-                {byte, element(2, erlang:process_info(Pid, memory))},
-                element(2, erlang:process_info(Pid, reductions)),
-                element(2, erlang:process_info(Pid, message_queue_len))
-            ]
+            #{
+                cells => #{
+                    pid => Pid,
+                    register => Register,
+                    memory => {byte, element(2, erlang:process_info(Pid, memory))},
+                    reductions => element(2, erlang:process_info(Pid, reductions)),
+                    message_queue_len => element(2, erlang:process_info(Pid, message_queue_len))
+                },
+                handle => Pid
+            }
         end
      || Pid <- erlang:processes()
     ],
-    {Rows, PrevState}.
+    #{rows => Rows, state => PrevState}.
 ```
 
 Rendered sample:
@@ -162,11 +168,11 @@ Rendered sample:
 
 - `{byte, Value}` automatically renders human-readable byte units.
 - `{percent, Value}` outputs a percentage with two decimals.
-- `color` can be any ANSI color escape (e.g., `?RED_BG`) to highlight critical cells.
+- `color` can be any ANSI color escape (for example `?RED_BG`) to highlight critical cells.
 
 ## 3. Custom handlers
 
-By default, selecting a row in your plugin opens the standard `observer_cli_process` view for the first `pid` found in that row. To override this, add a `handler` tuple to the plugin definition. The predicate receives every element in the row and should return true for the items you need. When the predicate matches, `HandlerModule:start/3` is invoked with the same contract as `observer_cli_process:start/3`.
+By default, selecting a row with `handle => Pid` opens the standard `observer_cli_process` view. To open a custom detail view, set `handler` to a module in the plugin definition and put the selected value in each row's `handle`.
 
 ```erlang
 {plugins,
@@ -175,19 +181,63 @@ By default, selecting a row in your plugin opens the standard `observer_cli_proc
     title => "XPlug",
     shortcut => "X",
     interval => 1600,
-    sort_column => 3,
-    handler => {fun is_pid/1, observer_cli_plug_item_behaviour_x}},
-  #{module => observer_cli_plug_behaviour_y,
-    title => "YPlug",
-    shortcut => "Y",
-    interval => 2000,
-    sort_column => 3,
-    handler => {fun is_binary/1, observer_cli_plug_item_behaviour_y}}
+    sort => memory,
+    handler => observer_cli_plug_item_behaviour_x}
  ]}.
 ```
 
-Use this when a row selection should drill into a custom detail view (for example, ETS metadata or OS metrics).
+When the selected row contains `#{handle := Handle}`, Observer CLI calls `HandlerModule:start(plugin, Handle, ViewOpts)` with the same contract as `observer_cli_process:start/3`.
 
-## 4. Example plugin
+Use this when a row selection should drill into a custom detail view (for example, ETS metadata or OS metrics). If the row should not be selectable, omit `handle`.
+
+## 4. 1.x to 2.0 migration
+
+2.0 keeps plugin registration and normal plugin-page navigation, but plugin callback return values now use maps with explicit keys. Migrate old plugins as follows:
+
+| 1.x shape | 2.0 shape |
+| --- | --- |
+| `attributes/1 -> {Rows, State}` | `attributes/1 -> #{rows => Rows, state => State}` |
+| `sheet_header/0 -> [#{title => Title, width => Width, shortcut => Shortcut}]` | `sheet_header/0 -> #{columns => [#{id => Id, title => Title, width => Width, shortcut => Shortcut}], default_sort => Id}` |
+| `sheet_body/1 -> {RowLists, State}` | `sheet_body/1 -> #{rows => [#{cells => #{ColumnId => Value}, handle => Handle}], state => State}` |
+| config `sort_column => N` | config `sort => ColumnId`, or omit it and use `default_sort` |
+| config `handler => {PredicateFun, HandlerModule}` | config `handler => HandlerModule`, with the selected value in row `handle` |
+| implicit first-`pid` drill-down | explicit `handle => Pid` for process drill-down |
+
+Minimal callback migration example:
+
+```erlang
+%% 1.x
+sheet_header() ->
+    [#{title => "Name", width => 12, shortcut => "N"},
+     #{title => "Value", width => 8, shortcut => "V"}].
+
+sheet_body(State) ->
+    {[["alpha", 1], ["beta", 2]], State}.
+
+%% 2.0
+sheet_header() ->
+    #{
+        columns => [
+            #{id => name, title => "Name", width => 12, shortcut => "N"},
+            #{id => value, title => "Value", width => 8, shortcut => "V"}
+        ],
+        default_sort => value
+    }.
+
+sheet_body(State) ->
+    #{
+        rows => [
+            #{cells => #{name => "alpha", value => 1}},
+            #{cells => #{name => "beta", value => 2}}
+        ],
+        state => State
+    }.
+```
+
+For process drill-down, add `handle => Pid` to the row and leave `handler` unset. For custom drill-down, add `handler => HandlerModule` to the plugin config and set `handle` to the term your handler expects.
+
+During startup, Observer CLI still migrates `sort_column => N` to the matching column id and accepts old handler tuples by keeping the handler module. Legacy callback return shapes are rejected with `error({plugin_api_error, #{source => Source, reason => Reason}})` so plugin authors see the API mismatch early.
+
+## 5. Example plugin
 
 [`os_stats`](https://github.com/zhongwencool/os_stats) shows a complete implementation that surfaces Linux kernel information, load averages, disk usage, memory, CPU, and IO statistics via the same behaviour. Use it as inspiration for structuring larger dashboards.
