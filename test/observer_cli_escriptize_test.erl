@@ -8,6 +8,7 @@ required_modules_test_() ->
     [
         {"simple application without deps", fun simple_app/0},
         {"application with dependency", fun app_with_dependency/0},
+        {"unloaded dependency metadata", fun unloaded_dependency_metadata/0},
         {"application with included application", fun app_with_included/0},
         {"resolve target name", fun resolve_target_name_test/0},
         {"random local node name", fun random_local_node_name_test/0},
@@ -67,6 +68,20 @@ app_with_dependency() ->
 
     application:unload(some_app),
     application:unload(dependency_a).
+
+unloaded_dependency_metadata() ->
+    ReconWasLoaded = application:get_key(recon, modules) =/= undefined,
+    _ = application:unload(recon),
+    _ = application:load(observer_cli),
+    try
+        Mods = observer_cli_escriptize:required_modules([observer_cli]),
+        ?assert(lists:member(recon_lib, Mods))
+    after
+        case ReconWasLoaded of
+            true -> ok;
+            false -> application:unload(recon)
+        end
+    end.
 
 app_with_included() ->
     ok = application:load(

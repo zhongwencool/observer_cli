@@ -200,19 +200,29 @@ maybe_wait_remote_stop(_Node) ->
 -endif.
 
 application_included(Application) ->
+    ensure_application_loaded(Application),
     case application:get_key(Application, included_applications) of
         {ok, Apps} -> Apps;
         _ -> []
     end.
 
 application_modules(Application) ->
+    ensure_application_loaded(Application),
     case application:get_key(Application, modules) of
         {ok, Modules} -> Modules;
         _ -> []
     end.
 
 applications(ApplicationsAcc, App) ->
+    ensure_application_loaded(App),
     case application:get_key(App, applications) of
         {ok, Applications} -> ApplicationsAcc ++ Applications;
         undefined -> ApplicationsAcc
+    end.
+
+ensure_application_loaded(App) ->
+    case application:load(App) of
+        ok -> ok;
+        {error, {already_loaded, App}} -> ok;
+        {error, _Reason} -> ok
     end.
