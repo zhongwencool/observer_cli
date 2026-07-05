@@ -47,26 +47,27 @@ manager(ChildPid, #view_opts{ets = EtsOpts = #ets{cur_page = CurPage}} = ViewOpt
         quit ->
             erlang:send(ChildPid, quit);
         {new_interval, NewMs} ->
-            clean([ChildPid]),
-            start(ViewOpts#view_opts{ets = EtsOpts#ets{interval = NewMs}});
+            restart(ChildPid, ViewOpts#view_opts{ets = EtsOpts#ets{interval = NewMs}});
         size ->
-            clean([ChildPid]),
-            start(ViewOpts#view_opts{ets = EtsOpts#ets{attr = size}});
+            restart(ChildPid, ViewOpts#view_opts{ets = EtsOpts#ets{attr = size}});
         %% Home
         {func, proc_count, memory} ->
-            clean([ChildPid]),
-            start(ViewOpts#view_opts{ets = EtsOpts#ets{attr = memory}});
+            restart(ChildPid, ViewOpts#view_opts{ets = EtsOpts#ets{attr = memory}});
         page_down_top_n ->
-            NewPage = observer_cli_lib:next_page(CurPage, 1),
-            clean([ChildPid]),
-            start(ViewOpts#view_opts{ets = EtsOpts#ets{cur_page = NewPage}});
+            restart_page(ChildPid, ViewOpts, CurPage, 1);
         page_up_top_n ->
-            NewPage = observer_cli_lib:next_page(CurPage, -1),
-            clean([ChildPid]),
-            start(ViewOpts#view_opts{ets = EtsOpts#ets{cur_page = NewPage}});
+            restart_page(ChildPid, ViewOpts, CurPage, -1);
         _ ->
             manager(ChildPid, ViewOpts)
     end.
+
+restart_page(ChildPid, ViewOpts = #view_opts{ets = EtsOpts}, CurPage, Delta) ->
+    NewPage = observer_cli_lib:next_page(CurPage, Delta),
+    restart(ChildPid, ViewOpts#view_opts{ets = EtsOpts#ets{cur_page = NewPage}}).
+
+restart(ChildPid, ViewOpts) ->
+    clean([ChildPid]),
+    start(ViewOpts).
 
 render_worker(Interval, LastTimeRef, Attr, CurPage, AutoRow) ->
     TerminalRow = observer_cli_lib:get_terminal_rows(AutoRow),

@@ -53,31 +53,30 @@ manager(Pid, Opts = #view_opts{app = App = #app{cur_page = CurPage}}) ->
             erlang:send(Pid, quit),
             quit;
         {func, proc_count, message_queue_len} ->
-            clean([Pid]),
-            start(Opts#view_opts{app = App#app{type = {message_queue_len, 4}}});
+            restart(Pid, Opts#view_opts{app = App#app{type = {message_queue_len, 4}}});
         {func, proc_count, reductions} ->
-            clean([Pid]),
-            start(Opts#view_opts{app = App#app{type = {reductions, 3}}});
+            restart(Pid, Opts#view_opts{app = App#app{type = {reductions, 3}}});
         {func, proc_count, memory} ->
-            clean([Pid]),
-            start(Opts#view_opts{app = App#app{type = {memory, 2}}});
+            restart(Pid, Opts#view_opts{app = App#app{type = {memory, 2}}});
         pause_or_resume ->
-            clean([Pid]),
-            start(Opts#view_opts{app = App#app{type = {proc_count, 1}}});
+            restart(Pid, Opts#view_opts{app = App#app{type = {proc_count, 1}}});
         {new_interval, NewInterval} ->
-            clean([Pid]),
-            start(Opts#view_opts{app = App#app{interval = NewInterval}});
+            restart(Pid, Opts#view_opts{app = App#app{interval = NewInterval}});
         page_down_top_n ->
-            NewPage = observer_cli_lib:next_page(CurPage, 1),
-            clean([Pid]),
-            start(Opts#view_opts{app = App#app{cur_page = NewPage}});
+            restart_page(Pid, Opts, CurPage, 1);
         page_up_top_n ->
-            NewPage = observer_cli_lib:next_page(CurPage, -1),
-            clean([Pid]),
-            start(Opts#view_opts{app = App#app{cur_page = NewPage}});
+            restart_page(Pid, Opts, CurPage, -1);
         _ ->
             manager(Pid, Opts)
     end.
+
+restart_page(Pid, Opts = #view_opts{app = App}, CurPage, Delta) ->
+    NewPage = observer_cli_lib:next_page(CurPage, Delta),
+    restart(Pid, Opts#view_opts{app = App#app{cur_page = NewPage}}).
+
+restart(Pid, Opts) ->
+    clean([Pid]),
+    start(Opts).
 
 render_worker(App, AutoRow) ->
     #app{type = Type, interval = Interval, cur_page = CurPage} = App,

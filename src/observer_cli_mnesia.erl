@@ -58,23 +58,25 @@ manager(ChildPid, #view_opts{db = DBOpts = #db{cur_page = CurPage, hide_sys = Hi
             erlang:send(ChildPid, {system_table, NewHide}),
             manager(ChildPid, HomeOpts#view_opts{db = DBOpts#db{hide_sys = NewHide}});
         size ->
-            clean([ChildPid]),
-            start(HomeOpts#view_opts{db = DBOpts#db{attr = size}});
+            restart(ChildPid, HomeOpts#view_opts{db = DBOpts#db{attr = size}});
         %% Home
         {func, proc_count, memory} ->
-            clean([ChildPid]),
-            start(HomeOpts#view_opts{db = DBOpts#db{attr = memory}});
+            restart(ChildPid, HomeOpts#view_opts{db = DBOpts#db{attr = memory}});
         page_down_top_n ->
-            NewPage = observer_cli_lib:next_page(CurPage, 1),
-            clean([ChildPid]),
-            start(HomeOpts#view_opts{db = DBOpts#db{cur_page = NewPage}});
+            restart_page(ChildPid, HomeOpts, CurPage, 1);
         page_up_top_n ->
-            NewPage = observer_cli_lib:next_page(CurPage, -1),
-            clean([ChildPid]),
-            start(HomeOpts#view_opts{db = DBOpts#db{cur_page = NewPage}});
+            restart_page(ChildPid, HomeOpts, CurPage, -1);
         _ ->
             manager(ChildPid, HomeOpts)
     end.
+
+restart_page(ChildPid, HomeOpts = #view_opts{db = DBOpts}, CurPage, Delta) ->
+    NewPage = observer_cli_lib:next_page(CurPage, Delta),
+    restart(ChildPid, HomeOpts#view_opts{db = DBOpts#db{cur_page = NewPage}}).
+
+restart(ChildPid, HomeOpts) ->
+    clean([ChildPid]),
+    start(HomeOpts).
 
 render_worker(Interval, LastTimeRef, HideSystemTable, AutoRow, Attr, CurPage) ->
     TerminalRow = observer_cli_lib:get_terminal_rows(AutoRow),
