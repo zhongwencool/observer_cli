@@ -161,6 +161,27 @@ collect_system_info_test() ->
     ?assert(is_list(maps:get(sys_info, Info))),
     ?assert(is_list(maps:get(dist_nodes_info, Info))).
 
+render_system_sections_test() ->
+    SysInfo = observer_cli_system:collect_sys_info("printf 'header\\n 1 2 3 4\\n'"),
+    [Sys, Allocator, DistNodes, CacheHit] = observer_cli_system:render_system_sections(#{
+        sys_info => SysInfo,
+        average_block_curs => allocator_curs(),
+        average_block_maxes => allocator_maxes(),
+        sbcs_to_mbcs_curs => allocator_sbcs_curs(),
+        sbcs_to_mbcs_maxes => allocator_sbcs_maxes(),
+        dist_nodes_info => [],
+        cache_hit_info => cache_hit_fixture()
+    }),
+    ?assertEqual(observer_cli_system:render_sys_info(SysInfo), Sys),
+    ?assertEqual(
+        observer_cli_system:render_block_size_info(
+            allocator_curs(), allocator_maxes(), allocator_sbcs_curs(), allocator_sbcs_maxes()
+        ),
+        Allocator
+    ),
+    ?assertEqual(observer_cli_system:render_dist_node_info([]), DistNodes),
+    ?assertEqual(observer_cli_system:render_cache_hit_rates(cache_hit_fixture(), 12), CacheHit).
+
 render_cache_hit_rates_test() ->
     CacheHitInfo = [
         {{instance, 0}, [{hit_rate, 0.5}, {hits, 1}, {calls, 2}]},
