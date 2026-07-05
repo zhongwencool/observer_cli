@@ -33,6 +33,23 @@ render_sheet_body_test() ->
     ?assertMatch([{1, _}], ets:lookup(SheetCache, 1)),
     ets:delete(SheetCache).
 
+render_sheet_body_sort_column_test() ->
+    SheetCache = ets:new(plugin_sheet_cache_sort, [set, public]),
+    {_, Widths} = observer_cli_plugin:render_sheet_header(observer_cli_test_plugin, 2),
+    {_Lines, _NewSheet} = observer_cli_plugin:render_sheet_body(
+        observer_cli_test_plugin,
+        1,
+        1,
+        2,
+        2,
+        Widths,
+        SheetCache,
+        []
+    ),
+    ?assertEqual([{1, ["beta", 2]}], ets:lookup(SheetCache, 1)),
+    ?assertEqual([{2, ["alpha", 1]}], ets:lookup(SheetCache, 2)),
+    ets:delete(SheetCache).
+
 render_sheet_undef_test() ->
     SheetCache = ets:new(plugin_sheet_cache_undef, [set, public]),
     Plug = #{module => missing_plugin_module, sort_column => 1, cur_page => 1, cur_row => 1},

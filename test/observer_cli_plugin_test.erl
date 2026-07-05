@@ -25,8 +25,17 @@ init_config_from_env_test() ->
             Plug = observer_cli_plugin:init_config(#plug{plugs = []}),
             #{1 := Conf} = Plug#plug.plugs,
             ?assertEqual(1, Plug#plug.cur_index),
+            ?assertEqual(observer_cli_test_plugin, maps:get(module, Conf)),
+            ?assertEqual("T", maps:get(shortcut, Conf)),
+            ?assertEqual("Test", maps:get(title, Conf)),
             ?assertEqual(1500, maps:get(interval, Conf)),
-            ?assertEqual(1, maps:get(cur_page, Conf))
+            ?assertEqual(1, maps:get(cur_page, Conf)),
+            ?assertEqual(1, maps:get(cur_row, Conf)),
+            ?assertEqual(2, maps:get(sort_column, Conf)),
+            ?assertEqual(
+                observer_cli_plugin:get_sheet_width(observer_cli_test_plugin),
+                maps:get(sheet_width, Conf)
+            )
         end
     ).
 
@@ -41,9 +50,16 @@ update_plugins_test() ->
     ?assertEqual(2000, maps:get(interval, maps:get(2, Updated))).
 
 maybe_shortcut_menu_test() ->
-    Plug = #plug{cur_index = 1, plugs = #{1 => #{shortcut => "T", title => "Test"}}},
+    Plug = #plug{
+        cur_index = 1,
+        plugs = #{
+            1 => #{shortcut => "T", title => "Test"},
+            2 => #{shortcut => "U", title => "Other"}
+        }
+    },
     Opts = #view_opts{plug = Plug},
-    ?assertEqual({ok, menu, 1}, observer_cli_plugin:maybe_shortcut("T", Opts)).
+    ?assertEqual({ok, menu, 1}, observer_cli_plugin:maybe_shortcut("T", Opts)),
+    ?assertEqual({ok, menu, 2}, observer_cli_plugin:maybe_shortcut("U", Opts)).
 
 maybe_shortcut_sheet_test() ->
     Plug = #plug{cur_index = 1, plugs = #{1 => #{module => observer_cli_test_plugin}}},
@@ -95,25 +111,35 @@ start_jump_action_test() ->
     ChildPid = spawn(fun() -> receive
         after infinity -> ok
         end end),
-    ets:insert(SheetCache, {1, [item]}),
+    ets:insert(SheetCache, {2, [skip, target]}),
     Plug = #plug{
         cur_index = 1,
         plugs = #{
             1 => #{
-                handler => {fun(_Item) -> true end, observer_cli_test_handler},
+                handler => {fun(Item) -> Item =:= target end, observer_cli_test_handler},
                 cur_row => 1
             }
         }
     },
     Opts = #view_opts{plug = Plug},
     try
+        put(observer_cli_test_handler_parent, self()),
         observer_cli_test_io:with_input(
-            ["1\n"],
+            ["2\n"],
             fun() ->
                 ?assertEqual(quit, observer_cli_plugin:manager(ChildPid, SheetCache, Opts))
             end
-        )
+        ),
+        receive
+            {plugin_handler, plugin, target, #view_opts{
+                plug = #plug{plugs = #{1 := #{cur_row := 2}}}
+            }} ->
+                ok
+        after 1000 ->
+            erlang:error(plugin_handler_not_called)
+        end
     after
+        erase(observer_cli_test_handler_parent),
         case ets:info(SheetCache) of
             undefined -> ok;
             _ -> ets:delete(SheetCache)
