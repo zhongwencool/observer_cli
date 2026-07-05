@@ -65,11 +65,11 @@ manager(ChildPid, #view_opts{db = DBOpts = #db{cur_page = CurPage, hide_sys = Hi
             clean([ChildPid]),
             start(HomeOpts#view_opts{db = DBOpts#db{attr = memory}});
         page_down_top_n ->
-            NewPage = max(CurPage + 1, 1),
+            NewPage = observer_cli_lib:next_page(CurPage, 1),
             clean([ChildPid]),
             start(HomeOpts#view_opts{db = DBOpts#db{cur_page = NewPage}});
         page_up_top_n ->
-            NewPage = max(CurPage - 1, 1),
+            NewPage = observer_cli_lib:next_page(CurPage, -1),
             clean([ChildPid]),
             start(HomeOpts#view_opts{db = DBOpts#db{cur_page = NewPage}});
         _ ->

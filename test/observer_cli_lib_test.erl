@@ -315,6 +315,11 @@ update_page_pos_test() ->
     erlang:unlink(StorePid),
     erlang:exit(StorePid, kill).
 
+next_page_test() ->
+    ?assertEqual(2, observer_cli_lib:next_page(1, 1)),
+    ?assertEqual(1, observer_cli_lib:next_page(1, -1)),
+    ?assertEqual(3, observer_cli_lib:next_page(5, -2)).
+
 get_pos_test() ->
     ?assertEqual({1, 1}, observer_cli_lib:get_pos(1, 10, [], 0)),
     ?assertEqual({3, 3}, observer_cli_lib:get_pos(2, 2, [], 5)).

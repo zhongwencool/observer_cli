@@ -80,12 +80,12 @@ manager(StorePid, RenderPid, ViewOpts = #view_opts{inet = InetOpts}) ->
         jump ->
             start_port_view(StorePid, RenderPid, ViewOpts, true);
         page_down_top_n ->
-            NewPage = max(CurPage + 1, 1),
+            NewPage = observer_cli_lib:next_page(CurPage, 1),
             NewPages = observer_cli_lib:update_page_pos(StorePid, NewPage, Pages),
             clean([StorePid, RenderPid]),
             start(ViewOpts#view_opts{inet = InetOpts#inet{cur_page = NewPage, pages = NewPages}});
         page_up_top_n ->
-            NewPage = max(CurPage - 1, 1),
+            NewPage = observer_cli_lib:next_page(CurPage, -1),
             NewPages = observer_cli_lib:update_page_pos(StorePid, NewPage, Pages),
             clean([StorePid, RenderPid]),
             start(ViewOpts#view_opts{inet = InetOpts#inet{cur_page = NewPage, pages = NewPages}});

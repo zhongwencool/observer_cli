@@ -180,12 +180,12 @@ manager(StorePid, RenderPid, Opts, LastSchWallFlag) ->
             clean(Resource),
             start(Opts#view_opts{home = Home#home{func = Func, type = Type}});
         page_down_top_n ->
-            NewPage = max(CurPage + 1, 1),
+            NewPage = observer_cli_lib:next_page(CurPage, 1),
             NewPages = observer_cli_lib:update_page_pos(StorePid, NewPage, Pages),
             clean(Resource),
             start(Opts#view_opts{home = Home#home{cur_page = NewPage, pages = NewPages}});
         page_up_top_n ->
-            NewPage = max(CurPage - 1, 1),
+            NewPage = observer_cli_lib:next_page(CurPage, -1),
             NewPages = observer_cli_lib:update_page_pos(StorePid, NewPage, Pages),
             clean(Resource),
             start(Opts#view_opts{home = Home#home{cur_page = NewPage, pages = NewPages}});

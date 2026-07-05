@@ -130,7 +130,7 @@ update_page(ChildPid, SheetCache, ViewOpts, Delta) ->
     case current_plugin(ViewOpts) of
         {ok, CurIndex, Plugs, CurPlugs} ->
             CurPage = maps:get(cur_page, CurPlugs),
-            NewPage = max(CurPage + Delta, 1),
+            NewPage = observer_cli_lib:next_page(CurPage, Delta),
             NewPlugs = update_plugins(CurIndex, Plugs, #{cur_page => NewPage}),
             restart_with_plugins(ChildPid, SheetCache, ViewOpts, NewPlugs);
         error ->

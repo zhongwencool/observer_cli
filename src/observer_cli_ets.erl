@@ -57,11 +57,11 @@ manager(ChildPid, #view_opts{ets = EtsOpts = #ets{cur_page = CurPage}} = ViewOpt
             clean([ChildPid]),
             start(ViewOpts#view_opts{ets = EtsOpts#ets{attr = memory}});
         page_down_top_n ->
-            NewPage = max(CurPage + 1, 1),
+            NewPage = observer_cli_lib:next_page(CurPage, 1),
             clean([ChildPid]),
             start(ViewOpts#view_opts{ets = EtsOpts#ets{cur_page = NewPage}});
         page_up_top_n ->
-            NewPage = max(CurPage - 1, 1),
+            NewPage = observer_cli_lib:next_page(CurPage, -1),
             clean([ChildPid]),
             start(ViewOpts#view_opts{ets = EtsOpts#ets{cur_page = NewPage}});
         _ ->

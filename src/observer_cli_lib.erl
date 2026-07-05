@@ -40,6 +40,7 @@
 -export([render_footer/1]).
 -export([render_footer/2]).
 -export([exit_processes/1]).
+-export([next_page/2]).
 -export([update_page_pos/3]).
 -export([get_pos/4]).
 -export([sublist/3]).
@@ -408,6 +409,10 @@ exit_processes(List) ->
     ],
     flush(),
     ok.
+
+-spec next_page(integer(), integer()) -> pos_integer().
+next_page(CurPage, Delta) ->
+    erlang:max(CurPage + Delta, 1).
 
 -spec update_page_pos(pid() | pos_integer(), pos_integer(), list()) -> list().
 update_page_pos(StorePid, Page, Pages) when is_pid(StorePid) ->

@@ -68,11 +68,11 @@ manager(Pid, Opts = #view_opts{app = App = #app{cur_page = CurPage}}) ->
             clean([Pid]),
             start(Opts#view_opts{app = App#app{interval = NewInterval}});
         page_down_top_n ->
-            NewPage = max(CurPage + 1, 1),
+            NewPage = observer_cli_lib:next_page(CurPage, 1),
             clean([Pid]),
             start(Opts#view_opts{app = App#app{cur_page = NewPage}});
         page_up_top_n ->
-            NewPage = max(CurPage - 1, 1),
+            NewPage = observer_cli_lib:next_page(CurPage, -1),
             clean([Pid]),
             start(Opts#view_opts{app = App#app{cur_page = NewPage}});
         _ ->
