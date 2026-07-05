@@ -121,61 +121,63 @@ mfa_to_list_test() ->
     ),
     ?assertEqual("123", lists:flatten(observer_cli_lib:mfa_to_list(123))).
 
-parse_integer_test() ->
-    ?assertEqual({new_interval, 1500}, observer_cli_lib:parse_integer("1500")),
-    ?assertEqual({jump, 10}, observer_cli_lib:parse_integer("10")),
-    ?assertEqual({input_str, "abc"}, observer_cli_lib:parse_integer("abc")),
-    ?assertEqual({input_str, "-1"}, observer_cli_lib:parse_integer("-1")).
+command_parse_integer_test() ->
+    ?assertEqual({new_interval, 1500}, observer_cli_command:parse_integer("1500")),
+    ?assertEqual({jump, 10}, observer_cli_command:parse_integer("10")),
+    ?assertEqual({input_str, "abc"}, observer_cli_command:parse_integer("abc")),
+    ?assertEqual({input_str, "-1"}, observer_cli_command:parse_integer("-1")).
 
-parse_cmd_str_test() ->
-    ?assertEqual(home_view, observer_cli_lib:parse_cmd_str("H\n")),
-    ?assertEqual(system_view, observer_cli_lib:parse_cmd_str("S\n")),
-    ?assertEqual(app_view, observer_cli_lib:parse_cmd_str("A\n")),
-    ?assertEqual(inet_view, observer_cli_lib:parse_cmd_str("N\n")),
-    ?assertEqual(mnesia_view, observer_cli_lib:parse_cmd_str("M\n")),
-    ?assertEqual(ets_view, observer_cli_lib:parse_cmd_str("E\n")),
-    ?assertEqual(help_view, observer_cli_lib:parse_cmd_str("D\n")),
-    ?assertEqual(plugin_view, observer_cli_lib:parse_cmd_str("P\n")),
-    ?assertEqual(inet_count, observer_cli_lib:parse_cmd_str("ic\n")),
-    ?assertEqual(inet_window, observer_cli_lib:parse_cmd_str("iw\n")),
-    ?assertEqual(recv_cnt, observer_cli_lib:parse_cmd_str("rc\n")),
-    ?assertEqual(recv_oct, observer_cli_lib:parse_cmd_str("ro\n")),
-    ?assertEqual(send_cnt, observer_cli_lib:parse_cmd_str("sc\n")),
-    ?assertEqual(send_oct, observer_cli_lib:parse_cmd_str("so\n")),
-    ?assertEqual(cnt, observer_cli_lib:parse_cmd_str("cnt\n")),
-    ?assertEqual(oct, observer_cli_lib:parse_cmd_str("oct\n")),
-    ?assertEqual(page_up_top_n, observer_cli_lib:parse_cmd_str("pu\n")),
-    ?assertEqual(page_down_top_n, observer_cli_lib:parse_cmd_str("pd\n")),
-    ?assertEqual(page_up_top_n, observer_cli_lib:parse_cmd_str("PU\n")),
-    ?assertEqual(page_down_top_n, observer_cli_lib:parse_cmd_str("PD\n")),
-    ?assertEqual(page_up_top_n, observer_cli_lib:parse_cmd_str("B\n")),
-    ?assertEqual(page_down_top_n, observer_cli_lib:parse_cmd_str("F\n")),
-    ?assertEqual({func, proc_count, memory}, observer_cli_lib:parse_cmd_str("m\n")),
-    ?assertEqual({func, proc_count, reductions}, observer_cli_lib:parse_cmd_str("r\n")),
-    ?assertEqual({func, proc_count, binary_memory}, observer_cli_lib:parse_cmd_str("b\n")),
-    ?assertEqual({func, proc_count, total_heap_size}, observer_cli_lib:parse_cmd_str("t\n")),
-    ?assertEqual({func, proc_count, message_queue_len}, observer_cli_lib:parse_cmd_str("mq\n")),
-    ?assertEqual({func, proc_window, reductions}, observer_cli_lib:parse_cmd_str("rr\n")),
-    ?assertEqual({func, proc_window, binary_memory}, observer_cli_lib:parse_cmd_str("bb\n")),
-    ?assertEqual({func, proc_window, total_heap_size}, observer_cli_lib:parse_cmd_str("tt\n")),
-    ?assertEqual({func, proc_window, memory}, observer_cli_lib:parse_cmd_str("mm\n")),
-    ?assertEqual({func, proc_window, message_queue_len}, observer_cli_lib:parse_cmd_str("mmq\n")),
-    ?assertEqual(jump, observer_cli_lib:parse_cmd_str("\n")),
-    ?assertEqual(size, observer_cli_lib:parse_cmd_str("s\n")),
-    ?assertEqual(hide, observer_cli_lib:parse_cmd_str("hide\n")),
-    ?assertEqual(scheduler_usage, observer_cli_lib:parse_cmd_str("`\n")),
-    ?assertEqual({new_interval, 1500}, observer_cli_lib:parse_cmd_str("1500")),
-    ?assertEqual({jump, 10}, observer_cli_lib:parse_cmd_str("10")),
-    ?assertEqual(quit, observer_cli_lib:parse_cmd_str({error, estale})),
+shared_parse_cmd_str_test() ->
+    ?assertEqual(home_view, observer_cli_command:parse_shared("H\n")),
+    ?assertEqual(system_view, observer_cli_command:parse_shared("S\n")),
+    ?assertEqual(app_view, observer_cli_command:parse_shared("A\n")),
+    ?assertEqual(inet_view, observer_cli_command:parse_shared("N\n")),
+    ?assertEqual(mnesia_view, observer_cli_command:parse_shared("M\n")),
+    ?assertEqual(ets_view, observer_cli_command:parse_shared("E\n")),
+    ?assertEqual(help_view, observer_cli_command:parse_shared("D\n")),
+    ?assertEqual(plugin_view, observer_cli_command:parse_shared("P\n")),
+    ?assertEqual(inet_count, observer_cli_command:parse_shared("ic\n")),
+    ?assertEqual(inet_window, observer_cli_command:parse_shared("iw\n")),
+    ?assertEqual(recv_cnt, observer_cli_command:parse_shared("rc\n")),
+    ?assertEqual(recv_oct, observer_cli_command:parse_shared("ro\n")),
+    ?assertEqual(send_cnt, observer_cli_command:parse_shared("sc\n")),
+    ?assertEqual(send_oct, observer_cli_command:parse_shared("so\n")),
+    ?assertEqual(cnt, observer_cli_command:parse_shared("cnt\n")),
+    ?assertEqual(oct, observer_cli_command:parse_shared("oct\n")),
+    ?assertEqual(page_up_top_n, observer_cli_command:parse_shared("pu\n")),
+    ?assertEqual(page_down_top_n, observer_cli_command:parse_shared("pd\n")),
+    ?assertEqual(page_up_top_n, observer_cli_command:parse_shared("PU\n")),
+    ?assertEqual(page_down_top_n, observer_cli_command:parse_shared("PD\n")),
+    ?assertEqual(page_up_top_n, observer_cli_command:parse_shared("B\n")),
+    ?assertEqual(page_down_top_n, observer_cli_command:parse_shared("F\n")),
+    ?assertEqual({func, proc_count, memory}, observer_cli_command:parse_shared("m\n")),
+    ?assertEqual({func, proc_count, reductions}, observer_cli_command:parse_shared("r\n")),
+    ?assertEqual({func, proc_count, binary_memory}, observer_cli_command:parse_shared("b\n")),
+    ?assertEqual({func, proc_count, total_heap_size}, observer_cli_command:parse_shared("t\n")),
+    ?assertEqual({func, proc_count, message_queue_len}, observer_cli_command:parse_shared("mq\n")),
+    ?assertEqual({func, proc_window, reductions}, observer_cli_command:parse_shared("rr\n")),
+    ?assertEqual({func, proc_window, binary_memory}, observer_cli_command:parse_shared("bb\n")),
+    ?assertEqual({func, proc_window, total_heap_size}, observer_cli_command:parse_shared("tt\n")),
+    ?assertEqual({func, proc_window, memory}, observer_cli_command:parse_shared("mm\n")),
+    ?assertEqual(
+        {func, proc_window, message_queue_len}, observer_cli_command:parse_shared("mmq\n")
+    ),
+    ?assertEqual(jump, observer_cli_command:parse_shared("\n")),
+    ?assertEqual(size, observer_cli_command:parse_shared("s\n")),
+    ?assertEqual(hide, observer_cli_command:parse_shared("hide\n")),
+    ?assertEqual(scheduler_usage, observer_cli_command:parse_shared("`\n")),
+    ?assertEqual({new_interval, 1500}, observer_cli_command:parse_shared("1500")),
+    ?assertEqual({jump, 10}, observer_cli_command:parse_shared("10")),
+    ?assertEqual(quit, observer_cli_command:parse_shared({error, estale})),
     ?assertEqual(
         {go_to_pid, list_to_pid("<0.0.0>")},
-        observer_cli_lib:parse_cmd_str("<0.0.0>\n")
+        observer_cli_command:parse_shared("<0.0.0>\n")
     ),
     ?assertEqual(
         {go_to_pid, list_to_pid("<0.12.0>")},
-        observer_cli_lib:parse_cmd_str(">12\n")
+        observer_cli_command:parse_shared(">12\n")
     ),
-    ?assertEqual(quit, observer_cli_lib:parse_cmd_str(">\n")).
+    ?assertEqual(quit, observer_cli_command:parse_shared(">\n")).
 
 weighted_widths_edge_test() ->
     ?assertEqual([], observer_cli_lib:weighted_widths([], [])),

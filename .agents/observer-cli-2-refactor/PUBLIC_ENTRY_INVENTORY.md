@@ -12,7 +12,7 @@ This file is an inventory only. It does not change startup behavior, command beh
 - Startup/API source: `src/observer_cli.erl`, `src/observer_cli_escriptize.erl`, `include/observer_cli.hrl`, `rebar.config`, `README.md`.
 - Plugin source/docs: `src/observer_cli_plugin.erl`, `docs/plugin.md`.
 - Formatter source/docs: `src/observer_cli_formatter.erl`, `src/observer_cli_formatter_default.erl`, `src/observer_cli_process.erl`, `docs/formatter.md`.
-- Interactive command source: `src/observer_cli_lib.erl`, built-in page modules, `src/less_client.erl`, `src/observer_cli_help.erl`.
+- Interactive command source: `src/observer_cli_command.erl`, `src/observer_cli_lib.erl`, built-in page modules, `src/less_client.erl`, `src/observer_cli_help.erl`.
 
 ## Startup and configuration entries
 
@@ -35,7 +35,7 @@ All command strings are line-based input through `io:get_line("")`; uppercase/lo
 
 ### Shared top menu and shared parser
 
-Source: `observer_cli_lib:parse_cmd_str/1` and `observer_cli_lib:parse_cmd/3`.
+Source: `observer_cli_command:parse_shared/1` and `observer_cli_lib:parse_cmd/3`.
 
 | Command | Action |
 | --- | --- |
@@ -57,7 +57,7 @@ Source: `observer_cli_lib:parse_cmd_str/1` and `observer_cli_lib:parse_cmd/3`.
 
 ### Home
 
-Source: `observer_cli:manager/4`, `observer_cli_lib:parse_cmd_str/1`.
+Source: `observer_cli:manager/4`, `observer_cli_command:parse_shared/1`.
 
 | Command | Action |
 | --- | --- |

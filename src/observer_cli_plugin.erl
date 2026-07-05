@@ -296,7 +296,7 @@ parse_cmd_str(Key) ->
         "\n" -> jump;
         %% {error, estale}|{error, terminated}
         {error, _Reason} -> quit;
-        Number -> observer_cli_lib:parse_integer(Number)
+        Number -> observer_cli_command:parse_integer(Number)
     end.
 
 render_menu(#plug{cur_index = CurIndex, plugs = Plugs}, SheetWidth) ->

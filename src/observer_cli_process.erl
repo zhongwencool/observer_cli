@@ -620,7 +620,7 @@ parse_cmd_str(Key) ->
         {error, _Reason} ->
             quit;
         Number ->
-            observer_cli_lib:parse_integer(Number)
+            observer_cli_command:parse_integer(Number)
     end.
 
 render_state(Pid, Type, Interval) ->

@@ -425,7 +425,7 @@ parse_cmd_str(Key) ->
         "P\n" -> info_view;
         "H\n" -> home_view;
         "N\n" -> net_view;
-        Number -> observer_cli_lib:parse_integer(Number)
+        Number -> observer_cli_command:parse_integer(Number)
     end.
 
 output_die_view(Port, Interval) ->
