@@ -21,8 +21,11 @@
 -export([render_menu/2]).
 -export([render_top_menu/2]).
 -export([render_menu_header/3]).
+-export([layout_base_width/0]).
 -export([layout_width/0]).
 -export([layout_extra_width/0]).
+-export([layout_extra_width/1]).
+-export([layout_extra_width/2]).
 -export([weighted_widths/2]).
 -export([get_terminal_rows/1]).
 -export([select/1]).
@@ -160,7 +163,7 @@ render_top_menu(Type, Text) ->
         end,
     Title = get_menu_title(Type, MnesiaTitle),
     UpTime = uptime(),
-    TitleWidth = ?COLUMN + 151 - erlang:length(UpTime) + layout_extra_width(),
+    TitleWidth = layout_base_width() + 146 - erlang:length(UpTime) + layout_extra_width(),
     render_menu_header(Title, Text, TitleWidth).
 
 -spec render_menu_header(iodata(), iodata(), pos_integer()) -> iolist().
@@ -240,20 +243,33 @@ flush_redraw_timer(LastTimeRef) ->
     LastTimeRef =/= ?INIT_TIME_REF andalso erlang:cancel_timer(LastTimeRef),
     ok.
 
+-spec layout_base_width() -> pos_integer().
+layout_base_width() ->
+    ?COLUMN + 5.
+
 -spec layout_width() -> pos_integer().
 layout_width() ->
+    BaseWidth = layout_base_width(),
     case io:columns() of
-        {ok, Columns} when is_integer(Columns), Columns > ?COLUMN + 5 ->
+        {ok, Columns} when is_integer(Columns), Columns > BaseWidth ->
             Columns - 1;
         {ok, Columns} when is_integer(Columns) ->
-            erlang:max(?COLUMN + 5, Columns);
+            erlang:max(BaseWidth, Columns);
         _ ->
-            ?COLUMN + 5
+            BaseWidth
     end.
 
 -spec layout_extra_width() -> non_neg_integer().
 layout_extra_width() ->
-    layout_width() - (?COLUMN + 5).
+    layout_extra_width(layout_base_width()).
+
+-spec layout_extra_width(pos_integer()) -> non_neg_integer().
+layout_extra_width(BaseWidth) ->
+    layout_extra_width(layout_width(), BaseWidth).
+
+-spec layout_extra_width(pos_integer(), pos_integer()) -> non_neg_integer().
+layout_extra_width(LayoutWidth, BaseWidth) ->
+    erlang:max(LayoutWidth - BaseWidth, 0).
 
 -spec weighted_widths([non_neg_integer()], [non_neg_integer()]) -> [non_neg_integer()].
 weighted_widths(BaseWidths, Weights) when length(BaseWidths) =:= length(Weights) ->

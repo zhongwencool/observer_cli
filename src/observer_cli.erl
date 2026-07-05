@@ -445,7 +445,7 @@ render_memory_process_line(MemSum, PortParallelism, Interval) ->
     [Title, Row].
 
 home_summary_extras() ->
-    Extra = erlang:max(observer_cli_lib:layout_width() - (?COLUMN + 6), 0),
+    Extra = observer_cli_lib:layout_extra_width(observer_cli_lib:layout_base_width() + 1),
     PerColumn = Extra div 6,
     Remainder = Extra rem 6,
     RawMiddleValueExtra = PerColumn + extra_bit(Remainder, 4),
@@ -823,7 +823,7 @@ top_n_rows(FormatFunc, Start, List) ->
     {Row, PidList}.
 
 top_n_text_widths(NameWidth, CurrentTitleWidth, CurrentWidth, LayoutWidth) ->
-    Extra = erlang:max(LayoutWidth - (?COLUMN + 5), 0),
+    Extra = observer_cli_lib:layout_extra_width(LayoutWidth, observer_cli_lib:layout_base_width()),
     NameExtra = Extra div 2,
     CurrentExtra = Extra - NameExtra,
     {NameWidth + NameExtra, CurrentTitleWidth + CurrentExtra, CurrentWidth + CurrentExtra}.

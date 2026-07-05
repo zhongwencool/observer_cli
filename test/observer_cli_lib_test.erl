@@ -34,7 +34,8 @@ layout_width_keeps_base_width_test() ->
         80,
         [],
         fun() ->
-            ?assertEqual(?COLUMN + 5, observer_cli_lib:layout_width())
+            ?assertEqual(observer_cli_lib:layout_base_width(), observer_cli_lib:layout_width()),
+            ?assertEqual(0, observer_cli_lib:layout_extra_width())
         end
     ).
 
@@ -45,6 +46,7 @@ layout_width_uses_wide_terminal_test() ->
         [],
         fun() ->
             ?assertEqual(159, observer_cli_lib:layout_width()),
+            ?assertEqual(20, observer_cli_lib:layout_extra_width()),
             ?assertEqual(
                 159, observer_cli_lib:visible_length(observer_cli_lib:render_footer("q"))
             )

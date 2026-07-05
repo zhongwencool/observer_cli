@@ -395,7 +395,9 @@ render_menu(Type, Interval) ->
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
     Title = get_menu_title(Type),
     UpTime = observer_cli_lib:uptime(),
-    TitleWidth = ?COLUMN + 41 - erlang:length(UpTime) + observer_cli_lib:layout_extra_width(),
+    TitleWidth =
+        observer_cli_lib:layout_base_width() + 36 - erlang:length(UpTime) +
+            observer_cli_lib:layout_extra_width(),
     observer_cli_lib:render_menu_header(Title, Text, TitleWidth).
 
 get_menu_title(Type) ->

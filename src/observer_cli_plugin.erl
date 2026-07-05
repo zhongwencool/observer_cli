@@ -448,9 +448,9 @@ get_sheet_width(Mod) ->
         Width = lists:foldl(fun(#{width := W}, Acc) -> Acc + W + 1 end, 1, Mod:sheet_header()),
         case Width > 1 of
             true -> Width - 2;
-            false -> ?COLUMN + 5
+            false -> observer_cli_lib:layout_base_width()
         end
     catch
         error:undef ->
-            ?COLUMN + 5
+            observer_cli_lib:layout_base_width()
     end.

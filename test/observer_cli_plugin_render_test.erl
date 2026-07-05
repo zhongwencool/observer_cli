@@ -64,7 +64,10 @@ mix_content_width_middle_test() ->
 
 get_sheet_width_test() ->
     ?assertEqual(12, observer_cli_plugin:get_sheet_width(observer_cli_test_plugin)),
-    ?assertEqual(?COLUMN + 5, observer_cli_plugin:get_sheet_width(missing_plugin_module)).
+    ?assertEqual(
+        observer_cli_lib:layout_base_width(),
+        observer_cli_plugin:get_sheet_width(missing_plugin_module)
+    ).
 
 match_shortcut_test() ->
     Plugs = [
