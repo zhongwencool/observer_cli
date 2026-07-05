@@ -1,6 +1,7 @@
 [
   extras: [
     {"README.md", title: "Home"},
+    "./docs/development.md",
     "./docs/plugin.md",
     "./docs/formatter.md",
     "./docs/CHANGELOG.md",
