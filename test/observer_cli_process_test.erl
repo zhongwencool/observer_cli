@@ -79,8 +79,15 @@ render_state_success_test() ->
 state_nav_test() ->
     NavHome = observer_cli_process:state_nav(home),
     NavPlugin = observer_cli_process:state_nav(plugin),
+    ?assertEqual(quit, maps:get("q\n", NavHome)),
+    ?assertEqual(quit, maps:get("Q\n", NavHome)),
+    ?assertEqual(home, maps:get("H\n", NavHome)),
+    ?assertEqual(info_view, maps:get("P\n", NavHome)),
+    ?assertEqual(message_view, maps:get("M\n", NavHome)),
+    ?assertEqual(dict_view, maps:get("D\n", NavHome)),
+    ?assertEqual(stack_view, maps:get("C\n", NavHome)),
     ?assertEqual(false, maps:is_key("B\n", NavHome)),
-    ?assertEqual(true, maps:is_key("B\n", NavPlugin)).
+    ?assertEqual(back, maps:get("B\n", NavPlugin)).
 
 truncate_str_formatter_fallback_test() ->
     Prev = application:get_env(observer_cli, formatter),
@@ -244,6 +251,7 @@ parse_cmd_str_test() ->
     ?assertEqual(back, observer_cli_process:parse_cmd_str("B\n")),
     ?assertEqual({jump, 10}, observer_cli_process:parse_cmd_str("10")),
     ?assertEqual({new_interval, 1500}, observer_cli_process:parse_cmd_str("1500")),
+    ?assertEqual({input_str, "oops"}, observer_cli_process:parse_cmd_str("oops\n")),
     ?assertEqual(quit, observer_cli_process:parse_cmd_str({error, estale})).
 
 chart_format_test() ->

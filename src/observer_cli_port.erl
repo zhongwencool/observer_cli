@@ -425,6 +425,7 @@ parse_cmd_str(Key) ->
         "P\n" -> info_view;
         "H\n" -> home_view;
         "N\n" -> net_view;
+        {error, _Reason} -> quit;
         Number -> observer_cli_command:parse_integer(Number)
     end.
 

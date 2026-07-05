@@ -71,7 +71,10 @@ parse_cmd_str_test() ->
     ?assertEqual(info_view, observer_cli_port:parse_cmd_str("P\n")),
     ?assertEqual(home_view, observer_cli_port:parse_cmd_str("H\n")),
     ?assertEqual(net_view, observer_cli_port:parse_cmd_str("N\n")),
-    ?assertEqual({new_interval, 1500}, observer_cli_port:parse_cmd_str("1500")).
+    ?assertEqual({jump, 10}, observer_cli_port:parse_cmd_str("10")),
+    ?assertEqual({new_interval, 1500}, observer_cli_port:parse_cmd_str("1500")),
+    ?assertEqual({input_str, "oops"}, observer_cli_port:parse_cmd_str("oops\n")),
+    ?assertEqual(quit, observer_cli_port:parse_cmd_str({error, terminated})).
 
 addr_to_str_test() ->
     ?assertEqual("127.0.0.1:4000", observer_cli_port:addr_to_str({{127, 0, 0, 1}, 4000})).
