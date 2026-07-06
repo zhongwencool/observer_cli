@@ -34,6 +34,25 @@ start_manager_branches_test() ->
         cleanup_mnesia(Dir)
     end.
 
+start_render_worker_messages_test() ->
+    Dir = filename:join(["test", "tmp", "mnesia_worker"]),
+    setup_mnesia(Dir),
+    try
+        {atomic, ok} =
+            mnesia:create_table(test_table, [{attributes, [id, value]}, {ram_copies, [node()]}]),
+        ok = mnesia:wait_for_tables([test_table], 5000),
+        Inputs = ["x\n", {sleep, 30, "2000\n"}, {sleep, 30, "hide\n"}, {sleep, 30, "q\n"}],
+        observer_cli_test_io:with_input(
+            Inputs,
+            fun() ->
+                Opts = #view_opts{auto_row = false, db = #db{interval = 1}},
+                ?assertEqual(quit, observer_cli_mnesia:start(Opts))
+            end
+        )
+    after
+        cleanup_mnesia(Dir)
+    end.
+
 collect_mnesia_info_error_test() ->
     mnesia:stop(),
     ?assertMatch({error, _}, observer_cli_mnesia:collect_mnesia_info(false, memory)).
@@ -71,6 +90,28 @@ collect_mnesia_info_running_test() ->
         ?assertEqual(ram_copies, proplists:get_value(storage, Tab1)),
         Tab2 = observer_cli_mnesia:with_storage_type(test_table, ext, Tab0),
         ?assertEqual("ext", lists:flatten(proplists:get_value(storage, Tab2)))
+    after
+        cleanup_mnesia(Dir)
+    end.
+
+collect_mnesia_info_disc_only_table_test() ->
+    Dir = filename:join(["test", "tmp", "mnesia_disc_only"]),
+    setup_mnesia(Dir),
+    try
+        {atomic, ok} =
+            mnesia:create_table(disc_table, [
+                {attributes, [id, value]}, {disc_only_copies, [node()]}
+            ]),
+        ok = mnesia:wait_for_tables([disc_table], 5000),
+        List = observer_cli_mnesia:collect_mnesia_info(false, memory),
+        [CollectedRow] = [
+            Row
+         || Row = {_, _, Tab} <- List,
+            proplists:get_value(name, Tab) =:= disc_table
+        ],
+        {0, _SortValue, Tab} = CollectedRow,
+        ?assertEqual(disc_only_copies, proplists:get_value(storage, Tab)),
+        ?assert(proplists:is_defined(fixed, Tab))
     after
         cleanup_mnesia(Dir)
     end.

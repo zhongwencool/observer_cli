@@ -25,6 +25,11 @@ start_state_view_quit_test() ->
         exit(Pid, kill)
     end.
 
+start_state_view_success_action_test() ->
+    Pid = whereis(application_controller),
+    ?assert(is_pid(Pid)),
+    ?assertEqual(true, run_start(["S\n", "P\n", "q\n"], Pid)).
+
 start_view_switch_test() ->
     Pid = spawn(fun() -> receive
         after infinity -> ok
@@ -233,6 +238,15 @@ render_process_stack_test() ->
     ]),
     ?assert(string:find(lists:flatten(Line), "observer_cli_process_test") =/= nomatch),
     ?assert(string:find(lists:flatten(Line), "observer_cli_process_test.erl:1") =/= nomatch).
+
+render_process_stack_multiple_entries_test() ->
+    Line = observer_cli_process:render_process_stack([
+        {mod_a, fun_a, 0, [{file, "a.erl"}, {line, 1}]},
+        {mod_b, fun_b, 1, [{file, "b.erl"}, {line, 2}]}
+    ]),
+    Text = lists:flatten(Line),
+    ?assert(string:find(Text, "mod_a:fun_a/0") =/= nomatch),
+    ?assert(string:find(Text, "mod_b:fun_b/1") =/= nomatch).
 
 collect_process_state_test() ->
     Pid = whereis(application_controller),
@@ -630,6 +644,22 @@ render_worker_stack_undefined_test() ->
     end,
     Worker = spawn_worker(stack, Target),
     stop_worker(Worker).
+
+render_worker_state_success_test() ->
+    Target = whereis(application_controller),
+    ?assert(is_pid(Target)),
+    observer_cli_test_io:with_input(
+        ["q\n"],
+        fun() ->
+            Worker = spawn_worker(state, Target),
+            receive
+                {state_view_done, {ok, quit}} -> ok
+            after 2000 ->
+                erlang:error(state_view_done_missing)
+            end,
+            stop_worker(Worker)
+        end
+    ).
 
 render_worker_info_dead_test() ->
     Target = spawn(fun() -> ok end),

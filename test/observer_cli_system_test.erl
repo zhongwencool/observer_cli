@@ -319,6 +319,20 @@ get_address_unknown_test() ->
     Info = [{address, #net_address{address = undefined}}],
     ?assertEqual("unknown", observer_cli_system:get_address(Info)).
 
+render_dist_node_info_unsupported_queue_test() ->
+    Lines = observer_cli_system:render_dist_node_info([
+        {node(), #{
+            queue_size => not_found,
+            queue_limit => 1024,
+            address => "unknown",
+            in => 0,
+            out => 0,
+            type => normal,
+            state => up
+        }}
+    ]),
+    ?assert(string:find(lists:flatten(Lines), "unsupp") =/= nomatch).
+
 render_dist_node_info_wide_layout_test() ->
     Created = ensure_sys_dist(),
     try

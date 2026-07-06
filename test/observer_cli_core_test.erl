@@ -206,6 +206,7 @@ render_home_summary_wide_layout_test() ->
 
 render_scheduler_usage_test() ->
     ?assertEqual({0, []}, observer_cli:render_scheduler_usage(undefined)),
+    ?assertEqual({0, []}, observer_cli:render_scheduler_usage([])),
     {2, _} = observer_cli:render_scheduler_usage([{1, 0.1}, {2, 0.2}, {3, 0.3}, {4, 0.4}]),
     {3, _} = observer_cli:render_scheduler_usage([{1, 0.1}, {2, 0.2}, {3, 0.3}, {4, 0.4}, {5, 0.5}]),
     {2, _} = observer_cli:render_scheduler_usage(

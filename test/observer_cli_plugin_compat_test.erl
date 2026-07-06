@@ -115,6 +115,61 @@ rejected_invalid_columns_sort_and_default_handler_test() ->
         })
     ).
 
+rejected_invalid_plugin_api_shapes_test() ->
+    ?assertError(
+        {plugin_api_error, #{source := attributes, reason := expected_rows_state_map}},
+        observer_cli_plugin_compat:normalize_attributes(not_a_map)
+    ),
+    ?assertError(
+        {plugin_api_error, #{source := attributes, reason := invalid_attribute_row}},
+        observer_cli_plugin_compat:normalize_attributes(#{rows => [bad_row], state => attrs})
+    ),
+    ?assertError(
+        {plugin_api_error, #{source := attributes, reason := invalid_attribute_cell}},
+        observer_cli_plugin_compat:normalize_attributes(#{
+            rows => [[#{content => bad}]], state => attrs
+        })
+    ),
+    ?assertError(
+        {plugin_api_error, #{source := sheet_header, reason := expected_columns_map}},
+        observer_cli_plugin_compat:normalize_sheet_header(not_a_map)
+    ),
+    ?assertError(
+        {plugin_api_error, #{source := sheet_header, reason := invalid_column}},
+        observer_cli_plugin_compat:normalize_sheet_header(#{
+            columns => [#{id => name, title => "Name", width => 0}], default_sort => name
+        })
+    ),
+    ?assertError(
+        {plugin_api_error, #{source := sheet_body, reason := expected_rows_state_map}},
+        observer_cli_plugin_compat:normalize_sheet_body(not_a_map)
+    ),
+    ?assertError(
+        {plugin_api_error, #{source := sheet_body, reason := invalid_row}},
+        observer_cli_plugin_compat:normalize_sheet_body(#{rows => [bad_row], state => sheet})
+    ),
+    ?assertError(
+        {plugin_api_error, #{source := config, reason := invalid_handler}},
+        observer_cli_plugin_compat:migrate_config(#{handler => {not_a_handler}}, header())
+    ),
+    ?assertError(
+        {plugin_api_error, #{source := config, reason := invalid_handler}},
+        observer_cli_plugin_compat:resolve_handler(#{handler => {not_a_handler}}, #{
+            cells => #{name => "alpha"}, handle => self()
+        })
+    ),
+    ?assertError(
+        {plugin_api_error, #{source := row_handler, reason := invalid_row}},
+        observer_cli_plugin_compat:resolve_handler(#{}, bad_row)
+    ).
+
+migrated_atom_handler_passthrough_test() ->
+    Config = observer_cli_plugin_compat:migrate_config(
+        #{handler => observer_cli_test_handler, sort => name},
+        header()
+    ),
+    ?assertEqual(observer_cli_test_handler, maps:get(handler, Config)).
+
 header() ->
     #{
         columns => [

@@ -13,6 +13,8 @@ example_test_() ->
         {"next page after last", fun next_page_after_last/0},
         {"previous page before first", fun previous_page_before_first/0},
         {"previous page after next", fun previous_page_after_next/0},
+        {"previous page from later page", fun previous_page_from_later_page/0},
+        {"ignores unknown messages", fun ignores_unknown_messages/0},
         {"lines minimum", fun lines_minimum/0}
     ].
 
@@ -74,6 +76,26 @@ previous_page_after_next() ->
 
     less_server:next(LessServer),
     ?assertEqual("a\nb\n", less_server:prev(LessServer)),
+
+    less_server:stop(LessServer).
+
+previous_page_from_later_page() ->
+    {ok, LessServer} = less_server:start_link("a\nb\nc\nd\ne\nf", 2),
+
+    less_server:next(LessServer),
+    less_server:next(LessServer),
+    ?assertEqual("c\nd\n", less_server:prev(LessServer)),
+
+    less_server:stop(LessServer).
+
+ignores_unknown_messages() ->
+    {ok, LessServer} = less_server:start_link("a\nb", 2),
+
+    ?assertEqual(ok, gen_server:call(LessServer, unexpected)),
+    gen_server:cast(LessServer, unexpected),
+    LessServer ! unexpected,
+    timer:sleep(10),
+    ?assertEqual("a\nb\n", less_server:page(LessServer)),
 
     less_server:stop(LessServer).
 

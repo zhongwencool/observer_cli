@@ -140,6 +140,15 @@ start_manager_branches_test() ->
         end
     ).
 
+start_redraw_test() ->
+    observer_cli_test_io:with_input(
+        [{sleep, 30, "q\n"}],
+        fun() ->
+            Opts = #view_opts{auto_row = false, app = #app{interval = 1}},
+            ?assertEqual(quit, observer_cli_application:start(Opts))
+        end
+    ).
+
 find_group_leader_test() ->
     ?assert(is_pid(observer_cli_application:find_group_leader(self()))).
 

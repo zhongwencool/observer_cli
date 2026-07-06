@@ -125,6 +125,26 @@ start_numeric_jump_without_row_test() ->
         )
     end).
 
+start_blank_jump_without_row_test() ->
+    ?assertEqual(true, run_start(["\n", "q\n"])).
+
+start_pause_quit_test() ->
+    ?assertEqual(quit, run_start(["p\n", {sleep, 30, "q\n"}])).
+
+start_pause_resume_test() ->
+    ?assertEqual(quit, run_start(["p\n", {sleep, 30, "p\n"}, {sleep, 30, "q\n"}])).
+
+start_timer_redraw_test() ->
+    ?assertEqual(quit, run_start([{sleep, 30, "q\n"}], #view_opts{home = #home{interval = 1}})).
+
+start_pause_timer_redraw_test() ->
+    ?assertEqual(
+        quit,
+        run_start(["p\n", {sleep, 30, "q\n"}], #view_opts{
+            home = #home{interval = 1}
+        })
+    ).
+
 with_trap_exit(Fun) ->
     PrevTrap = process_flag(trap_exit, true),
     try
@@ -138,13 +158,16 @@ remote_node() ->
     list_to_atom("observer_cli_missing@" ++ Host).
 
 run_start(Inputs) ->
+    run_start(Inputs, #view_opts{}).
+
+run_start(Inputs, Opts) ->
     Parent = self(),
     Ref = make_ref(),
     Pid = spawn(fun() ->
         process_flag(trap_exit, true),
         Result = observer_cli_test_io:with_input(
             Inputs,
-            fun() -> observer_cli:start(#view_opts{}) end
+            fun() -> observer_cli:start(Opts) end
         ),
         Parent ! {Ref, Result}
     end),

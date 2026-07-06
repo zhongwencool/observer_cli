@@ -165,7 +165,13 @@ command_parse_integer_test() ->
     ?assertEqual({new_interval, 1500}, observer_cli_command:parse_integer("1500")),
     ?assertEqual({jump, 10}, observer_cli_command:parse_integer("10")),
     ?assertEqual({input_str, "abc"}, observer_cli_command:parse_integer("abc")),
-    ?assertEqual({input_str, "-1"}, observer_cli_command:parse_integer("-1")).
+    ?assertEqual({input_str, "-1"}, observer_cli_command:parse_integer("-1")),
+    ?assertEqual({jump, 10}, observer_cli_lib:parse_integer("10")).
+
+pad_rendered_trims_reset_before_border_test() ->
+    Line = observer_cli_lib:pad_rendered([<<"value">>, ?RESET, <<" |">>]),
+    ?assertNotEqual(nomatch, string:find(Line, "value")),
+    ?assertEqual(nomatch, binary:match(unicode:characters_to_binary(Line), <<"\e[0m |">>)).
 
 shared_parse_cmd_str_test() ->
     ?assertEqual(home_view, observer_cli_command:parse_shared("H\n")),

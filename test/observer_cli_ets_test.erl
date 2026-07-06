@@ -24,6 +24,15 @@ start_manager_branches_test() ->
         end
     ).
 
+start_redraw_test() ->
+    observer_cli_test_io:with_input(
+        [{sleep, 30, "q\n"}],
+        fun() ->
+            Opts = #view_opts{auto_row = false, ets = #ets{interval = 1}},
+            ?assertEqual(quit, observer_cli_ets:start(Opts))
+        end
+    ).
+
 get_ets_info_existing_test() ->
     TabName = test_ets_table,
     ets:new(TabName, [named_table, public, set]),

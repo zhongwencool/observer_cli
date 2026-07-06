@@ -11,6 +11,9 @@ start_configured_plugin_quit_test() ->
 start_configured_plugin_navigation_test() ->
     ?assertEqual(quit, run_plugin_inputs(["F\n", "B\n", "1500\n", "q\n"])).
 
+start_configured_plugin_redraw_test() ->
+    ?assertEqual(quit, run_plugin_inputs([{sleep, 30, "q\n"}], #{interval => 1})).
+
 start_configured_plugin_go_home_test() ->
     ?assertEqual(quit, run_plugin_inputs(["H\n", "q\n"])).
 
@@ -37,6 +40,20 @@ init_config_from_env_test() ->
                 observer_cli_plugin:get_sheet_width(observer_cli_test_plugin),
                 maps:get(sheet_width, Conf)
             )
+        end
+    ).
+
+init_config_missing_plugin_uses_defaults_test() ->
+    Plugins = [#{module => missing_plugin_module, shortcut => "M", title => "Missing"}],
+    with_plugins_env(
+        Plugins,
+        fun() ->
+            #plug{plugs = #{1 := Conf}} = observer_cli_plugin:init_config(#plug{plugs = []}),
+            ?assertEqual(missing_plugin_module, maps:get(module, Conf)),
+            ?assertEqual(1, maps:get(cur_page, Conf)),
+            ?assertEqual(1, maps:get(cur_row, Conf)),
+            ?assertEqual(1500, maps:get(interval, Conf)),
+            ?assertEqual(observer_cli_lib:layout_base_width(), maps:get(sheet_width, Conf))
         end
     ).
 
@@ -402,12 +419,18 @@ render_worker_configured_plugin_test() ->
     ets:delete(SheetCache).
 
 run_plugin_inputs(Inputs) ->
+    run_plugin_inputs(Inputs, #{}).
+
+run_plugin_inputs(Inputs, ExtraConfig) ->
     Plugins = [
-        #{
-            module => observer_cli_test_plugin,
-            shortcut => "T",
-            title => "Test"
-        }
+        maps:merge(
+            #{
+                module => observer_cli_test_plugin,
+                shortcut => "T",
+                title => "Test"
+            },
+            ExtraConfig
+        )
     ],
     with_plugins_env(
         Plugins,

@@ -62,30 +62,42 @@ io_server(Rows, Columns, Inputs, Owner, Clients, Output) ->
         {collect_output, From, Ref} ->
             From ! {Ref, lists:reverse(Output)},
             io_server(Rows, Columns, Inputs, Owner, Clients, Output);
+        {delayed_io_reply, From, ReplyAs, Reply} ->
+            From ! {io_reply, ReplyAs, Reply},
+            io_server(Rows, Columns, Inputs, Owner, Clients, Output);
         {'DOWN', Ref, process, Pid, _} ->
             io_server(Rows, Columns, Inputs, Owner, drop_client(Pid, Ref, Clients), Output);
         {io_request, From, ReplyAs, Request} ->
             NextClients = track_client(From, Owner, Clients),
-            {Reply, NextInputs, NextOutput} = handle_request(
-                Request, Rows, Columns, Inputs, Output
-            ),
-            From ! {io_reply, ReplyAs, Reply},
-            io_server(Rows, Columns, NextInputs, Owner, NextClients, NextOutput)
+            case handle_request(Request, Rows, Columns, Inputs, Output) of
+                {delay, Millis, Reply, NextInputs, NextOutput} ->
+                    erlang:send_after(Millis, self(), {delayed_io_reply, From, ReplyAs, Reply}),
+                    io_server(Rows, Columns, NextInputs, Owner, NextClients, NextOutput);
+                {Reply, NextInputs, NextOutput} ->
+                    From ! {io_reply, ReplyAs, Reply},
+                    io_server(Rows, Columns, NextInputs, Owner, NextClients, NextOutput)
+            end
     end.
 
 drain_io_server(Rows, Columns, Inputs, Owner, Clients, Output) ->
     receive
         stop ->
             ok;
+        {delayed_io_reply, From, ReplyAs, Reply} ->
+            From ! {io_reply, ReplyAs, Reply},
+            drain_io_server(Rows, Columns, Inputs, Owner, Clients, Output);
         {'DOWN', Ref, process, Pid, _} ->
             drain_io_server(Rows, Columns, Inputs, Owner, drop_client(Pid, Ref, Clients), Output);
         {io_request, From, ReplyAs, Request} ->
             NextClients = track_client(From, Owner, Clients),
-            {Reply, NextInputs, NextOutput} = handle_request(
-                Request, Rows, Columns, Inputs, Output
-            ),
-            From ! {io_reply, ReplyAs, Reply},
-            drain_io_server(Rows, Columns, NextInputs, Owner, NextClients, NextOutput)
+            case handle_request(Request, Rows, Columns, Inputs, Output) of
+                {delay, Millis, Reply, NextInputs, NextOutput} ->
+                    erlang:send_after(Millis, self(), {delayed_io_reply, From, ReplyAs, Reply}),
+                    drain_io_server(Rows, Columns, NextInputs, Owner, NextClients, NextOutput);
+                {Reply, NextInputs, NextOutput} ->
+                    From ! {io_reply, ReplyAs, Reply},
+                    drain_io_server(Rows, Columns, NextInputs, Owner, NextClients, NextOutput)
+            end
     after 100 ->
         case maps:size(Clients) of
             0 -> ok;
@@ -109,8 +121,12 @@ drop_client(Pid, Ref, Clients) ->
 
 handle_request({get_line, _Enc, _Prompt}, _Rows, _Columns, Inputs, Output) ->
     case Inputs of
-        [Line | Rest] -> {Line, Rest, Output};
-        [] -> {eof, [], Output}
+        [{sleep, Millis, Line} | Rest] ->
+            {delay, Millis, Line, Rest, Output};
+        [Line | Rest] ->
+            {Line, Rest, Output};
+        [] ->
+            {eof, [], Output}
     end;
 handle_request({get_chars, _Enc, _Prompt, N}, _Rows, _Columns, Inputs, Output) ->
     case Inputs of
