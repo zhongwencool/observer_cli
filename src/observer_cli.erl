@@ -982,7 +982,7 @@ rank_format(ValueFormat, MidFormat, QueueFormat, NameWidth, CurrentWidth) ->
         ],
     Selected =
         [
-            "|\e[42m~-3.3w|~-12.12s|",
+            "|\e[7m~-3.3w|~-12.12s|",
             ValueFormat,
             "|~-",
             NameBin,
@@ -996,7 +996,7 @@ rank_format(ValueFormat, MidFormat, QueueFormat, NameWidth, CurrentWidth) ->
             CurrentBin,
             ".",
             CurrentBin,
-            "s\e[49m|~n"
+            "s\e[0m|~n"
         ],
     {lists:flatten(Selected), lists:flatten(Normal)}.
 

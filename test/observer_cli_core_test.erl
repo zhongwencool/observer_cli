@@ -309,6 +309,9 @@ render_top_n_view_type_columns_test() ->
                 [Title],
                 ["No | Pid", "Name|>Label|>Initial Call", "Current Function" | Fragments]
             ),
+            RowBin = unicode:characters_to_binary(Row),
+            ?assertNotEqual(nomatch, binary:match(RowBin, ?ANSI_INVERSE)),
+            ?assertEqual(nomatch, binary:match(RowBin, ?ANSI_GREEN_BG)),
             ?assertEqual(TitleWidth, observer_cli_lib:visible_length(Title)),
             ?assertEqual(LayoutWidth, observer_cli_lib:visible_length(Row))
         end,
