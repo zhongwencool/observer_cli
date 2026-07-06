@@ -168,7 +168,11 @@ wider_columns({BaseTitle, BaseRow}, {WideTitle, WideRow}, Columns) ->
 
 setup_mnesia(Dir) ->
     mnesia:stop(),
-    catch mnesia:delete_schema([node()]),
+    try
+        mnesia:delete_schema([node()])
+    catch
+        _:_ -> ok
+    end,
     _ = file:del_dir_r(Dir),
     ok = filelib:ensure_dir(filename:join(Dir, "placeholder")),
     application:set_env(mnesia, dir, Dir),
@@ -177,7 +181,11 @@ setup_mnesia(Dir) ->
 
 cleanup_mnesia(Dir) ->
     mnesia:stop(),
-    catch mnesia:delete_schema([node()]),
+    try
+        mnesia:delete_schema([node()])
+    catch
+        _:_ -> ok
+    end,
     _ = file:del_dir_r(Dir),
     ok.
 

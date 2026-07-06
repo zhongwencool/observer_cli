@@ -4,6 +4,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 -include("observer_cli.hrl").
+-compile(nowarn_untyped_record).
 -include_lib("kernel/include/net_address.hrl").
 
 start_manager_branches_test() ->

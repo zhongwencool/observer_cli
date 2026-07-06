@@ -275,13 +275,16 @@ run_unreachable_node_test() ->
     end,
     erlang:set_cookie(node(), CookieAtom),
     try
-        _ =
-            catch observer_cli_escriptize:run(
+        try
+            observer_cli_escriptize:run(
                 "missing@invalid-host",
                 CookieAtom,
                 1000,
                 fun(_Node) -> ok end
-            ),
+            )
+        catch
+            _:_ -> ok
+        end,
         ok
     after
         erlang:set_cookie(node(), PrevCookie),
@@ -312,17 +315,13 @@ run_name_mode_mismatch_test() ->
         end,
     erlang:set_cookie(node(), CookieAtom),
     try
-        Result =
-            catch observer_cli_escriptize:run(
+        ?assertError(
+            {net_kernel_start_failed, {name_mode_mismatch, ExpectedMode, ActualMode, _}},
+            observer_cli_escriptize:run(
                 TargetNode,
                 CookieAtom,
                 1000
-            ),
-        ?assertMatch(
-            {'EXIT', {
-                {net_kernel_start_failed, {name_mode_mismatch, ExpectedMode, ActualMode, _}}, _
-            }},
-            Result
+            )
         )
     after
         erlang:set_cookie(node(), PrevCookie),
