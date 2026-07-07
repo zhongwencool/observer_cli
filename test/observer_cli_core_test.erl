@@ -223,6 +223,8 @@ render_scheduler_usage_test() ->
     ).
 
 render_scheduler_usage_wide_layout_test() ->
+    FullSchedulers = lists:map(fun(N) -> {N, 1.0} end, lists:seq(1, 8)),
+    ?assert(scheduler_bar_count(160, FullSchedulers) > scheduler_bar_count(139, FullSchedulers)),
     observer_cli_test_io:with_geometry(
         24,
         160,
@@ -248,6 +250,17 @@ render_scheduler_usage_wide_layout_test() ->
                     Samples
                 )
             )
+        end
+    ).
+
+scheduler_bar_count(Columns, SchedulerUsage) ->
+    observer_cli_test_io:with_geometry(
+        24,
+        Columns,
+        [],
+        fun() ->
+            {_Rows, [Line | _]} = observer_cli:render_scheduler_usage(SchedulerUsage),
+            erlang:length([Char || Char <- observer_cli_test_io:plain(Line), Char =:= $|])
         end
     ).
 

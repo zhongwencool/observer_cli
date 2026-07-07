@@ -650,6 +650,7 @@ render_scheduler_usage(SchedulerUsage) ->
 %% < 8 core split 2 part
 render_scheduler_usage(SchedulerUsage, SchedulerNum) when SchedulerNum < 8 ->
     Column = scheduler_usage_rows_by_count(SchedulerNum),
+    [Width1, Width2] = scheduler_bar_widths(2),
     CPU =
         [
             begin
@@ -658,10 +659,12 @@ render_scheduler_usage(SchedulerUsage, SchedulerNum) when SchedulerNum < 8 ->
                 Percent2 = proplists:get_value(Seq2, SchedulerUsage, 0.0),
                 CPU1 = observer_cli_lib:to_percent(Percent1),
                 CPU2 = observer_cli_lib:to_percent(Percent2),
-                Process1 = lists:duplicate(trunc(Percent1 * 57), "|"),
-                Process2 = lists:duplicate(trunc(Percent2 * 57), "|"),
+                Process1 = scheduler_bar(Percent1, Width1),
+                Process2 = scheduler_bar(Percent2, Width2),
                 IsLastLine = Seq1 =:= Column,
-                Format = process_bar_format_style([Percent1, Percent2], IsLastLine),
+                Format = process_bar_format_style(
+                    [Percent1, Percent2], [Width1, Width2], IsLastLine
+                ),
                 io_lib:format(Format, [Seq1, Process1, CPU1, Seq2, Process2, CPU2])
             end
          || Seq1 <- lists:seq(1, Column)
@@ -670,6 +673,7 @@ render_scheduler_usage(SchedulerUsage, SchedulerNum) when SchedulerNum < 8 ->
 %% 100 >= scheduler >= 8 split 4 part
 render_scheduler_usage(SchedulerUsage, SchedulerNum) when SchedulerNum =< 100 ->
     Column = scheduler_usage_rows_by_count(SchedulerNum),
+    [Width1, Width2, Width3, Width4] = scheduler_bar_widths(4),
     CPU =
         [
             begin
@@ -684,13 +688,15 @@ render_scheduler_usage(SchedulerUsage, SchedulerNum) when SchedulerNum =< 100 ->
                 CPU2 = observer_cli_lib:to_percent(Percent2),
                 CPU3 = observer_cli_lib:to_percent(Percent3),
                 CPU4 = observer_cli_lib:to_percent(Percent4),
-                Process1 = lists:duplicate(trunc(Percent1 * 22), "|"),
-                Process2 = lists:duplicate(trunc(Percent2 * 22), "|"),
-                Process3 = lists:duplicate(trunc(Percent3 * 22), "|"),
-                Process4 = lists:duplicate(trunc(Percent4 * 23), "|"),
+                Process1 = scheduler_bar(Percent1, Width1),
+                Process2 = scheduler_bar(Percent2, Width2),
+                Process3 = scheduler_bar(Percent3, Width3),
+                Process4 = scheduler_bar(Percent4, Width4),
                 IsLastLine = Seq1 =:= Column,
                 Format = process_bar_format_style(
-                    [Percent1, Percent2, Percent3, Percent4], IsLastLine
+                    [Percent1, Percent2, Percent3, Percent4],
+                    [Width1, Width2, Width3, Width4],
+                    IsLastLine
                 ),
                 io_lib:format(
                     Format,
@@ -795,6 +801,16 @@ render_scheduler_usage(SchedulerUsage, SchedulerNum) ->
 
 pad_scheduler_lines(Lines) ->
     [observer_cli_lib:pad_rendered(Line) || Line <- Lines].
+
+scheduler_bar_widths(2) ->
+    observer_cli_lib:weighted_widths([57, 57], [1, 1]);
+scheduler_bar_widths(4) ->
+    observer_cli_lib:weighted_widths([22, 22, 22, 23], [1, 1, 1, 1]);
+scheduler_bar_widths(_Parts) ->
+    [].
+
+scheduler_bar(Percent, Width) ->
+    lists:duplicate(trunc(Percent * Width), "|").
 
 transform_seq(Seq, Column, Total) ->
     Num = Seq + Column,
@@ -1047,14 +1063,26 @@ warning_color(_Percent) ->
     ?GREEN.
 
 process_bar_format_style(Percents, IsLastLine) ->
+    process_bar_format_style(Percents, scheduler_bar_widths(length(Percents)), IsLastLine).
+
+process_bar_format_style(Percents, Widths, IsLastLine) ->
     Format =
         case [warning_color(P) || P <- Percents] of
             [W1, W2] ->
-                <<"|", W1/binary, "|~2..0w ~-57.57s~s", W2/binary,
-                    " |~2..0w ~-57.57s ~s \e[0m|~n">>;
+                [Width1, Width2] = Widths,
+                Bar1 = scheduler_bar_format(Width1),
+                Bar2 = scheduler_bar_format(Width2),
+                <<"|", W1/binary, "|~2..0w ", Bar1/binary, "~s", W2/binary, " |~2..0w ",
+                    Bar2/binary, " ~s \e[0m|~n">>;
             [W1, W2, W3, W4] ->
-                <<"|", W1/binary, "|~-2.2w ~-22.22s ~s", W2/binary, " |~-2.2w ~-22.22s ~s",
-                    W3/binary, " |~-2.2w ~-22.22s ~s", W4/binary, " |~-2.2w ~-23.23s ~s \e[0m|~n">>;
+                [Width1, Width2, Width3, Width4] = Widths,
+                Bar1 = scheduler_bar_format(Width1),
+                Bar2 = scheduler_bar_format(Width2),
+                Bar3 = scheduler_bar_format(Width3),
+                Bar4 = scheduler_bar_format(Width4),
+                <<"|", W1/binary, "|~-2.2w ", Bar1/binary, " ~s", W2/binary, " |~-2.2w ",
+                    Bar2/binary, " ~s", W3/binary, " |~-2.2w ", Bar3/binary, " ~s", W4/binary,
+                    " |~-2.2w ", Bar4/binary, " ~s \e[0m|~n">>;
             [W1, W2, W3, W4, W5, W6, W7, W8, W9, W10] ->
                 <<"|", W1/binary, " | ~-3.3w ~s", W2/binary, " | ~-3.3w ~s", W3/binary,
                     " | ~-3.3w ~s", W4/binary, " | ~-3.3w ~s", W5/binary, " | ~-3.3w ~s", W6/binary,
@@ -1067,6 +1095,10 @@ process_bar_format_style(Percents, IsLastLine) ->
         false ->
             Format
     end.
+
+scheduler_bar_format(Width) ->
+    WidthBin = erlang:integer_to_binary(Width),
+    <<"~-", WidthBin/binary, ".", WidthBin/binary, "s">>.
 
 get_top_n_info(Item) ->
     {Pid, Val, Call = [IsName | _]} = Item,
