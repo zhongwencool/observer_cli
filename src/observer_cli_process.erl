@@ -247,28 +247,71 @@ collect_process_info(Pid) ->
 
             Work = proplists:get_value(work, ProcessInfo),
             Reductions = proplists:get_value(reductions, Work),
+            case collect_process_extra(Pid, WordSize) of
+                dead ->
+                    dead;
+                Extra ->
+                    ProcessView = maps:merge(
+                        #{
+                            pid => Pid,
+                            registered_name => RegisteredName,
+                            group_leader => GroupLeader,
+                            status => Status,
+                            trap_exit => TrapExit,
+                            initial_call => InitialCall,
+                            message_queue_len => MessageQueueLen,
+                            heap_size => HeapSize,
+                            total_heap_size => TotalHeapSize,
+                            garbage_collection => GarbageCollection
+                        },
+                        Extra
+                    ),
+                    #{
+                        process => ProcessView,
+                        links => Link,
+                        monitors => Monitors,
+                        monitored_by => MonitoredBy,
+                        reductions => Reductions,
+                        memory => Memory
+                    }
+            end
+    end.
 
-            ProcessView = #{
-                pid => Pid,
-                registered_name => RegisteredName,
-                group_leader => GroupLeader,
-                status => Status,
-                trap_exit => TrapExit,
-                initial_call => InitialCall,
-                message_queue_len => MessageQueueLen,
-                heap_size => HeapSize,
-                total_heap_size => TotalHeapSize,
-                garbage_collection => GarbageCollection
-            },
+collect_process_extra(Pid, WordSize) ->
+    case
+        erlang:process_info(Pid, [
+            priority,
+            stack_size,
+            binary,
+            catchlevel,
+            suspending,
+            error_handler
+        ])
+    of
+        undefined ->
+            dead;
+        Info ->
+            Binaries = proplists:get_value(binary, Info, []),
             #{
-                process => ProcessView,
-                links => Link,
-                monitors => Monitors,
-                monitored_by => MonitoredBy,
-                reductions => Reductions,
-                memory => Memory
+                priority => proplists:get_value(priority, Info),
+                stack_size => proplists:get_value(stack_size, Info, 0) * WordSize,
+                binary_refs => binary_refs_summary(Binaries),
+                catchlevel => proplists:get_value(catchlevel, Info),
+                suspending => proplists:get_value(suspending, Info, []),
+                error_handler => proplists:get_value(error_handler, Info)
             }
     end.
+
+binary_refs_summary(Binaries) ->
+    Bytes = lists:foldl(
+        fun
+            ({_, Size, _}, Acc) when is_integer(Size) -> Acc + Size;
+            (_, Acc) -> Acc
+        end,
+        0,
+        Binaries
+    ),
+    {erlang:length(Binaries), Bytes}.
 
 collect_process_gc(GarbageCollection) ->
     #{
@@ -406,7 +449,11 @@ process_meta_fields(#{
     registered_name := RegisteredName,
     group_leader := GroupLeader,
     status := Status,
-    initial_call := InitialCall
+    initial_call := InitialCall,
+    priority := Priority,
+    catchlevel := CatchLevel,
+    suspending := Suspending,
+    error_handler := ErrorHandler
 }) ->
     PidStr = erlang:pid_to_list(Pid),
     Name =
@@ -418,13 +465,19 @@ process_meta_fields(#{
         registered_name => Name,
         initial_call => observer_cli_lib:mfa_to_list(InitialCall),
         group_leader => erlang:pid_to_list(GroupLeader),
-        status => Status
+        status => Status,
+        priority => Priority,
+        catchlevel => CatchLevel,
+        suspending => format_suspending(Suspending),
+        error_handler => ErrorHandler
     }.
 
 process_memory_fields(#{
     message_queue_len := MessageQueueLen,
     heap_size := HeapSize,
     total_heap_size := TotalHeapSize,
+    stack_size := StackSize,
+    binary_refs := BinaryRefs,
     trap_exit := TrapExit
 }) ->
     MessageQueueLenColor =
@@ -436,8 +489,19 @@ process_memory_fields(#{
         message_queue_len => {erlang:integer_to_list(MessageQueueLen), MessageQueueLenColor},
         heap_size => HeapSize,
         total_heap_size => TotalHeapSize,
+        stack_size => StackSize,
+        binary_refs => BinaryRefs,
         trap_exit => TrapExit
     }.
+
+format_binary_refs({Count, Bytes}) ->
+    [erlang:integer_to_list(Count), $/, observer_cli_lib:to_byte(Bytes)].
+
+format_suspending([]) ->
+    "0";
+format_suspending(Suspending) ->
+    Items = [observer_cli_lib:to_list(P) || P <- lists:sublist(Suspending, 3)],
+    [erlang:integer_to_list(erlang:length(Suspending)), $:, string:join(Items, ",")].
 
 process_gc_fields(#{garbage_collection := GarbageCollection}) ->
     #{
@@ -465,12 +529,18 @@ render_process_info_rows(Meta, Memory, GC, [
         registered_name := Name,
         initial_call := InitialCallStr,
         group_leader := GroupLeaderStr,
-        status := Status
+        status := Status,
+        priority := Priority,
+        catchlevel := CatchLevel,
+        suspending := Suspending,
+        error_handler := ErrorHandler
     } = Meta,
     #{
         message_queue_len := {MessageQueueLenStr, MessageQueueLenColor},
         heap_size := HeapSize,
         total_heap_size := TotalHeapSize,
+        stack_size := StackSize,
+        binary_refs := BinaryRefs,
         trap_exit := TrapExit
     } = Memory,
     #{
@@ -507,7 +577,35 @@ render_process_info_rows(Meta, Memory, GC, [
         ?W("trap_exit", MemoryW),
         ?W(TrapExit, MemoryValueW),
         ?W("minor_gcs", GcW),
-        ?W(MinorGcs, GcValueW)
+        ?W(MinorGcs, GcValueW),
+        ?NEW_LINE,
+        ?W("priority", MetaW),
+        ?W(Priority, MetaValueW),
+        ?W("stack_size", MemoryW),
+        ?W({byte, StackSize}, MemoryValueW),
+        ?W("", GcW),
+        ?W("", GcValueW),
+        ?NEW_LINE,
+        ?W("catchlevel", MetaW),
+        ?W(CatchLevel, MetaValueW),
+        ?W("binary_refs", MemoryW),
+        ?W(format_binary_refs(BinaryRefs), MemoryValueW),
+        ?W("", GcW),
+        ?W("", GcValueW),
+        ?NEW_LINE,
+        ?W("suspending", MetaW),
+        ?W(Suspending, MetaValueW),
+        ?W("", MemoryW),
+        ?W("", MemoryValueW),
+        ?W("", GcW),
+        ?W("", GcValueW),
+        ?NEW_LINE,
+        ?W("error_handler", MetaW),
+        ?W(ErrorHandler, MetaValueW),
+        ?W("", MemoryW),
+        ?W("", MemoryValueW),
+        ?W("", GcW),
+        ?W("", GcValueW)
     ]).
 
 render_link_monitor(Link, Monitors, MonitoredBy) ->
