@@ -46,6 +46,12 @@
     pages = [{1, 1}] :: list()
 }).
 
+-record(ports, {
+    interval = ?DEFAULT_INTERVAL :: integer(),
+    attr = queue_size :: atom(),
+    cur_page = 1 :: pos_integer()
+}).
+
 -record(process, {interval = ?DEFAULT_INTERVAL :: integer()}).
 
 -record(plug, {cur_index = 1 :: pos_integer(), plugs = [] :: map() | []}).
@@ -58,6 +64,7 @@
     db = #db{} :: #db{},
     help = #help{} :: #help{},
     inet = #inet{} :: #inet{},
+    ports = #ports{} :: #ports{},
     process = #process{} :: #process{},
     port = ?DEFAULT_INTERVAL :: pos_integer(),
     plug = #plug{} :: #plug{},
@@ -73,6 +80,7 @@
     db/0,
     help/0,
     inet/0,
+    ports/0,
     process/0,
     plug/0
 ]).
@@ -85,6 +93,7 @@
 -type db() :: #db{}.
 -type help() :: #help{}.
 -type inet() :: #inet{}.
+-type ports() :: #ports{}.
 -type process() :: #process{}.
 -type plug() :: #plug{}.
 

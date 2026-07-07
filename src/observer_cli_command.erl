@@ -17,6 +17,8 @@ parse_shared(Key) ->
             app_view;
         "N\n" ->
             inet_view;
+        "O\n" ->
+            ports_view;
         "M\n" ->
             mnesia_view;
         "E\n" ->
@@ -42,6 +44,8 @@ parse_shared(Key) ->
             cnt;
         "oct\n" ->
             oct;
+        "qs\n" ->
+            queue_size;
         Cmd when Cmd =:= "q\n"; Cmd =:= "Q\n" ->
             quit;
         Cmd when Cmd =:= "pu\n"; Cmd =:= "PU\n"; Cmd =:= "B\n" ->

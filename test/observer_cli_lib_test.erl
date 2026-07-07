@@ -84,7 +84,7 @@ parse_cmd_quit_test() ->
 parse_cmd_top_menu_routes_test() ->
     [
         route_shared_command(Cmd)
-     || Cmd <- ["H\n", "S\n", "A\n", "N\n", "M\n", "E\n", "D\n", "P\n"]
+     || Cmd <- ["H\n", "S\n", "A\n", "N\n", "O\n", "M\n", "E\n", "D\n", "P\n"]
     ].
 
 parse_cmd_top_menu_exits_plain_pids_test() ->
@@ -178,6 +178,7 @@ shared_parse_cmd_str_test() ->
     ?assertEqual(system_view, observer_cli_command:parse_shared("S\n")),
     ?assertEqual(app_view, observer_cli_command:parse_shared("A\n")),
     ?assertEqual(inet_view, observer_cli_command:parse_shared("N\n")),
+    ?assertEqual(ports_view, observer_cli_command:parse_shared("O\n")),
     ?assertEqual(mnesia_view, observer_cli_command:parse_shared("M\n")),
     ?assertEqual(ets_view, observer_cli_command:parse_shared("E\n")),
     ?assertEqual(help_view, observer_cli_command:parse_shared("D\n")),
@@ -190,6 +191,7 @@ shared_parse_cmd_str_test() ->
     ?assertEqual(send_oct, observer_cli_command:parse_shared("so\n")),
     ?assertEqual(cnt, observer_cli_command:parse_shared("cnt\n")),
     ?assertEqual(oct, observer_cli_command:parse_shared("oct\n")),
+    ?assertEqual(queue_size, observer_cli_command:parse_shared("qs\n")),
     ?assertEqual(page_up_top_n, observer_cli_command:parse_shared("pu\n")),
     ?assertEqual(page_down_top_n, observer_cli_command:parse_shared("pd\n")),
     ?assertEqual(page_up_top_n, observer_cli_command:parse_shared("PU\n")),

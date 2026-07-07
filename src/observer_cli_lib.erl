@@ -83,6 +83,7 @@ get_menu_title(Selection, MnesiaTitle) ->
     Options = [
         {home, "Home(H)"},
         {inet, "Network(N)"},
+        {ports, "Ports(O)"},
         {allocator, "System(S)"},
         {ets, "Ets(E)"},
         {mnesia, MnesiaTitle},
@@ -218,6 +219,9 @@ parse_cmd(ViewOpts, Module, Args) ->
         inet_view ->
             clean_before_route(Module, Args),
             observer_cli_inet:start(ViewOpts);
+        ports_view ->
+            clean_before_route(Module, Args),
+            observer_cli_port:start(ViewOpts);
         mnesia_view ->
             clean_before_route(Module, Args),
             observer_cli_mnesia:start(ViewOpts);

@@ -84,6 +84,7 @@ start(Interval) when is_integer(Interval), Interval >= ?MIN_INTERVAL ->
         db = #db{interval = Interval},
         help = #help{interval = Interval},
         inet = #inet{interval = Interval},
+        ports = #ports{interval = Interval},
         process = #process{interval = Interval},
         port = Interval
     }).
