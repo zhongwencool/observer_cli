@@ -401,7 +401,7 @@ render_sys_info(SysInfo) ->
     CPU = proplists:get_value("CPU's and Threads", SystemAndCPU),
     {_, _, Memory} = lists:keyfind("Memory Usage", 1, MemAndStatistics),
     {_, _, Statistics} = lists:keyfind("Statistics", 1, MemAndStatistics),
-    render_sys_info(System, CPU, Memory, Statistics).
+    render_sys_info(System, CPU, Memory, Statistics) ++ render_runtime_limit_info(SysInfo).
 
 collect_sys_info(Cmd) ->
     collect_os_process_info(Cmd) ++ collect_runtime_info().
@@ -497,6 +497,72 @@ sys_info_row_widths() ->
 compiled_for_widths() ->
     observer_cli_lib:weighted_widths([22, 111], [0, 1]).
 
+render_runtime_limit_info(SysInfo) ->
+    Widths = [Metric1W, Value1W, Metric2W, Value2W, Metric3W, Value3W] = runtime_limit_widths(),
+    Title = ?render([
+        ?UNDERLINE,
+        ?GRAY_BG,
+        ?W("System Statistics / Limit", Metric1W),
+        ?W("Value", Value1W),
+        ?W("System Statistics / Limit", Metric2W),
+        ?W("Value", Value2W),
+        ?W("System Statistics / Limit", Metric3W),
+        ?W("Value", Value3W)
+    ]),
+    Rows = [
+        [
+            {"Processes", format_count_limit(process_count, process_limit, SysInfo)},
+            {"Dirty CPU schedulers", to_list(proplists:get_value(dirty_cpu_schedulers, SysInfo))},
+            {"Distribution buffer busy limit",
+                to_list(proplists:get_value(dist_buf_busy_limit, SysInfo))}
+        ],
+        [
+            {"Ports", format_count_limit(port_count, port_limit, SysInfo)},
+            {"Online dirty CPU schedulers",
+                to_list(proplists:get_value(dirty_cpu_schedulers_online, SysInfo))},
+            {"Modules", to_list(proplists:get_value(module_count, SysInfo))}
+        ],
+        [
+            {"Atoms", format_count_limit(atom_count, atom_limit, SysInfo)},
+            {"Run Queue", to_list(proplists:get_value(run_queue, SysInfo))},
+            {"ETS", format_count_limit(ets_count, ets_limit, SysInfo)}
+        ]
+    ],
+    [Title | [render_runtime_limit_row(Row, Widths) || Row <- Rows]].
+
+render_runtime_limit_row(
+    [{Name1, Value1}, {Name2, Value2}, {Name3, Value3}],
+    [Metric1W, Value1W, Metric2W, Value2W, Metric3W, Value3W]
+) ->
+    ?render([
+        ?W(Name1, Metric1W),
+        ?W(Value1, Value1W),
+        ?W(Name2, Metric2W),
+        ?W(Value2, Value2W),
+        ?W(Name3, Metric3W),
+        ?W(Value3, Value3W)
+    ]).
+
+runtime_limit_widths() ->
+    observer_cli_lib:weighted_widths([30, 10, 30, 10, 30, 11], [0, 1, 0, 1, 0, 1]).
+
+format_count_limit(CountKey, LimitKey, SysInfo) ->
+    Count = proplists:get_value(CountKey, SysInfo),
+    Limit = proplists:get_value(LimitKey, SysInfo),
+    format_count_limit(Count, Limit).
+
+format_count_limit(Count, Limit) when is_integer(Count), is_integer(Limit), Limit > 0 ->
+    [
+        integer_to_list(Count),
+        " / ",
+        integer_to_list(Limit),
+        " (",
+        observer_cli_lib:to_percent(Count / Limit),
+        " used)"
+    ];
+format_count_limit(Count, Limit) ->
+    [to_list(Count), " / ", to_list(Limit)].
+
 collect_os_process_info(Cmd) ->
     [_, CmdValue | _] = string:split(os:cmd(Cmd), "\n", all),
     [CpuPsV, MemPsV, RssPsV, VszPsV] =
@@ -528,6 +594,7 @@ collect_runtime_info() ->
         end,
     {{_, Input}, {_, Output}} = erlang:statistics(io),
     [
+        {run_queue, erlang:statistics(run_queue)},
         {io_input, Input},
         {io_output, Output},
 
@@ -537,6 +604,8 @@ collect_runtime_info() ->
         {schedulers, erlang:system_info(schedulers)},
         {schedulers_online, SchedulersOnline},
         {schedulers_available, SchedulersAvailable},
+        {dirty_cpu_schedulers, maybe_system_info(dirty_cpu_schedulers)},
+        {dirty_cpu_schedulers_online, maybe_system_info(dirty_cpu_schedulers_online)},
 
         {otp_release, erlang:system_info(otp_release)},
         {version, erlang:system_info(version)},
@@ -547,7 +616,17 @@ collect_runtime_info() ->
         {thread_pool_size, erlang:system_info(thread_pool_size)},
         {wordsize_internal, erlang:system_info({wordsize, internal})},
         {wordsize_external, erlang:system_info({wordsize, external})},
-        {alloc_info, alloc_info()}
+        {alloc_info, alloc_info()},
+        {module_count, erlang:length(code:all_loaded())},
+        {process_count, erlang:system_info(process_count)},
+        {process_limit, erlang:system_info(process_limit)},
+        {port_count, erlang:system_info(port_count)},
+        {port_limit, erlang:system_info(port_limit)},
+        {atom_count, erlang:system_info(atom_count)},
+        {atom_limit, maybe_system_info(atom_limit)},
+        {ets_count, maybe_system_info(ets_count)},
+        {ets_limit, maybe_system_info(ets_limit)},
+        {dist_buf_busy_limit, maybe_system_info(dist_buf_busy_limit)}
         | MemInfo
     ].
 
@@ -557,6 +636,13 @@ alloc_info() ->
         Allocators -> Allocators
     catch
         _:_ -> []
+    end.
+
+maybe_system_info(Key) ->
+    try erlang:system_info(Key) of
+        Value -> Value
+    catch
+        _:badarg -> undefined
     end.
 
 fill_info([{dynamic, Key} | Rest], Data) when is_atom(Key) ->

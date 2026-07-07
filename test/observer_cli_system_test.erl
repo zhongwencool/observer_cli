@@ -133,6 +133,28 @@ render_sys_info_empty_ps_test() ->
     ),
     ?assert(string:find(lists:flatten(Line), "System/Architecture") =/= nomatch).
 
+render_sys_info_runtime_limits_test() ->
+    observer_cli_test_io:with_geometry(
+        24,
+        201,
+        [],
+        fun() ->
+            Line = observer_cli_system:render_sys_info(
+                observer_cli_system:collect_sys_info("printf 'header\\n 1 2 3 4\\n'")
+            ),
+            Output = lists:flatten(Line),
+            ?assert(string:find(Output, "System Statistics / Limit") =/= nomatch),
+            ?assert(string:find(Output, "Distribution buffer busy limit") =/= nomatch),
+            ?assert(string:find(Output, "Dirty CPU schedulers") =/= nomatch),
+            ?assert(string:find(Output, "Modules") =/= nomatch),
+            ?assertEqual(nomatch, string:find(Output, "Up time")),
+            ?assert(string:find(Output, "% used") =/= nomatch),
+            ?assert(
+                lists:all(fun(Width) -> Width =< 200 end, observer_cli_test_io:line_widths(Line))
+            )
+        end
+    ).
+
 collect_sys_info_test() ->
     Cmd = "printf 'header\\n 1 2 3 4\\n'",
     OsProcessInfo = observer_cli_system:collect_os_process_info(Cmd),
@@ -180,6 +202,11 @@ collect_system_info_test() ->
     ?assert(lists:keymember(otp_release, 1, SysInfo)),
     ?assert(lists:keymember(schedulers_online, 1, SysInfo)),
     ?assert(lists:keymember(io_input, 1, SysInfo)),
+    ?assert(lists:keymember(ets_count, 1, SysInfo)),
+    ?assert(lists:keymember(ets_limit, 1, SysInfo)),
+    ?assert(lists:keymember(dist_buf_busy_limit, 1, SysInfo)),
+    ?assert(lists:keymember(dirty_cpu_schedulers, 1, SysInfo)),
+    ?assert(lists:keymember(module_count, 1, SysInfo)),
     ?assert(is_list(DistNodesInfo)),
     [
         ?assertMatch(
