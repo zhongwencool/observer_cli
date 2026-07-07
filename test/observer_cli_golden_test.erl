@@ -42,13 +42,11 @@ home_golden_output_fragments_test() ->
             Prompt = observer_cli:get_refresh_prompt(proc_count, memory, 1500, 10),
             Menu = observer_cli_lib:render_menu(home, Prompt),
             Footer = observer_cli:render_footer(),
-            {StableInfo, PortParallelism} = observer_cli:get_stable_system_info(),
+            StableInfo = observer_cli:get_stable_system_info(),
             SystemLines = observer_cli:render_system_line(
                 "printf 'header\n 1 2\n'", StableInfo, {ok, 1000, 10}
             ),
-            MemoryLines = observer_cli:render_memory_process_line(
-                {1, 2, 3, 4}, PortParallelism, 1500
-            ),
+            MemoryLines = observer_cli:render_memory_process_line({1, 2, 3, 4}, 1500),
             {_, [TopTitle]} = observer_cli:render_top_n_view(
                 memory, [], 0, [{1, 1}], 1, LayoutWidth
             ),
@@ -71,7 +69,7 @@ home_golden_output_fragments_test() ->
                 "Current Function",
                 "Count/Limit",
                 "Reds(Total/SinceLastCall)",
-                "Port Parallelism (+spp)",
+                "Persistent Terms",
                 "IO/GC:(1500ms)"
             ]),
             observer_cli_test_io:assert_ansi_boundaries(Output),

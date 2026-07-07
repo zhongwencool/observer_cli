@@ -20,7 +20,7 @@
 
 -export([
     render_system_line/2, render_system_line/3,
-    render_memory_process_line/3,
+    render_memory_process_line/2,
     render_scheduler_usage/1,
     render_footer/0,
     render_top_n_view/5, render_top_n_view/6,
@@ -324,10 +324,10 @@ collect_home_snapshot(PsCmd, Home, StableInfo, LastStats, TerminalRows, IsFirstT
     Runtime = sample_home_runtime(PsCmd, StableInfo, Diffs, SchedulerUsage, Interval),
     {maps:merge(Runtime#{process_rows => ProcessRows}, ProcessRanking), NewStats}.
 
-sample_home_runtime(PsCmd, {StableInfo, PortParallelism}, Diffs, SchedulerUsage, Interval) ->
+sample_home_runtime(PsCmd, StableInfo, Diffs, SchedulerUsage, Interval) ->
     #{
         system_summary => system_summary(PsCmd, StableInfo, get_atom_status()),
-        memory_summary => memory_process_summary(Diffs, PortParallelism, Interval),
+        memory_summary => memory_process_summary(Diffs, Interval),
         scheduler_usage => SchedulerUsage
     }.
 
@@ -487,12 +487,12 @@ system_atom_summary_row(
 
 -ifdef(TEST).
 
-render_memory_process_line(MemSum, PortParallelism, Interval) ->
-    render_home_summary(memory_process_summary(MemSum, PortParallelism, Interval)).
+render_memory_process_line(MemSum, Interval) ->
+    render_home_summary(memory_process_summary(MemSum, Interval)).
 
 -endif.
 
-memory_process_summary(MemSum, PortParallelism, Interval) ->
+memory_process_summary(MemSum, Interval) ->
     {LeftLabelExtra, LeftValueExtra, MiddleLabelExtra, MiddleValueExtra, RightLabelExtra,
         RightValueExtra} = home_summary_extras(),
     RunQ = erlang:statistics(run_queue),
@@ -508,6 +508,9 @@ memory_process_summary(MemSum, PortParallelism, Interval) ->
             ets:all()
         ),
     {BytesIn, BytesOut, GcCount, GcWordsReclaimed} = MemSum,
+    PersistentTermInfo = persistent_term:info(),
+    PersistentTermCount = maps:get(count, PersistentTermInfo),
+    PersistentTermMemory = maps:get(memory, PersistentTermInfo),
 
     {Queue, LogKey} =
         case whereis(error_logger) of
@@ -561,8 +564,11 @@ memory_process_summary(MemSum, PortParallelism, Interval) ->
                 {"Atom", 10 + LeftLabelExtra},
                 {{byte, AtomMem}, 12},
                 {AtomMemPercent, 6 + LeftValueExtra},
-                {"Port Parallelism (+spp)", 25 + MiddleLabelExtra},
-                {PortParallelism, 21 + MiddleValueExtra},
+                {
+                    ["Persistent Terms/", erlang:integer_to_list(PersistentTermCount)],
+                    25 + MiddleLabelExtra
+                },
+                {{byte, PersistentTermMemory}, 21 + MiddleValueExtra},
                 {"Gc Count", 20 + RightLabelExtra},
                 {GcCount, 25 + RightValueExtra}
             ]},
@@ -1153,16 +1159,13 @@ get_refresh_prompt(proc_window, Type, Interval, Rows) ->
 get_stable_system_info() ->
     OtpRelease = erlang:system_info(otp_release),
     SysVersion = erlang:system_info(system_version) -- "\n",
-    {
-        [
-            OtpRelease,
-            SysVersion ++ " " ++ atom_to_list(erlang:node()),
-            erlang:system_info(process_limit),
-            erlang:system_info(port_limit),
-            erlang:system_info(ets_limit)
-        ],
-        erlang:system_info(port_parallelism)
-    }.
+    [
+        OtpRelease,
+        SysVersion ++ " " ++ atom_to_list(erlang:node()),
+        erlang:system_info(process_limit),
+        erlang:system_info(port_limit),
+        erlang:system_info(ets_limit)
+    ].
 
 get_atom_status() ->
     try erlang:system_info(atom_limit) of

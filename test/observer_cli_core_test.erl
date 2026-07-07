@@ -96,19 +96,19 @@ get_current_initial_call_test() ->
 
 render_system_line_test() ->
     PsCmd = "printf 'header\\n 1 2\\n'",
-    {StableInfo, _} = observer_cli:get_stable_system_info(),
+    StableInfo = observer_cli:get_stable_system_info(),
     Line = observer_cli:render_system_line(PsCmd, StableInfo),
     ?assert(string:find(lists:flatten(Line), "System") =/= nomatch).
 
 render_system_line_unsupported_atom_status_test() ->
     PsCmd = "printf 'header\\n 1 2\\n'",
-    {StableInfo, _} = observer_cli:get_stable_system_info(),
+    StableInfo = observer_cli:get_stable_system_info(),
     Line = observer_cli:render_system_line(PsCmd, StableInfo, {error, unsupported}),
     ?assert(string:find(lists:flatten(Line), "Ets Limit") =/= nomatch).
 
 render_system_line_missing_output_test() ->
     PsCmd = "printf ''",
-    {StableInfo, _} = observer_cli:get_stable_system_info(),
+    StableInfo = observer_cli:get_stable_system_info(),
     Line = observer_cli:render_system_line(PsCmd, StableInfo),
     ?assert(string:find(lists:flatten(Line), "ps -o pcpu") =/= nomatch).
 
@@ -119,13 +119,11 @@ accept_net_ticktime_result_test() ->
 
 render_memory_process_line_test() ->
     MemSum = {1, 2, 3, 4},
-    {_, PortParallelism} = observer_cli:get_stable_system_info(),
-    Line = observer_cli:render_memory_process_line(MemSum, PortParallelism, 1500),
+    Line = observer_cli:render_memory_process_line(MemSum, 1500),
     ?assert(string:find(lists:flatten(Line), "Total") =/= nomatch).
 
 render_memory_process_line_error_logger_test() ->
     MemSum = {1, 2, 3, 4},
-    {_, PortParallelism} = observer_cli:get_stable_system_info(),
     Prev = whereis(error_logger),
     TempPid =
         case Prev of
@@ -141,7 +139,7 @@ render_memory_process_line_error_logger_test() ->
                 Prev
         end,
     try
-        Line = observer_cli:render_memory_process_line(MemSum, PortParallelism, 1500),
+        Line = observer_cli:render_memory_process_line(MemSum, 1500),
         ?assert(string:find(lists:flatten(Line), "RunQueue") =/= nomatch)
     after
         case Prev of
@@ -159,13 +157,11 @@ render_home_summary_wide_layout_test() ->
         160,
         [],
         fun() ->
-            {StableInfo, PortParallelism} = observer_cli:get_stable_system_info(),
+            StableInfo = observer_cli:get_stable_system_info(),
             SystemLines = observer_cli:render_system_line(
                 "printf 'header\n 1 2\n'", StableInfo
             ),
-            MemLines = observer_cli:render_memory_process_line(
-                {1, 2, 3, 4}, PortParallelism, 1500
-            ),
+            MemLines = observer_cli:render_memory_process_line({1, 2, 3, 4}, 1500),
             [SystemTitle | _] = SystemLines,
             [MemTitle | _] = MemLines,
             ?assertEqual(
