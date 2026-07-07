@@ -84,6 +84,7 @@ get_menu_title(Selection, MnesiaTitle) ->
         {home, "Home(H)"},
         {inet, "Network(N)"},
         {ports, "Ports(O)"},
+        {sockets, "Sockets(K)"},
         {allocator, "System(S)"},
         {ets, "Ets(E)"},
         {mnesia, MnesiaTitle},
@@ -222,6 +223,9 @@ parse_cmd(ViewOpts, Module, Args) ->
         ports_view ->
             clean_before_route(Module, Args),
             observer_cli_port:start(ViewOpts);
+        sockets_view ->
+            clean_before_route(Module, Args),
+            observer_cli_socket:start(ViewOpts);
         mnesia_view ->
             clean_before_route(Module, Args),
             observer_cli_mnesia:start(ViewOpts);

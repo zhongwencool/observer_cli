@@ -52,6 +52,12 @@
     cur_page = 1 :: pos_integer()
 }).
 
+-record(sockets, {
+    interval = ?DEFAULT_INTERVAL :: integer(),
+    sort = io :: atom(),
+    cur_page = 1 :: pos_integer()
+}).
+
 -record(process, {interval = ?DEFAULT_INTERVAL :: integer()}).
 
 -record(plug, {cur_index = 1 :: pos_integer(), plugs = [] :: map() | []}).
@@ -65,6 +71,7 @@
     help = #help{} :: #help{},
     inet = #inet{} :: #inet{},
     ports = #ports{} :: #ports{},
+    sockets = #sockets{} :: #sockets{},
     process = #process{} :: #process{},
     port = ?DEFAULT_INTERVAL :: pos_integer(),
     plug = #plug{} :: #plug{},
@@ -81,6 +88,7 @@
     help/0,
     inet/0,
     ports/0,
+    sockets/0,
     process/0,
     plug/0
 ]).
@@ -94,6 +102,7 @@
 -type help() :: #help{}.
 -type inet() :: #inet{}.
 -type ports() :: #ports{}.
+-type sockets() :: #sockets{}.
 -type process() :: #process{}.
 -type plug() :: #plug{}.
 

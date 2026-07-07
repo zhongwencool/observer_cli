@@ -18,12 +18,12 @@
 start() ->
     spawn_link(fun() -> loop({1, []}) end).
 
--spec update(pid(), pos_integer(), list()) -> ok.
+-spec update(pid(), pos_integer(), [{pos_integer(), term()}]) -> ok.
 update(StorePid, Row, TopNList) ->
     erlang:send(StorePid, {?UPDATE_TOP_N, Row, TopNList}),
     ok.
 
--spec lookup_pos(pid(), pos_integer()) -> {pos_integer(), pid()}.
+-spec lookup_pos(pid(), pos_integer()) -> {pos_integer(), term()} | {error, undefined}.
 lookup_pos(StorePid, CurPos) ->
     erlang:send(StorePid, {?LOOKUP_PID, CurPos, self()}),
     receive

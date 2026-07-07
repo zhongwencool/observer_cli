@@ -69,6 +69,7 @@ render_help() ->
         shortcut("3000", "set interval time to 3000ms, the integer must >= 1500."),
         shortcut("p", "pause/unpause the view."),
         shortcut("O", "open all ports view."),
+        shortcut("K", "open socket API sockets view."),
 
         section("3. HOME(H) Commands"),
         shortcut("`", "enable/disable schedule usage."),

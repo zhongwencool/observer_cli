@@ -54,6 +54,7 @@ home_golden_output_fragments_test() ->
             observer_cli_test_io:assert_stable_fragments(Output, [
                 "Home(H)",
                 "Network(N)",
+                "Sockets(K)",
                 "System(S)",
                 "Ets(E)",
                 "App(A)",

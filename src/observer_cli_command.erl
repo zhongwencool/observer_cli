@@ -19,6 +19,8 @@ parse_shared(Key) ->
             inet_view;
         "O\n" ->
             ports_view;
+        "K\n" ->
+            sockets_view;
         "M\n" ->
             mnesia_view;
         "E\n" ->
@@ -46,6 +48,34 @@ parse_shared(Key) ->
             oct;
         "qs\n" ->
             queue_size;
+        "io\n" ->
+            socket_io;
+        "rb\n" ->
+            socket_read_byte;
+        "wb\n" ->
+            socket_write_byte;
+        "pk\n" ->
+            socket_packets;
+        "wt\n" ->
+            socket_waits;
+        "fl\n" ->
+            socket_fails;
+        "mx\n" ->
+            socket_max_packet;
+        "ac\n" ->
+            socket_accepts;
+        "id\n" ->
+            socket_id;
+        "fd\n" ->
+            socket_fd;
+        "ow\n" ->
+            socket_owner;
+        "dm\n" ->
+            socket_domain;
+        "tp\n" ->
+            socket_type;
+        "pt\n" ->
+            socket_protocol;
         Cmd when Cmd =:= "q\n"; Cmd =:= "Q\n" ->
             quit;
         Cmd when Cmd =:= "pu\n"; Cmd =:= "PU\n"; Cmd =:= "B\n" ->

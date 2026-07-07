@@ -118,7 +118,7 @@ render_ports_worker(
     end.
 
 select_port(Pos, #ports{attr = Attr}) when is_integer(Pos), Pos > 0 ->
-    SortPorts = recon_lib:sublist_top_n_attrs(collect_ports_info(Attr), Pos),
+    {_, SortPorts} = collect_ports_render_info(Pos, 1, Attr),
     case erlang:length(SortPorts) >= Pos of
         true ->
             {_, _, #{port := Port}} = lists:nth(Pos, SortPorts),
