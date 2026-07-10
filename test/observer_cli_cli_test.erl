@@ -66,10 +66,25 @@ command_options_test() ->
             route => command,
             command => processes,
             arguments => [],
-            options => #{node => "target@host", sort => "memory", limit => "20", json => true}
+            options => #{
+                node => "target@host",
+                cookie_env => "ERL_COOKIE",
+                sort => "memory",
+                limit => "20",
+                json => true
+            }
         }},
         observer_cli_cli:parse([
-            "processes", "--node", "target@host", "--sort", "memory", "--limit", "20", "--json"
+            "processes",
+            "--node",
+            "target@host",
+            "--cookie-env",
+            "ERL_COOKIE",
+            "--sort",
+            "memory",
+            "--limit",
+            "20",
+            "--json"
         ])
     ),
     ?assertEqual(
@@ -142,6 +157,94 @@ unsupported_format_test() ->
     assert_argument_error(
         {unsupported_format, "yaml"},
         observer_cli_cli:parse(["memory", "--format", "yaml"])
+    ).
+
+target_validation_test() ->
+    ?assertEqual(
+        {ok, {"target@host", shortnames}},
+        observer_cli_cli:target(#{node => "target@host", cookie_env => "COOKIE"})
+    ),
+    ?assertEqual(
+        {ok, {"target@host.example", longnames}},
+        observer_cli_cli:target(#{node => "target@host.example", cookie_env => "COOKIE"})
+    ),
+    ?assertEqual(
+        {ok, {"target@host", longnames}},
+        observer_cli_cli:target(#{
+            node => "target@host", cookie_env => "COOKIE", name_mode => "long"
+        })
+    ),
+    lists:foreach(
+        fun(Node) ->
+            assert_argument_error(
+                invalid_node,
+                observer_cli_cli:parse(["memory", "--node", Node, "--cookie-env", "COOKIE"])
+            )
+        end,
+        ["@host", "target@", "target@@host", "target\n@host", lists:duplicate(256, $a)]
+    ),
+    assert_argument_error(
+        {unsupported_name_mode, "wide"},
+        observer_cli_cli:parse([
+            "memory", "--node", "target@host", "--cookie-env", "COOKIE", "--name-mode", "wide"
+        ])
+    ),
+    assert_argument_error(
+        missing_cookie_source,
+        observer_cli_cli:parse(["memory", "--node", "target@host"])
+    ).
+
+cookie_source_test() ->
+    Env = "OBSERVER_CLI_COOKIE_SOURCE_TEST",
+    Secret = "test cookie",
+    true = os:putenv(Env, Secret),
+    try
+        ?assertEqual(
+            {ok, list_to_binary(Secret)}, observer_cli_cli:cookie_source(#{cookie_env => Env})
+        ),
+        true = os:putenv(Env, ""),
+        ?assertEqual({error, invalid_cookie}, observer_cli_cli:cookie_source(#{cookie_env => Env}))
+    after
+        true = os:unsetenv(Env)
+    end,
+    ?assertEqual(
+        {error, cookie_source_unavailable},
+        observer_cli_cli:cookie_source(#{cookie_env => "OBSERVER_CLI_MISSING_COOKIE_TEST"})
+    ),
+    with_cookie_file(<<"file_secret\r\n">>, 8#600, fun(Path) ->
+        ?assertEqual(
+            {ok, <<"file_secret">>}, observer_cli_cli:cookie_source(#{cookie_file => Path})
+        )
+    end),
+    with_cookie_file(<<"file_secret\n\n">>, 8#600, fun(Path) ->
+        ?assertEqual(
+            {error, invalid_cookie}, observer_cli_cli:cookie_source(#{cookie_file => Path})
+        )
+    end),
+    with_cookie_file(<<"file_secret">>, 8#644, fun(Path) ->
+        ?assertEqual(
+            {error, cookie_file_permissions},
+            observer_cli_cli:cookie_source(#{cookie_file => Path})
+        )
+    end),
+    with_cookie_file(binary:copy(<<"x">>, 256), 8#600, fun(Path) ->
+        ?assertEqual(
+            {error, invalid_cookie}, observer_cli_cli:cookie_source(#{cookie_file => Path})
+        )
+    end).
+
+timeout_validation_test() ->
+    ?assertEqual({ok, 10000}, observer_cli_cli:timeout(#{})),
+    ?assertEqual({ok, 1500}, observer_cli_cli:timeout(#{timeout => "1500ms"})),
+    ?assertEqual({ok, 10000}, observer_cli_cli:timeout(#{timeout => "10s"})),
+    ?assertEqual({ok, 120000}, observer_cli_cli:timeout(#{timeout => "120s"})),
+    lists:foreach(
+        fun(Text) ->
+            assert_argument_error(
+                invalid_timeout, observer_cli_cli:parse(["memory", "--timeout", Text])
+            )
+        end,
+        ["0", "121s", "forever"]
     ).
 
 response_envelope_test() ->
@@ -251,5 +354,18 @@ assert_argument_error(Reason, Result) ->
         {error, #{category => argument, exit_code => 2, reason => Reason}},
         Result
     ).
+
+with_cookie_file(Contents, Mode, Fun) ->
+    Path = filename:join(
+        os:getenv("TMPDIR", "/tmp"),
+        "observer_cli_cookie_" ++ integer_to_list(erlang:unique_integer([positive]))
+    ),
+    ok = file:write_file(Path, Contents),
+    ok = file:change_mode(Path, Mode),
+    try
+        Fun(Path)
+    after
+        file:delete(Path)
+    end.
 
 -endif.

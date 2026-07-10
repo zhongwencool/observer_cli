@@ -1,8 +1,22 @@
 -module(observer_cli_cli).
 
--export([parse/1, envelope/6, error/2, encode/2, exit_code/1, escape_text/1]).
+-include_lib("kernel/include/file.hrl").
+
+-export([
+    parse/1,
+    target/1,
+    cookie_source/1,
+    timeout/1,
+    envelope/6,
+    error/2,
+    encode/2,
+    exit_code/1,
+    escape_text/1
+]).
 
 -define(MAX_RESPONSE_BYTES, 1024 * 1024).
+-define(MAX_NODE_LENGTH, 255).
+-define(MAX_COOKIE_LENGTH, 255).
 -define(SCHEMA, <<"observer_cli.cli/v1">>).
 
 -type route() ::
@@ -113,8 +127,207 @@ validate_format_options(#{format := Format}) when
     Format =/= "text", Format =/= "json", Format =/= "term"
 ->
     {error, {unsupported_format, Format}};
-validate_format_options(_Options) ->
+validate_format_options(Options) ->
+    validate_target_options(Options).
+
+validate_target_options(#{name_mode := Mode}) when Mode =/= "short", Mode =/= "long" ->
+    {error, {unsupported_name_mode, Mode}};
+validate_target_options(#{timeout := _Timeout} = Options) ->
+    case timeout(Options) of
+        {ok, _Milliseconds} -> validate_target_without_timeout(maps:remove(timeout, Options));
+        {error, Reason} -> {error, Reason}
+    end;
+validate_target_options(Options) ->
+    validate_target_without_timeout(Options).
+
+validate_target_without_timeout(#{node := _Node} = Options) when
+    not is_map_key(cookie_env, Options), not is_map_key(cookie_file, Options)
+->
+    {error, missing_cookie_source};
+validate_target_without_timeout(#{node := _Node} = Options) ->
+    case target(Options) of
+        {ok, {_Target, _Mode}} -> ok;
+        {error, Reason} -> {error, Reason}
+    end;
+validate_target_without_timeout(_Options) ->
     ok.
+
+-spec target(map()) ->
+    {ok, {string(), shortnames | longnames}} | {error, atom()}.
+target(#{node := Text} = Options) ->
+    case node_parts(Text) of
+        {ok, [Name]} ->
+            case inet:gethostname() of
+                {ok, Host} -> finish_target(Name, Host, Options);
+                {error, _Reason} -> {error, invalid_node}
+            end;
+        {ok, [Name, Host]} ->
+            finish_target(Name, Host, Options);
+        error ->
+            {error, invalid_node}
+    end;
+target(_Options) ->
+    {error, no_active_context}.
+
+-spec cookie_source(map()) -> {ok, binary()} | {error, atom()}.
+cookie_source(#{cookie_env := Name}) ->
+    case valid_env_name(Name) of
+        true ->
+            case os:getenv(Name) of
+                false -> {error, cookie_source_unavailable};
+                Value -> valid_cookie(unicode:characters_to_binary(Value))
+            end;
+        false ->
+            {error, invalid_cookie_source}
+    end;
+cookie_source(#{cookie_file := Path}) ->
+    read_cookie_file(Path);
+cookie_source(_Options) ->
+    {error, missing_cookie_source}.
+
+-spec timeout(map()) -> {ok, pos_integer()} | {error, atom()}.
+timeout(#{timeout := Text}) ->
+    case duration_ms(Text) of
+        Milliseconds when is_integer(Milliseconds), Milliseconds > 0, Milliseconds =< 120000 ->
+            {ok, Milliseconds};
+        _ ->
+            {error, invalid_timeout}
+    end;
+timeout(_Options) ->
+    {ok, 10000}.
+
+node_parts(Text) when is_list(Text), length(Text) =< ?MAX_NODE_LENGTH ->
+    case valid_text(Text) of
+        true ->
+            case string:split(Text, "@", all) of
+                [Name] when Name =/= [] -> {ok, [Name]};
+                [Name, Host] when Name =/= [], Host =/= [] -> {ok, [Name, Host]};
+                _ -> error
+            end;
+        false ->
+            error
+    end;
+node_parts(_Text) ->
+    error.
+
+finish_target(Name, Host, Options) ->
+    Target = Name ++ "@" ++ Host,
+    case length(Target) =< ?MAX_NODE_LENGTH of
+        true -> {ok, {Target, name_mode(Options, Host)}};
+        false -> {error, invalid_node}
+    end.
+
+name_mode(#{name_mode := "short"}, _Host) ->
+    shortnames;
+name_mode(#{name_mode := "long"}, _Host) ->
+    longnames;
+name_mode(_Options, Host) ->
+    case lists:member($., Host) orelse lists:member($:, Host) of
+        true -> longnames;
+        false -> shortnames
+    end.
+
+valid_env_name(Name) when is_list(Name), Name =/= [], length(Name) =< 255 ->
+    valid_text(Name) andalso not lists:member($=, Name);
+valid_env_name(_Name) ->
+    false.
+
+read_cookie_file(Path) when is_list(Path), Path =/= [] ->
+    case file:read_file_info(Path) of
+        {ok, #file_info{type = regular, mode = Mode, size = Size}} when Size =< 257 ->
+            case safe_cookie_file_mode(Mode) of
+                true ->
+                    case read_cookie_bytes(Path) of
+                        {ok, Binary} -> valid_cookie(strip_cookie_newline(Binary));
+                        {error, invalid_cookie} -> {error, invalid_cookie};
+                        {error, _Reason} -> {error, cookie_source_unavailable}
+                    end;
+                false ->
+                    {error, cookie_file_permissions}
+            end;
+        {ok, #file_info{type = regular}} ->
+            {error, invalid_cookie};
+        {ok, _Info} ->
+            {error, cookie_source_unavailable};
+        {error, _Reason} ->
+            {error, cookie_source_unavailable}
+    end;
+read_cookie_file(_Path) ->
+    {error, invalid_cookie_source}.
+
+read_cookie_bytes(Path) ->
+    case file:open(Path, [raw, binary, read]) of
+        {ok, File} ->
+            Result =
+                case file:read(File, 258) of
+                    {ok, Binary} when byte_size(Binary) =< 257 -> {ok, Binary};
+                    _ -> {error, invalid_cookie}
+                end,
+            ok = file:close(File),
+            Result;
+        {error, _Reason} ->
+            {error, unavailable}
+    end.
+
+safe_cookie_file_mode(Mode) ->
+    case os:type() of
+        {unix, _} -> (Mode band 8#077) =:= 0;
+        _ -> true
+    end.
+
+strip_cookie_newline(Binary) when byte_size(Binary) >= 2 ->
+    case binary:part(Binary, byte_size(Binary) - 2, 2) of
+        <<"\r\n">> -> binary:part(Binary, 0, byte_size(Binary) - 2);
+        _ -> strip_cookie_lf(Binary)
+    end;
+strip_cookie_newline(Binary) ->
+    strip_cookie_lf(Binary).
+
+strip_cookie_lf(Binary) when byte_size(Binary) >= 1 ->
+    case binary:last(Binary) of
+        $\n -> binary:part(Binary, 0, byte_size(Binary) - 1);
+        _ -> Binary
+    end;
+strip_cookie_lf(Binary) ->
+    Binary.
+
+valid_cookie(Binary) when
+    is_binary(Binary), byte_size(Binary) > 0, byte_size(Binary) =< ?MAX_COOKIE_LENGTH
+->
+    case lists:all(fun(Byte) -> Byte >= 32 andalso Byte =< 126 end, binary_to_list(Binary)) of
+        true -> {ok, Binary};
+        false -> {error, invalid_cookie}
+    end;
+valid_cookie(_Binary) ->
+    {error, invalid_cookie}.
+
+valid_text(Text) ->
+    lists:all(
+        fun(Character) ->
+            Character >= 32 andalso not (Character >= 127 andalso Character =< 159)
+        end,
+        Text
+    ).
+
+duration_ms(Text) when is_list(Text) ->
+    case lists:reverse(Text) of
+        [$s, $m | Reversed] -> positive_integer(lists:reverse(Reversed));
+        [$s | Reversed] -> multiply_duration(positive_integer(lists:reverse(Reversed)), 1000);
+        _ -> positive_integer(Text)
+    end;
+duration_ms(_Text) ->
+    error.
+
+positive_integer(Text) ->
+    try list_to_integer(Text) of
+        Value when Value > 0 -> Value;
+        _ -> error
+    catch
+        error:badarg -> error
+    end.
+
+multiply_duration(Value, Multiplier) when is_integer(Value) -> Value * Multiplier;
+multiply_duration(error, _Multiplier) -> error.
 
 option("--node") -> {value, node};
 option("--cookie-env") -> {value, cookie_env};

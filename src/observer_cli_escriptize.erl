@@ -21,7 +21,10 @@
     run/3,
     run/4,
     run_remote/4,
-    remote_load/1
+    remote_load/1,
+    run_command/1,
+    with_target/2,
+    connect_target/7
 ]).
 -endif.
 
@@ -33,7 +36,10 @@ main(Options) ->
         {ok, #{route := tui, target := TargetNode, cookie := Cookie, interval := Interval}} ->
             run(TargetNode, cookie_atom(Cookie), Interval);
         {ok, #{route := command, command := Command, options := CommandOptions}} ->
-            command_error(Command, CommandOptions, capability, command_unavailable);
+            case run_command(CommandOptions) of
+                {error, Category, Reason} ->
+                    command_error(Command, CommandOptions, Category, Reason)
+            end;
         {error, Error} ->
             case command_from_args(Options) of
                 undefined ->
@@ -62,6 +68,163 @@ run_args(Options, RunFun) ->
 
 parse_args(Options) ->
     observer_cli_cli:parse(Options).
+
+run_command(Options) ->
+    with_target(Options, fun(_Target, _Capabilities) ->
+        {error, capability, command_unavailable}
+    end).
+
+with_target(Options, Fun) ->
+    case node() of
+        nonode@nohost ->
+            case {observer_cli_cli:target(Options), observer_cli_cli:cookie_source(Options)} of
+                {{ok, {TargetText, NameMode}}, {ok, CookieBinary}} ->
+                    case observer_cli_cli:timeout(Options) of
+                        {ok, Timeout} ->
+                            Target = list_to_atom(TargetText),
+                            Cookie = binary_to_atom(CookieBinary),
+                            connect_target(Target, NameMode, Cookie, Timeout, Fun);
+                        {error, Reason} ->
+                            {error, argument, Reason}
+                    end;
+                {{error, no_active_context}, _Cookie} ->
+                    {error, capability, no_active_context};
+                {{error, Reason}, _Cookie} ->
+                    {error, argument, Reason};
+                {_Target, {error, missing_cookie_source}} ->
+                    {error, argument, missing_cookie_source};
+                {_Target, {error, Reason}} ->
+                    {error, connection, Reason}
+            end;
+        _Distributed ->
+            {error, controller, controller_already_distributed}
+    end.
+
+connect_target(Target, NameMode, Cookie, Timeout, Fun) ->
+    connect_target(
+        Target,
+        NameMode,
+        Cookie,
+        Timeout,
+        fun() -> crypto:strong_rand_bytes(24) end,
+        fun net_kernel:connect_node/1,
+        Fun
+    ).
+
+connect_target(Target, NameMode, Cookie, Timeout, RandomFun, ConnectFun, Fun) ->
+    Deadline = erlang:monotonic_time(millisecond) + Timeout,
+    case node() of
+        nonode@nohost ->
+            case
+                net_kernel:start(undefined, #{
+                    name_domain => NameMode, dist_listen => false, hidden => true
+                })
+            of
+                {ok, _Pid} ->
+                    try
+                        connect_started(
+                            Target, Cookie, Deadline, RandomFun, ConnectFun, Fun
+                        )
+                    after
+                        stop_controller(Target)
+                    end;
+                {error, {already_started, _Pid}} ->
+                    {error, controller, controller_already_distributed};
+                {error, _Reason} ->
+                    {error, controller, controller_start_failed}
+            end;
+        _Distributed ->
+            {error, controller, controller_already_distributed}
+    end.
+
+connect_started(Target, Cookie, Deadline, RandomFun, ConnectFun, Fun) ->
+    case random_cookie(RandomFun) of
+        {ok, RandomCookie} ->
+            true = erlang:set_cookie(RandomCookie),
+            true = erlang:set_cookie(Target, Cookie),
+            case connect_before(Target, ConnectFun, remaining(Deadline)) of
+                ok ->
+                    case capabilities(Target, remaining(Deadline)) of
+                        {ok, Capabilities} -> Fun(Target, Capabilities);
+                        Error -> Error
+                    end;
+                Error ->
+                    Error
+            end;
+        error ->
+            {error, controller, random_cookie_unavailable}
+    end.
+
+random_cookie(RandomFun) ->
+    try RandomFun() of
+        Bytes when is_binary(Bytes), byte_size(Bytes) =:= 24 ->
+            {ok, binary_to_atom(binary:encode_hex(Bytes))};
+        _Other ->
+            error
+    catch
+        _:_ -> error
+    end.
+
+connect_before(_Target, _ConnectFun, Timeout) when Timeout =< 0 ->
+    {error, connection, connection_failed};
+connect_before(Target, ConnectFun, Timeout) ->
+    Parent = self(),
+    {Pid, Monitor} = spawn_monitor(fun() -> Parent ! {self(), ConnectFun(Target)} end),
+    receive
+        {Pid, true} ->
+            erlang:demonitor(Monitor, [flush]),
+            ok;
+        {Pid, _Other} ->
+            erlang:demonitor(Monitor, [flush]),
+            {error, connection, connection_failed};
+        {'DOWN', Monitor, process, Pid, _Reason} ->
+            {error, connection, connection_failed}
+    after Timeout ->
+        exit(Pid, kill),
+        receive
+            {'DOWN', Monitor, process, Pid, _Reason} -> ok
+        end,
+        {error, connection, connection_failed}
+    end.
+
+capabilities(_Target, Timeout) when Timeout =< 0 ->
+    {error, capability, capability_unavailable};
+capabilities(Target, Timeout) ->
+    try erpc:call(Target, observer_cli_snapshot, capabilities, [], Timeout) of
+        #{protocol_version := 1} = Capabilities -> {ok, Capabilities};
+        _Incompatible -> {error, capability, capability_unavailable}
+    catch
+        _:_ -> {error, capability, capability_unavailable}
+    end.
+
+remaining(Deadline) ->
+    erlang:max(0, Deadline - erlang:monotonic_time(millisecond)).
+
+stop_controller(_Target) ->
+    case whereis(net_kernel) of
+        undefined ->
+            ok;
+        Pid ->
+            Monitor = erlang:monitor(process, Pid),
+            _ = net_kernel:stop(),
+            receive
+                {'DOWN', Monitor, process, Pid, _Reason} -> ok
+            after 5000 ->
+                erlang:demonitor(Monitor, [flush])
+            end
+    end,
+    wait_not_alive(500).
+
+wait_not_alive(0) ->
+    ok;
+wait_not_alive(Attempts) ->
+    case erlang:is_alive() of
+        false ->
+            ok;
+        true ->
+            timer:sleep(10),
+            wait_not_alive(Attempts - 1)
+    end.
 
 command_error(Command, Options, Category, Reason) when is_map(Options) ->
     Format =

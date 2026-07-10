@@ -3,7 +3,7 @@
     {vsn, "1.8.8"},
     {modules, [observer_cli]},
     {registered, []},
-    {applications, [kernel, stdlib, recon]},
+    {applications, [kernel, stdlib, crypto, recon]},
     {files, [
         "include",
         "LICENSE*",

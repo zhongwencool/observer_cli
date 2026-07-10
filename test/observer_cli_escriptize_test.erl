@@ -30,7 +30,12 @@ required_modules_test_() ->
         {"run preinstalled TUI once", fun run_preinstalled_tui_once_test/0},
         {"run legacy-loaded TUI once", fun run_legacy_loaded_tui_once_test/0},
         {"run name mode mismatch", fun run_name_mode_mismatch_test/0},
-        {"run unreachable node", {timeout, 20000, fun run_unreachable_node_test/0}}
+        {"run unreachable node", {timeout, 20000, fun run_unreachable_node_test/0}},
+        {"refuse pre-distributed controller", fun refuse_pre_distributed_controller/0},
+        {"stop before connect on random failure", fun random_failure_stops_before_connect/0},
+        {"dynamic controller handshake", {timeout, 20000, fun dynamic_controller_handshake/0}},
+        {"missing capability", {timeout, 20000, fun missing_capability/0}},
+        {"incompatible capability", {timeout, 20000, fun incompatible_capability/0}}
     ].
 
 simple_app() ->
@@ -546,6 +551,191 @@ run_legacy_loaded_tui_once_test() ->
         )
     ),
     ?assertEqual([remote_load_called, tui_started], drain_run_messages([])).
+
+refuse_pre_distributed_controller() ->
+    with_distribution(fun(_Cookie) ->
+        ?assertEqual(
+            {error, controller, controller_already_distributed},
+            observer_cli_escriptize:with_target(#{}, fun(_Target, _Capabilities) -> ok end)
+        )
+    end).
+
+random_failure_stops_before_connect() ->
+    ?assertEqual(nonode@nohost, node()),
+    Parent = self(),
+    ?assertEqual(
+        {error, controller, random_cookie_unavailable},
+        observer_cli_escriptize:connect_target(
+            missing@host,
+            shortnames,
+            observer_cli_target_cookie,
+            1000,
+            fun() -> erlang:error(no_random_source) end,
+            fun(_Target) -> Parent ! connect_called end,
+            fun(_Target, _Capabilities) -> Parent ! callback_called end
+        )
+    ),
+    receive
+        connect_called -> ?assert(false);
+        callback_called -> ?assert(false)
+    after 0 ->
+        ok
+    end,
+    ?assertEqual(nonode@nohost, node()).
+
+dynamic_controller_handshake() ->
+    ?assertEqual(nonode@nohost, node()),
+    Cookie = observer_cli_dynamic_target_cookie,
+    {Port, Target} = start_target(shortnames, Cookie, [snapshot_beam_dir()]),
+    RandomBytes = binary:copy(<<16#aa>>, 24),
+    RandomCookie = binary_to_atom(binary:encode_hex(RandomBytes)),
+    try
+        ?assertEqual(
+            {ok, #{protocol_version => 1}},
+            observer_cli_escriptize:connect_target(
+                Target,
+                shortnames,
+                Cookie,
+                10000,
+                fun() -> RandomBytes end,
+                fun net_kernel:connect_node/1,
+                fun(ConnectedTarget, Capabilities) ->
+                    Controller = node(self()),
+                    assert_not_equal(nonode@nohost, Controller),
+                    assert_equal(RandomCookie, erlang:get_cookie()),
+                    assert_equal(Cookie, erlang:get_cookie(ConnectedTarget)),
+                    ?assert(
+                        lists:member(
+                            Controller, erpc:call(ConnectedTarget, erlang, nodes, [hidden])
+                        )
+                    ),
+                    ?assertNot(
+                        lists:member(
+                            Controller, erpc:call(ConnectedTarget, erlang, nodes, [visible])
+                        )
+                    ),
+                    {ok, EpmdNames} = net_adm:names(),
+                    ControllerName = hd(string:split(atom_to_list(Controller), "@")),
+                    ?assertNot(lists:keymember(ControllerName, 1, EpmdNames)),
+                    {ok, Capabilities}
+                end
+            )
+        )
+    after
+        stop_target(Port)
+    end,
+    ?assertEqual(nonode@nohost, node()).
+
+missing_capability() ->
+    capability_error_test([]).
+
+incompatible_capability() ->
+    Dir = temporary_directory("observer_cli_incompatible"),
+    Source = filename:join(Dir, "observer_cli_snapshot.erl"),
+    ok = file:write_file(
+        Source,
+        <<"-module(observer_cli_snapshot).\n-export([capabilities/0]).\ncapabilities() -> #{protocol_version => 2}.\n">>
+    ),
+    {ok, observer_cli_snapshot} = compile:file(Source, [{outdir, Dir}]),
+    try
+        capability_error_test([Dir])
+    after
+        file:del_dir_r(Dir)
+    end.
+
+capability_error_test(CodePaths) ->
+    ?assertEqual(nonode@nohost, node()),
+    Cookie = observer_cli_capability_target_cookie,
+    {Port, Target} = start_target(shortnames, Cookie, CodePaths),
+    try
+        ?assertEqual(
+            {error, capability, capability_unavailable},
+            observer_cli_escriptize:connect_target(
+                Target,
+                shortnames,
+                Cookie,
+                10000,
+                fun() -> binary:copy(<<16#55>>, 24) end,
+                fun net_kernel:connect_node/1,
+                fun(_ConnectedTarget, _Capabilities) -> capability_accepted end
+            )
+        )
+    after
+        stop_target(Port)
+    end,
+    ?assertEqual(nonode@nohost, node()).
+
+snapshot_beam_dir() ->
+    filename:join(code:lib_dir(observer_cli), "ebin").
+
+start_target(NameMode, Cookie, CodePaths) ->
+    Erl = filename:join([
+        code:root_dir(), "erts-" ++ erlang:system_info(version), "bin", "erl"
+    ]),
+    Name = peer:random_name("observer_cli_diagnostic_target"),
+    NameArguments =
+        case NameMode of
+            shortnames -> ["-sname", Name];
+            longnames -> ["-name", Name ++ "@127.0.0.1"]
+        end,
+    PathArguments = lists:append([["-pa", Path] || Path <- CodePaths]),
+    Arguments =
+        ["-noshell", "-noinput"] ++
+            NameArguments ++
+            ["-setcookie", atom_to_list(Cookie)] ++
+            PathArguments ++
+            ["-eval", "io:put_chars(\"READY\\n\"), receive after infinity -> ok end."],
+    Port = open_port(
+        {spawn_executable, Erl},
+        [binary, exit_status, stderr_to_stdout, {args, Arguments}]
+    ),
+    {os_pid, OsPid} = erlang:port_info(Port, os_pid),
+    wait_target_ready(Port, <<>>),
+    Host =
+        case NameMode of
+            shortnames ->
+                {ok, Hostname} = inet:gethostname(),
+                Hostname;
+            longnames ->
+                "127.0.0.1"
+        end,
+    {{Port, OsPid}, list_to_atom(Name ++ "@" ++ Host)}.
+
+wait_target_ready(Port, Output) ->
+    receive
+        {Port, {data, Data}} ->
+            Combined = <<Output/binary, Data/binary>>,
+            case binary:match(Combined, <<"READY\n">>) of
+                nomatch -> wait_target_ready(Port, Combined);
+                _ -> ok
+            end;
+        {Port, {exit_status, Status}} ->
+            erlang:error({target_start_failed, Status, Output})
+    after 10000 ->
+        erlang:error(target_start_timeout)
+    end.
+
+stop_target({Port, OsPid}) ->
+    _ = os:cmd("kill -TERM " ++ integer_to_list(OsPid)),
+    try port_close(Port) of
+        true -> ok
+    catch
+        error:badarg -> ok
+    end.
+
+temporary_directory(Prefix) ->
+    Dir = filename:join(
+        os:getenv("TMPDIR", "/tmp"),
+        Prefix ++ "_" ++ integer_to_list(erlang:unique_integer([positive]))
+    ),
+    ok = file:make_dir(Dir),
+    Dir.
+
+assert_equal(Expected, Actual) ->
+    ?assertEqual(Expected, Actual).
+
+assert_not_equal(Unexpected, Actual) ->
+    ?assertNotEqual(Unexpected, Actual).
 
 drain_run_messages(Messages) ->
     receive
