@@ -76,7 +76,9 @@ run_worker(Controller, Command, Request, Policy, TargetTimeout, MaxHeapWords) ->
     Deadline = erlang:monotonic_time(millisecond) + TargetTimeout,
     try
         {Worker, WorkerRef} = spawn_opt(
-            fun() -> worker(Coordinator, RunRef, Command, Request, Policy, Deadline) end,
+            fun() ->
+                worker(Coordinator, Controller, RunRef, Command, Request, Policy, Deadline)
+            end,
             [
                 link,
                 monitor,
@@ -154,9 +156,9 @@ worker_down(WorkerRef, Reason) ->
         end
     ).
 
-worker(Coordinator, RunRef, Command, Request, Policy, Deadline) ->
+worker(Coordinator, Controller, RunRef, Command, Request, Policy, Deadline) ->
     Outcome =
-        try probe(Command, Request, #{deadline => Deadline}) of
+        try probe(Command, Request, #{deadline => Deadline, controller => Controller}) of
             {probe_error, Reason} when is_atom(Reason) ->
                 {error, Reason};
             Raw ->
@@ -189,12 +191,328 @@ probe(test_crash, Observer, _Context) ->
 probe(test_heap, Observer, _Context) ->
     Observer ! {test_worker, self()},
     lists:seq(1, 1000000);
+probe(snapshot, Request, Context) ->
+    capture_snapshot(Request, Context);
 probe(_Command, _Request, _Context) ->
     {probe_error, capability_unavailable}.
 -else.
+probe(snapshot, Request, Context) ->
+    capture_snapshot(Request, Context);
 probe(_Command, _Request, _Context) ->
     {probe_error, capability_unavailable}.
 -endif.
+
+capture_snapshot(Request, #{deadline := Deadline, controller := Controller}) when is_map(Request) ->
+    StartedAt = erlang:system_time(millisecond),
+    StartedMonotonic = erlang:monotonic_time(millisecond),
+    ModuleLoaded = code:is_loaded(?MODULE) =/= false,
+    Probes = [
+        run_snapshot_probe(runtime, true, fun runtime_probe/0, Request, Deadline),
+        run_snapshot_probe(resources, true, fun resources_probe/0, Request, Deadline),
+        run_snapshot_probe(memory, true, fun memory_probe/0, Request, Deadline),
+        run_snapshot_probe(schedulers, false, fun schedulers_probe/0, Request, Deadline),
+        run_snapshot_probe(
+            distribution,
+            false,
+            fun() -> distribution_probe(Controller) end,
+            Request,
+            Deadline
+        )
+    ],
+    FinishedMonotonic = erlang:monotonic_time(millisecond),
+    FinishedAt = erlang:system_time(millisecond),
+    ProbeReports = [Report || {Report, _Data} <- Probes],
+    #{
+        schema => <<"observer_cli.cli/v1">>,
+        command => snapshot,
+        target => target_from_probes(Probes),
+        capture => #{
+            status => capture_status(ProbeReports),
+            started_at => rfc3339(StartedAt),
+            finished_at => rfc3339(FinishedAt),
+            duration_ms => FinishedMonotonic - StartedMonotonic,
+            probes => ProbeReports,
+            observer_effects => observer_effects(ModuleLoaded, Controller)
+        },
+        data => snapshot_data(Probes),
+        warnings => probe_warnings(ProbeReports),
+        errors => probe_errors(ProbeReports)
+    };
+capture_snapshot(_Request, _Context) ->
+    {probe_error, invalid_request}.
+
+run_snapshot_probe(Id, Required, Fun, Request, Deadline) ->
+    Started = erlang:monotonic_time(millisecond),
+    Outcome =
+        case Started < Deadline of
+            true -> snapshot_probe_outcome(Id, Fun, Request);
+            false -> {timeout, target_timeout}
+        end,
+    Finished = erlang:monotonic_time(millisecond),
+    probe_result(Id, Required, Outcome, Finished - Started).
+
+-ifdef(TEST).
+snapshot_probe_outcome(Id, Fun, #{test_probe_outcomes := Outcomes}) ->
+    case maps:find(Id, Outcomes) of
+        {ok, Outcome} -> Outcome;
+        error -> call_snapshot_probe(Fun)
+    end;
+snapshot_probe_outcome(_Id, Fun, _Request) ->
+    call_snapshot_probe(Fun).
+-else.
+snapshot_probe_outcome(_Id, Fun, _Request) ->
+    call_snapshot_probe(Fun).
+-endif.
+
+call_snapshot_probe(Fun) ->
+    try Fun() of
+        {ok, _Data, _Coverage} = Result -> Result;
+        {unavailable, _Reason} = Result -> Result;
+        _Invalid -> {error, invalid_probe_result}
+    catch
+        error:badarg -> {unavailable, capability_unavailable};
+        _Class:_Reason:_Stacktrace -> {error, probe_failed}
+    end.
+
+probe_result(Id, Required, {ok, Data, Coverage}, Duration) ->
+    {probe_report(Id, Required, ok, null, Duration, 1, Coverage), Data};
+probe_result(Id, Required, {unavailable, Reason}, Duration) ->
+    {probe_report(Id, Required, unavailable, Reason, Duration, 0, []), undefined};
+probe_result(Id, Required, {timeout, Reason}, Duration) ->
+    {probe_report(Id, Required, timeout, Reason, Duration, 0, []), undefined};
+probe_result(Id, Required, {error, Reason}, Duration) ->
+    {probe_report(Id, Required, error, Reason, Duration, 0, []), undefined};
+probe_result(Id, Required, _Invalid, Duration) ->
+    {probe_report(Id, Required, error, invalid_probe_result, Duration, 0, []), undefined}.
+
+probe_report(Id, Required, Status, Reason, Duration, Samples, Coverage) ->
+    #{
+        id => Id,
+        required => Required,
+        status => Status,
+        reason_code => Reason,
+        duration_ms => Duration,
+        samples => Samples,
+        coverage => Coverage
+    }.
+
+runtime_probe() ->
+    {ok,
+        #{
+            node => {identifier, node, node()},
+            otp_release => text_system_info(otp_release),
+            runtime_version => text_system_info(version),
+            system_architecture => text_system_info(system_architecture),
+            word_size_bytes => erlang:system_info(wordsize)
+        },
+        [target_identity, otp_runtime]}.
+
+resources_probe() ->
+    {ok,
+        #{
+            process => contaminated_count(process_count, process_limit),
+            port => contaminated_count(port_count, port_limit),
+            atom => contaminated_count(atom_count, atom_limit),
+            ets => #{
+                observed_count => erlang:system_info(ets_count),
+                limit => erlang:system_info(ets_limit)
+            }
+        },
+        [global_counts, no_resource_enumeration]}.
+
+contaminated_count(CountKey, LimitKey) ->
+    #{
+        observed_count_including_observer => erlang:system_info(CountKey),
+        limit => erlang:system_info(LimitKey),
+        observer_contaminated => true
+    }.
+
+memory_probe() ->
+    {{input, Input}, {output, Output}} = erlang:statistics(io),
+    {Collections, ReclaimedWords, _} = erlang:statistics(garbage_collection),
+    WordSize = erlang:system_info(wordsize),
+    PersistentTerm = persistent_term:info(),
+    {ok,
+        #{
+            beam => (memory_map(erlang:memory()))#{observer_contaminated => true},
+            io => #{
+                input_bytes_total => Input,
+                output_bytes_total => Output,
+                observer_contaminated => true
+            },
+            garbage_collection => #{
+                collections_total => Collections,
+                reclaimed_words_total => ReclaimedWords,
+                reclaimed_bytes_total => ReclaimedWords * WordSize,
+                observer_contaminated => true
+            },
+            persistent_term => #{
+                count => maps:get(count, PersistentTerm),
+                memory_bytes => maps:get(memory, PersistentTerm)
+            }
+        },
+        [beam_memory, runtime_io, runtime_gc, persistent_term_summary]}.
+
+memory_map(Memory) ->
+    maps:from_list([{memory_key(Key), Value} || {Key, Value} <- Memory]).
+
+memory_key(total) -> total_bytes;
+memory_key(processes) -> processes_bytes;
+memory_key(processes_used) -> processes_used_bytes;
+memory_key(system) -> system_bytes;
+memory_key(atom) -> atom_bytes;
+memory_key(atom_used) -> atom_used_bytes;
+memory_key(binary) -> binary_bytes;
+memory_key(code) -> code_bytes;
+memory_key(ets) -> ets_bytes.
+
+schedulers_probe() ->
+    SchedulersOnline = erlang:system_info(schedulers_online),
+    RunQueueLengths = erlang:statistics(run_queue_lengths),
+    {ok,
+        #{
+            schedulers_configured => erlang:system_info(schedulers),
+            schedulers_online => SchedulersOnline,
+            dirty_cpu_schedulers_configured => erlang:system_info(dirty_cpu_schedulers),
+            dirty_cpu_schedulers_online => erlang:system_info(dirty_cpu_schedulers_online),
+            dirty_io_schedulers => erlang:system_info(dirty_io_schedulers),
+            run_queue_lengths => RunQueueLengths,
+            normal_observed_runnable_count_including_observer =>
+                lists:sum(lists:sublist(RunQueueLengths, SchedulersOnline)),
+            dirty_cpu_observed_runnable_count_including_observer => lists:last(
+                RunQueueLengths
+            ),
+            run_queue_snapshot_atomic => false,
+            scheduler_wall_time_enabled_by_observer_cli => false,
+            observer_contaminated => true
+        },
+        [scheduler_topology, run_queue_non_atomic]}.
+
+distribution_probe(Controller) ->
+    Connected = erlang:nodes(connected),
+    Visible = erlang:nodes(visible),
+    Hidden = erlang:nodes(hidden),
+    ControllerNode = controller_node(Controller),
+    KeptConnected = exclude_node(ControllerNode, Connected),
+    KeptVisible = exclude_node(ControllerNode, Visible),
+    KeptHidden = exclude_node(ControllerNode, Hidden),
+    Exclusions =
+        case ControllerNode =/= undefined andalso lists:member(ControllerNode, Connected) of
+            true ->
+                [#{peer => {identifier, peer, ControllerNode}, reason => diagnostics_controller}];
+            false ->
+                []
+        end,
+    {ok,
+        #{
+            state => peer_state(KeptConnected),
+            connected_peers => peer_identifiers(KeptConnected),
+            visible_peers => peer_identifiers(KeptVisible),
+            hidden_peers => peer_identifiers(KeptHidden),
+            excluded_peers => Exclusions
+        },
+        [public_connected_peers, visible_hidden_classification]}.
+
+controller_node(Controller) when is_pid(Controller) -> node(Controller);
+controller_node(_Controller) -> undefined.
+
+exclude_node(undefined, Nodes) -> Nodes;
+exclude_node(Node, Nodes) -> lists:delete(Node, Nodes).
+
+peer_identifiers(Nodes) -> [{identifier, peer, Peer} || Peer <- Nodes].
+
+peer_state([]) -> empty;
+peer_state(_Peers) -> connected.
+
+text_system_info(Key) ->
+    unicode:characters_to_binary(erlang:system_info(Key)).
+
+target_from_probes(Probes) ->
+    case probe_data(runtime, Probes) of
+        #{node := Node, otp_release := OtpRelease} ->
+            #{node => Node, otp_release => OtpRelease};
+        _ ->
+            null
+    end.
+
+snapshot_data(Probes) ->
+    lists:foldl(
+        fun
+            ({#{id := Id, status := ok}, Data}, Acc) -> Acc#{Id => Data};
+            (_Probe, Acc) -> Acc
+        end,
+        #{snapshot_version => 1},
+        Probes
+    ).
+
+probe_data(Id, [{#{id := Id, status := ok}, Data} | _Rest]) -> Data;
+probe_data(Id, [_Probe | Rest]) -> probe_data(Id, Rest);
+probe_data(_Id, []) -> undefined.
+
+capture_status(ProbeReports) ->
+    case lists:any(fun probe_makes_partial/1, ProbeReports) of
+        true -> partial;
+        false -> complete
+    end.
+
+probe_makes_partial(#{required := true, status := Status}) ->
+    Status =/= ok;
+probe_makes_partial(#{required := false, status := Status}) ->
+    Status =:= timeout orelse Status =:= error.
+
+probe_warnings(ProbeReports) ->
+    [
+        #{probe => Id, reason_code => Reason}
+     || #{id := Id, required := false, status := unavailable, reason_code := Reason} <-
+            ProbeReports
+    ].
+
+probe_errors(ProbeReports) ->
+    [
+        #{
+            class => probe_error_class(Required),
+            probe => Id,
+            reason_code => Reason
+        }
+     || #{
+            id := Id,
+            required := Required,
+            status := Status,
+            reason_code := Reason
+        } <- ProbeReports,
+        Status =:= timeout orelse Status =:= error orelse
+            (Required =:= true andalso Status =:= unavailable)
+    ].
+
+probe_error_class(true) -> required_probe;
+probe_error_class(false) -> partial.
+
+observer_effects(ModuleLoaded, Controller) ->
+    Base = [
+        #{
+            id => diagnostics_worker,
+            affected_facts => [process_count, port_count, memory, io, garbage_collection]
+        },
+        #{id => module_load, module_loaded_before_sample => ModuleLoaded}
+    ],
+    case controller_node(Controller) of
+        undefined ->
+            Base;
+        ControllerNode ->
+            Base ++
+                [
+                    #{
+                        id => distribution_controller,
+                        controller_peer => {identifier, peer, ControllerNode},
+                        dynamic_controller_name_atom => true
+                    }
+                ]
+    end.
+
+rfc3339(SystemTime) ->
+    unicode:characters_to_binary(
+        calendar:system_time_to_rfc3339(SystemTime, [{unit, millisecond}, {offset, "Z"}])
+    ).
 
 normalize_value(_Term, _Policy, Depth, _State) when Depth > ?MAX_DEPTH ->
     {error, response_too_deep};
@@ -334,6 +652,7 @@ identifier_binary(Type, Value) when
     Type =:= name;
     Type =:= module;
     Type =:= function;
+    Type =:= peer;
     Type =:= table;
     Type =:= application
 ->

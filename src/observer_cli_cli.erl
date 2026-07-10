@@ -473,6 +473,8 @@ reason_code({Code, _Left, _Right}) when is_atom(Code) ->
     atom_to_binary(Code);
 reason_code(Code) when is_atom(Code) ->
     atom_to_binary(Code);
+reason_code(Code) when is_binary(Code) ->
+    Code;
 reason_code(_Reason) ->
     <<"unknown_error">>.
 
@@ -486,6 +488,8 @@ reason_message(command_unavailable) ->
     <<"command capability is not available yet">>;
 reason_message(response_too_large) ->
     <<"encoded response exceeds one MiB">>;
+reason_message(Reason) when is_binary(Reason) ->
+    escape_text(Reason);
 reason_message(Reason) ->
     iolist_to_binary(io_lib:format("~tp", [Reason])).
 

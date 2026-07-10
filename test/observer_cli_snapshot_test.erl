@@ -7,6 +7,141 @@
 capabilities_test() ->
     ?assertEqual(#{protocol_version => 1}, observer_cli_snapshot:capabilities()).
 
+default_snapshot_is_scan_free_fact_package_test() ->
+    Response = snapshot(#{}),
+    ?assertEqual(<<"snapshot">>, maps:get(<<"command">>, Response)),
+    ?assertMatch(
+        #{<<"node">> := <<"node-1">>, <<"otp_release">> := _},
+        maps:get(<<"target">>, Response)
+    ),
+    Capture = maps:get(<<"capture">>, Response),
+    ?assertEqual(<<"complete">>, maps:get(<<"status">>, Capture)),
+    ?assert(is_binary(maps:get(<<"started_at">>, Capture))),
+    ?assert(is_binary(maps:get(<<"finished_at">>, Capture))),
+    ?assert(maps:get(<<"duration_ms">>, Capture) >= 0),
+    assert_probe(<<"runtime">>, true, <<"ok">>, Capture),
+    assert_probe(<<"resources">>, true, <<"ok">>, Capture),
+    assert_probe(<<"memory">>, true, <<"ok">>, Capture),
+    assert_probe(<<"schedulers">>, false, <<"ok">>, Capture),
+    assert_probe(<<"distribution">>, false, <<"ok">>, Capture),
+    Data = maps:get(<<"data">>, Response),
+    ?assertEqual(1, maps:get(<<"snapshot_version">>, Data)),
+    Resources = maps:get(<<"resources">>, Data),
+    lists:foreach(
+        fun(Key) ->
+            ?assertEqual(
+                true,
+                maps:get(<<"observer_contaminated">>, maps:get(Key, Resources))
+            )
+        end,
+        [<<"process">>, <<"port">>, <<"atom">>]
+    ),
+    Memory = maps:get(<<"memory">>, Data),
+    ?assertEqual(
+        true,
+        maps:get(<<"observer_contaminated">>, maps:get(<<"beam">>, Memory))
+    ),
+    GC = maps:get(<<"garbage_collection">>, Memory),
+    ?assertEqual(
+        maps:get(<<"reclaimed_words_total">>, GC) * erlang:system_info(wordsize),
+        maps:get(<<"reclaimed_bytes_total">>, GC)
+    ),
+    ?assertEqual(
+        false,
+        maps:get(
+            <<"scheduler_wall_time_enabled_by_observer_cli">>,
+            maps:get(<<"schedulers">>, Data)
+        )
+    ),
+    Distribution = maps:get(<<"distribution">>, Data),
+    ?assertEqual(<<"empty">>, maps:get(<<"state">>, Distribution)),
+    ?assertEqual([], maps:get(<<"connected_peers">>, Distribution)),
+    [ModuleEffect] = [
+        Effect
+     || #{<<"id">> := <<"module_load">>} = Effect <-
+            maps:get(<<"observer_effects">>, Capture)
+    ],
+    ?assertEqual(true, maps:get(<<"module_loaded_before_sample">>, ModuleEffect)),
+    ?assertEqual([], maps:get(<<"errors">>, Response)),
+    ?assertEqual([], maps:get(<<"warnings">>, Response)),
+    ?assertEqual(
+        nomatch,
+        binary:match(term_to_binary(Response), atom_to_binary(node()))
+    ),
+    assert_json_safe(Response).
+
+default_snapshot_does_not_call_full_enumerators_test() ->
+    Parent = self(),
+    Tracer = spawn(fun() -> trace_forwarder(Parent) end),
+    Enumerators = [
+        {erlang, processes, 0},
+        {erlang, ports, 0},
+        {ets, all, 0},
+        {socket, which_sockets, 0},
+        {application, loaded_applications, 0},
+        {application, which_applications, 0},
+        {application, which_applications, 1},
+        {mnesia, system_info, 1}
+    ],
+    lists:foreach(fun(MFA) -> erlang:trace_pattern(MFA, true, [local]) end, Enumerators),
+    erlang:trace(new, true, [call, {tracer, Tracer}]),
+    try
+        _ = snapshot(#{}),
+        receive
+            {enumerator_called, Call} -> ?assertEqual(no_full_enumerator_call, Call)
+        after 100 ->
+            ok
+        end
+    after
+        erlang:trace(new, false, [call]),
+        lists:foreach(fun(MFA) -> erlang:trace_pattern(MFA, false, [local]) end, Enumerators),
+        exit(Tracer, kill)
+    end.
+
+snapshot_probe_failure_semantics_test() ->
+    Unavailable = snapshot(#{
+        test_probe_outcomes => #{schedulers => {unavailable, capability_unavailable}}
+    }),
+    UnavailableCapture = maps:get(<<"capture">>, Unavailable),
+    ?assertEqual(<<"complete">>, maps:get(<<"status">>, UnavailableCapture)),
+    assert_probe(<<"schedulers">>, false, <<"unavailable">>, UnavailableCapture),
+    ?assertNot(is_map_key(<<"schedulers">>, maps:get(<<"data">>, Unavailable))),
+    ?assertMatch(
+        [#{<<"probe">> := <<"schedulers">>, <<"reason_code">> := <<"capability_unavailable">>}],
+        maps:get(<<"warnings">>, Unavailable)
+    ),
+    OptionalTimeout = snapshot(#{
+        test_probe_outcomes => #{schedulers => {timeout, target_timeout}}
+    }),
+    ?assertEqual(
+        <<"partial">>,
+        maps:get(<<"status">>, maps:get(<<"capture">>, OptionalTimeout))
+    ),
+    ?assertMatch(
+        [#{<<"class">> := <<"partial">>, <<"probe">> := <<"schedulers">>}],
+        maps:get(<<"errors">>, OptionalTimeout)
+    ),
+    RequiredError = snapshot(#{
+        test_probe_outcomes => #{resources => {error, probe_failed}}
+    }),
+    ?assertEqual(
+        <<"partial">>, maps:get(<<"status">>, maps:get(<<"capture">>, RequiredError))
+    ),
+    ?assertNot(is_map_key(<<"resources">>, maps:get(<<"data">>, RequiredError))),
+    ?assert(is_map_key(<<"memory">>, maps:get(<<"data">>, RequiredError))),
+    ?assertMatch(
+        [#{<<"class">> := <<"required_probe">>, <<"probe">> := <<"resources">>}],
+        maps:get(<<"errors">>, RequiredError)
+    ).
+
+local_snapshot_text_and_term_envelopes_test() ->
+    Response = snapshot(#{}),
+    {ok, Text} = observer_cli_cli:encode(text, Response),
+    ?assertNotEqual(nomatch, binary:match(Text, <<"observer_cli.cli/v1">>)),
+    {ok, Term} = observer_cli_cli:encode(term, Response),
+    {ok, Tokens, _EndLocation} = erl_scan:string(binary_to_list(Term)),
+    ?assertEqual({ok, Response}, erl_parse:parse_term(Tokens)).
+
 normalization_and_identifier_policy_test() ->
     Reference = make_ref(),
     Raw = #{
@@ -177,6 +312,40 @@ dispatch_observed(Request, Timeout, Policy) ->
     Worker = receive_worker(),
     ?assertNot(is_process_alive(Worker)),
     Result.
+
+snapshot(Request) ->
+    #{<<"status">> := <<"ok">>, <<"result">> := Response} =
+        observer_cli_snapshot:dispatch(
+            self(),
+            snapshot,
+            Request,
+            options(3000, redact)
+        ),
+    Response.
+
+assert_probe(Id, Required, Status, Capture) ->
+    Probes = maps:get(<<"probes">>, Capture),
+    [Probe] = [Item || #{<<"id">> := ProbeId} = Item <- Probes, ProbeId =:= Id],
+    ?assertMatch(
+        #{
+            <<"required">> := Required,
+            <<"status">> := Status,
+            <<"reason_code">> := _,
+            <<"duration_ms">> := _,
+            <<"samples">> := _,
+            <<"coverage">> := _
+        },
+        Probe
+    ).
+
+trace_forwarder(Parent) ->
+    receive
+        {trace, _Pid, call, Call} ->
+            Parent ! {enumerator_called, Call},
+            trace_forwarder(Parent);
+        _Other ->
+            trace_forwarder(Parent)
+    end.
 
 receive_worker() ->
     receive

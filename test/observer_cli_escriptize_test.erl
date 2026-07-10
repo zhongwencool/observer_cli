@@ -626,6 +626,102 @@ dynamic_controller_handshake() ->
     end,
     ?assertEqual(nonode@nohost, node()).
 
+snapshot_escript_envelopes_test_() ->
+    {timeout, 30, fun snapshot_escript_envelopes/0}.
+
+snapshot_escript_envelopes() ->
+    ?assertEqual(nonode@nohost, node()),
+    Cookie = observer_cli_snapshot_escript_cookie,
+    {Port, Target} = start_target(shortnames, Cookie, [snapshot_beam_dir()]),
+    Escript = os:find_executable("escript"),
+    AppDir = code:lib_dir(observer_cli),
+    Script = filename:join(
+        os:getenv("TMPDIR", "/tmp"),
+        "observer_cli_snapshot_" ++
+            integer_to_list(erlang:unique_integer([positive])) ++ ".escript"
+    ),
+    Contents = io_lib:format(
+        "#!/usr/bin/env escript~n%%! -pa ~ts/ebin~n"
+        "main(Args) -> observer_cli_escriptize:main(Args).~n",
+        [AppDir]
+    ),
+    CookieEnv = "OBSERVER_CLI_SNAPSHOT_ESCRIPT_COOKIE",
+    ok = file:write_file(Script, Contents),
+    true = os:putenv(CookieEnv, atom_to_list(Cookie)),
+    Args = [
+        Script,
+        "snapshot",
+        "--node",
+        atom_to_list(Target),
+        "--cookie-env",
+        CookieEnv
+    ],
+    try
+        {0, Text} = run_escript(Escript, Args),
+        ?assertNotEqual(nomatch, binary:match(Text, <<"observer_cli.cli/v1">>)),
+        ?assertNotEqual(nomatch, binary:match(Text, <<"complete">>)),
+        ?assertEqual(nomatch, binary:match(Text, atom_to_binary(Target))),
+        {0, Term} = run_escript(Escript, Args ++ ["--format", "term"]),
+        {ok, Tokens, _EndLocation} = erl_scan:string(binary_to_list(Term)),
+        {ok, Response} = erl_parse:parse_term(Tokens),
+        ?assertMatch(
+            #{
+                <<"schema">> := <<"observer_cli.cli/v1">>,
+                <<"command">> := <<"snapshot">>,
+                <<"capture">> := #{<<"status">> := <<"complete">>}
+            },
+            Response
+        ),
+        assert_partial_snapshot_exit(Escript, Script, CookieEnv)
+    after
+        true = os:unsetenv(CookieEnv),
+        file:delete(Script),
+        stop_target(Port)
+    end,
+    ?assertEqual(nonode@nohost, node()).
+
+assert_partial_snapshot_exit(Escript, Script, CookieEnv) ->
+    Dir = temporary_directory("observer_cli_partial_snapshot"),
+    Source = filename:join(Dir, "observer_cli_snapshot.erl"),
+    ok = file:write_file(
+        Source,
+        <<
+            "-module(observer_cli_snapshot).\n"
+            "-export([capabilities/0,dispatch/4]).\n"
+            "capabilities() -> #{protocol_version => 1}.\n"
+            "dispatch(_,snapshot,_,_) -> #{<<\"status\">> => <<\"ok\">>, "
+            "<<\"result\">> => #{<<\"schema\">> => <<\"observer_cli.cli/v1\">>, "
+            "<<\"command\">> => <<\"snapshot\">>, <<\"target\">> => null, "
+            "<<\"capture\">> => #{<<\"status\">> => <<\"partial\">>}, "
+            "<<\"data\">> => #{}, <<\"warnings\">> => [], <<\"errors\">> => []}}.\n"
+        >>
+    ),
+    {ok, observer_cli_snapshot} = compile:file(Source, [{outdir, Dir}]),
+    Cookie = observer_cli_partial_snapshot_cookie,
+    {Port, Target} = start_target(shortnames, Cookie, [Dir]),
+    true = os:putenv(CookieEnv, atom_to_list(Cookie)),
+    try
+        {3, Term} = run_escript(Escript, [
+            Script,
+            "snapshot",
+            "--node",
+            atom_to_list(Target),
+            "--cookie-env",
+            CookieEnv,
+            "--format",
+            "term"
+        ]),
+        {ok, Tokens, _EndLocation} = erl_scan:string(binary_to_list(Term)),
+        {ok, Response} = erl_parse:parse_term(Tokens),
+        ?assertMatch(
+            #{<<"capture">> := #{<<"status">> := <<"partial">>}},
+            Response
+        )
+    after
+        stop_target(Port),
+        file:del_dir_r(Dir)
+    end.
+
 missing_capability() ->
     capability_error_test([]).
 

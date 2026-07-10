@@ -22,7 +22,7 @@
     run/4,
     run_remote/4,
     remote_load/1,
-    run_command/1,
+    run_command/2,
     with_target/2,
     connect_target/7
 ]).
@@ -36,7 +36,9 @@ main(Options) ->
         {ok, #{route := tui, target := TargetNode, cookie := Cookie, interval := Interval}} ->
             run(TargetNode, cookie_atom(Cookie), Interval);
         {ok, #{route := command, command := Command, options := CommandOptions}} ->
-            case run_command(CommandOptions) of
+            case run_command(Command, CommandOptions) of
+                {ok, Response, ExitCode} ->
+                    command_output(CommandOptions, Response, ExitCode);
                 {error, Category, Reason} ->
                     command_error(Command, CommandOptions, Category, Reason)
             end;
@@ -69,10 +71,52 @@ run_args(Options, RunFun) ->
 parse_args(Options) ->
     observer_cli_cli:parse(Options).
 
-run_command(Options) ->
+run_command(snapshot, #{deep := true} = Options) ->
+    with_target(Options, fun(_Target, _Capabilities) ->
+        {error, capability, command_unavailable}
+    end);
+run_command(snapshot, Options) ->
+    with_target(Options, fun(Target, _Capabilities) ->
+        run_snapshot(Target, Options)
+    end);
+run_command(_Command, Options) ->
     with_target(Options, fun(_Target, _Capabilities) ->
         {error, capability, command_unavailable}
     end).
+
+run_snapshot(Target, Options) ->
+    {ok, Timeout} = observer_cli_cli:timeout(Options),
+    Policy =
+        case maps:is_key(include_identifiers, Options) of
+            true -> include;
+            false -> redact
+        end,
+    DispatchOptions = #{timeout_ms => Timeout, identifier_policy => Policy},
+    try
+        erpc:call(
+            Target,
+            observer_cli_snapshot,
+            dispatch,
+            [self(), snapshot, #{}, DispatchOptions],
+            Timeout
+        )
+    of
+        #{<<"status">> := <<"ok">>, <<"result">> := Response} ->
+            snapshot_response(Response);
+        #{<<"status">> := <<"error">>, <<"reason_code">> := Reason} ->
+            {error, required_probe, Reason};
+        _Invalid ->
+            {error, schema, invalid_snapshot_response}
+    catch
+        _Class:_Reason:_Stacktrace -> {error, required_probe, target_dispatch_failed}
+    end.
+
+snapshot_response(#{<<"capture">> := #{<<"status">> := <<"complete">>}} = Response) ->
+    {ok, Response, observer_cli_cli:exit_code(success)};
+snapshot_response(#{<<"capture">> := #{<<"status">> := <<"partial">>}} = Response) ->
+    {ok, Response, observer_cli_cli:exit_code(partial)};
+snapshot_response(_Invalid) ->
+    {error, schema, invalid_snapshot_response}.
 
 with_target(Options, Fun) ->
     case node() of
@@ -226,14 +270,18 @@ wait_not_alive(Attempts) ->
             wait_not_alive(Attempts - 1)
     end.
 
+command_output(Options, Response, ExitCode) ->
+    Format = command_format(Options),
+    case observer_cli_cli:encode(Format, Response) of
+        {ok, Output} ->
+            io:put_chars(standard_io, Output),
+            erlang:halt(ExitCode);
+        {error, EncodeError} ->
+            output_encode_error(EncodeError)
+    end.
+
 command_error(Command, Options, Category, Reason) when is_map(Options) ->
-    Format =
-        case Options of
-            #{json := true} -> json;
-            #{format := "json"} -> json;
-            #{format := "term"} -> term;
-            _ -> text
-        end,
+    Format = command_format(Options),
     command_error(Command, Format, Category, Reason);
 command_error(Command, Format, Category, Reason) ->
     Error = observer_cli_cli:error(Category, Reason),
@@ -248,18 +296,24 @@ command_error(Command, Format, Category, Reason) ->
             io:put_chars(Device, Output),
             erlang:halt(observer_cli_cli:exit_code(Category));
         {error, EncodeError} ->
-            EncodeReason = maps:get(reason, EncodeError),
-            Message = maps:get(
-                <<"message">>,
-                observer_cli_cli:error(
-                    maps:get(category, EncodeError), EncodeReason
-                )
-            ),
-            io:format(standard_error, "observer_cli: ~ts~n", [
-                observer_cli_cli:escape_text(Message)
-            ]),
-            erlang:halt(observer_cli_cli:exit_code(EncodeError))
+            output_encode_error(EncodeError)
     end.
+
+command_format(#{json := true}) -> json;
+command_format(#{format := "json"}) -> json;
+command_format(#{format := "term"}) -> term;
+command_format(_Options) -> text.
+
+output_encode_error(EncodeError) ->
+    EncodeReason = maps:get(reason, EncodeError),
+    Message = maps:get(
+        <<"message">>,
+        observer_cli_cli:error(maps:get(category, EncodeError), EncodeReason)
+    ),
+    io:format(standard_error, "observer_cli: ~ts~n", [
+        observer_cli_cli:escape_text(Message)
+    ]),
+    erlang:halt(observer_cli_cli:exit_code(EncodeError)).
 
 command_from_args([[$-, $- | _] | _] = Arguments) ->
     command_from_arguments(Arguments);
