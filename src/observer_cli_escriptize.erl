@@ -20,30 +20,29 @@
     all_applications/1,
     run/3,
     run/4,
+    run_remote/4,
     remote_load/1
 ]).
 -endif.
 
 %% @doc escript main
--spec main(list()) -> 'ok'.
+-spec main(list()) -> ok | {ok, map()}.
 
 main(Options) ->
     run_args(Options, fun run/3).
 
 run_args(Options, RunFun) ->
     case parse_args(Options) of
-        {ok, TargetNode, Cookie, Interval} ->
-            RunFun(TargetNode, Cookie, Interval);
-        usage ->
+        {ok, #{route := tui, target := TargetNode, cookie := Cookie, interval := Interval}} ->
+            RunFun(TargetNode, cookie_atom(Cookie), Interval);
+        {ok, #{route := command} = Command} ->
+            {ok, Command};
+        {error, _Reason} ->
             io:format("Usage: observer_cli TARGETNODE [TARGETCOOKIE REFRESHMS]~n")
     end.
 
-parse_args([TargetNode]) ->
-    {ok, TargetNode, undefined, 1500};
-parse_args([TargetNode, Cookie, Interval]) ->
-    {ok, TargetNode, list_to_atom(Cookie), list_to_integer(Interval)};
-parse_args(_Options) ->
-    usage.
+parse_args(Options) ->
+    observer_cli_cli:parse(Options).
 
 run(TargetNode, Cookie, Interval) ->
     run(TargetNode, Cookie, Interval, fun remote_load/1).
@@ -65,10 +64,30 @@ run(TargetNode, Cookie, Interval, RemoteLoadFun) ->
         Options = [{cookie, Cookie}, {interval, Interval}],
         observer_cli:start(TargetNodeAtom, Options)
     end,
-    {badrpc, _} = Start(),
-    RemoteLoadFun(TargetNodeAtom),
-    maybe_wait_remote_stop(TargetNodeAtom),
-    io:format("~p~n", [Start()]).
+    maybe_set_target_cookie(TargetNodeAtom, Cookie),
+    run_remote(TargetNodeAtom, fun remote_module_available/1, RemoteLoadFun, Start).
+
+run_remote(TargetNode, ProbeFun, RemoteLoadFun, StartFun) ->
+    case ProbeFun(TargetNode) of
+        true -> ok;
+        false -> RemoteLoadFun(TargetNode)
+    end,
+    maybe_wait_remote_stop(TargetNode),
+    io:format("~p~n", [StartFun()]).
+
+remote_module_available(Node) ->
+    net_kernel:hidden_connect_node(Node) =:= true andalso
+        rpc:call(Node, code, ensure_loaded, [observer_cli]) =:= {module, observer_cli}.
+
+maybe_set_target_cookie(_Node, undefined) ->
+    ok;
+maybe_set_target_cookie(Node, Cookie) ->
+    erlang:set_cookie(Node, Cookie).
+
+cookie_atom(undefined) ->
+    undefined;
+cookie_atom(Cookie) ->
+    list_to_atom(Cookie).
 
 remote_load(Node) when Node =:= node() ->
     ok;

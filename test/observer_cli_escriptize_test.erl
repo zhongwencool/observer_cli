@@ -18,6 +18,7 @@ required_modules_test_() ->
         {"application helpers fallback", fun application_helpers_fallback_test/0},
         {"parse args", fun parse_args_test/0},
         {"run args", fun run_args_test/0},
+        {"run command args", fun run_command_args_test/0},
         {"run args usage", fun run_args_usage/0},
         {"main usage", fun main_usage_test/0},
         {"remote load local", fun remote_load_local_test/0},
@@ -25,6 +26,8 @@ required_modules_test_() ->
         {"run starts distribution", fun run_starts_distribution_test/0},
         {"run waits for missing node", fun run_waits_for_missing_node_test/0},
         {"run waits for stopped peer", fun run_waits_for_stopped_peer_test/0},
+        {"run preinstalled TUI once", fun run_preinstalled_tui_once_test/0},
+        {"run legacy-loaded TUI once", fun run_legacy_loaded_tui_once_test/0},
         {"run name mode mismatch", fun run_name_mode_mismatch_test/0},
         {"run unreachable node", {timeout, 20000, fun run_unreachable_node_test/0}}
     ].
@@ -209,21 +212,23 @@ application_helpers_fallback_test() ->
 
 parse_args_test() ->
     ?assertEqual(
-        {ok, "target@host", undefined, 1500},
+        {ok, #{route => tui, target => "target@host", cookie => undefined, interval => 1500}},
         observer_cli_escriptize:parse_args(["target@host"])
     ),
     ?assertEqual(
-        {ok, "target@host", test_cookie, 2000},
+        {ok, #{route => tui, target => "target@host", cookie => "test_cookie", interval => 2000}},
         observer_cli_escriptize:parse_args(["target@host", "test_cookie", "2000"])
     ),
-    ?assertEqual(usage, observer_cli_escriptize:parse_args([])),
-    ?assertEqual(usage, observer_cli_escriptize:parse_args(["target@host", "cookie"])),
-    ?assertEqual(
-        usage,
+    ?assertMatch({error, #{exit_code := 2}}, observer_cli_escriptize:parse_args([])),
+    ?assertMatch(
+        {error, #{exit_code := 2}}, observer_cli_escriptize:parse_args(["target@host", "cookie"])
+    ),
+    ?assertMatch(
+        {error, #{exit_code := 2}},
         observer_cli_escriptize:parse_args(["target@host", "cookie", "2000", "extra"])
     ),
-    ?assertError(
-        badarg,
+    ?assertMatch(
+        {error, #{exit_code := 2}},
         observer_cli_escriptize:parse_args(["target@host", "cookie", "not-an-integer"])
     ).
 
@@ -235,6 +240,21 @@ run_args_test() ->
             fun(TargetNode, Cookie, Interval) -> {ok, TargetNode, Cookie, Interval} end
         )
     ).
+
+run_command_args_test() ->
+    Parent = self(),
+    ?assertMatch(
+        {ok, #{route := command, command := memory}},
+        observer_cli_escriptize:run_args(
+            ["memory", "--json"],
+            fun(_TargetNode, _Cookie, _Interval) -> Parent ! run_called end
+        )
+    ),
+    receive
+        run_called -> ?assert(false)
+    after 0 ->
+        ok
+    end.
 
 run_args_usage() ->
     Parent = self(),
@@ -412,6 +432,10 @@ run_waits_for_stopped_peer_test() ->
         PrevStopEnv = application:get_env(observer_cli, test_stop_remote),
         ok = application:set_env(observer_cli, test_stop_remote, true),
         try
+            spawn(fun() ->
+                timer:sleep(50),
+                peer:stop(Peer)
+            end),
             ?assertEqual(
                 ok,
                 observer_cli_test_io:with_input(
@@ -421,13 +445,7 @@ run_waits_for_stopped_peer_test() ->
                             atom_to_list(Node),
                             Cookie,
                             1000,
-                            fun(_Node) ->
-                                spawn(fun() ->
-                                    timer:sleep(50),
-                                    peer:stop(Peer)
-                                end),
-                                ok
-                            end
+                            fun(_Node) -> ok end
                         )
                     end
                 )
@@ -441,6 +459,56 @@ run_waits_for_stopped_peer_test() ->
             end
         end
     end).
+
+run_preinstalled_tui_once_test() ->
+    Parent = self(),
+    ProbeFun = fun(_Node) -> true end,
+    RemoteLoadFun = fun(_Node) -> Parent ! remote_load_called end,
+    StartFun = fun() ->
+        Parent ! tui_started,
+        quit
+    end,
+    ?assertEqual(
+        ok,
+        observer_cli_test_io:with_input(
+            [],
+            fun() ->
+                observer_cli_escriptize:run_remote(
+                    preinstalled@target, ProbeFun, RemoteLoadFun, StartFun
+                )
+            end
+        )
+    ),
+    ?assertEqual([tui_started], drain_run_messages([])).
+
+run_legacy_loaded_tui_once_test() ->
+    Parent = self(),
+    ProbeFun = fun(_Node) -> false end,
+    RemoteLoadFun = fun(_Node) -> Parent ! remote_load_called end,
+    StartFun = fun() ->
+        Parent ! tui_started,
+        quit
+    end,
+    ?assertEqual(
+        ok,
+        observer_cli_test_io:with_input(
+            [],
+            fun() ->
+                observer_cli_escriptize:run_remote(
+                    missing_module@target, ProbeFun, RemoteLoadFun, StartFun
+                )
+            end
+        )
+    ),
+    ?assertEqual([remote_load_called, tui_started], drain_run_messages([])).
+
+drain_run_messages(Messages) ->
+    receive
+        Message when Message =:= remote_load_called; Message =:= tui_started ->
+            drain_run_messages(Messages ++ [Message])
+    after 0 ->
+        Messages
+    end.
 
 with_distribution(Fun) ->
     WasAlive = erlang:is_alive(),
