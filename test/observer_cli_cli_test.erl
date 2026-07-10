@@ -138,6 +138,114 @@ invalid_tui_forms_test() ->
         observer_cli_cli:parse(["tui", "target", "cookie", "fast"])
     ).
 
+unsupported_format_test() ->
+    assert_argument_error(
+        {unsupported_format, "yaml"},
+        observer_cli_cli:parse(["memory", "--format", "yaml"])
+    ).
+
+response_envelope_test() ->
+    Capture = #{<<"status">> => <<"complete">>},
+    Data = #{<<"memory_bytes">> => 42},
+    ?assertEqual(
+        #{
+            <<"schema">> => <<"observer_cli.cli/v1">>,
+            <<"command">> => <<"memory">>,
+            <<"target">> => #{<<"node">> => <<"target@host">>},
+            <<"capture">> => Capture,
+            <<"data">> => Data,
+            <<"warnings">> => [],
+            <<"errors">> => []
+        },
+        observer_cli_cli:envelope(
+            memory, #{<<"node">> => <<"target@host">>}, Capture, Data, [], []
+        )
+    ),
+    Error = observer_cli_cli:error(argument, invalid_arguments),
+    ?assertMatch(
+        #{<<"capture">> := null, <<"data">> := null, <<"errors">> := [_]},
+        observer_cli_cli:envelope(memory, null, null, null, [], [Error])
+    ).
+
+term_encoder_round_trip_test() ->
+    Response = observer_cli_cli:envelope(
+        memory,
+        null,
+        null,
+        null,
+        [],
+        [observer_cli_cli:error(argument, invalid_arguments)]
+    ),
+    {ok, Encoded} = observer_cli_cli:encode(term, Response),
+    ?assertEqual(<<".\n">>, binary:part(Encoded, byte_size(Encoded) - 2, 2)),
+    {ok, Tokens, _EndLocation} = erl_scan:string(binary_to_list(Encoded)),
+    ?assertEqual({ok, Response}, erl_parse:parse_term(Tokens)).
+
+json_encoder_test() ->
+    Success = observer_cli_cli:envelope(
+        memory,
+        #{<<"node">> => <<"target@host">>},
+        #{<<"status">> => <<"complete">>},
+        #{},
+        [],
+        []
+    ),
+    Failure = observer_cli_cli:envelope(
+        memory, null, null, null, [], [observer_cli_cli:error(argument, invalid_arguments)]
+    ),
+    case code:ensure_loaded(json) of
+        {module, json} ->
+            lists:foreach(
+                fun(Response) ->
+                    {ok, Encoded} = observer_cli_cli:encode(json, Response),
+                    ?assertEqual(Response, erlang:apply(json, decode, [Encoded]))
+                end,
+                [Success, Failure]
+            );
+        {error, _Reason} ->
+            lists:foreach(
+                fun(Response) ->
+                    ?assertEqual(
+                        {error, #{
+                            category => capability, exit_code => 2, reason => json_unavailable
+                        }},
+                        observer_cli_cli:encode(json, Response)
+                    )
+                end,
+                [Success, Failure]
+            )
+    end.
+
+encoder_cap_and_text_escaping_test() ->
+    Oversized = observer_cli_cli:envelope(
+        memory,
+        #{<<"node">> => <<"target@host">>},
+        #{<<"status">> => <<"complete">>},
+        #{<<"value">> => binary:copy(<<"x">>, 1024 * 1024)},
+        [],
+        []
+    ),
+    ?assertEqual(
+        {error, #{category => schema, exit_code => 4, reason => response_too_large}},
+        observer_cli_cli:encode(term, Oversized)
+    ),
+    Dynamic = <<"safe", 27, "]0;title", 7, 10>>,
+    ?assertEqual(<<"safe\\x1B]0;title\\x07\\x0A">>, observer_cli_cli:escape_text(Dynamic)),
+    TextResponse = observer_cli_cli:envelope(
+        memory, null, null, null, [], [observer_cli_cli:error(argument, {unknown_option, Dynamic})]
+    ),
+    {ok, Text} = observer_cli_cli:encode(text, TextResponse),
+    ?assertEqual(nomatch, binary:match(Text, <<27>>)),
+    ?assertEqual(nomatch, binary:match(Text, <<7>>)).
+
+exit_code_classes_test() ->
+    ?assertEqual(0, observer_cli_cli:exit_code(success)),
+    ?assertEqual(1, observer_cli_cli:exit_code(diagnose_findings)),
+    ?assertEqual(2, observer_cli_cli:exit_code(capability)),
+    ?assertEqual(3, observer_cli_cli:exit_code(partial)),
+    ?assertEqual(4, observer_cli_cli:exit_code(schema)),
+    ?assertEqual(4, observer_cli_cli:exit_code(unknown)).
+
 assert_argument_error(Reason, Result) ->
     ?assertEqual(
         {error, #{category => argument, exit_code => 2, reason => Reason}},

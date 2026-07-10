@@ -26,11 +26,29 @@
 -endif.
 
 %% @doc escript main
--spec main(list()) -> ok | {ok, map()}.
+-spec main([string()]) -> ok | no_return().
 
 main(Options) ->
-    run_args(Options, fun run/3).
+    case parse_args(Options) of
+        {ok, #{route := tui, target := TargetNode, cookie := Cookie, interval := Interval}} ->
+            run(TargetNode, cookie_atom(Cookie), Interval);
+        {ok, #{route := command, command := Command, options := CommandOptions}} ->
+            command_error(Command, CommandOptions, capability, command_unavailable);
+        {error, Error} ->
+            case command_from_args(Options) of
+                undefined ->
+                    io:format("Usage: observer_cli TARGETNODE [TARGETCOOKIE REFRESHMS]~n");
+                Command ->
+                    command_error(
+                        Command,
+                        requested_format(Options),
+                        maps:get(category, Error),
+                        maps:get(reason, Error)
+                    )
+            end
+    end.
 
+-ifdef(TEST).
 run_args(Options, RunFun) ->
     case parse_args(Options) of
         {ok, #{route := tui, target := TargetNode, cookie := Cookie, interval := Interval}} ->
@@ -40,9 +58,74 @@ run_args(Options, RunFun) ->
         {error, _Reason} ->
             io:format("Usage: observer_cli TARGETNODE [TARGETCOOKIE REFRESHMS]~n")
     end.
+-endif.
 
 parse_args(Options) ->
     observer_cli_cli:parse(Options).
+
+command_error(Command, Options, Category, Reason) when is_map(Options) ->
+    Format =
+        case Options of
+            #{json := true} -> json;
+            #{format := "json"} -> json;
+            #{format := "term"} -> term;
+            _ -> text
+        end,
+    command_error(Command, Format, Category, Reason);
+command_error(Command, Format, Category, Reason) ->
+    Error = observer_cli_cli:error(Category, Reason),
+    Response = observer_cli_cli:envelope(Command, null, null, null, [], [Error]),
+    case observer_cli_cli:encode(Format, Response) of
+        {ok, Output} ->
+            Device =
+                case Format of
+                    text -> standard_error;
+                    _ -> standard_io
+                end,
+            io:put_chars(Device, Output),
+            erlang:halt(observer_cli_cli:exit_code(Category));
+        {error, EncodeError} ->
+            EncodeReason = maps:get(reason, EncodeError),
+            Message = maps:get(
+                <<"message">>,
+                observer_cli_cli:error(
+                    maps:get(category, EncodeError), EncodeReason
+                )
+            ),
+            io:format(standard_error, "observer_cli: ~ts~n", [
+                observer_cli_cli:escape_text(Message)
+            ]),
+            erlang:halt(observer_cli_cli:exit_code(EncodeError))
+    end.
+
+command_from_args([[$-, $- | _] | _] = Arguments) ->
+    command_from_arguments(Arguments);
+command_from_args([First | _]) ->
+    case observer_cli_cli:parse([First]) of
+        {ok, #{route := command, command := Command}} -> Command;
+        _ -> undefined
+    end;
+command_from_args([]) ->
+    undefined.
+
+command_from_arguments([Argument | Rest]) ->
+    case observer_cli_cli:parse([Argument]) of
+        {ok, #{route := command, command := Command}} -> Command;
+        _ -> command_from_arguments(Rest)
+    end;
+command_from_arguments([]) ->
+    undefined.
+
+requested_format(Arguments) ->
+    case lists:member("--json", Arguments) of
+        true -> json;
+        false -> requested_format_value(Arguments)
+    end.
+
+requested_format_value(["--format", "json" | _]) -> json;
+requested_format_value(["--format", "term" | _]) -> term;
+requested_format_value([_ | Rest]) -> requested_format_value(Rest);
+requested_format_value([]) -> text.
 
 run(TargetNode, Cookie, Interval) ->
     run(TargetNode, Cookie, Interval, fun remote_load/1).

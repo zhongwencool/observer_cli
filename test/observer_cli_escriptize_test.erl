@@ -21,6 +21,7 @@ required_modules_test_() ->
         {"run command args", fun run_command_args_test/0},
         {"run args usage", fun run_args_usage/0},
         {"main usage", fun main_usage_test/0},
+        {"escript command exits", fun escript_command_exits/0},
         {"remote load local", fun remote_load_local_test/0},
         {"remote load peer node", fun remote_load_peer_node_test/0},
         {"run starts distribution", fun run_starts_distribution_test/0},
@@ -283,6 +284,50 @@ main_usage_test() ->
             ?assertEqual(ok, observer_cli_escriptize:main([]))
         end
     ).
+
+escript_command_exits() ->
+    Escript = os:find_executable("escript"),
+    AppDir = code:lib_dir(observer_cli),
+    CliBeamDir = filename:join(AppDir, "test"),
+    EscriptizeBeamDir = filename:join(AppDir, "ebin"),
+    Script = filename:join(
+        os:getenv("TMPDIR", "/tmp"),
+        "observer_cli_exit_" ++ integer_to_list(erlang:unique_integer([positive])) ++ ".escript"
+    ),
+    Contents = io_lib:format(
+        "#!/usr/bin/env escript~n%%! -pa ~ts -pa ~ts~n"
+        "main([\"command\"]) -> observer_cli_escriptize:main([\"memory\", \"--format\", \"term\"]);~n"
+        "main([Category]) -> erlang:halt(observer_cli_cli:exit_code(list_to_atom(Category))).~n",
+        [CliBeamDir, EscriptizeBeamDir]
+    ),
+    ok = file:write_file(Script, Contents),
+    try
+        {2, CommandOutput} = run_escript(Escript, [Script, "command"]),
+        ?assertNotEqual(nomatch, binary:match(CommandOutput, <<"observer_cli.cli/v1">>)),
+        ?assertNotEqual(nomatch, binary:match(CommandOutput, <<"capture">>)),
+        ?assertNotEqual(nomatch, binary:match(CommandOutput, <<"null">>)),
+        ?assertEqual({0, <<>>}, run_escript(Escript, [Script, "success"])),
+        ?assertEqual({1, <<>>}, run_escript(Escript, [Script, "diagnose_findings"])),
+        ?assertEqual({3, <<>>}, run_escript(Escript, [Script, "connection"])),
+        ?assertEqual({4, <<>>}, run_escript(Escript, [Script, "internal"]))
+    after
+        file:delete(Script)
+    end.
+
+run_escript(Escript, Args) ->
+    Port = open_port(
+        {spawn_executable, Escript},
+        [binary, exit_status, stderr_to_stdout, {args, Args}]
+    ),
+    collect_escript(Port, <<>>).
+
+collect_escript(Port, Output) ->
+    receive
+        {Port, {data, Data}} -> collect_escript(Port, <<Output/binary, Data/binary>>);
+        {Port, {exit_status, Status}} -> {Status, Output}
+    after 10000 ->
+        erlang:error(escript_timeout)
+    end.
 
 run_unreachable_node_test() ->
     Cookie = "observer_cli_test_cookie",

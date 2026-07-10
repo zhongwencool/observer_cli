@@ -1,6 +1,9 @@
 -module(observer_cli_cli).
 
--export([parse/1]).
+-export([parse/1, envelope/6, error/2, encode/2, exit_code/1, escape_text/1]).
+
+-define(MAX_RESPONSE_BYTES, 1024 * 1024).
+-define(SCHEMA, <<"observer_cli.cli/v1">>).
 
 -type route() ::
     #{
@@ -106,6 +109,10 @@ validate_exclusive_options(Options, []) ->
 
 validate_format_options(#{json := true, format := Format}) when Format =/= "json" ->
     {error, {mutually_exclusive_options, json, format}};
+validate_format_options(#{format := Format}) when
+    Format =/= "text", Format =/= "json", Format =/= "term"
+->
+    {error, {unsupported_format, Format}};
 validate_format_options(_Options) ->
     ok.
 
@@ -155,3 +162,132 @@ command(_Argument) -> undefined.
 
 argument_error(Reason) ->
     {error, #{category => argument, exit_code => 2, reason => Reason}}.
+
+-spec envelope(atom() | binary(), null | map(), null | map(), null | map(), [term()], [term()]) ->
+    map().
+envelope(Command, Target, Capture, Data, Warnings, Errors) ->
+    #{
+        <<"schema">> => ?SCHEMA,
+        <<"command">> => command_binary(Command),
+        <<"target">> => Target,
+        <<"capture">> => Capture,
+        <<"data">> => Data,
+        <<"warnings">> => Warnings,
+        <<"errors">> => Errors
+    }.
+
+-spec error(atom(), term()) -> map().
+error(Category, Reason) ->
+    #{
+        <<"class">> => atom_to_binary(Category),
+        <<"reason_code">> => reason_code(Reason),
+        <<"message">> => reason_message(Reason)
+    }.
+
+-spec encode(text | term | json, map()) -> {ok, binary()} | {error, map()}.
+encode(text, Response) ->
+    capped(iolist_to_binary(io_lib:format("~tp~n", [Response])));
+encode(term, Response) ->
+    capped(iolist_to_binary(io_lib:format("~tp.~n", [Response])));
+encode(json, Response) ->
+    case code:ensure_loaded(json) of
+        {module, json} ->
+            try capped(iolist_to_binary(erlang:apply(json, encode, [Response]))) of
+                Result -> Result
+            catch
+                _:_ -> encoder_error(json_encoding_failed)
+            end;
+        {error, _Reason} ->
+            {error, controller_error(capability, json_unavailable)}
+    end;
+encode(_Format, _Response) ->
+    {error, controller_error(format, unsupported_format)}.
+
+-spec exit_code(atom() | map()) -> 0..4.
+exit_code(#{category := Category}) ->
+    exit_code(Category);
+exit_code(success) ->
+    0;
+exit_code(diagnose_findings) ->
+    1;
+exit_code(argument) ->
+    2;
+exit_code(format) ->
+    2;
+exit_code(capability) ->
+    2;
+exit_code(safety_refusal) ->
+    3;
+exit_code(scan_budget_exceeded) ->
+    3;
+exit_code(controller) ->
+    3;
+exit_code(distribution) ->
+    3;
+exit_code(connection) ->
+    3;
+exit_code(required_probe) ->
+    3;
+exit_code(partial) ->
+    3;
+exit_code(internal) ->
+    4;
+exit_code(cleanup) ->
+    4;
+exit_code(schema) ->
+    4;
+exit_code(_Unknown) ->
+    4.
+
+-spec escape_text(unicode:chardata()) -> binary().
+escape_text(Text) ->
+    case unicode:characters_to_binary(Text) of
+        Binary when is_binary(Binary) ->
+            iolist_to_binary([escape_byte(Byte) || <<Byte>> <= Binary]);
+        {_Error, Valid, Rest} ->
+            Raw = iolist_to_binary([Valid, Rest]),
+            <<"base64:", (base64:encode(Raw))/binary>>
+    end.
+
+command_binary(Command) when is_atom(Command) ->
+    atom_to_binary(Command);
+command_binary(Command) when is_binary(Command) ->
+    Command.
+
+reason_code({Code, _Detail}) when is_atom(Code) ->
+    atom_to_binary(Code);
+reason_code({Code, _Left, _Right}) when is_atom(Code) ->
+    atom_to_binary(Code);
+reason_code(Code) when is_atom(Code) ->
+    atom_to_binary(Code);
+reason_code(_Reason) ->
+    <<"unknown_error">>.
+
+reason_message({unknown_option, Option}) ->
+    iolist_to_binary([<<"unknown option: ">>, escape_text(Option)]);
+reason_message({unsupported_format, Format}) ->
+    iolist_to_binary([<<"unsupported format: ">>, escape_text(Format)]);
+reason_message(json_unavailable) ->
+    <<"JSON output requires OTP 27 or newer">>;
+reason_message(command_unavailable) ->
+    <<"command capability is not available yet">>;
+reason_message(response_too_large) ->
+    <<"encoded response exceeds one MiB">>;
+reason_message(Reason) ->
+    iolist_to_binary(io_lib:format("~tp", [Reason])).
+
+capped(Binary) when byte_size(Binary) =< ?MAX_RESPONSE_BYTES ->
+    {ok, Binary};
+capped(_Binary) ->
+    {error, controller_error(schema, response_too_large)}.
+
+encoder_error(Reason) ->
+    {error, controller_error(internal, Reason)}.
+
+controller_error(Category, Reason) ->
+    #{category => Category, exit_code => exit_code(Category), reason => Reason}.
+
+escape_byte(Byte) when Byte < 16#20; Byte >= 16#7F, Byte =< 16#9F ->
+    io_lib:format("\\x~2.16.0B", [Byte]);
+escape_byte(Byte) ->
+    Byte.
