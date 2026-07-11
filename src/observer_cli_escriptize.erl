@@ -80,6 +80,10 @@ run_command(snapshot, Options) ->
     with_target(Options, fun(Target, _Capabilities) ->
         run_snapshot(Target, Options)
     end);
+run_command(diagnose, Options) ->
+    with_target(Options, fun(Target, _Capabilities) ->
+        run_diagnose(Target, Options)
+    end);
 run_command(connect, Options) ->
     run_connect(Options);
 run_command(status, Options) ->
@@ -198,6 +202,56 @@ snapshot_response(#{<<"capture">> := #{<<"status">> := <<"partial">>}} = Respons
     {ok, Response, observer_cli_cli:exit_code(partial)};
 snapshot_response(_Invalid) ->
     {error, schema, invalid_snapshot_response}.
+
+run_diagnose(Target, Options) ->
+    {ok, Timeout} = observer_cli_cli:timeout(Options),
+    Policy =
+        case maps:is_key(include_identifiers, Options) of
+            true -> include;
+            false -> redact
+        end,
+    DispatchOptions = #{timeout_ms => Timeout, identifier_policy => Policy},
+    try
+        erpc:call(
+            Target,
+            observer_cli_snapshot,
+            dispatch,
+            [self(), diagnose, #{}, DispatchOptions],
+            Timeout
+        )
+    of
+        #{<<"status">> := <<"ok">>, <<"result">> := Response} ->
+            diagnose_response(Response);
+        #{<<"status">> := <<"error">>, <<"reason_code">> := Reason} ->
+            {error, required_probe, Reason};
+        _Invalid ->
+            {error, schema, invalid_diagnose_response}
+    catch
+        _Class:_Reason:_Stacktrace -> {error, required_probe, target_dispatch_failed}
+    end.
+
+diagnose_response(
+    #{
+        <<"capture">> := #{<<"status">> := <<"complete">>},
+        <<"data">> := #{
+            <<"findings">> := []
+        }
+    } = Response
+) ->
+    {ok, Response, observer_cli_cli:exit_code(success)};
+diagnose_response(
+    #{
+        <<"capture">> := #{<<"status">> := <<"complete">>},
+        <<"data">> := #{
+            <<"findings">> := [_ | _]
+        }
+    } = Response
+) ->
+    {ok, Response, observer_cli_cli:exit_code(diagnose_findings)};
+diagnose_response(#{<<"capture">> := #{<<"status">> := <<"partial">>}} = Response) ->
+    {ok, Response, observer_cli_cli:exit_code(partial)};
+diagnose_response(_Invalid) ->
+    {error, schema, invalid_diagnose_response}.
 
 with_target(Options, Fun) ->
     case node() of

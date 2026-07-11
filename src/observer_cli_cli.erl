@@ -157,6 +157,11 @@ validate_runtime_options(snapshot, Options) ->
         true -> validate_target_options(Options);
         false -> {error, unsupported_command_option}
     end;
+validate_runtime_options(diagnose, Options) ->
+    case only_options(Options, []) of
+        true -> validate_target_options(Options);
+        false -> {error, unsupported_command_option}
+    end;
 validate_runtime_options(distribution, #{limit := Text} = Options) ->
     case positive_integer(Text) of
         Limit when is_integer(Limit), Limit =< 200 -> validate_target_options(Options);
@@ -314,6 +319,7 @@ validate_arguments(supervision_tree, _Arguments) ->
     {error, invalid_arguments};
 validate_arguments(Command, []) when
     Command =:= snapshot;
+    Command =:= diagnose;
     Command =:= processes;
     Command =:= applications;
     Command =:= ets;
@@ -325,6 +331,7 @@ validate_arguments(Command, []) when
     ok;
 validate_arguments(Command, _Arguments) when
     Command =:= snapshot;
+    Command =:= diagnose;
     Command =:= processes;
     Command =:= applications;
     Command =:= ets;

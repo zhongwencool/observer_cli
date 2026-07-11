@@ -118,6 +118,21 @@ deep_snapshot_option_contract_test() ->
     ),
     assert_argument_error(invalid_arguments, observer_cli_cli:parse(["snapshot", "extra"])).
 
+quick_diagnose_option_contract_test() ->
+    ?assertMatch(
+        {ok, #{command := diagnose, arguments := [], options := #{}}},
+        observer_cli_cli:parse(["diagnose"])
+    ),
+    lists:foreach(
+        fun(Arguments) ->
+            assert_argument_error(
+                unsupported_command_option, observer_cli_cli:parse(["diagnose" | Arguments])
+            )
+        end,
+        [["--observe", "30s"], ["--deep"], ["--app", "kernel"]]
+    ),
+    assert_argument_error(invalid_arguments, observer_cli_cli:parse(["diagnose", "extra"])).
+
 process_inspection_option_contract_test() ->
     ?assertMatch(
         {ok, #{command := processes, options := #{sort := "reductions", duration := "250ms"}}},

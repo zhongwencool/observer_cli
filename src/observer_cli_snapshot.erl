@@ -1,6 +1,13 @@
 -module(observer_cli_snapshot).
 
--export([capabilities/0, dispatch/4, normalize/2, truncate/1]).
+-export([
+    capabilities/0,
+    diagnostic_distribution/1,
+    diagnostic_sample/2,
+    dispatch/4,
+    normalize/2,
+    truncate/1
+]).
 
 -ifdef(TEST).
 -export([
@@ -240,6 +247,8 @@ probe(test_heap, Observer, _Context) ->
     lists:seq(1, 1000000);
 probe(snapshot, Request, Context) ->
     capture_snapshot(Request, Context);
+probe(diagnose, Request, Context) ->
+    observer_cli_diagnostic:capture(Request, Context);
 probe(memory, Request, Context) ->
     capture_memory(Request, Context);
 probe(schedulers, Request, Context) ->
@@ -271,6 +280,8 @@ probe(_Command, _Request, _Context) ->
 -else.
 probe(snapshot, Request, Context) ->
     capture_snapshot(Request, Context);
+probe(diagnose, Request, Context) ->
+    observer_cli_diagnostic:capture(Request, Context);
 probe(memory, Request, Context) ->
     capture_memory(Request, Context);
 probe(schedulers, Request, Context) ->
@@ -342,6 +353,79 @@ capture_snapshot(Request, #{deadline := Deadline, controller := Controller} = Co
     };
 capture_snapshot(_Request, _Context) ->
     {probe_error, invalid_request}.
+
+-spec diagnostic_sample(map(), map()) -> map().
+diagnostic_sample(Request, Context) when is_map(Request), is_map(Context) ->
+    Started = erlang:monotonic_time(millisecond),
+    {ok, Resources, _} = resources_probe(),
+    ResourceFinished = erlang:monotonic_time(millisecond),
+    Inventory =
+        try diagnostic_process_inventory(Request, Context) of
+            Result -> Result
+        catch
+            _Class:_Reason:_Stacktrace ->
+                #{status => error, reason_code => process_inventory_failed}
+        end,
+    Finished = erlang:monotonic_time(millisecond),
+    #{
+        status => ok,
+        monotonic_start_ms => Started,
+        monotonic_finish_ms => Finished,
+        monotonic_midpoint_ms => Started + ((ResourceFinished - Started) div 2),
+        resources => Resources,
+        process_inventory => Inventory
+    }.
+
+-spec diagnostic_distribution(pid()) -> map().
+diagnostic_distribution(Controller) ->
+    {ok, Distribution, _Coverage} = distribution_probe(Controller),
+    Distribution.
+
+diagnostic_process_inventory(Request, Context) ->
+    Source = process_source(Request),
+    case admit_process_scan(Source, reductions, 3, 2, all) of
+        {ok, Admission} ->
+            Started = erlang:monotonic_time(millisecond),
+            Initial = inventory_acc(Context, 1),
+            Acc = fold_processes(
+                Source,
+                fun(Pid, State) ->
+                    case
+                        scan_process(Pid, [message_queue_len, memory, reductions], Source, State)
+                    of
+                        {ok, Item, Next} ->
+                            #{
+                                raw_pid := RawPid,
+                                message_queue_len := Queue,
+                                memory := Memory,
+                                reductions := Reductions
+                            } = Item,
+                            Next#{
+                                values =>
+                                    (maps:get(values, Next, #{}))#{
+                                        RawPid => #{
+                                            message_queue_len => Queue,
+                                            memory_bytes => Memory,
+                                            reductions => Reductions
+                                        }
+                                    }
+                            };
+                        {skip, Next} ->
+                            Next
+                    end
+                end,
+                Initial#{values => #{}}
+            ),
+            Finished = erlang:monotonic_time(millisecond),
+            #{
+                status => ok,
+                values => maps:get(values, Acc),
+                audit => audit_inventory(Acc, maps:size(maps:get(values, Acc)), Started, Finished),
+                admission => Admission
+            };
+        {unavailable, Details} ->
+            Details
+    end.
 
 deep_snapshot_probes(#{deep := true} = Request, Context) ->
     OldTrapExit = process_flag(trap_exit, true),

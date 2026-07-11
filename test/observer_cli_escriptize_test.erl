@@ -728,6 +728,96 @@ context_escript() ->
 snapshot_escript_envelopes_test_() ->
     {timeout, 30, fun snapshot_escript_envelopes/0}.
 
+diagnose_escript_exit_codes_test_() ->
+    {timeout, 30, fun diagnose_escript_exit_codes/0}.
+
+diagnose_escript_exit_codes() ->
+    ?assertEqual(nonode@nohost, node()),
+    {Escript, Script} = context_escript(),
+    CookieEnv = "OBSERVER_CLI_DIAGNOSE_ESCRIPT_COOKIE",
+    try
+        lists:foreach(
+            fun({Code, CaptureStatus, Findings}) ->
+                diagnose_escript_exit_case(
+                    Escript, Script, CookieEnv, Code, CaptureStatus, Findings
+                )
+            end,
+            [
+                {0, complete, []},
+                {1, complete, [#{id => <<"vm.process_limit_pressure">>}]},
+                {3, partial, []}
+            ]
+        ),
+        diagnose_escript_schema_exit_case(Escript, Script, CookieEnv)
+    after
+        true = os:unsetenv(CookieEnv),
+        file:delete(Script)
+    end,
+    ?assertEqual(nonode@nohost, node()).
+
+diagnose_escript_exit_case(Escript, Script, CookieEnv, ExitCode, CaptureStatus, Findings) ->
+    Response = diagnostic_response(CaptureStatus, Findings),
+    diagnose_escript_with_dispatch(
+        Escript,
+        Script,
+        CookieEnv,
+        ExitCode,
+        io_lib:format("~tp", [
+            #{<<"status">> => <<"ok">>, <<"result">> => Response}
+        ])
+    ).
+
+diagnose_escript_schema_exit_case(Escript, Script, CookieEnv) ->
+    diagnose_escript_with_dispatch(
+        Escript,
+        Script,
+        CookieEnv,
+        4,
+        "#{<<\"status\">> => <<\"ok\">>, <<\"result\">> => #{}}"
+    ).
+
+diagnose_escript_with_dispatch(Escript, Script, CookieEnv, ExitCode, DispatchResult) ->
+    Dir = temporary_directory("observer_cli_diagnose_exit"),
+    Source = filename:join(Dir, "observer_cli_snapshot.erl"),
+    Contents = io_lib:format(
+        "-module(observer_cli_snapshot).~n"
+        "-export([capabilities/0,dispatch/4]).~n"
+        "capabilities() -> #{protocol_version => 1}.~n"
+        "dispatch(_,diagnose,_,_) -> ~s.~n",
+        [DispatchResult]
+    ),
+    ok = file:write_file(Source, Contents),
+    {ok, observer_cli_snapshot} = compile:file(Source, [{outdir, Dir}]),
+    Cookie = list_to_atom("observer_cli_diagnose_" ++ integer_to_list(ExitCode)),
+    {Port, Target} = start_target(shortnames, Cookie, [Dir]),
+    true = os:putenv(CookieEnv, atom_to_list(Cookie)),
+    try
+        {ExitCode, _Output} = run_escript(Escript, [
+            Script,
+            "diagnose",
+            "--node",
+            atom_to_list(Target),
+            "--cookie-env",
+            CookieEnv,
+            "--format",
+            "term"
+        ])
+    after
+        stop_target(Port),
+        file:del_dir_r(Dir)
+    end.
+
+diagnostic_response(Status, Findings) ->
+    #{
+        <<"schema">> => <<"observer_cli.cli/v1">>,
+        <<"command">> => <<"diagnose">>,
+        <<"target">> => null,
+        <<"capture">> => #{<<"status">> => atom_to_binary(Status)},
+        <<"data">> => #{<<"findings">> => Findings},
+        <<"warnings">> => [],
+        <<"errors">> => []
+    }.
+
 snapshot_escript_envelopes() ->
     ?assertEqual(nonode@nohost, node()),
     Cookie = observer_cli_snapshot_escript_cookie,
