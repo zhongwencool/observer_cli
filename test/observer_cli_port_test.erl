@@ -5,6 +5,59 @@
 -include_lib("eunit/include/eunit.hrl").
 -include("observer_cli.hrl").
 
+diagnostic_ports_use_explicit_keys_and_raw_identity_test() ->
+    PortA = open_port({spawn, "cat"}, []),
+    PortB = open_port({spawn, "cat"}, []),
+    Parent = self(),
+    Info = fun(Port, Key) ->
+        Parent ! {port_info_key, Port, Key},
+        diagnostic_port_field(Key)
+    end,
+    Source = #{
+        count_fun => fun() -> 2 end,
+        all_fun => fun() -> {ok, [PortA, PortB]} end,
+        info_fun => Info
+    },
+    try
+        Data = diagnostic_port_data(#{sort => io, limit => 2, test_port_source => Source}),
+        Items = maps:get(<<"items">>, Data),
+        ?assertEqual(2, length(Items)),
+        ?assertEqual([12, 12], [maps:get(<<"io">>, Item) || Item <- Items]),
+        ?assertEqual(1, length(lists:usort([maps:get(<<"display_id">>, Item) || Item <- Items]))),
+        Calls = collect_port_info_calls(14, []),
+        ?assertEqual(
+            [connected, id, input, memory, name, output, queue_size],
+            lists:usort([Key || {_Port, Key} <- Calls])
+        )
+    after
+        port_close(PortA),
+        port_close(PortB)
+    end.
+
+diagnostic_port_field(name) -> {ok, "efile"};
+diagnostic_port_field(connected) -> {ok, self()};
+diagnostic_port_field(queue_size) -> {ok, 3};
+diagnostic_port_field(memory) -> {ok, 4};
+diagnostic_port_field(id) -> {ok, 7};
+diagnostic_port_field(input) -> {ok, 5};
+diagnostic_port_field(output) -> {ok, 7}.
+
+collect_port_info_calls(0, Acc) ->
+    Acc;
+collect_port_info_calls(Count, Acc) ->
+    receive
+        {port_info_key, Port, Key} -> collect_port_info_calls(Count - 1, [{Port, Key} | Acc])
+    after 1000 ->
+        error({missing_port_info_calls, Count})
+    end.
+
+diagnostic_port_data(Request) ->
+    #{<<"status">> := <<"ok">>, <<"result">> := #{<<"data">> := Data}} =
+        observer_cli_snapshot:dispatch(
+            self(), ports, Request, #{timeout_ms => 5000, identifier_policy => include}
+        ),
+    Data.
+
 start_quit_test() ->
     {ok, Listen} = gen_tcp:listen(0, [binary, {active, false}]),
     try

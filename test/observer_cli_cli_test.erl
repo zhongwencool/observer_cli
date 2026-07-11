@@ -419,6 +419,31 @@ scheduler_duration_and_deadline_validation_test() ->
         observer_cli_cli:parse(["distribution", "--limit", "201"])
     ).
 
+io_resource_options_test() ->
+    ?assertMatch(
+        {ok, #{command := network, options := #{sort := "recv_oct", duration := "250ms"}}},
+        observer_cli_cli:parse(["network", "--sort", "recv_oct", "--duration", "250ms"])
+    ),
+    ?assertMatch(
+        {ok, #{command := ports, options := #{sort := "io", limit := "7"}}},
+        observer_cli_cli:parse(["ports", "--sort", "io", "--limit", "7"])
+    ),
+    ?assertMatch(
+        {ok, #{command := sockets, options := #{sort := "fails", duration := "10s"}}},
+        observer_cli_cli:parse(["sockets", "--sort", "fails", "--duration", "10s"])
+    ),
+    ?assertMatch(
+        {error, #{reason := invalid_sort}}, observer_cli_cli:parse(["network", "--sort", "io"])
+    ),
+    ?assertMatch(
+        {error, #{reason := unsupported_command_option}},
+        observer_cli_cli:parse(["ports", "--duration", "250ms"])
+    ),
+    ?assertMatch(
+        {error, #{reason := timeout_too_short}},
+        observer_cli_cli:parse(["sockets", "--duration", "10s", "--timeout", "14999ms"])
+    ).
+
 response_envelope_test() ->
     Capture = #{<<"status">> => <<"complete">>},
     Data = #{<<"memory_bytes">> => 42},

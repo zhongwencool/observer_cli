@@ -5,6 +5,68 @@
 -include_lib("eunit/include/eunit.hrl").
 -include("observer_cli.hrl").
 
+network_raw_port_generation_test() ->
+    FirstPort = open_port({spawn, "cat"}, []),
+    SecondPort = open_port({spawn, "cat"}, []),
+    try
+        First = #{FirstPort => network_counter_item(FirstPort, 10, 20)},
+        Second = #{SecondPort => network_counter_item(SecondPort, 30, 40)},
+        Window = observer_cli_snapshot:counter_window(network, First, Second),
+        [Born] = maps:get(items, Window),
+        ?assertEqual(baseline_missing, maps:get(state, Born)),
+        ?assertEqual(null, maps:get(oct, Born)),
+        ?assertEqual([FirstPort], maps:get(gone, Window))
+    after
+        port_close(FirstPort),
+        port_close(SecondPort)
+    end.
+
+network_counter_states_test() ->
+    Port = open_port({spawn, "cat"}, []),
+    try
+        First = #{Port => network_counter_item(Port, 10, 20)},
+        Reset = #{Port => network_counter_item(Port, 9, 21)},
+        [ResetItem] = maps:get(items, observer_cli_snapshot:counter_window(network, First, Reset)),
+        ?assertEqual(counter_reset, maps:get(state, ResetItem)),
+        Shape = (network_counter_item(Port, 11, 22))#{
+            counters := #{recv_oct => 11}, counter_shape := [recv_oct]
+        },
+        [ShapeItem] = maps:get(
+            items, observer_cli_snapshot:counter_window(network, First, #{Port => Shape})
+        ),
+        ?assertEqual(shape_change, maps:get(state, ShapeItem))
+    after
+        port_close(Port)
+    end.
+
+network_total_and_bounded_delta_fixture_test() ->
+    {ok, Listen} = gen_tcp:listen(0, [binary, {active, false}]),
+    try
+        Total = diagnostic_data(network, #{sort => oct, limit => 20}),
+        ?assertEqual(<<"total">>, maps:get(<<"sort_semantics">>, Total)),
+        ?assertMatch(
+            #{
+                <<"input_bytes_total">> := _,
+                <<"output_bytes_total">> := _,
+                <<"io_bytes_total">> := _
+            },
+            maps:get(<<"vm_port_driver_io">>, Total)
+        ),
+        Delta = diagnostic_data(network, #{sort => oct, limit => 20, duration_ms => 250}),
+        ?assertEqual(<<"delta">>, maps:get(<<"sort_semantics">>, Delta)),
+        ?assertMatch(
+            #{
+                <<"input_bytes_delta">> := _,
+                <<"output_bytes_delta">> := _,
+                <<"io_bytes_delta">> := _
+            },
+            maps:get(<<"vm_port_driver_io">>, Delta)
+        ),
+        ?assert(maps:get(<<"interval_ms">>, Delta) >= 250)
+    after
+        gen_tcp:close(Listen)
+    end.
+
 start_manager_branches_test() ->
     Inputs = [
         "ic\n",
@@ -79,6 +141,22 @@ add_choose_color_test() ->
     Chosen = observer_cli_inet:add_choose_color(1, 1, Row),
     ?assertEqual(?CHOOSE_BG, hd(Chosen)),
     ?assertEqual(Row, observer_cli_inet:add_choose_color(1, 2, Row)).
+
+network_counter_item(Port, Recv, Send) ->
+    #{
+        raw_id => Port,
+        resource => {identifier, port, Port},
+        protocol => tcp,
+        counters => #{recv_oct => Recv, send_oct => Send},
+        counter_shape => [recv_oct, send_oct]
+    }.
+
+diagnostic_data(Command, Request) ->
+    #{<<"status">> := <<"ok">>, <<"result">> := #{<<"data">> := Data}} =
+        observer_cli_snapshot:dispatch(
+            self(), Command, Request, #{timeout_ms => 7000, identifier_policy => include}
+        ),
+    Data.
 
 collect_inet_info_test() ->
     ?assert(is_list(observer_cli_inet:collect_inet_info(inet_count, recv_cnt, 0, 1500, 0))),

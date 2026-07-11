@@ -176,6 +176,17 @@ validate_runtime_options(Command, Options) when Command =:= ets; Command =:= mne
         true -> validate_list_options(Options, ["memory", "size"]);
         false -> {error, unsupported_command_option}
     end;
+validate_runtime_options(network, Options) ->
+    validate_counter_list_options(Options, ["oct", "recv_oct", "send_oct"]);
+validate_runtime_options(ports, Options) ->
+    case only_options(Options, [sort, limit]) of
+        true -> validate_list_options(Options, ["queue_size", "memory", "input", "output", "io"]);
+        false -> {error, unsupported_command_option}
+    end;
+validate_runtime_options(sockets, Options) ->
+    validate_counter_list_options(
+        Options, ["io", "read_bytes", "write_bytes", "packets", "waits", "fails"]
+    );
 validate_runtime_options(process, Options) ->
     case only_options(Options, [info]) of
         true -> validate_target_options(Options);
@@ -183,6 +194,27 @@ validate_runtime_options(process, Options) ->
     end;
 validate_runtime_options(_Command, Options) ->
     validate_target_options(Options).
+
+validate_counter_list_options(Options, Sorts) ->
+    case only_options(Options, [sort, limit, duration]) of
+        true ->
+            case validate_list_values(Options, Sorts) of
+                ok ->
+                    case maps:find(duration, Options) of
+                        {ok, _} ->
+                            case duration(Options) of
+                                {ok, Duration} -> validate_scheduler_timeout(Options, Duration);
+                                {error, Reason} -> {error, Reason}
+                            end;
+                        error ->
+                            validate_target_options(Options)
+                    end;
+                Error ->
+                    Error
+            end;
+        false ->
+            {error, unsupported_command_option}
+    end.
 
 only_options(Options, CommandOptions) ->
     Global = [
@@ -254,11 +286,23 @@ validate_arguments(process, [_Target]) ->
 validate_arguments(process, _Arguments) ->
     {error, process_target_required};
 validate_arguments(Command, []) when
-    Command =:= processes; Command =:= applications; Command =:= ets; Command =:= mnesia
+    Command =:= processes;
+    Command =:= applications;
+    Command =:= ets;
+    Command =:= mnesia;
+    Command =:= network;
+    Command =:= ports;
+    Command =:= sockets
 ->
     ok;
 validate_arguments(Command, _Arguments) when
-    Command =:= processes; Command =:= applications; Command =:= ets; Command =:= mnesia
+    Command =:= processes;
+    Command =:= applications;
+    Command =:= ets;
+    Command =:= mnesia;
+    Command =:= network;
+    Command =:= ports;
+    Command =:= sockets
 ->
     {error, invalid_arguments};
 validate_arguments(_Command, _Arguments) ->

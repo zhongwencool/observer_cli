@@ -8,7 +8,9 @@
     measure_scheduler/4,
     distribution_context/7,
     stable_process_window/3,
-    resolve_process_target/2
+    resolve_process_target/2,
+    counter_window/3,
+    socket_metrics/1
 ]).
 -endif.
 
@@ -24,6 +26,8 @@
 -define(APPLICATION_SCAN_BUDGET, 5000).
 -define(ETS_SCAN_BUDGET, 100000).
 -define(MNESIA_SCAN_BUDGET, 10000).
+-define(PORT_SCAN_BUDGET, 100000).
+-define(SOCKET_SCAN_BUDGET, 100000).
 -define(WORKING_SET_BYTES_PER_FIELD, 64).
 -define(MAX_WORKING_SET_BYTES, 64 * 1024 * 1024).
 
@@ -230,6 +234,12 @@ probe(ets, Request, Context) ->
     capture_ets(Request, Context);
 probe(mnesia, Request, Context) ->
     capture_mnesia(Request, Context);
+probe(network, Request, Context) ->
+    capture_network(Request, Context);
+probe(ports, Request, Context) ->
+    capture_ports(Request, Context);
+probe(sockets, Request, Context) ->
+    capture_sockets(Request, Context);
 probe(_Command, _Request, _Context) ->
     {probe_error, capability_unavailable}.
 -else.
@@ -251,6 +261,12 @@ probe(ets, Request, Context) ->
     capture_ets(Request, Context);
 probe(mnesia, Request, Context) ->
     capture_mnesia(Request, Context);
+probe(network, Request, Context) ->
+    capture_network(Request, Context);
+probe(ports, Request, Context) ->
+    capture_ports(Request, Context);
+probe(sockets, Request, Context) ->
+    capture_sockets(Request, Context);
 probe(_Command, _Request, _Context) ->
     {probe_error, capability_unavailable}.
 -endif.
@@ -464,6 +480,61 @@ capture_mnesia(Request, Context) when is_map(Request) ->
 capture_mnesia(_Request, _Context) ->
     {probe_error, invalid_request}.
 
+capture_network(Request, Context) when is_map(Request) ->
+    capture_counter_resources(
+        network, network_inventory, Request, Context, network_source(Request)
+    );
+capture_network(_Request, _Context) ->
+    {probe_error, invalid_request}.
+
+capture_ports(Request, Context) when is_map(Request) ->
+    Sort = maps:get(sort, Request, queue_size),
+    Limit = maps:get(limit, Request, 20),
+    case valid_port_request(Sort, Limit) of
+        true ->
+            Source = port_source(Request),
+            capture_scan_inspection(ports, port_inventory, 1, Context, fun() ->
+                collect_ports(Source, Sort, Limit, Context)
+            end);
+        false ->
+            {probe_error, invalid_request}
+    end;
+capture_ports(_Request, _Context) ->
+    {probe_error, invalid_request}.
+
+capture_sockets(Request, Context) when is_map(Request) ->
+    Source = socket_source(Request),
+    case (maps:get(available_fun, Source))() of
+        true ->
+            capture_counter_resources(sockets, socket_inventory, Request, Context, Source);
+        false ->
+            capture_scan_inspection(sockets, socket_inventory, 0, Context, fun() ->
+                {unavailable, capability_unavailable, #{
+                    status => unavailable, reason_code => capability_unavailable
+                }}
+            end)
+    end;
+capture_sockets(_Request, _Context) ->
+    {probe_error, invalid_request}.
+
+capture_counter_resources(Command, ProbeId, Request, Context, Source) ->
+    Sort = maps:get(sort, Request, default_counter_sort(Command)),
+    Limit = maps:get(limit, Request, 20),
+    Duration = maps:get(duration_ms, Request, undefined),
+    case valid_counter_request(Command, Sort, Limit, Duration) of
+        true ->
+            Samples =
+                case Duration of
+                    undefined -> 1;
+                    _ -> 2
+                end,
+            capture_scan_inspection(Command, ProbeId, Samples, Context, fun() ->
+                collect_counter_resources(Command, Source, Sort, Limit, Duration, Context)
+            end);
+        false ->
+            {probe_error, invalid_request}
+    end.
+
 capture_scan_inspection(Command, ProbeId, Samples, #{controller := Controller}, OutcomeFun) ->
     StartedAt = erlang:system_time(millisecond),
     StartedMonotonic = erlang:monotonic_time(millisecond),
@@ -472,7 +543,8 @@ capture_scan_inspection(Command, ProbeId, Samples, #{controller := Controller}, 
     {Status, Reason, Data, Coverage} =
         case Outcome of
             {ok, Value, Covered} -> {ok, null, Value, Covered};
-            {unavailable, Why, Details} -> {unavailable, Why, Details, [admission_only]}
+            {unavailable, Why, Details} -> {unavailable, Why, Details, [admission_only]};
+            {error, Why, Details} -> {error, Why, Details, []}
         end,
     FinishedMonotonic = erlang:monotonic_time(millisecond),
     FinishedAt = erlang:system_time(millisecond),
@@ -482,7 +554,11 @@ capture_scan_inspection(Command, ProbeId, Samples, #{controller := Controller}, 
         command => Command,
         target => target_from_runtime(Runtime),
         capture => #{
-            status => complete,
+            status =>
+                case Status of
+                    error -> partial;
+                    _ -> complete
+                end,
             started_at => rfc3339(StartedAt),
             finished_at => rfc3339(FinishedAt),
             duration_ms => FinishedMonotonic - StartedMonotonic,
@@ -518,6 +594,26 @@ valid_application_request(Sort, Limit) ->
 valid_table_request(Sort, Limit) ->
     lists:member(Sort, [memory, size]) andalso
         is_integer(Limit) andalso Limit >= 1 andalso Limit =< 200.
+
+valid_counter_request(network, Sort, Limit, Duration) ->
+    valid_counter_values(Sort, [oct, recv_oct, send_oct], Limit, Duration);
+valid_counter_request(sockets, Sort, Limit, Duration) ->
+    valid_counter_values(
+        Sort, [io, read_bytes, write_bytes, packets, waits, fails], Limit, Duration
+    ).
+
+valid_counter_values(Sort, Sorts, Limit, Duration) ->
+    lists:member(Sort, Sorts) andalso is_integer(Limit) andalso Limit >= 1 andalso
+        Limit =< 200 andalso
+        (Duration =:= undefined orelse
+            (is_integer(Duration) andalso Duration >= 250 andalso Duration =< 10000)).
+
+valid_port_request(Sort, Limit) ->
+    lists:member(Sort, [queue_size, memory, input, output, io]) andalso
+        is_integer(Limit) andalso Limit >= 1 andalso Limit =< 200.
+
+default_counter_sort(network) -> oct;
+default_counter_sort(sockets) -> io.
 
 process_inventory_keys(binary_memory) ->
     [registered_name, current_function, initial_call, memory, binary];
@@ -1449,6 +1545,703 @@ default_mnesia_source() ->
         ets_info_fun => fun ets:info/2,
         word_size_fun => fun() -> erlang:system_info(wordsize) end
     }.
+
+network_source(Request) ->
+    network_source_test(Request, default_network_source()).
+
+-ifdef(TEST).
+network_source_test(#{test_network_source := Source}, _Default) -> Source;
+network_source_test(_Request, Default) -> Default.
+-else.
+network_source_test(_Request, Default) -> Default.
+-endif.
+
+default_network_source() ->
+    #{
+        count_fun => fun() -> erlang:system_info(port_count) end,
+        all_fun => fun safe_ports/0,
+        name_fun => fun(Port) -> safe_port_info(Port, name) end,
+        stat_fun => fun(Port) -> inet:getstat(Port, [recv_oct, send_oct]) end,
+        io_fun => fun() -> erlang:statistics(io) end,
+        sleep_fun => fun timer:sleep/1,
+        monotonic_fun => fun() -> erlang:monotonic_time(millisecond) end
+    }.
+
+port_source(Request) ->
+    port_source_test(Request, default_port_source()).
+
+-ifdef(TEST).
+port_source_test(#{test_port_source := Source}, _Default) -> Source;
+port_source_test(_Request, Default) -> Default.
+-else.
+port_source_test(_Request, Default) -> Default.
+-endif.
+
+default_port_source() ->
+    #{
+        count_fun => fun() -> erlang:system_info(port_count) end,
+        all_fun => fun safe_ports/0,
+        info_fun => fun safe_port_info/2
+    }.
+
+socket_source(Request) ->
+    socket_source_test(Request, default_socket_source()).
+
+-ifdef(TEST).
+socket_source_test(#{test_socket_source := Source}, _Default) -> Source;
+socket_source_test(_Request, Default) -> Default.
+-else.
+socket_source_test(_Request, Default) -> Default.
+-endif.
+
+default_socket_source() ->
+    #{
+        available_fun => fun socket_available/0,
+        count_fun => fun socket:number_of/0,
+        global_fun => fun socket:info/0,
+        all_fun => fun safe_sockets/0,
+        info_fun => fun(Socket) -> socket:info(Socket) end,
+        sleep_fun => fun timer:sleep/1,
+        monotonic_fun => fun() -> erlang:monotonic_time(millisecond) end
+    }.
+
+safe_ports() ->
+    try
+        {ok, erlang:ports()}
+    catch
+        _:_ -> {error, enumeration_error}
+    end.
+
+safe_sockets() ->
+    try
+        {ok, socket:which_sockets()}
+    catch
+        _:_ -> {error, enumeration_error}
+    end.
+
+safe_port_info(Port, Key) ->
+    try erlang:port_info(Port, Key) of
+        {Key, Value} -> {ok, Value};
+        undefined -> missing
+    catch
+        _:_ -> missing
+    end.
+
+socket_available() ->
+    case code:ensure_loaded(socket) of
+        {module, socket} ->
+            erlang:function_exported(socket, info, 0) andalso
+                erlang:function_exported(socket, number_of, 0) andalso
+                erlang:function_exported(socket, which_sockets, 0);
+        _ ->
+            false
+    end.
+
+collect_counter_resources(Command, Source, Sort, Limit, Duration, Context) ->
+    Count = safe_resource_count(Source),
+    Budget =
+        case Command of
+            network -> ?PORT_SCAN_BUDGET;
+            sockets -> ?SOCKET_SCAN_BUDGET
+        end,
+    Fields = tracked_counter_fields(Command),
+    Retained = Count,
+    Estimate = working_set_estimate(
+        Retained,
+        Fields,
+        case Duration of
+            undefined -> 1;
+            _ -> 2
+        end
+    ),
+    case Count =< Budget andalso Estimate =< ?MAX_WORKING_SET_BYTES of
+        false ->
+            {unavailable, scan_budget_exceeded, #{
+                status => unavailable,
+                reason_code => scan_budget_exceeded,
+                admission_stage => pre_enumeration,
+                observed_resource_count => Count,
+                scan_budget_count => Budget,
+                working_set_estimated_bytes => Estimate,
+                working_set_budget_bytes => ?MAX_WORKING_SET_BYTES
+            }};
+        true ->
+            collect_admitted_counter_resources(
+                Command, Source, Sort, Limit, Duration, Context, Estimate
+            )
+    end.
+
+safe_resource_count(Source) ->
+    try (maps:get(count_fun, Source))() of
+        Count when is_integer(Count), Count >= 0 -> Count;
+        _ -> ?SOCKET_SCAN_BUDGET + 1
+    catch
+        _:_ -> ?SOCKET_SCAN_BUDGET + 1
+    end.
+
+collect_admitted_counter_resources(Command, Source, Sort, Limit, undefined, _Context, Estimate) ->
+    case resource_sample(Command, Source) of
+        {ok, Sample, Audit, Coverage} ->
+            Items0 = [total_resource_item(Command, Item) || Item <- maps:values(Sample)],
+            Items = rank_resource_items(Items0, Sort, Limit),
+            {ok,
+                (total_resource_audit(Command, Audit))#{
+                    status => resource_status(length(Items0)),
+                    items => [public_resource_item(Item) || Item <- Items],
+                    returned_count => length(Items),
+                    dropped_count => length(Items0) - length(Items),
+                    sort => Sort,
+                    sort_semantics => total,
+                    baseline_count => 0,
+                    tracked_field_count => tracked_counter_fields(Command),
+                    retained_sample_count => 1,
+                    working_set_estimated_bytes => Estimate
+                },
+                resource_coverage(Command, Coverage)};
+        {error, Reason} ->
+            enumeration_error(Command, Reason)
+    end;
+collect_admitted_counter_resources(Command, Source, Sort, Limit, Duration, _Context, Estimate) ->
+    case resource_sample(Command, Source) of
+        {ok, First, FirstAudit, FirstCoverage} ->
+            (maps:get(sleep_fun, Source))(Duration),
+            case resource_sample(Command, Source) of
+                {ok, Second, SecondAudit, SecondCoverage} ->
+                    Interval =
+                        (maps:get(monotonic_fun, Source))() -
+                            maps:get(sample_monotonic_ms, FirstAudit),
+                    Window = counter_window(Command, First, Second),
+                    Items = rank_resource_items(maps:get(items, Window), Sort, Limit),
+                    {ok,
+                        (delta_resource_audit(Command, FirstAudit, SecondAudit))#{
+                            status => resource_status(length(maps:get(items, Window))),
+                            items => [public_resource_item(Item) || Item <- Items],
+                            returned_count => length(Items),
+                            dropped_count => length(maps:get(items, Window)) - length(Items),
+                            sort => Sort,
+                            sort_semantics => delta,
+                            requested_duration_ms => Duration,
+                            interval_ms => Interval,
+                            lifecycle => public_lifecycle(Window),
+                            baseline_count => map_size(First),
+                            tracked_field_count => tracked_counter_fields(Command),
+                            retained_sample_count => 2,
+                            working_set_estimated_bytes => Estimate
+                        },
+                        resource_coverage(Command, FirstCoverage ++ SecondCoverage)};
+                {error, Reason} ->
+                    enumeration_error(Command, Reason)
+            end;
+        {error, Reason} ->
+            enumeration_error(Command, Reason)
+    end.
+
+resource_sample(network, Source) -> network_sample(Source);
+resource_sample(sockets, Source) -> socket_sample(Source).
+
+network_sample(Source) ->
+    case (maps:get(all_fun, Source))() of
+        {ok, Ports} when is_list(Ports) ->
+            Started = (maps:get(monotonic_fun, Source))(),
+            {Items, Disappeared} = lists:foldl(
+                fun(Port, {Acc, Gone}) ->
+                    case network_resource(Port, Source) of
+                        skip -> {Acc, Gone};
+                        disappeared -> {Acc, Gone + 1};
+                        Item -> {Acc#{Port => Item}, Gone}
+                    end
+                end,
+                {#{}, 0},
+                Ports
+            ),
+            Audit = (resource_audit(length(Ports), map_size(Items), Disappeared, Started))#{
+                vm_io_counters => network_io_counters(Source)
+            },
+            {ok, Items, Audit, []};
+        {error, Reason} ->
+            {error, Reason};
+        _ ->
+            {error, invalid_enumeration_shape}
+    end.
+
+network_resource(Port, Source) ->
+    case (maps:get(name_fun, Source))(Port) of
+        {ok, Name} ->
+            case inet_protocol(Name) of
+                undefined ->
+                    skip;
+                Protocol ->
+                    case (maps:get(stat_fun, Source))(Port) of
+                        {ok, Stats} when is_list(Stats) ->
+                            Counters = maps:from_list(Stats),
+                            #{
+                                raw_id => Port,
+                                resource => {identifier, port, Port},
+                                protocol => Protocol,
+                                counters => Counters,
+                                counter_shape => lists:sort(maps:keys(Counters))
+                            };
+                        _ ->
+                            disappeared
+                    end
+            end;
+        missing ->
+            disappeared
+    end.
+
+inet_protocol("tcp_inet") -> tcp;
+inet_protocol("udp_inet") -> udp;
+inet_protocol("sctp_inet") -> sctp;
+inet_protocol(_) -> undefined.
+
+socket_sample(Source) ->
+    case (maps:get(all_fun, Source))() of
+        {ok, Sockets} when is_list(Sockets) ->
+            Started = (maps:get(monotonic_fun, Source))(),
+            {Items, Disappeared, Coverage} = lists:foldl(
+                fun(Socket, {Acc, Gone, Covered}) ->
+                    try (maps:get(info_fun, Source))(Socket) of
+                        #{counters := RawCounters} = Info when is_map(RawCounters) ->
+                            Counters = maps:with(socket_counter_keys(), RawCounters),
+                            Item = #{
+                                raw_id => Socket,
+                                resource => {identifier, socket, Socket},
+                                domain => maps:get(domain, Info, null),
+                                type => maps:get(type, Info, null),
+                                protocol => maps:get(protocol, Info, null),
+                                counters => Counters,
+                                counter_shape => lists:sort(maps:keys(Counters))
+                            },
+                            {
+                                Acc#{Socket => Item},
+                                Gone,
+                                socket_optional_coverage(Counters) ++ Covered
+                            };
+                        _ ->
+                            {Acc, Gone + 1, Covered}
+                    catch
+                        _:_ -> {Acc, Gone + 1, Covered}
+                    end
+                end,
+                {#{}, 0, []},
+                Sockets
+            ),
+            Global =
+                try
+                    (maps:get(global_fun, Source))()
+                catch
+                    _:_ -> #{}
+                end,
+            UseRegistry = maps:get(use_registry, Global, unknown),
+            {ok, Items,
+                (resource_audit(length(Sockets), map_size(Items), Disappeared, Started))#{
+                    registry_known_count => map_size(Items),
+                    use_registry => UseRegistry,
+                    empty_meaning => no_registry_known_sockets
+                },
+                Coverage};
+        {error, Reason} ->
+            {error, Reason};
+        _ ->
+            {error, invalid_enumeration_shape}
+    end.
+
+resource_audit(Scanned, Eligible, Disappeared, Started) ->
+    #{
+        scanned_count => Scanned,
+        eligible_count => Eligible,
+        disappeared_count => Disappeared,
+        complete => true,
+        admission_stage => post_enumeration,
+        sample_monotonic_ms => Started
+    }.
+
+network_io_counters(Source) ->
+    try (maps:get(io_fun, Source))() of
+        {{input, Input}, {output, Output}} when
+            is_integer(Input), Input >= 0, is_integer(Output), Output >= 0
+        ->
+            #{input => Input, output => Output};
+        _ ->
+            #{}
+    catch
+        _:_ -> #{}
+    end.
+
+total_resource_audit(network, Audit) ->
+    Counters = maps:get(vm_io_counters, Audit, #{}),
+    (maps:remove(vm_io_counters, Audit))#{vm_port_driver_io => vm_io_metrics(Counters, total)};
+total_resource_audit(sockets, Audit) ->
+    Audit.
+
+delta_resource_audit(network, First, Second) ->
+    FirstCounters = maps:get(vm_io_counters, First, #{}),
+    SecondCounters = maps:get(vm_io_counters, Second, #{}),
+    Metrics =
+        case lists:sort(maps:keys(FirstCounters)) =:= lists:sort(maps:keys(SecondCounters)) of
+            true ->
+                vm_io_metrics(counter_deltas(FirstCounters, SecondCounters), delta);
+            false ->
+                #{
+                    status => shape_change,
+                    input_bytes_delta => null,
+                    output_bytes_delta => null,
+                    io_bytes_delta => null
+                }
+        end,
+    (maps:without([sample_monotonic_ms, vm_io_counters], Second))#{vm_port_driver_io => Metrics};
+delta_resource_audit(sockets, _First, Second) ->
+    maps:without([sample_monotonic_ms], Second).
+
+vm_io_metrics(Counters, Semantics) ->
+    Input = counter_metric(Counters, [input], []),
+    Output = counter_metric(Counters, [output], []),
+    Io = counter_metric(Counters, [input, output], []),
+    Suffix =
+        case Semantics of
+            total -> <<"_bytes_total">>;
+            delta -> <<"_bytes_delta">>
+        end,
+    maps:fold(
+        fun
+            (Key, #{status := available, value := Value}, Acc) ->
+                Acc#{iolist_to_binary([atom_to_binary(Key), Suffix]) => Value};
+            (Key, #{status := Status}, Acc) ->
+                Acc#{status => Status, iolist_to_binary([atom_to_binary(Key), Suffix]) => null}
+        end,
+        #{status => available},
+        #{input => Input, output => Output, io => Io}
+    ).
+
+collect_ports(Source, Sort, Limit, _Context) ->
+    Count = safe_resource_count(Source),
+    Estimate = working_set_estimate(min(Count, Limit), 7, 1),
+    case Count =< ?PORT_SCAN_BUDGET andalso Estimate =< ?MAX_WORKING_SET_BYTES of
+        false ->
+            {unavailable, scan_budget_exceeded, #{
+                status => unavailable,
+                reason_code => scan_budget_exceeded,
+                admission_stage => pre_enumeration,
+                observed_resource_count => Count,
+                scan_budget_count => ?PORT_SCAN_BUDGET,
+                working_set_estimated_bytes => Estimate,
+                working_set_budget_bytes => ?MAX_WORKING_SET_BYTES
+            }};
+        true ->
+            case (maps:get(all_fun, Source))() of
+                {ok, Ports} when is_list(Ports) ->
+                    collect_port_items(Ports, Source, Sort, Limit, Estimate);
+                {error, Reason} ->
+                    enumeration_error(ports, Reason);
+                _ ->
+                    enumeration_error(ports, invalid_enumeration_shape)
+            end
+    end.
+
+collect_port_items(Ports, Source, Sort, Limit, Estimate) ->
+    {Items0, Disappeared} = lists:foldl(
+        fun(Port, {Items, Gone}) ->
+            case port_resource(Port, Source) of
+                skip -> {Items, Gone};
+                disappeared -> {Items, Gone + 1};
+                Item -> {[Item | Items], Gone}
+            end
+        end,
+        {[], 0},
+        Ports
+    ),
+    Items = rank_resource_items(Items0, Sort, Limit),
+    {ok,
+        #{
+            status => resource_status(length(Items0)),
+            items => [public_resource_item(Item) || Item <- Items],
+            scanned_count => length(Ports),
+            eligible_count => length(Items0),
+            returned_count => length(Items),
+            dropped_count => length(Items0) - length(Items),
+            disappeared_count => Disappeared,
+            complete => true,
+            sort => Sort,
+            sort_semantics => current_or_lifetime,
+            tracked_field_count => 7,
+            retained_sample_count => 1,
+            working_set_estimated_bytes => Estimate
+        },
+        [documented_port_info_keys, name_only_inet_classification, raw_port_identity]}.
+
+port_resource(Port, Source) ->
+    Info = maps:get(info_fun, Source),
+    case Info(Port, name) of
+        {ok, Name} ->
+            case inet_protocol(Name) of
+                undefined ->
+                    Fields = [connected, queue_size, memory, id, input, output],
+                    Values = maps:from_list([{Key, port_field(Info(Port, Key))} || Key <- Fields]),
+                    Input = maps:get(input, Values),
+                    Output = maps:get(output, Values),
+                    Io =
+                        case {Input, Output} of
+                            {I, O} when is_integer(I), is_integer(O) -> I + O;
+                            _ -> null
+                        end,
+                    #{
+                        raw_id => Port,
+                        resource => {identifier, port, Port},
+                        name => Name,
+                        connected_pid => port_identifier(maps:get(connected, Values)),
+                        queue_size => maps:get(queue_size, Values),
+                        memory => maps:get(memory, Values),
+                        display_id => maps:get(id, Values),
+                        input => Input,
+                        output => Output,
+                        io => Io,
+                        field_errors => [Key || Key <- Fields, maps:get(Key, Values) =:= null]
+                    };
+                _ ->
+                    skip
+            end;
+        missing ->
+            disappeared
+    end.
+
+port_field({ok, Value}) -> Value;
+port_field(missing) -> null.
+
+port_identifier(Pid) when is_pid(Pid) -> {identifier, pid, Pid};
+port_identifier(_) -> null.
+
+total_resource_item(network, Item) ->
+    add_network_metrics(Item, maps:get(counters, Item));
+total_resource_item(sockets, Item) ->
+    add_socket_metrics(Item, maps:get(counters, Item)).
+
+add_network_metrics(Item, Counters) ->
+    add_metrics(Item, #{
+        recv_oct => counter_metric(Counters, [recv_oct], []),
+        send_oct => counter_metric(Counters, [send_oct], []),
+        oct => counter_metric(Counters, [recv_oct, send_oct], [])
+    }).
+
+add_socket_metrics(Item, Counters) ->
+    add_metrics(Item, socket_metrics(Counters)).
+
+add_metrics(Item, Metrics) ->
+    maps:fold(
+        fun
+            (Key, #{status := available, value := Value}, Acc) ->
+                Acc#{
+                    Key => Value,
+                    metric_states := (maps:get(metric_states, Acc, #{}))#{Key => available}
+                };
+            (Key, #{status := Status}, Acc) ->
+                Acc#{
+                    Key => null,
+                    metric_states := (maps:get(metric_states, Acc, #{}))#{Key => Status}
+                }
+        end,
+        Item#{metric_states => #{}},
+        Metrics
+    ).
+
+socket_metrics(Counters) when is_map(Counters) ->
+    #{
+        read_bytes => socket_metric(Counters, [read_byte], []),
+        write_bytes => socket_metric(Counters, [write_byte], [sendfile_byte]),
+        io => socket_metric(Counters, [read_byte, write_byte], [sendfile_byte]),
+        packets => socket_metric(Counters, [read_pkg, write_pkg], [sendfile_pkg]),
+        waits => socket_metric(Counters, [acc_waits, read_waits, write_waits], [sendfile_waits]),
+        fails => socket_metric(Counters, [acc_fails, read_fails, write_fails], [sendfile_fails])
+    }.
+
+socket_metric(Counters, Required, Optional) ->
+    counter_metric(Counters, Required, Optional).
+
+counter_metric(Counters, Required, Optional) ->
+    RequiredValues = [maps:get(Key, Counters, missing) || Key <- Required],
+    OptionalValues = [maps:get(Key, Counters, missing) || Key <- Optional],
+    case lists:member(counter_reset, RequiredValues ++ OptionalValues) of
+        true ->
+            #{status => counter_reset};
+        false ->
+            case lists:all(fun valid_counter/1, RequiredValues) of
+                true ->
+                    Value =
+                        lists:sum(RequiredValues) +
+                            lists:sum([V || V <- OptionalValues, valid_counter(V)]),
+                    #{status => available, value => Value};
+                false ->
+                    #{status => missing_core}
+            end
+    end.
+
+valid_counter(Value) -> is_integer(Value) andalso Value >= 0.
+
+socket_optional_coverage(Counters) ->
+    Optional = [sendfile_byte, sendfile_pkg, sendfile_waits, sendfile_fails],
+    case lists:any(fun(Key) -> not maps:is_key(Key, Counters) end, Optional) of
+        true -> [optional_sendfile_counter_absent];
+        false -> []
+    end.
+
+counter_window(Command, First, Second) ->
+    FirstIds = lists:sort(maps:keys(First)),
+    SecondIds = lists:sort(maps:keys(Second)),
+    StableIds = ordsets:intersection(FirstIds, SecondIds),
+    Born = ordsets:subtract(SecondIds, FirstIds),
+    Gone = ordsets:subtract(FirstIds, SecondIds),
+    StableItems = [
+        counter_delta_item(Command, maps:get(Id, First), maps:get(Id, Second))
+     || Id <- StableIds
+    ],
+    BornItems = [
+        unavailable_delta_item(Command, maps:get(Id, Second), baseline_missing)
+     || Id <- Born
+    ],
+    #{
+        items => StableItems ++ BornItems,
+        born => Born,
+        gone => Gone,
+        reset => [
+            maps:get(raw_id, Item)
+         || Item <- StableItems, resource_item_state(Item) =:= counter_reset
+        ],
+        shape_changed => [
+            maps:get(raw_id, Item)
+         || Item <- StableItems,
+            resource_item_state(Item) =:= shape_change
+        ]
+    }.
+
+counter_delta_item(Command, First, Second) ->
+    FirstCounters = maps:get(counters, First),
+    SecondCounters = maps:get(counters, Second),
+    case maps:get(counter_shape, First) =:= maps:get(counter_shape, Second) of
+        false ->
+            unavailable_delta_item(Command, Second, shape_change);
+        true ->
+            Deltas = counter_deltas(FirstCounters, SecondCounters),
+            Item =
+                case Command of
+                    network -> add_network_metrics(Second, Deltas);
+                    sockets -> add_socket_metrics(Second, Deltas)
+                end,
+            States = maps:values(maps:get(metric_states, Item)),
+            Item#{
+                state =>
+                    case lists:member(counter_reset, States) of
+                        true -> counter_reset;
+                        false -> available
+                    end
+            }
+    end.
+
+counter_deltas(First, Second) ->
+    lists:foldl(
+        fun(Key, Acc) ->
+            Before = maps:get(Key, First),
+            After = maps:get(Key, Second),
+            case valid_counter(Before) andalso valid_counter(After) andalso After >= Before of
+                true ->
+                    Acc#{Key => After - Before};
+                false when is_integer(Before), is_integer(After), After < Before ->
+                    Acc#{Key => counter_reset};
+                false ->
+                    Acc#{Key => invalid_counter}
+            end
+        end,
+        #{},
+        maps:keys(First)
+    ).
+
+unavailable_delta_item(network, Item, State) ->
+    Item#{
+        state => State,
+        recv_oct => null,
+        send_oct => null,
+        oct => null,
+        metric_states => #{recv_oct => State, send_oct => State, oct => State}
+    };
+unavailable_delta_item(sockets, Item, State) ->
+    Keys = [io, read_bytes, write_bytes, packets, waits, fails],
+    lists:foldl(
+        fun(Key, Acc) -> Acc#{Key => null} end,
+        Item#{state => State, metric_states => maps:from_keys(Keys, State)},
+        Keys
+    ).
+
+resource_item_state(Item) -> maps:get(state, Item, available).
+
+rank_resource_items(Items, Sort, Limit) ->
+    lists:sublist(lists:sort(fun(A, B) -> resource_precedes(A, B, Sort) end, Items), Limit).
+
+resource_precedes(A, B, Sort) ->
+    AValue = maps:get(Sort, A, null),
+    BValue = maps:get(Sort, B, null),
+    case {is_integer(AValue), is_integer(BValue)} of
+        {true, true} ->
+            AValue > BValue orelse
+                (AValue =:= BValue andalso maps:get(raw_id, A) < maps:get(raw_id, B));
+        {true, false} ->
+            true;
+        {false, true} ->
+            false;
+        {false, false} ->
+            maps:get(raw_id, A) < maps:get(raw_id, B)
+    end.
+
+public_resource_item(Item) -> maps:without([raw_id, counters, counter_shape], Item).
+
+public_lifecycle(Window) ->
+    #{
+        baseline_missing => resource_identifiers(maps:get(born, Window)),
+        gone => resource_identifiers(maps:get(gone, Window)),
+        counter_reset => resource_identifiers(maps:get(reset, Window)),
+        shape_change => resource_identifiers(maps:get(shape_changed, Window))
+    }.
+
+resource_identifiers(Ids) -> [raw_resource_identifier(Id) || Id <- Ids].
+raw_resource_identifier(Id) when is_port(Id) -> {identifier, port, Id};
+raw_resource_identifier({'$socket', _} = Id) -> {identifier, socket, Id};
+raw_resource_identifier(Id) when is_reference(Id) -> {identifier, socket, Id};
+raw_resource_identifier(Id) -> Id.
+
+resource_status(0) -> empty;
+resource_status(_) -> ok.
+
+tracked_counter_fields(network) -> 2;
+tracked_counter_fields(sockets) -> 14.
+
+socket_counter_keys() ->
+    [
+        read_byte,
+        write_byte,
+        read_pkg,
+        write_pkg,
+        acc_waits,
+        read_waits,
+        write_waits,
+        acc_fails,
+        read_fails,
+        write_fails,
+        sendfile_byte,
+        sendfile_pkg,
+        sendfile_waits,
+        sendfile_fails
+    ].
+
+resource_coverage(network, _Coverage) ->
+    [legacy_inet_ports_only, vm_port_driver_counters, raw_port_identity];
+resource_coverage(sockets, Coverage) ->
+    lists:usort([registry_known_sockets, opaque_raw_socket_identity | Coverage]).
+
+enumeration_error(Command, Reason) ->
+    {error, enumeration_error, #{
+        status => error,
+        reason_code => enumeration_error,
+        resource => Command,
+        enumeration_error => Reason,
+        items => []
+    }}.
 
 capture_inspection(Command, ProbeId, Samples, #{controller := Controller}, Fun) ->
     StartedAt = erlang:system_time(millisecond),
