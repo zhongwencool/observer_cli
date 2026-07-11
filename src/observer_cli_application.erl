@@ -351,6 +351,8 @@ get_version(App, Maps) ->
         _ -> "unknown"
     end.
 
+find_group_leader(Pid) when node(Pid) =/= node() ->
+    no_group;
 find_group_leader(Pid) ->
     case erlang:process_info(Pid, group_leader) of
         undefined -> no_group;

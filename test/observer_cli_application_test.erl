@@ -154,6 +154,12 @@ start_redraw_test() ->
 find_group_leader_test() ->
     ?assert(is_pid(observer_cli_application:find_group_leader(self()))).
 
+find_remote_group_leader_test() ->
+    RemotePid = binary_to_term(
+        <<131, 103, 100, 0, 11, "remote@host", 0, 0, 0, 1, 0, 0, 0, 0, 0>>
+    ),
+    ?assertEqual(no_group, observer_cli_application:find_group_leader(RemotePid)).
+
 render_app_info_wide_layout_test() ->
     Base = app_row_widths(80),
     Wide = app_row_widths(180),
