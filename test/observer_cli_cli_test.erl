@@ -33,6 +33,7 @@ reserved_command_words_test() ->
                 case Command of
                     process -> [Word, "<0.1.0>"];
                     gen_server_state -> [Word, "<0.1.0>"];
+                    supervision_tree -> [Word, "--app", "kernel"];
                     _ -> [Word]
                 end,
             ?assertMatch(
@@ -155,6 +156,25 @@ gen_server_state_is_explicit_high_risk_command_test() ->
     assert_argument_error(
         unsupported_command_option,
         observer_cli_cli:parse(["gen-server-state", "server", "--info"])
+    ).
+
+supervision_tree_is_one_level_application_command_test() ->
+    ?assertMatch(
+        {ok, #{command := supervision_tree, arguments := [], options := #{app := "kernel"}}},
+        observer_cli_cli:parse(["supervision-tree", "--app", "kernel"])
+    ),
+    assert_argument_error(application_required, observer_cli_cli:parse(["supervision-tree"])),
+    assert_argument_error(
+        invalid_arguments,
+        observer_cli_cli:parse(["supervision-tree", "kernel", "--app", "kernel"])
+    ),
+    assert_argument_error(
+        {unknown_option, "--supervisor"},
+        observer_cli_cli:parse(["supervision-tree", "--supervisor", "root", "--app", "kernel"])
+    ),
+    assert_argument_error(
+        {unknown_option, "--depth"},
+        observer_cli_cli:parse(["supervision-tree", "--app", "kernel", "--depth", "2"])
     ).
 
 table_inspection_option_contract_test() ->

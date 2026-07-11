@@ -202,6 +202,13 @@ validate_runtime_options(gen_server_state, Options) ->
         true -> validate_target_options(Options);
         false -> {error, unsupported_command_option}
     end;
+validate_runtime_options(supervision_tree, #{app := App} = Options) ->
+    case only_options(Options, [app]) andalso valid_application_name(App) of
+        true -> validate_target_options(Options);
+        false -> {error, unsupported_command_option}
+    end;
+validate_runtime_options(supervision_tree, _Options) ->
+    {error, application_required};
 validate_runtime_options(_Command, #{deep := true}) ->
     {error, unsupported_command_option};
 validate_runtime_options(_Command, Options) ->
@@ -301,6 +308,10 @@ validate_arguments(gen_server_state, [_Target]) ->
     ok;
 validate_arguments(gen_server_state, _Arguments) ->
     {error, gen_server_target_required};
+validate_arguments(supervision_tree, []) ->
+    ok;
+validate_arguments(supervision_tree, _Arguments) ->
+    {error, invalid_arguments};
 validate_arguments(Command, []) when
     Command =:= snapshot;
     Command =:= processes;
@@ -801,6 +812,11 @@ valid_text(Text) ->
         end,
         Text
     ).
+
+valid_application_name(Name) when is_list(Name), Name =/= [], length(Name) =< 255 ->
+    valid_text(Name);
+valid_application_name(_Name) ->
+    false.
 
 duration_ms(Text) when is_list(Text) ->
     case lists:reverse(Text) of

@@ -5,6 +5,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -include("observer_cli.hrl").
 
+-export([start/2, stop/1, init/1, start_fixture_child/0]).
+
 app_status_test() ->
     Info = [
         {loaded, [{app1, "desc", "1.0"}]},
@@ -308,6 +310,297 @@ application_post_enumeration_refusal_skips_attribution_test() ->
     receive
         {process_fold, _} -> ?assert(false)
     after 50 -> ok
+    end.
+
+supervision_tree_public_static_and_dynamic_fixtures_test_() ->
+    {timeout, 10, fun supervision_tree_public_static_and_dynamic_fixtures/0}.
+
+supervision_tree_public_static_and_dynamic_fixtures() ->
+    StaticApp = observer_cli_goal13_static,
+    DynamicApp = observer_cli_goal13_dynamic,
+    try
+        ok = load_fixture_application(StaticApp, static),
+        ok = application:start(StaticApp),
+        {ok, StaticRoot} = application:get_supervisor(StaticApp),
+        Static = supervision_tree(StaticApp, #{}),
+        ?assertEqual(<<"ok">>, maps:get(<<"status">>, Static)),
+        ?assertEqual(list_to_binary(pid_to_list(StaticRoot)), maps:get(<<"root">>, Static)),
+        [StaticChild] = maps:get(<<"children">>, Static),
+        ?assertEqual(<<"available">>, maps:get(<<"identity">>, StaticChild)),
+        ?assertEqual(<<"atom:static_child">>, maps:get(<<"id">>, StaticChild)),
+        ?assertEqual(true, maps:get(<<"leaf">>, StaticChild)),
+
+        ok = load_fixture_application(DynamicApp, dynamic),
+        ok = application:start(DynamicApp),
+        {ok, DynamicRoot} = application:get_supervisor(DynamicApp),
+        {ok, _DynamicChild} = supervisor:start_child(DynamicRoot, []),
+        Dynamic = supervision_tree(DynamicApp, #{}),
+        [DynamicItem] = maps:get(<<"children">>, Dynamic),
+        ?assertEqual(<<"unavailable">>, maps:get(<<"identity">>, DynamicItem)),
+        ?assertEqual(<<"dynamic_id">>, maps:get(<<"identity_reason">>, DynamicItem)),
+        ?assertEqual(<<"aggregate_only">>, maps:get(<<"churn_semantics">>, DynamicItem))
+    after
+        stop_fixture_application(DynamicApp),
+        stop_fixture_application(StaticApp)
+    end.
+
+supervision_tree_bounds_and_normalizes_child_identity_test() ->
+    Parent = self(),
+    Root = spawn(fun application_fixture/0),
+    Child = spawn(fun application_fixture/0),
+    Remote = remote_pid_fixture(),
+    HugeInteger = 1 bsl 2048,
+    Children = [
+        {safe_atom, Child, worker, [secret_module]},
+        {42, restarting, supervisor, [secret_module]},
+        {<<"safe-binary">>, Remote, worker, [secret_module]},
+        {undefined, undefined, worker, [secret_module]},
+        {duplicate, Child, worker, [secret_module]},
+        {duplicate, Child, worker, [secret_module]},
+        {{complex, <<"fixture-child-secret">>}, Child, worker, [secret_module]},
+        {binary:copy(<<"x">>, 129), Child, worker, [secret_module]},
+        {HugeInteger, Child, worker, [secret_module]}
+    ],
+    Source = supervision_source(Root, Children, Parent),
+    try
+        Data = supervision_tree(observer_cli_goal13_fixture, Source),
+        ?assertEqual(9, maps:get(<<"observed_child_count">>, Data)),
+        ?assertEqual(6, maps:get(<<"identity_unavailable_count">>, Data)),
+        Items = maps:get(<<"children">>, Data),
+        ?assertEqual(
+            [<<"available">>, <<"available">>, <<"available">>],
+            [maps:get(<<"identity">>, Item) || Item <- lists:sublist(Items, 3)]
+        ),
+        ?assertEqual(
+            [
+                <<"dynamic_id">>,
+                <<"duplicate_id">>,
+                <<"duplicate_id">>,
+                <<"complex_id">>,
+                <<"oversized_id">>,
+                <<"oversized_id">>
+            ],
+            [
+                maps:get(<<"identity_reason">>, Item)
+             || Item <- lists:nthtail(3, Items)
+            ]
+        ),
+        RemoteItem = lists:nth(3, Items),
+        ?assertEqual(<<"remote">>, maps:get(<<"location">>, maps:get(<<"child">>, RemoteItem))),
+        ?assertEqual(
+            nomatch, binary:match(term_to_binary(Data), <<"fixture-child-secret">>)
+        ),
+        ?assertEqual(nomatch, binary:match(term_to_binary(Data), <<"secret_module">>)),
+        Redacted = supervision_tree_response(
+            observer_cli_goal13_fixture,
+            supervision_source(
+                Root, [{<<"fixture-scalar-secret">>, Child, worker, []}], Parent
+            ),
+            redact
+        ),
+        ?assertEqual(
+            nomatch, binary:match(term_to_binary(Redacted), <<"fixture-scalar-secret">>)
+        ),
+        [RedactedItem] = maps:get(<<"children">>, maps:get(<<"data">>, Redacted)),
+        ?assertEqual(<<"child-1">>, maps:get(<<"id">>, RedactedItem)),
+        [
+            receive
+                {count_children, Root} -> ok
+            end
+         || _ <- [1, 2]
+        ],
+        [
+            receive
+                {which_children, Root} -> ok
+            end
+         || _ <- [1, 2]
+        ],
+        receive
+            {which_children, Root} -> ?assert(false)
+        after 50 -> ok
+        end
+    after
+        flush_supervision_messages(),
+        exit(Child, kill),
+        exit(Root, kill)
+    end.
+
+supervision_tree_preflight_and_soft_output_cap_test() ->
+    Parent = self(),
+    Root = spawn(fun application_fixture/0),
+    RefusedSource = (supervision_source(Root, [], Parent))#{
+        count_children_fun => fun(RequestedRoot) ->
+            Parent ! {count_children, RequestedRoot},
+            [{specs, 5001}, {active, 1}, {supervisors, 0}, {workers, 1}]
+        end
+    },
+    try
+        Refused = supervision_tree(observer_cli_goal13_fixture, RefusedSource),
+        ?assertEqual(<<"unavailable">>, maps:get(<<"status">>, Refused)),
+        ?assertEqual(<<"scan_budget_exceeded">>, maps:get(<<"reason_code">>, Refused)),
+        receive
+            {which_children, Root} -> ?assert(false)
+        after 50 -> ok
+        end,
+        Children = [{N, Root, worker, []} || N <- lists:seq(1, 501)],
+        CappedResponse = supervision_tree_response(
+            observer_cli_goal13_fixture, supervision_source(Root, Children, Parent)
+        ),
+        Capped = maps:get(<<"data">>, CappedResponse),
+        ?assertEqual(501, maps:get(<<"observed_child_count">>, Capped)),
+        ?assertEqual(500, maps:get(<<"returned_count">>, Capped)),
+        ?assertEqual(1, maps:get(<<"dropped_count">>, Capped)),
+        ?assertEqual(500, length(maps:get(<<"children">>, Capped))),
+        Acquisition = maps:get(<<"acquisition">>, Capped),
+        ?assertEqual(<<"o_children">>, maps:get(<<"count_children_complexity">>, Acquisition)),
+        ?assertEqual(false, maps:get(<<"snapshot_atomic">>, Acquisition)),
+        ?assertEqual(
+            false, maps:get(<<"deadline_retracts_delivered_request">>, Acquisition)
+        ),
+        WarningReasons = [
+            maps:get(<<"reason_code">>, Warning)
+         || Warning <-
+                maps:get(<<"warnings">>, CappedResponse)
+        ],
+        ?assert(lists:member(<<"supervisor_snapshot_is_non_atomic">>, WarningReasons)),
+        ?assert(lists:member(<<"deadline_does_not_retract_infinity_calls">>, WarningReasons))
+    after
+        flush_supervision_messages(),
+        exit(Root, kill)
+    end.
+
+supervision_tree_public_outcome_normalization_test() ->
+    Root = spawn(fun application_fixture/0),
+    Base = supervision_source(Root, [], self()),
+    try
+        NotFound = supervision_tree(unknown_goal13_application, Base),
+        ?assertEqual(<<"not_found">>, maps:get(<<"status">>, NotFound)),
+        NotRunning = supervision_tree(
+            observer_cli_goal13_fixture, Base#{supervisor_fun => fun(_App) -> undefined end}
+        ),
+        ?assertEqual(<<"not_running">>, maps:get(<<"status">>, NotRunning)),
+        Failed = supervision_tree_response(
+            observer_cli_goal13_fixture,
+            Base#{supervisor_fun => fun(_App) -> {error, <<"fixture-supervisor-secret">>} end}
+        ),
+        ?assertEqual(<<"partial">>, maps:get(<<"status">>, maps:get(<<"capture">>, Failed))),
+        ?assertEqual(
+            nomatch, binary:match(term_to_binary(Failed), <<"fixture-supervisor-secret">>)
+        ),
+        Exited = supervision_tree_response(
+            observer_cli_goal13_fixture,
+            Base#{supervisor_fun => fun(_App) -> exit(fixture_supervisor_exit) end}
+        ),
+        [ExitError] = maps:get(<<"errors">>, Exited),
+        ?assertEqual(<<"supervisor_resolution_failed">>, maps:get(<<"reason_code">>, ExitError)),
+        Dead = spawn(fun() -> ok end),
+        DeadRef = monitor(process, Dead),
+        receive
+            {'DOWN', DeadRef, process, Dead, _} -> ok
+        end,
+        DeadRoot = supervision_tree(
+            observer_cli_goal13_fixture, Base#{supervisor_fun => fun(_App) -> {ok, Dead} end}
+        ),
+        ?assertEqual(<<"not_running">>, maps:get(<<"status">>, DeadRoot)),
+        RemoteRoot = supervision_tree_response(
+            observer_cli_goal13_fixture,
+            Base#{supervisor_fun => fun(_App) -> {ok, remote_pid_fixture()} end}
+        ),
+        [RemoteError] = maps:get(<<"errors">>, RemoteRoot),
+        ?assertEqual(<<"remote_supervisor_root">>, maps:get(<<"reason_code">>, RemoteError))
+    after
+        exit(Root, kill)
+    end.
+
+load_fixture_application(App, Mode) ->
+    application:load(
+        {application, App, [
+            {description, "observer_cli supervision fixture"},
+            {vsn, "1"},
+            {modules, [?MODULE]},
+            {registered, []},
+            {applications, [kernel, stdlib]},
+            {mod, {?MODULE, Mode}}
+        ]}
+    ).
+
+stop_fixture_application(App) ->
+    _ = application:stop(App),
+    _ = application:unload(App),
+    ok.
+
+start(_StartType, Mode) ->
+    supervisor:start_link(?MODULE, Mode).
+
+stop(_State) ->
+    ok.
+
+init(static) ->
+    {ok,
+        {{one_for_one, 1, 5}, [
+            {static_child, {?MODULE, start_fixture_child, []}, permanent, 5000, worker, [?MODULE]}
+        ]}};
+init(dynamic) ->
+    {ok,
+        {{simple_one_for_one, 1, 5}, [
+            {dynamic_child, {?MODULE, start_fixture_child, []}, temporary, 5000, worker, [?MODULE]}
+        ]}}.
+
+start_fixture_child() ->
+    {ok, spawn_link(fun application_fixture/0)}.
+
+supervision_tree(App, Source) ->
+    maps:get(<<"data">>, supervision_tree_response(App, Source)).
+
+supervision_tree_response(App, Source) ->
+    supervision_tree_response(App, Source, include).
+
+supervision_tree_response(App, Source, Policy) ->
+    Request =
+        case Source of
+            #{} when map_size(Source) =:= 0 -> #{app => atom_to_binary(App)};
+            _ -> #{app => atom_to_binary(App), test_application_source => Source}
+        end,
+    #{<<"status">> := <<"ok">>, <<"result">> := Response} =
+        observer_cli_snapshot:dispatch(
+            self(),
+            supervision_tree,
+            Request,
+            #{timeout_ms => 3000, identifier_policy => Policy}
+        ),
+    Response.
+
+supervision_source(Root, Children, Parent) ->
+    #{
+        loaded_fun => fun() -> [{observer_cli_goal13_fixture, "fixture", "1"}] end,
+        running_fun => fun(_Timeout) -> [] end,
+        supervisor_fun => fun(_App) -> {ok, Root} end,
+        root_info_fun => fun erlang:process_info/2,
+        alive_fun => fun erlang:is_process_alive/1,
+        count_children_fun => fun(RequestedRoot) ->
+            Parent ! {count_children, RequestedRoot},
+            [
+                {specs, length(Children)},
+                {active, length(Children)},
+                {supervisors, 0},
+                {workers, length(Children)}
+            ]
+        end,
+        which_children_fun => fun(RequestedRoot) ->
+            Parent ! {which_children, RequestedRoot},
+            Children
+        end
+    }.
+
+remote_pid_fixture() ->
+    binary_to_term(<<131, 103, 100, 0, 9, "undefined", 0, 0, 0, 1, 0, 0, 0, 0, 0>>, [safe]).
+
+flush_supervision_messages() ->
+    receive
+        {count_children, _Root} -> flush_supervision_messages();
+        {which_children, _Root} -> flush_supervision_messages()
+    after 0 ->
+        ok
     end.
 
 diagnostics_process_source(Pids, InfoFun) ->

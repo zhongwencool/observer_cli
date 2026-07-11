@@ -30,6 +30,10 @@
 -define(PROCESS_SCAN_BUDGET, 100000).
 -define(BINARY_PROCESS_SCAN_BUDGET, 20000).
 -define(APPLICATION_SCAN_BUDGET, 5000).
+-define(SUPERVISOR_SCAN_BUDGET, 5000).
+-define(SUPERVISOR_OUTPUT_CAP, 500).
+-define(CHILD_ID_MAX_BYTES, 128).
+-define(CHILD_ID_MAX_BITS, 1024).
 -define(ETS_SCAN_BUDGET, 100000).
 -define(MNESIA_SCAN_BUDGET, 10000).
 -define(PORT_SCAN_BUDGET, 100000).
@@ -260,6 +264,8 @@ probe(sockets, Request, Context) ->
     capture_sockets(Request, Context);
 probe(gen_server_state, Request, Context) ->
     capture_gen_server_state(Request, Context);
+probe(supervision_tree, Request, Context) ->
+    capture_supervision_tree(Request, Context);
 probe(_Command, _Request, _Context) ->
     {probe_error, capability_unavailable}.
 -else.
@@ -289,6 +295,8 @@ probe(sockets, Request, Context) ->
     capture_sockets(Request, Context);
 probe(gen_server_state, Request, Context) ->
     capture_gen_server_state(Request, Context);
+probe(supervision_tree, Request, Context) ->
+    capture_supervision_tree(Request, Context);
 probe(_Command, _Request, _Context) ->
     {probe_error, capability_unavailable}.
 -endif.
@@ -614,6 +622,342 @@ capture_gen_server_state(#{target := Target} = Request, Context) ->
     Response#{warnings := state_risk_warnings(), errors := Errors};
 capture_gen_server_state(_Request, _Context) ->
     {probe_error, invalid_request}.
+
+capture_supervision_tree(#{app := App} = Request, Context) ->
+    Source = application_source(Request),
+    Response = capture_scan_inspection(
+        supervision_tree,
+        supervision_tree,
+        1,
+        Context,
+        fun() -> collect_supervision_tree(App, Source) end
+    ),
+    Data = maps:get(data, Response),
+    Errors =
+        case maps:get(status, Data) of
+            error ->
+                [
+                    #{
+                        class => required_probe,
+                        probe => supervision_tree,
+                        reason_code => maps:get(reason_code, Data)
+                    }
+                ];
+            unavailable ->
+                [
+                    #{
+                        class => required_probe,
+                        probe => supervision_tree,
+                        reason_code => maps:get(reason_code, Data)
+                    }
+                ];
+            _ ->
+                []
+        end,
+    Response#{warnings := supervision_tree_warnings(), errors := Errors};
+capture_supervision_tree(_Request, _Context) ->
+    {probe_error, invalid_request}.
+
+collect_supervision_tree(AppText, Source) ->
+    Risk = supervision_tree_risk(),
+    case resolve_loaded_application(AppText, (maps:get(loaded_fun, Source))()) of
+        not_found ->
+            {ok, Risk#{status => not_found, root => null, children => []}, [
+                public_application_supervisor, one_level_only
+            ]};
+        {ok, App} ->
+            collect_application_root(App, Source, Risk)
+    end.
+
+collect_application_root(App, Source, Risk) ->
+    try (maps:get(supervisor_fun, Source))(App) of
+        undefined ->
+            {ok,
+                Risk#{
+                    status => not_running,
+                    application => {identifier, application, App},
+                    root => null,
+                    children => []
+                },
+                [public_application_supervisor, one_level_only]};
+        {ok, Root} when is_pid(Root), node(Root) =:= node() ->
+            case (maps:get(alive_fun, Source))(Root) of
+                true ->
+                    collect_root_children(App, Root, Source, Risk);
+                false ->
+                    {ok,
+                        Risk#{
+                            status => not_running,
+                            application => {identifier, application, App},
+                            root => null,
+                            children => []
+                        },
+                        [public_application_supervisor, local_live_root, one_level_only]}
+            end;
+        {ok, Root} when is_pid(Root) ->
+            {error, remote_supervisor_root, Risk#{
+                status => error, reason_code => remote_supervisor_root
+            }};
+        _Other ->
+            {error, supervisor_resolution_failed, Risk#{
+                status => error, reason_code => supervisor_resolution_failed
+            }}
+    catch
+        _Class:_Reason:_Stacktrace ->
+            {error, supervisor_resolution_failed, Risk#{
+                status => error, reason_code => supervisor_resolution_failed
+            }}
+    end.
+
+collect_root_children(App, Root, Source, Risk) ->
+    try (maps:get(count_children_fun, Source))(Root) of
+        Counts ->
+            case supervisor_counts(Counts) of
+                {ok, CountMap} ->
+                    preflight_root_children(App, Root, Source, Risk, CountMap);
+                error ->
+                    {error, supervisor_count_failed, Risk#{
+                        status => error, reason_code => supervisor_count_failed
+                    }}
+            end
+    catch
+        _Class:_Reason:_Stacktrace ->
+            {error, supervisor_count_failed, Risk#{
+                status => error, reason_code => supervisor_count_failed
+            }}
+    end.
+
+preflight_root_children(App, Root, Source, Risk, Counts) ->
+    Observed = max(maps:get(active, Counts), maps:get(specs, Counts)),
+    case Observed =< ?SUPERVISOR_SCAN_BUDGET of
+        false ->
+            {unavailable, scan_budget_exceeded, Risk#{
+                status => unavailable,
+                reason_code => scan_budget_exceeded,
+                application => {identifier, application, App},
+                root => {identifier, pid, Root},
+                preflight => Counts,
+                observed_child_count => Observed,
+                scan_budget_count => ?SUPERVISOR_SCAN_BUDGET,
+                children => []
+            }};
+        true ->
+            collect_admitted_root_children(App, Root, Source, Risk, Counts)
+    end.
+
+collect_admitted_root_children(App, Root, Source, Risk, Counts) ->
+    try (maps:get(which_children_fun, Source))(Root) of
+        Children when is_list(Children) ->
+            case valid_supervisor_children(Children) of
+                true ->
+                    ChildCounts = child_identity_counts(Children),
+                    Returned = lists:sublist(Children, ?SUPERVISOR_OUTPUT_CAP),
+                    Items = [supervision_child(Child, ChildCounts, Source) || Child <- Returned],
+                    Unavailable = length([
+                        unavailable
+                     || {Id, _Child, _Type, _Modules} <- Children,
+                        child_identity_available(Id, ChildCounts) =:= false
+                    ]),
+                    {ok,
+                        Risk#{
+                            status => ok,
+                            application => {identifier, application, App},
+                            root => {identifier, pid, Root},
+                            preflight => Counts,
+                            observed_child_count => length(Children),
+                            returned_count => length(Items),
+                            dropped_count => length(Children) - length(Items),
+                            identity_unavailable_count => Unavailable,
+                            children => Items
+                        },
+                        [
+                            public_application_supervisor,
+                            local_live_root,
+                            count_children_preflight,
+                            direct_children_only,
+                            soft_output_cap
+                        ]};
+                false ->
+                    {error, supervisor_children_failed, Risk#{
+                        status => error, reason_code => supervisor_children_failed
+                    }}
+            end;
+        _Other ->
+            {error, supervisor_children_failed, Risk#{
+                status => error, reason_code => supervisor_children_failed
+            }}
+    catch
+        _Class:_Reason:_Stacktrace ->
+            {error, supervisor_children_failed, Risk#{
+                status => error, reason_code => supervisor_children_failed
+            }}
+    end.
+
+supervisor_counts(Counts) when is_list(Counts) ->
+    Values = maps:from_list(Counts),
+    case Values of
+        #{specs := Specs, active := Active, supervisors := Supervisors, workers := Workers} when
+            is_integer(Specs),
+            Specs >= 0,
+            is_integer(Active),
+            Active >= 0,
+            is_integer(Supervisors),
+            Supervisors >= 0,
+            is_integer(Workers),
+            Workers >= 0
+        ->
+            {ok, #{
+                specs => Specs, active => Active, supervisors => Supervisors, workers => Workers
+            }};
+        _ ->
+            error
+    end;
+supervisor_counts(_Counts) ->
+    error.
+
+valid_supervisor_children(Children) ->
+    lists:all(
+        fun
+            ({_Id, Child, Type, _Modules}) when
+                (is_pid(Child) orelse Child =:= restarting orelse Child =:= undefined) andalso
+                    (Type =:= worker orelse Type =:= supervisor)
+            ->
+                true;
+            (_) ->
+                false
+        end,
+        Children
+    ).
+
+child_identity_counts(Children) ->
+    lists:foldl(
+        fun({Id, _Child, _Type, _Modules}, Acc) ->
+            case child_identity(Id) of
+                {ok, Key, _} -> Acc#{Key => maps:get(Key, Acc, 0) + 1};
+                {error, _Reason} -> Acc
+            end
+        end,
+        #{},
+        Children
+    ).
+
+supervision_child({Id, Child, Type, _Modules}, Counts, Source) ->
+    (child_identity_item(Id, Counts))#{
+        type => Type,
+        child => child_pid_item(Child, Source),
+        leaf => true,
+        churn_semantics => aggregate_only
+    }.
+
+child_identity_available(Id, Counts) ->
+    case child_identity(Id) of
+        {ok, Key, _Type} -> maps:get(Key, Counts) =:= 1;
+        {error, _Reason} -> false
+    end.
+
+child_identity_item(Id, Counts) ->
+    case child_identity(Id) of
+        {ok, Key, Type} ->
+            case maps:get(Key, Counts) of
+                1 -> #{identity => available, id_type => Type, id => {identifier, child, Key}};
+                _ -> #{identity => unavailable, identity_reason => duplicate_id, id => null}
+            end;
+        {error, Reason} ->
+            #{identity => unavailable, identity_reason => Reason, id => null}
+    end.
+
+child_identity(undefined) ->
+    {error, dynamic_id};
+child_identity(Id) when is_atom(Id) ->
+    bounded_child_identity(atom, atom_to_binary(Id));
+child_identity(Id) when is_binary(Id) ->
+    bounded_child_identity(binary, Id);
+child_identity(Id) when
+    is_integer(Id),
+    Id >= -(1 bsl ?CHILD_ID_MAX_BITS),
+    Id =< (1 bsl ?CHILD_ID_MAX_BITS)
+->
+    bounded_child_identity(integer, integer_to_binary(Id));
+child_identity(Id) when is_integer(Id) ->
+    {error, oversized_id};
+child_identity(_Id) ->
+    {error, complex_id}.
+
+bounded_child_identity(Type, Value) ->
+    Encoded = <<(atom_to_binary(Type))/binary, $:, Value/binary>>,
+    case byte_size(Encoded) =< ?CHILD_ID_MAX_BYTES of
+        true -> {ok, Encoded, Type};
+        false -> {error, oversized_id}
+    end.
+
+child_pid_item(Pid, Source) when is_pid(Pid), node(Pid) =:= node() ->
+    #{
+        pid => {identifier, pid, Pid},
+        location => local,
+        state =>
+            case (maps:get(alive_fun, Source))(Pid) of
+                true -> alive;
+                false -> dead
+            end
+    };
+child_pid_item(Pid, _Source) when is_pid(Pid) ->
+    #{pid => {identifier, pid, Pid}, location => remote, state => remote};
+child_pid_item(restarting, _Source) ->
+    #{pid => null, location => local, state => restarting};
+child_pid_item(undefined, _Source) ->
+    #{pid => null, location => local, state => undefined}.
+
+resolve_loaded_application(AppText, Loaded) ->
+    case application_name_binary(AppText) of
+        {ok, Name} ->
+            case [App || {App, _Description, _Version} <- Loaded, atom_to_binary(App) =:= Name] of
+                [App] -> {ok, App};
+                _ -> not_found
+            end;
+        error ->
+            not_found
+    end.
+
+application_name_binary(Name) when is_binary(Name), byte_size(Name) > 0, byte_size(Name) =< 255 ->
+    case unicode:characters_to_binary(Name) of
+        Name -> {ok, Name};
+        _ -> error
+    end;
+application_name_binary(Name) when is_list(Name), Name =/= [], length(Name) =< 255 ->
+    case unicode:characters_to_binary(Name) of
+        Binary when is_binary(Binary), byte_size(Binary) =< 255 -> {ok, Binary};
+        _ -> error
+    end;
+application_name_binary(_Name) ->
+    error.
+
+supervision_tree_risk() ->
+    #{
+        risk_level => high,
+        scope => root_and_direct_children,
+        depth => 1,
+        acquisition => #{
+            count_children_complexity => o_children,
+            which_children_complexity => o_children,
+            calls_are_infinity => true,
+            deadline_retracts_delivered_request => false,
+            snapshot_atomic => false
+        },
+        limits => #{
+            scan_budget_count => ?SUPERVISOR_SCAN_BUDGET,
+            output_child_count => ?SUPERVISOR_OUTPUT_CAP,
+            child_id_canonical_bytes => ?CHILD_ID_MAX_BYTES
+        },
+        correlation => #{ambiguous_identity => aggregate_only}
+    }.
+
+supervision_tree_warnings() ->
+    [
+        #{reason_code => count_children_preflight_is_o_children},
+        #{reason_code => supervisor_snapshot_is_non_atomic},
+        #{reason_code => deadline_does_not_retract_infinity_calls},
+        #{reason_code => direct_child_limit_is_output_soft_cap}
+    ].
 
 collect_gen_server_state(Target, Source) ->
     Risk = state_risk_data(),
@@ -1876,7 +2220,10 @@ default_application_source() ->
         loaded_fun => fun application:loaded_applications/0,
         running_fun => fun application:which_applications/1,
         supervisor_fun => fun application:get_supervisor/1,
-        root_info_fun => fun erlang:process_info/2
+        root_info_fun => fun erlang:process_info/2,
+        alive_fun => fun erlang:is_process_alive/1,
+        count_children_fun => fun supervisor:count_children/1,
+        which_children_fun => fun supervisor:which_children/1
     }.
 
 ets_source(Request) ->
@@ -3387,6 +3734,8 @@ identifier_binary(socket, {'$socket', Value}) when is_reference(Value) ->
     {ok, list_to_binary(ref_to_list(Value))};
 identifier_binary(socket, Value) when is_reference(Value) ->
     {ok, list_to_binary(ref_to_list(Value))};
+identifier_binary(child, Value) when is_binary(Value) ->
+    {ok, Value};
 identifier_binary(Type, Value) when
     Type =:= node;
     Type =:= name;
