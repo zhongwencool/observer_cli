@@ -28,6 +28,15 @@ network_counter_states_test() ->
         Reset = #{Port => network_counter_item(Port, 9, 21)},
         [ResetItem] = maps:get(items, observer_cli_snapshot:counter_window(network, First, Reset)),
         ?assertEqual(counter_reset, maps:get(state, ResetItem)),
+        ?assertEqual(0, maps:get(cnt, ResetItem)),
+        CountReset = (network_counter_item(Port, 11, 21))#{
+            counters := #{recv_oct => 11, recv_cnt => 0, send_oct => 21, send_cnt => 3}
+        },
+        [CountResetItem] = maps:get(
+            items, observer_cli_snapshot:counter_window(network, First, #{Port => CountReset})
+        ),
+        ?assertEqual(counter_reset, maps:get(state, CountResetItem)),
+        ?assertEqual(null, maps:get(cnt, CountResetItem)),
         Shape = (network_counter_item(Port, 11, 22))#{
             counters := #{recv_oct => 11}, counter_shape := [recv_oct]
         },
@@ -52,6 +61,26 @@ network_total_and_bounded_delta_fixture_test() ->
             },
             maps:get(<<"vm_port_driver_io">>, Total)
         ),
+        [Listener | _] = [
+            Item
+         || Item <- maps:get(<<"items">>, Total),
+            maps:get(<<"resource">>, Item) =:= list_to_binary(port_to_list(Listen))
+        ],
+        lists:foreach(
+            fun(Key) -> ?assert(maps:is_key(Key, Listener)) end,
+            [
+                <<"recv_cnt">>,
+                <<"send_cnt">>,
+                <<"cnt">>,
+                <<"queue_size">>,
+                <<"memory">>,
+                <<"input">>,
+                <<"output">>,
+                <<"peername">>
+            ]
+        ),
+        ?assertEqual(null, maps:get(<<"peername">>, Listener)),
+        ?assertNot(lists:member(<<"peername">>, maps:get(<<"field_errors">>, Listener))),
         Delta = diagnostic_data(network, #{sort => oct, limit => 20, duration_ms => 250}),
         ?assertEqual(<<"delta">>, maps:get(<<"sort_semantics">>, Delta)),
         ?assertMatch(
@@ -74,6 +103,8 @@ network_port_disappearing_during_stat_read_test() ->
         all_fun => fun() -> {ok, [Port]} end,
         name_fun => fun(_Port) -> {ok, "tcp_inet"} end,
         stat_fun => fun(_Port) -> erlang:error(badarg) end,
+        info_fun => fun(_Port, _Key) -> missing end,
+        peername_fun => fun(_Port) -> {error, enotconn} end,
         io_fun => fun() -> {{input, 0}, {output, 0}} end,
         sleep_fun => fun(_Duration) -> ok end,
         monotonic_fun => fun() -> 0 end
@@ -93,6 +124,8 @@ network_resource_bad_stat_shape_is_treated_as_disappeared_test() ->
         all_fun => fun() -> {ok, [Port]} end,
         name_fun => fun(_Port) -> {ok, "tcp_inet"} end,
         stat_fun => fun(_Port) -> {ok, [{recv_oct, 10}, {send_oct}]} end,
+        info_fun => fun(_Port, _Key) -> missing end,
+        peername_fun => fun(_Port) -> {error, enotconn} end,
         io_fun => fun() -> {{input, 0}, {output, 0}} end,
         sleep_fun => fun(_Duration) -> ok end,
         monotonic_fun => fun() -> 0 end
@@ -104,6 +137,158 @@ network_resource_bad_stat_shape_is_treated_as_disappeared_test() ->
     after
         port_close(Port)
     end.
+
+network_count_context_and_peer_fixture_test() ->
+    FirstPort = open_port({spawn, "cat"}, []),
+    SecondPort = open_port({spawn, "cat"}, []),
+    try
+        Source = network_fixture_source(FirstPort, SecondPort),
+        erase(network_fixture_second),
+        Total = diagnostic_data(network, #{
+            sort => recv_cnt, limit => 1, test_network_source => Source
+        }),
+        [Top] = maps:get(<<"items">>, Total),
+        ?assertEqual(list_to_binary(port_to_list(SecondPort)), maps:get(<<"resource">>, Top)),
+        ?assertEqual(20, maps:get(<<"recv_cnt">>, Top)),
+        ?assertEqual(21, maps:get(<<"cnt">>, Top)),
+        ?assertEqual(<<"10.0.0.1:2883">>, maps:get(<<"peername">>, Top)),
+        erase(network_fixture_second),
+        SendTop = diagnostic_data(network, #{
+            sort => send_cnt, limit => 1, test_network_source => Source
+        }),
+        [SendTopItem] = maps:get(<<"items">>, SendTop),
+        ?assertEqual(
+            list_to_binary(port_to_list(FirstPort)), maps:get(<<"resource">>, SendTopItem)
+        ),
+        erase(network_fixture_second),
+        PeerErrorSource = Source#{
+            peername_fun := fun
+                (Port) when Port =:= FirstPort -> {error, eio};
+                (_Port) -> {ok, {{10, 0, 0, 1}, 2883}}
+            end
+        },
+        All = diagnostic_data(network, #{
+            sort => cnt, limit => 2, test_network_source => PeerErrorSource
+        }),
+        [First] = [
+            Item
+         || Item <- maps:get(<<"items">>, All),
+            maps:get(<<"resource">>, Item) =:= list_to_binary(port_to_list(FirstPort))
+        ],
+        ?assertEqual(null, maps:get(<<"memory">>, First)),
+        ?assertEqual([<<"memory">>, <<"peername">>], maps:get(<<"field_errors">>, First)),
+        erase(network_fixture_second),
+        RedactedResponse = diagnostic_response_policy(
+            network, #{sort => cnt, limit => 2, test_network_source => Source}, redact
+        ),
+        Redacted = maps:get(<<"data">>, RedactedResponse),
+        [RedactedTop, RedactedSecond] = maps:get(<<"items">>, Redacted),
+        Endpoint = maps:get(<<"peername">>, RedactedTop),
+        ?assertMatch(<<"endpoint-", _/binary>>, Endpoint),
+        ?assertEqual(Endpoint, maps:get(<<"peername">>, RedactedSecond)),
+        LeakedItem = RedactedTop#{
+            <<"peername">> := #{<<"data">> => <<"10.0.0.1:2883">>}
+        },
+        LeakedResponse = RedactedResponse#{
+            <<"data">> := Redacted#{<<"items">> := [LeakedItem, RedactedSecond]}
+        },
+        ?assertMatch(
+            {error, invalid_command_response},
+            observer_cli_escriptize:validate_response(network, redact, node(), LeakedResponse)
+        ),
+        erase(network_fixture_second),
+        Delta = diagnostic_data(network, #{
+            sort => cnt, limit => 2, duration_ms => 250, test_network_source => Source
+        }),
+        [DeltaTop | _] = maps:get(<<"items">>, Delta),
+        ?assertEqual(list_to_binary(port_to_list(FirstPort)), maps:get(<<"resource">>, DeltaTop)),
+        ?assertEqual(8, maps:get(<<"cnt">>, DeltaTop)),
+        ?assertEqual(9, maps:get(<<"queue_size">>, DeltaTop)),
+        ?assertEqual(7, maps:get(<<"memory">>, DeltaTop)),
+        ?assertEqual(4, maps:get(<<"input">>, DeltaTop)),
+        ?assertEqual(5, maps:get(<<"output">>, DeltaTop)),
+        ?assertEqual(<<"10.0.0.2:3883">>, maps:get(<<"peername">>, DeltaTop)),
+        EqualStats = fun(_Port) ->
+            {ok, [{recv_oct, 1}, {recv_cnt, 1}, {send_oct, 1}, {send_cnt, 1}]}
+        end,
+        Tie = diagnostic_data(network, #{
+            sort => cnt,
+            limit => 2,
+            test_network_source => Source#{stat_fun := EqualStats}
+        }),
+        ?assertEqual(
+            [list_to_binary(port_to_list(FirstPort)), list_to_binary(port_to_list(SecondPort))],
+            [maps:get(<<"resource">>, Item) || Item <- maps:get(<<"items">>, Tie)]
+        )
+    after
+        erase(network_fixture_second),
+        port_close(FirstPort),
+        port_close(SecondPort)
+    end.
+
+network_fixture_source(FirstPort, SecondPort) ->
+    #{
+        count_fun => fun() -> 2 end,
+        all_fun => fun() -> {ok, [FirstPort, SecondPort]} end,
+        name_fun => fun(_Port) -> {ok, "tcp_inet"} end,
+        stat_fun => fun(Port) ->
+            Second = get(network_fixture_second) =:= true,
+            case {Port, Second} of
+                {FirstPort, false} ->
+                    {ok, [{recv_oct, 100}, {recv_cnt, 10}, {send_oct, 20}, {send_cnt, 2}]};
+                {FirstPort, true} ->
+                    {ok, [{recv_oct, 130}, {recv_cnt, 15}, {send_oct, 27}, {send_cnt, 5}]};
+                {SecondPort, false} ->
+                    {ok, [{recv_oct, 200}, {recv_cnt, 20}, {send_oct, 10}, {send_cnt, 1}]};
+                {SecondPort, true} ->
+                    {ok, [{recv_oct, 201}, {recv_cnt, 21}, {send_oct, 11}, {send_cnt, 2}]}
+            end
+        end,
+        info_fun => fun
+            (Port, memory) when Port =:= FirstPort ->
+                case get(network_fixture_second) of
+                    true -> {ok, 7};
+                    _ -> missing
+                end;
+            (_Port, queue_size) ->
+                {ok,
+                    case get(network_fixture_second) of
+                        true -> 9;
+                        _ -> 1
+                    end};
+            (_Port, input) ->
+                {ok,
+                    case get(network_fixture_second) of
+                        true -> 4;
+                        _ -> 2
+                    end};
+            (_Port, output) ->
+                {ok,
+                    case get(network_fixture_second) of
+                        true -> 5;
+                        _ -> 2
+                    end};
+            (_Port, _Key) ->
+                {ok, 2}
+        end,
+        peername_fun => fun(_Port) ->
+            case get(network_fixture_second) of
+                true -> {ok, {{10, 0, 0, 2}, 3883}};
+                _ -> {ok, {{10, 0, 0, 1}, 2883}}
+            end
+        end,
+        io_fun => fun() -> {{input, 0}, {output, 0}} end,
+        sleep_fun => fun(_Duration) ->
+            put(network_fixture_second, true),
+            ok
+        end,
+        monotonic_fun => fun() ->
+            case get(network_fixture_second) of
+                true -> 250;
+                _ -> 0
+            end
+        end
+    }.
 
 start_manager_branches_test() ->
     Inputs = [
@@ -185,16 +370,22 @@ network_counter_item(Port, Recv, Send) ->
         raw_id => Port,
         resource => {identifier, port, Port},
         protocol => tcp,
-        counters => #{recv_oct => Recv, send_oct => Send},
-        counter_shape => [recv_oct, send_oct]
+        counters => #{recv_oct => Recv, recv_cnt => 1, send_oct => Send, send_cnt => 2},
+        counter_shape => [recv_cnt, recv_oct, send_cnt, send_oct]
     }.
 
 diagnostic_data(Command, Request) ->
-    #{<<"status">> := <<"ok">>, <<"result">> := #{<<"data">> := Data}} =
+    diagnostic_data_policy(Command, Request, include).
+
+diagnostic_data_policy(Command, Request, Policy) ->
+    maps:get(<<"data">>, diagnostic_response_policy(Command, Request, Policy)).
+
+diagnostic_response_policy(Command, Request, Policy) ->
+    #{<<"status">> := <<"ok">>, <<"result">> := Response} =
         observer_cli_snapshot:dispatch(
-            self(), Command, Request, #{timeout_ms => 7000, identifier_policy => include}
+            self(), Command, Request, #{timeout_ms => 7000, identifier_policy => Policy}
         ),
-    Data.
+    Response.
 
 collect_inet_info_test() ->
     ?assert(is_list(observer_cli_inet:collect_inet_info(inet_count, recv_cnt, 0, 1500, 0))),

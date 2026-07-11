@@ -379,6 +379,10 @@ command_help_test() ->
     observer_cli_test_io:assert_stable_fragments(ProcessesHelp, [
         "message_queue_len", "250ms..10s", "--sort reductions"
     ]),
+    {ok, NetworkHelp} = observer_cli_test_io:capture_with_geometry(
+        24, 80, [], fun() -> observer_cli_escriptize:main(["network", "--help"]) end
+    ),
+    observer_cli_test_io:assert_stable_fragments(NetworkHelp, ["recv_cnt", "send_cnt", "cnt"]),
     {ok, TraceHelp} = observer_cli_test_io:capture_with_geometry(
         24, 80, [], fun() -> observer_cli_escriptize:main(["trace", "--help"]) end
     ),

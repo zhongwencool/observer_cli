@@ -271,7 +271,7 @@ command_help("network") ->
     counter_help(
         "network",
         "Show VM port-driver and legacy inet counters, not all host network traffic.",
-        "oct (default), recv_oct, send_oct"
+        "oct (default), recv_oct, send_oct, cnt, recv_cnt, send_cnt"
     );
 command_help("ports") ->
     list_help(
@@ -1399,6 +1399,10 @@ valid_redacted_identifier_field(Key, Value) when is_binary(Value) ->
         undefined -> true;
         Prefix -> valid_stable_identifier(Prefix, Value)
     end;
+valid_redacted_identifier_field(Key, _Value) when
+    Key =:= <<"sockname">>; Key =:= <<"peername">>
+->
+    false;
 valid_redacted_identifier_field(_Key, _Value) ->
     true.
 

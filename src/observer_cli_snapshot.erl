@@ -1819,7 +1819,7 @@ valid_table_request(Sort, Limit) ->
         is_integer(Limit) andalso Limit >= 1 andalso Limit =< 200.
 
 valid_counter_request(network, Sort, Limit, Duration) ->
-    valid_counter_values(Sort, [oct, recv_oct, send_oct], Limit, Duration);
+    valid_counter_values(Sort, [oct, recv_oct, send_oct, cnt, recv_cnt, send_cnt], Limit, Duration);
 valid_counter_request(sockets, Sort, Limit, Duration) ->
     valid_counter_values(
         Sort, [io, read_bytes, write_bytes, packets, waits, fails], Limit, Duration
@@ -2984,7 +2984,9 @@ default_network_source() ->
         count_fun => fun() -> erlang:system_info(port_count) end,
         all_fun => fun safe_ports/0,
         name_fun => fun(Port) -> safe_port_info(Port, name) end,
-        stat_fun => fun(Port) -> inet:getstat(Port, [recv_oct, send_oct]) end,
+        stat_fun => fun(Port) -> inet:getstat(Port, [recv_oct, recv_cnt, send_oct, send_cnt]) end,
+        info_fun => fun safe_port_info/2,
+        peername_fun => fun inet:peername/1,
         io_fun => fun() -> erlang:statistics(io) end,
         sleep_fun => fun timer:sleep/1,
         monotonic_fun => fun() -> erlang:monotonic_time(millisecond) end
@@ -3216,13 +3218,23 @@ network_resource(Port, Source) ->
                         {ok, Stats} ->
                             case parse_network_counters(Stats) of
                                 {ok, Counters} ->
-                                    #{
+                                    Fields = [queue_size, memory, input, output],
+                                    Values = maps:from_list([
+                                        {Key, network_port_field(Port, Key, Source)}
+                                     || Key <- Fields
+                                    ]),
+                                    {Peername, PeerErrors} = network_peername(Port, Source),
+                                    maps:merge(Values, #{
                                         raw_id => Port,
                                         resource => {identifier, port, Port},
                                         protocol => Protocol,
+                                        peername => Peername,
+                                        field_errors =>
+                                            [Key || Key <- Fields, maps:get(Key, Values) =:= null] ++
+                                            PeerErrors,
                                         counters => Counters,
                                         counter_shape => lists:sort(maps:keys(Counters))
-                                    };
+                                    });
                                 error ->
                                     disappeared
                             end;
@@ -3234,6 +3246,21 @@ network_resource(Port, Source) ->
             end;
         missing ->
             disappeared
+    end.
+
+network_port_field(Port, Key, Source) ->
+    try (maps:get(info_fun, Source))(Port, Key) of
+        Value -> port_field(Value)
+    catch
+        _:_ -> null
+    end.
+
+network_peername(Port, Source) ->
+    Result = call_port_fun(peername_fun, Port, Source),
+    case {Result, port_endpoint(Result)} of
+        {{error, enotconn}, Peername} -> {Peername, []};
+        {_Result, null} -> {null, [peername]};
+        {_Result, Peername} -> {Peername, []}
     end.
 
 parse_network_counters(Stats) ->
@@ -3742,7 +3769,10 @@ add_network_metrics(Item, Counters) ->
     add_metrics(Item, #{
         recv_oct => counter_metric(Counters, [recv_oct], []),
         send_oct => counter_metric(Counters, [send_oct], []),
-        oct => counter_metric(Counters, [recv_oct, send_oct], [])
+        oct => counter_metric(Counters, [recv_oct, send_oct], []),
+        recv_cnt => counter_metric(Counters, [recv_cnt], []),
+        send_cnt => counter_metric(Counters, [send_cnt], []),
+        cnt => counter_metric(Counters, [recv_cnt, send_cnt], [])
     }).
 
 add_socket_metrics(Item, Counters) ->
@@ -3955,7 +3985,12 @@ unavailable_delta_item(network, Item, State) ->
         recv_oct => null,
         send_oct => null,
         oct => null,
-        metric_states => #{recv_oct => State, send_oct => State, oct => State}
+        recv_cnt => null,
+        send_cnt => null,
+        cnt => null,
+        metric_states => maps:from_keys(
+            [recv_oct, send_oct, oct, recv_cnt, send_cnt, cnt], State
+        )
     };
 unavailable_delta_item(sockets, Item, State) ->
     Keys = [io, read_bytes, write_bytes, packets, waits, fails],
@@ -3968,7 +4003,22 @@ unavailable_delta_item(sockets, Item, State) ->
 resource_item_state(Item) -> maps:get(state, Item, available).
 
 rank_resource_items(Items, Sort, Limit) ->
-    recon_top_n(Items, Sort, Limit).
+    lists:sublist(lists:sort(fun(A, B) -> resource_precedes(A, B, Sort) end, Items), Limit).
+
+resource_precedes(A, B, Sort) ->
+    AValue = maps:get(Sort, A, null),
+    BValue = maps:get(Sort, B, null),
+    case {is_integer(AValue), is_integer(BValue)} of
+        {true, true} ->
+            AValue > BValue orelse
+                (AValue =:= BValue andalso maps:get(raw_id, A) < maps:get(raw_id, B));
+        {true, false} ->
+            true;
+        {false, true} ->
+            false;
+        {false, false} ->
+            maps:get(raw_id, A) < maps:get(raw_id, B)
+    end.
 
 recon_top_n(Items, Sort, Limit) ->
     [
@@ -4006,7 +4056,7 @@ raw_resource_identifier(Id) -> Id.
 resource_status(0) -> empty;
 resource_status(_) -> ok.
 
-tracked_counter_fields(network) -> 2;
+tracked_counter_fields(network) -> 4;
 tracked_counter_fields(sockets) -> 14.
 
 socket_counter_keys() ->
@@ -4028,7 +4078,7 @@ socket_counter_keys() ->
     ].
 
 resource_coverage(network, _Coverage) ->
-    [legacy_inet_ports_only, vm_port_driver_counters, raw_port_identity];
+    [legacy_inet_ports_only, vm_port_driver_counters, raw_port_identity, port_context, peername];
 resource_coverage(sockets, Coverage) ->
     lists:usort([registry_known_sockets, opaque_raw_socket_identity | Coverage]).
 

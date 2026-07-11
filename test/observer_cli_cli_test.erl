@@ -666,6 +666,15 @@ io_resource_options_test() ->
         {ok, #{command := network, options := #{sort := "recv_oct", duration := "250ms"}}},
         observer_cli_cli:parse(["network", "--sort", "recv_oct", "--duration", "250ms"])
     ),
+    lists:foreach(
+        fun(Sort) ->
+            ?assertMatch(
+                {ok, #{command := network}},
+                observer_cli_cli:parse(["network", "--sort", Sort])
+            )
+        end,
+        ["recv_cnt", "send_cnt", "cnt"]
+    ),
     ?assertMatch(
         {ok, #{command := ports, options := #{sort := "io", limit := "7"}}},
         observer_cli_cli:parse(["ports", "--sort", "io", "--limit", "7"])
@@ -676,6 +685,15 @@ io_resource_options_test() ->
     ),
     ?assertMatch(
         {error, #{reason := invalid_sort}}, observer_cli_cli:parse(["network", "--sort", "io"])
+    ),
+    lists:foreach(
+        fun(Sort) ->
+            ?assertMatch(
+                {error, #{reason := invalid_sort}},
+                observer_cli_cli:parse(["network", "--sort", Sort])
+            )
+        end,
+        ["queue_size", "memory", "input", "output"]
     ),
     ?assertMatch(
         {error, #{reason := unsupported_command_option}},

@@ -42,7 +42,7 @@ store 和 collector 进程，因此 process、port、atom、memory、reductions�
 | Home 系统概要 | `snapshot`、`memory`、`schedulers` | 部分覆盖 | 主机 CPU/内存占比、active tasks、context switches、总 reductions/增量、逐 scheduler 利用率 |
 | Home 进程 Top N | `processes` | 部分覆盖 | CLI 每行不总是返回 TUI 全部列；只有 reductions 支持窗口排序 |
 | Process Info | `process TARGET`、`gen-server-state TARGET` | 部分覆盖 | `messages`、`dictionary` 有意排除；state 只返回有界 shape |
-| Network | `network` | 部分覆盖 | packet count、peer、queue/memory、port input/output |
+| Network | `network` | 部分覆盖 | 字段已覆盖；collector 未直接复用 recon 的两种视角 |
 | Ports | `ports`、`port TARGET` | 已覆盖 | 列表字段及有界详情均覆盖；`locking` 为实现相关信息 |
 | Sockets | `sockets` | 部分覆盖 | general counters、endpoint/state/owner/fd、accept/max packet、详情 counters/options |
 | System | `snapshot`、`memory`、`schedulers`、`distribution`、`network` | 部分覆盖 | 主机 RSS/VSZ、CPU 拓扑细项、distribution 连接细节 |
@@ -213,13 +213,13 @@ CLI 深度快照还实测得到：
 | VM IO input/output total | `vm_port_driver_io.*_bytes_total` | 已覆盖 | |
 | VM IO input/output delta | `--duration` 的 `*_bytes_delta` | 已覆盖 | |
 | recv_oct、send_oct、oct | 同名字段和 sort | 已覆盖 | legacy inet ports only |
-| recv_cnt、send_cnt、cnt | 无 | 未实现 | CLI 只支持 byte metrics |
+| recv_cnt、send_cnt、cnt | 同名字段和 sort | 已覆盖 | lifetime total 或 duration delta |
 | port id | `resource` | 已覆盖 | |
 | protocol | `protocol` | 已覆盖 | |
-| port input/output | 无 per-item 字段 | 未实现 | CLI 的 VM IO 不是每个 inet port 的 port input/output |
-| queue_size | 无 | 未实现 | |
-| memory | 无 | 未实现 | |
-| peername | 无 | 未实现 | |
+| port input/output | `input`、`output` | 已覆盖 | duration 使用第二次采样的当前值 |
+| queue_size | `queue_size` | 已覆盖 | 不扩展 sort allowlist |
+| memory | `memory` | 已覆盖 | 不扩展 sort allowlist |
+| peername | `peername` | 已覆盖 | 默认显示；`--redact` 和 deep snapshot 使用稳定 endpoint ID；listener 为 `null` |
 | recon `inet_count`/`inet_window` 两种视角 | point-in-time 或 `--duration` | 部分覆盖 | CLI 使用自己的有界 counter collector |
 
 `network --sort oct --limit 10` 和带 `--duration` 的窗口路径均已通过 OTP 29 live
@@ -363,10 +363,9 @@ CLI 只列 local tables，并明确区分 RAM/disc memory bytes 与 disc-only di
 
 ### P0：直接影响常见排障
 
-1. Network 每连接的 `recv_cnt/send_cnt/cnt`、peer、queue size、memory、port input/output。
-2. Ports：controls、slot、parallelism、locking、monitors、monitored_by。
-3. Distribution：address、in/out、type、state。
-4. Applications：version 和 `no_group` 的 memory/reductions/msgq 聚合。
+1. Ports：controls、slot、parallelism、locking、monitors、monitored_by。
+2. Distribution：address、in/out、type、state。
+3. Applications：version 和 `no_group` 的 memory/reductions/msgq 聚合。
 
 ### P1：有诊断价值，但可按需增加
 
@@ -403,5 +402,5 @@ socket options 塞进 `snapshot`。这些数据复制成本和敏感信息风险
 - limit、timeout、resource budget、born/gone/reset/shape-change 语义。
 
 结论：命令式 CLI 已实现 TUI 的主要“资源是什么、当前多大、Top N 是谁”，但尚未实现
-TUI 的全部“详情和辅助上下文”。最明显的缺口集中在 Network、Process signals/GC、
+TUI 的全部“详情和辅助上下文”。最明显的缺口集中在 Process signals/GC、
 Ports detail、Sockets detail，以及各页面只为人读而存在的扩展字段。

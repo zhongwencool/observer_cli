@@ -280,7 +280,7 @@ observer_cli tui diagnose COOKIE 1500
 | `applications` | group-leader attribution 的 count/memory/reductions/msgq | `--sort`、`--limit` | 近似归因，不是严格 ownership |
 | `ets` | table metadata、size、memory、owner | `--sort`、`--limit` | 不读 table content |
 | `mnesia` | table metadata、storage、size、memory | `--sort`、`--limit` | 未运行是 `not_running`，不是故障 |
-| `network` | VM port-driver IO 与 legacy inet TCP/UDP/SCTP counters | `--sort`、`--duration`、`--limit` | 不是主机全部网络流量 |
+| `network` | VM port-driver IO、legacy inet counters、port context 与 peer | `--sort`、`--duration`、`--limit`、`--redact` | 不是主机全部网络流量 |
 | `ports` | best-effort 非 inet Erlang Port queue/memory/connected PID | `--sort`、`--limit` | 分类只靠 documented port name heuristic；不是 TCP/UDP port number |
 | `port TARGET` | 单个 Port 的 scalars、signals 和 inet detail | `--redact` | raw target-local `#Port<0.N>`；signals 每组最多 30 项 |
 | `sockets` | OTP socket registry-known overview/counters | `--sort`、`--duration`、`--limit` | 不可见 registry-disabled sockets；enumeration error 不得伪装成 empty |
@@ -301,11 +301,11 @@ v1 `--sort` 是固定 allowlist；unknown key 退出 2。CLI key 保持简短，
 | `applications` | `memory` | `memory`、`process_count`、`reductions`、`message_queue_len` | bytes/count；current/lifetime aggregate |
 | `ets` | `memory` | `memory`、`size` | bytes/rows；current gauge |
 | `mnesia` | `memory` | `memory`、`size` | local in-memory bytes/rows；disc_only/external storage 不 eligible for memory sort |
-| `network` | `oct` | `oct`、`recv_oct`、`send_oct` | bytes；lifetime total 或 duration delta |
+| `network` | `oct` | `oct`、`recv_oct`、`send_oct`、`cnt`、`recv_cnt`、`send_cnt` | bytes/count；lifetime total 或 duration delta |
 | `ports` | `queue_size` | `queue_size`、`memory`、`input`、`output`、`io` | bytes；queue/memory gauge，input/output/io lifetime counter |
 | `sockets` | `io` | `io`、`read_bytes`、`write_bytes`、`packets`、`waits`、`fails` | bytes 或 count；lifetime total 或 duration delta |
 
-`oct = recv_oct + send_oct`、Port `io = input + output`。Socket composites 固定为：
+`oct = recv_oct + send_oct`、`cnt = recv_cnt + send_cnt`、Port `io = input + output`。Network 的 `queue_size`、`memory`、`input`、`output`、`peername` 是当前上下文，不参与排序；duration 使用第二次采样值。Socket composites 固定为：
 
 ```text
 read_bytes  = read_byte
@@ -394,7 +394,7 @@ Top N 在 target 侧使用 `{metric, canonical_raw_id}` 作为选择 key，再�
 - `port TARGET` 显式逐键读取基础字段及 links/monitors/monitored_by，每组 signals 最多 30 项；inet detail 固定为 sockname/peername、官方 10 项 statistics 和 TUI option allowlist。options 逐项标 `available|unsupported|error`，只允许标量及结构化 linger。endpoint、interface、netns 默认显示，`--redact` 映射为报告内稳定 ID。解析仅在 target side 对长度、格式和 round-trip 校验后的 raw Port 文本调用 `list_to_port/1`；非法或已消失对象统一 `status=not_found`。
 - Cross-sample correlation 在 target side 使用完整 raw identity：process 用 PID；ETS 用 `ets:info(Table,id)`；legacy inet/network 和 port 用完整 raw `Port` term；socket 用完整 opaque raw Socket term/ref。绝不使用可复用的 port slot/`port_info(id)`、socket fd、name 或展示字符串作为 generation。完成 stable intersection/born/dead 分类后才映射 report ID；同 fd/slot 重用不能拼接成一条 delta。
 - `socket:number_of/0` 与 `socket:which_sockets/0` 只覆盖 socket registry 已知对象。probe 固定输出 `coverage=registry_known_sockets` 和 `socket:info().use_registry`；即使全局为 true，per-open override 仍让 completeness 不可证明。admission count 也是 registry-known count；空结果只能写 `no_registry_known_sockets`，绝不能写“no sockets”或据此判断 healthy。
-- v1 network/socket probes 只输出 counters、raw-ID 映射和 domain/type/protocol 等非 endpoint metadata；不调用 `inet:peername|sockname` 或 `socket:peername|sockname`，因此不采 IP:port 或 Unix socket path。未来若加入 endpoint，必须纳入 identifier/redaction policy，不能沿用当前 TUI renderer 直接输出。
+- v1 network probe 调用 `inet:peername/1`，默认显示 endpoint，`--redact` 和默认脱敏的 deep snapshot 映射为报告内稳定 ID；listener/无远端返回 `null`。socket probe 仍不调用 `socket:peername|sockname`。
 
 ## 9. 高风险只读命令
 
@@ -1011,7 +1011,7 @@ Trace 因 count/rate 自然停止时仍是成功 capture，response 标记 `limi
 - Mnesia ram_copies/disc_copies words→bytes、disc_only bytes-on-disk 不乘 wordsize、external/unknown null；remote-only table 不进 `local_tables` report；
 - socket enumeration error 不伪装成 empty；Mnesia/socket unavailable 不等于健康或故障；
 - `socket:use_registry(false)`/per-open override 的 live socket 不可枚举 fixture；coverage 固定为 registry-known，empty 只表示 `no_registry_known_sockets`；
-- network/socket probe 不调用 peername/sockname；只有显式 `port TARGET` 返回 endpoint，并受 redaction policy 约束；
+- network peername 与显式 `port TARGET` endpoint 均受 redaction policy 约束；socket probe 不调用 peername/sockname；
 - OTP 26–29 socket counter-shape fixtures：core key missing 使 metric unavailable；sendfile optional absent 贡献 0 且进入 coverage；composite 任一已有 counter reset 使 delta invalid；
 - ports inventory 不调用 `port_info/1`，不会隐式读取 monitors/monitored_by；只有显式 `port TARGET` 逐键读取有界 signals；name heuristic 误分类用 fixture 固定为 best-effort；
 - 10 万级 disposable process/table/port 的 scan admission、peak worker heap、timeout 与 controller-disconnect cleanup；

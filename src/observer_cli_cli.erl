@@ -249,7 +249,9 @@ validate_runtime_options(Command, Options) when Command =:= ets; Command =:= mne
         false -> {error, unsupported_command_option}
     end;
 validate_runtime_options(network, Options) ->
-    validate_counter_list_options(network, Options, ["oct", "recv_oct", "send_oct"]);
+    validate_counter_list_options(
+        network, Options, ["oct", "recv_oct", "send_oct", "cnt", "recv_cnt", "send_cnt"]
+    );
 validate_runtime_options(ports, Options) ->
     case only_options(ports, Options, [sort, limit]) of
         true -> validate_list_options(Options, ["queue_size", "memory", "input", "output", "io"]);
