@@ -180,6 +180,188 @@ runtime_inspection_commands() ->
     ),
     ?assert(is_list(maps:get(<<"controller_queues">>, DistributionData))).
 
+process_inventory_boundary_and_stable_top_n_test() ->
+    Parent = self(),
+    Pids = [spawn(fun process_fixture/0) || _ <- lists:seq(1, 4)],
+    try
+        Values = maps:from_list(lists:zip(Pids, [10, 20, 20, 5])),
+        Source = process_source(Pids, fun(Pid, Keys) ->
+            Parent ! {process_info_keys, Keys},
+            process_info_fixture(Pid, Keys, maps:get(Pid, Values))
+        end),
+        Response = inspection_include(processes, #{
+            sort => memory, limit => 2, test_process_source => Source
+        }),
+        Data = maps:get(<<"data">>, Response),
+        ?assertEqual(4, maps:get(<<"scanned_count">>, Data)),
+        ?assertEqual(4, maps:get(<<"eligible_count">>, Data)),
+        ?assertEqual(2, maps:get(<<"returned_count">>, Data)),
+        ?assertEqual(2, maps:get(<<"dropped_count">>, Data)),
+        ?assertEqual(<<"fixture_list">>, maps:get(<<"inventory_path">>, Data)),
+        [First, Second] = maps:get(<<"items">>, Data),
+        ExpectedTie = lists:sort([lists:nth(2, Pids), lists:nth(3, Pids)]),
+        ?assertEqual(
+            [list_to_binary(pid_to_list(Pid)) || Pid <- ExpectedTie],
+            [maps:get(<<"pid">>, First), maps:get(<<"pid">>, Second)]
+        ),
+        KeysList = [
+            receive
+                {process_info_keys, K} -> K
+            end
+         || _ <- Pids
+        ],
+        ?assert(
+            lists:all(
+                fun(Keys) ->
+                    Keys =:= [current_function, initial_call, memory, registered_name]
+                end,
+                KeysList
+            )
+        ),
+        Forbidden = [
+            messages,
+            dictionary,
+            state,
+            current_stacktrace,
+            links,
+            monitors,
+            monitored_by,
+            suspending,
+            binary
+        ],
+        ?assertEqual([], [Key || Keys <- KeysList, Key <- Keys, lists:member(Key, Forbidden)]),
+        ?assertEqual(nomatch, binary:match(term_to_binary(Response), <<"#Ref<">>))
+    after
+        lists:foreach(fun(Pid) -> exit(Pid, kill) end, Pids)
+    end.
+
+binary_memory_is_explicit_and_refs_do_not_escape_test() ->
+    Parent = self(),
+    Pid = spawn(fun process_fixture/0),
+    Reference = make_ref(),
+    try
+        Source = process_source([Pid], fun(_Pid, Keys) ->
+            Parent ! {binary_keys, Keys},
+            [
+                {registered_name, []},
+                {current_function, {?MODULE, process_fixture, 0}},
+                {initial_call, {?MODULE, process_fixture, 0}},
+                {memory, 100},
+                {binary, [{Reference, 42, 1}]}
+            ]
+        end),
+        Response = inspection(processes, #{
+            sort => binary_memory, limit => 1, test_process_source => Source
+        }),
+        receive
+            {binary_keys, Keys} -> ?assertEqual(true, lists:member(binary, Keys))
+        end,
+        [Item] = maps:get(<<"items">>, maps:get(<<"data">>, Response)),
+        ?assertEqual(42, maps:get(<<"binary_memory_bytes">>, Item)),
+        ?assertEqual(nomatch, binary:match(term_to_binary(Response), ref_to_binary(Reference)))
+    after
+        exit(Pid, kill)
+    end.
+
+stable_process_window_lifecycle_and_late_hot_test() ->
+    Pids = [spawn(fun process_fixture/0) || _ <- lists:seq(1, 5)],
+    [Stable, LateHot, Reset, Dead, Born] = Pids,
+    try
+        Window = observer_cli_snapshot:stable_process_window(
+            #{Stable => 10, LateHot => 10, Reset => 50, Dead => 1},
+            #{Stable => 20, LateHot => 1010, Reset => 2, Born => 9999},
+            250
+        ),
+        ?assertEqual(#{Stable => 10, LateHot => 1000}, maps:get(stable, Window)),
+        ?assertEqual([Born], maps:get(born, Window)),
+        ?assertEqual([Dead], maps:get(dead, Window)),
+        ?assertEqual([Reset], maps:get(reset, Window))
+    after
+        lists:foreach(fun(Pid) -> exit(Pid, kill) end, Pids)
+    end.
+
+reduction_window_keeps_full_baseline_and_stable_pids_test() ->
+    Pids = [spawn(fun process_fixture/0) || _ <- lists:seq(1, 5)],
+    [Stable, LateHot, Reset, Dead, Born] = Pids,
+    try
+        Source = #{
+            count_fun => fun() -> 5 end,
+            fold =>
+                {fixture_window, fun(Fun, Acc) ->
+                    Sample =
+                        case get(goal08_sample) of
+                            undefined -> 1;
+                            N -> N + 1
+                        end,
+                    put(goal08_sample, Sample),
+                    Current =
+                        case Sample of
+                            1 -> [Stable, LateHot, Reset, Dead];
+                            2 -> [Stable, LateHot, Reset, Born]
+                        end,
+                    lists:foldl(Fun, Acc, Current)
+                end},
+            info_fun => fun(Pid, [reductions]) ->
+                Sample = get(goal08_sample),
+                Values =
+                    case Sample of
+                        1 -> #{Stable => 10, LateHot => 10, Reset => 50, Dead => 1};
+                        2 -> #{Stable => 20, LateHot => 1010, Reset => 2, Born => 9999}
+                    end,
+                [{reductions, maps:get(Pid, Values)}]
+            end,
+            sleep_fun => fun(_Duration) -> ok end,
+            monotonic_fun => fun() ->
+                case get(goal08_clock) of
+                    undefined ->
+                        put(goal08_clock, 250),
+                        0;
+                    N ->
+                        N
+                end
+            end,
+            whereis_fun => fun erlang:whereis/1,
+            alive_fun => fun erlang:is_process_alive/1
+        },
+        Response = inspection_include(processes, #{
+            sort => reductions, limit => 1, duration_ms => 250, test_process_source => Source
+        }),
+        Data = maps:get(<<"data">>, Response),
+        [Item] = maps:get(<<"items">>, Data),
+        ?assertEqual(list_to_binary(pid_to_list(LateHot)), maps:get(<<"pid">>, Item)),
+        ?assertEqual(1000, maps:get(<<"reductions_delta">>, Item)),
+        ?assertEqual(4, maps:get(<<"baseline_count">>, Data)),
+        ?assertEqual(1, maps:get(<<"born_count">>, Data)),
+        ?assertEqual(1, maps:get(<<"dead_count">>, Data)),
+        ?assertEqual(1, maps:get(<<"reset_count">>, Data)),
+        ?assertEqual(2, maps:get(<<"retained_sample_count">>, Data)),
+        ?assert(maps:get(<<"working_set_estimated_bytes">>, Data) > 0)
+    after
+        lists:foreach(fun(Pid) -> exit(Pid, kill) end, Pids)
+    end.
+
+process_scan_admission_refuses_before_enumeration_test() ->
+    Parent = self(),
+    Source = (process_source([], fun(_Pid, _Keys) -> undefined end))#{
+        count_fun => fun() -> 100001 end,
+        fold =>
+            {must_not_scan, fun(_Fun, Acc) ->
+                Parent ! scanned,
+                Acc
+            end}
+    },
+    Response = inspection(processes, #{sort => memory, test_process_source => Source}),
+    Data = maps:get(<<"data">>, Response),
+    ?assertEqual(<<"scan_budget_exceeded">>, maps:get(<<"reason_code">>, Data)),
+    ?assertEqual(<<"pre_enumeration">>, maps:get(<<"admission_stage">>, Data)),
+    receive
+        scanned -> ?assert(false)
+    after 50 -> ok
+    end,
+    [Probe] = maps:get(<<"probes">>, maps:get(<<"capture">>, Response)),
+    ?assertEqual(<<"unavailable">>, maps:get(<<"status">>, Probe)),
+    ?assertEqual(<<"complete">>, maps:get(<<"status">>, maps:get(<<"capture">>, Response))).
+
 scheduler_window_invalidates_unsafe_samples_test() ->
     First = scheduler_sample_fixture(#{1 => {10, 20}, 3 => {5, 10}}, 0),
     Valid = observer_cli_snapshot:scheduler_window(
@@ -473,6 +655,44 @@ inspection(Command, Request) ->
             options(3000, redact)
         ),
     Response.
+
+inspection_include(Command, Request) ->
+    #{<<"status">> := <<"ok">>, <<"result">> := Response} =
+        observer_cli_snapshot:dispatch(
+            self(), Command, Request, options(3000, include)
+        ),
+    Response.
+
+process_source(Pids, InfoFun) ->
+    #{
+        count_fun => fun() -> length(Pids) end,
+        fold => {fixture_list, fun(Fun, Acc) -> lists:foldl(Fun, Acc, Pids) end},
+        info_fun => InfoFun,
+        sleep_fun => fun(_Duration) -> ok end,
+        monotonic_fun => fun() -> erlang:monotonic_time(millisecond) end,
+        whereis_fun => fun erlang:whereis/1,
+        alive_fun => fun erlang:is_process_alive/1
+    }.
+
+process_info_fixture(_Pid, Keys, Metric) ->
+    Values = #{
+        registered_name => [],
+        current_function => {?MODULE, process_fixture, 0},
+        initial_call => {?MODULE, process_fixture, 0},
+        memory => Metric,
+        message_queue_len => Metric,
+        reductions => Metric,
+        total_heap_size => Metric
+    },
+    [{Key, maps:get(Key, Values)} || Key <- Keys].
+
+process_fixture() ->
+    receive
+        stop -> ok
+    end.
+
+ref_to_binary(Reference) ->
+    list_to_binary(ref_to_list(Reference)).
 
 scheduler_sample_fixture(Wall, Monotonic) ->
     #{

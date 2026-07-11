@@ -29,13 +29,14 @@ reserved_command_words_test() ->
     ],
     lists:foreach(
         fun({Word, Command}) ->
+            Arguments =
+                case Command of
+                    process -> [Word, "<0.1.0>"];
+                    _ -> [Word]
+                end,
             ?assertMatch(
                 {ok, #{route := command, command := Command}},
-                observer_cli_cli:parse([Word])
-            ),
-            ?assertMatch(
-                {ok, #{route := command, command := Command}},
-                observer_cli_cli:parse([Word, "cookie", "1500"])
+                observer_cli_cli:parse(Arguments)
             )
         end,
         Commands
@@ -104,6 +105,29 @@ command_options_test() ->
             "--replace-existing-trace"
         ])
     ).
+
+process_inspection_option_contract_test() ->
+    ?assertMatch(
+        {ok, #{command := processes, options := #{sort := "reductions", duration := "250ms"}}},
+        observer_cli_cli:parse(["processes", "--sort", "reductions", "--duration", "250ms"])
+    ),
+    ?assertMatch(
+        {ok, #{command := applications, options := #{sort := "process_count", limit := "200"}}},
+        observer_cli_cli:parse(["applications", "--sort", "process_count", "--limit", "200"])
+    ),
+    ?assertMatch(
+        {ok, #{command := process, arguments := ["registered_name"], options := #{info := true}}},
+        observer_cli_cli:parse(["process", "registered_name", "--info"])
+    ),
+    assert_argument_error(invalid_sort, observer_cli_cli:parse(["processes", "--sort", "cpu"])),
+    assert_argument_error(invalid_sort, observer_cli_cli:parse(["applications", "--sort", "cpu"])),
+    assert_argument_error(invalid_limit, observer_cli_cli:parse(["processes", "--limit", "201"])),
+    assert_argument_error(
+        duration_requires_reductions_sort,
+        observer_cli_cli:parse(["processes", "--sort", "memory", "--duration", "250ms"])
+    ),
+    assert_argument_error(process_target_required, observer_cli_cli:parse(["process"])),
+    assert_argument_error(invalid_arguments, observer_cli_cli:parse(["applications", "extra"])).
 
 global_option_before_command_test() ->
     assert_argument_error(

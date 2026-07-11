@@ -74,14 +74,20 @@ parse_command(Command, Arguments) ->
     parse_command(Command, Arguments, [], #{}).
 
 parse_command(Command, [], Positionals, Options) ->
+    Arguments = lists:reverse(Positionals),
     case validate_options(Command, Options) of
         ok ->
-            {ok, #{
-                route => command,
-                command => Command,
-                arguments => lists:reverse(Positionals),
-                options => Options
-            }};
+            case validate_arguments(Command, Arguments) of
+                ok ->
+                    {ok, #{
+                        route => command,
+                        command => Command,
+                        arguments => Arguments,
+                        options => Options
+                    }};
+                {error, Reason} ->
+                    argument_error(Reason)
+            end;
         {error, Reason} ->
             argument_error(Reason)
     end;
@@ -151,8 +157,102 @@ validate_runtime_options(distribution, #{limit := Text} = Options) ->
         Limit when is_integer(Limit), Limit =< 200 -> validate_target_options(Options);
         _ -> {error, invalid_limit}
     end;
+validate_runtime_options(processes, Options) ->
+    case only_options(Options, [sort, limit, duration]) of
+        true -> validate_processes_options(Options);
+        false -> {error, unsupported_command_option}
+    end;
+validate_runtime_options(applications, Options) ->
+    case only_options(Options, [sort, limit]) of
+        true ->
+            validate_list_options(
+                Options, ["memory", "process_count", "reductions", "message_queue_len"]
+            );
+        false ->
+            {error, unsupported_command_option}
+    end;
+validate_runtime_options(process, Options) ->
+    case only_options(Options, [info]) of
+        true -> validate_target_options(Options);
+        false -> {error, unsupported_command_option}
+    end;
 validate_runtime_options(_Command, Options) ->
     validate_target_options(Options).
+
+only_options(Options, CommandOptions) ->
+    Global = [
+        node,
+        cookie_env,
+        cookie_file,
+        name_mode,
+        format,
+        json,
+        timeout,
+        redact,
+        include_identifiers
+    ],
+    lists:all(fun(Key) -> lists:member(Key, Global ++ CommandOptions) end, maps:keys(Options)).
+
+validate_processes_options(Options) ->
+    case
+        validate_list_values(
+            Options, [
+                "memory", "message_queue_len", "reductions", "binary_memory", "total_heap_size"
+            ]
+        )
+    of
+        ok ->
+            case maps:find(duration, Options) of
+                {ok, _} ->
+                    case {maps:get(sort, Options, "memory"), duration(Options)} of
+                        {"reductions", {ok, Duration}} ->
+                            validate_scheduler_timeout(Options, Duration);
+                        {"reductions", {error, Reason}} ->
+                            {error, Reason};
+                        {_Sort, _Duration} ->
+                            {error, duration_requires_reductions_sort}
+                    end;
+                error ->
+                    validate_target_options(Options)
+            end;
+        Error ->
+            Error
+    end.
+
+validate_list_options(Options, Sorts) ->
+    case validate_list_values(Options, Sorts) of
+        ok -> validate_target_options(Options);
+        Error -> Error
+    end.
+
+validate_list_values(Options, Sorts) ->
+    case maps:get(sort, Options, hd(Sorts)) of
+        Sort when is_list(Sort) ->
+            case lists:member(Sort, Sorts) of
+                true -> validate_limit_value(Options);
+                false -> {error, invalid_sort}
+            end;
+        _ ->
+            {error, invalid_sort}
+    end.
+
+validate_limit_value(#{limit := Text}) ->
+    case positive_integer(Text) of
+        Limit when is_integer(Limit), Limit =< 200 -> ok;
+        _ -> {error, invalid_limit}
+    end;
+validate_limit_value(_Options) ->
+    ok.
+
+validate_arguments(process, [_Target]) ->
+    ok;
+validate_arguments(process, _Arguments) ->
+    {error, process_target_required};
+validate_arguments(Command, []) when Command =:= processes; Command =:= applications -> ok;
+validate_arguments(Command, _Arguments) when Command =:= processes; Command =:= applications ->
+    {error, invalid_arguments};
+validate_arguments(_Command, _Arguments) ->
+    ok.
 
 validate_scheduler_timeout(#{timeout := _} = Options, Duration) ->
     case timeout_value(Options) of

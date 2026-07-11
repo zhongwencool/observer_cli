@@ -187,4 +187,148 @@ wider_columns({BaseTitle, BaseRow}, {WideTitle, WideRow}, Columns) ->
         lists:nth(Pos, WideRow) > lists:nth(Pos, BaseRow)
     ].
 
+diagnostics_application_attribution_uses_one_public_inventory_test() ->
+    Parent = self(),
+    App = observer_cli_goal08_app,
+    Leader = spawn(fun application_fixture/0),
+    Root = spawn(fun application_fixture/0),
+    Processes = [spawn(fun application_fixture/0), spawn(fun application_fixture/0)],
+    Values = maps:from_list(lists:zip(Processes, [100, 200])),
+    ProcessSource = diagnostics_process_source(Processes, fun(Pid, Keys) ->
+        Parent ! {app_process_info, Keys},
+        [
+            {memory, maps:get(Pid, Values)},
+            {message_queue_len, 1},
+            {reductions, maps:get(Pid, Values) * 2},
+            {group_leader, Leader}
+        ]
+    end),
+    AppSource = #{
+        loaded_fun => fun() -> [{App, "fixture", "1"}] end,
+        running_fun => fun(_Timeout) -> [{App, "fixture", "1"}] end,
+        supervisor_fun => fun(Requested) ->
+            Parent ! {supervisor, Requested},
+            {ok, Root}
+        end,
+        root_info_fun => fun(RequestedRoot, Key) ->
+            Parent ! {root_info, RequestedRoot, Key},
+            {group_leader, Leader}
+        end
+    },
+    try
+        #{<<"status">> := <<"ok">>, <<"result">> := Response} =
+            observer_cli_snapshot:dispatch(
+                self(),
+                applications,
+                #{
+                    sort => memory,
+                    limit => 20,
+                    test_process_source => ProcessSource,
+                    test_application_source => AppSource
+                },
+                #{timeout_ms => 3000, identifier_policy => include}
+            ),
+        Data = maps:get(<<"data">>, Response),
+        ?assertEqual(<<"group_leader_application">>, maps:get(<<"attribution">>, Data)),
+        ?assertEqual(<<"approximation">>, maps:get(<<"attribution_semantics">>, Data)),
+        ?assertEqual(<<"fixture_list">>, maps:get(<<"inventory_path">>, Data)),
+        ?assertEqual(2, maps:get(<<"scanned_count">>, Data)),
+        ?assertEqual(0, maps:get(<<"unattributed_process_count">>, Data)),
+        [Item] = maps:get(<<"items">>, Data),
+        ?assertEqual(<<"observer_cli_goal08_app">>, maps:get(<<"application">>, Item)),
+        ?assertEqual(2, maps:get(<<"process_count">>, Item)),
+        ?assertEqual(300, maps:get(<<"memory_bytes">>, Item)),
+        ?assertEqual(true, maps:get(<<"loaded">>, Item)),
+        ?assertEqual(true, maps:get(<<"running">>, Item)),
+        receive
+            {process_fold, Processes} -> ok
+        end,
+        InfoKeys = [
+            receive
+                {app_process_info, Keys} -> Keys
+            end
+         || _ <- Processes
+        ],
+        ?assert(
+            lists:all(
+                fun(Keys) ->
+                    Keys =:= [memory, message_queue_len, reductions, group_leader]
+                end,
+                InfoKeys
+            )
+        ),
+        receive
+            {supervisor, App} -> ok
+        end,
+        receive
+            {root_info, Root, group_leader} -> ok
+        end,
+        receive
+            {process_fold, _} -> ?assert(false)
+        after 50 -> ok
+        end
+    after
+        lists:foreach(fun(Pid) -> exit(Pid, kill) end, [Leader, Root | Processes])
+    end.
+
+application_post_enumeration_refusal_skips_attribution_test() ->
+    Parent = self(),
+    Apps = [{Number, "fixture", "1"} || Number <- lists:seq(1, 5001)],
+    AppSource = #{
+        loaded_fun => fun() -> Apps end,
+        running_fun => fun(_Timeout) -> [] end,
+        supervisor_fun => fun(_App) ->
+            Parent ! supervisor_called,
+            undefined
+        end,
+        root_info_fun => fun(_Root, _Key) ->
+            Parent ! root_info_called,
+            undefined
+        end
+    },
+    ProcessSource = diagnostics_process_source([], fun(_Pid, _Keys) -> undefined end),
+    #{<<"status">> := <<"ok">>, <<"result">> := Response} =
+        observer_cli_snapshot:dispatch(
+            self(),
+            applications,
+            #{test_process_source => ProcessSource, test_application_source => AppSource},
+            #{timeout_ms => 3000, identifier_policy => include}
+        ),
+    Data = maps:get(<<"data">>, Response),
+    ?assertEqual(<<"scan_budget_exceeded">>, maps:get(<<"reason_code">>, Data)),
+    ?assertEqual(<<"post_enumeration">>, maps:get(<<"admission_stage">>, Data)),
+    receive
+        supervisor_called -> ?assert(false)
+    after 50 -> ok
+    end,
+    receive
+        root_info_called -> ?assert(false)
+    after 50 -> ok
+    end,
+    receive
+        {process_fold, _} -> ?assert(false)
+    after 50 -> ok
+    end.
+
+diagnostics_process_source(Pids, InfoFun) ->
+    Parent = self(),
+    #{
+        count_fun => fun() -> length(Pids) end,
+        fold =>
+            {fixture_list, fun(Fun, Acc) ->
+                Parent ! {process_fold, Pids},
+                lists:foldl(Fun, Acc, Pids)
+            end},
+        info_fun => InfoFun,
+        sleep_fun => fun(_Duration) -> ok end,
+        monotonic_fun => fun() -> 0 end,
+        whereis_fun => fun erlang:whereis/1,
+        alive_fun => fun erlang:is_process_alive/1
+    }.
+
+application_fixture() ->
+    receive
+        stop -> ok
+    end.
+
 -endif.

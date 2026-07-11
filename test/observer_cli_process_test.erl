@@ -868,4 +868,108 @@ wider_columns({BaseTitle, BaseRow}, {WideTitle, WideRow}, Columns) ->
         lists:nth(Pos, WideRow) > lists:nth(Pos, BaseRow)
     ].
 
+safe_diagnostics_process_info_and_name_resolution_test() ->
+    Parent = self(),
+    Name = observer_cli_goal08_fixture,
+    _ExistingUnregistered = observer_cli_goal08_unregistered,
+    Pid = spawn(fun() ->
+        receive
+            stop -> ok
+        end
+    end),
+    true = register(Name, Pid),
+    Source = #{
+        count_fun => fun() -> 1 end,
+        fold => {fixture_list, fun(_Fun, Acc) -> Acc end},
+        info_fun => fun(Target, Keys) ->
+            Parent ! {detail_keys, Target, Keys},
+            detail_info(Keys)
+        end,
+        sleep_fun => fun(_Duration) -> ok end,
+        monotonic_fun => fun() -> 0 end,
+        whereis_fun => fun erlang:whereis/1,
+        alive_fun => fun erlang:is_process_alive/1
+    },
+    try
+        #{<<"status">> := <<"ok">>, <<"result">> := Response} =
+            observer_cli_snapshot:dispatch(
+                self(),
+                process,
+                #{target => atom_to_binary(Name), test_process_source => Source},
+                #{timeout_ms => 3000, identifier_policy => include}
+            ),
+        receive
+            {detail_keys, Pid, Keys} ->
+                ?assertEqual(
+                    [
+                        registered_name,
+                        status,
+                        current_function,
+                        initial_call,
+                        memory,
+                        message_queue_len,
+                        reductions,
+                        heap_size,
+                        total_heap_size,
+                        stack_size,
+                        group_leader,
+                        garbage_collection_info
+                    ],
+                    Keys
+                )
+        end,
+        Data = maps:get(<<"data">>, Response),
+        Forbidden = [
+            <<"messages">>,
+            <<"dictionary">>,
+            <<"state">>,
+            <<"current_stacktrace">>,
+            <<"links">>,
+            <<"monitors">>,
+            <<"binary">>
+        ],
+        ?assertEqual([], [Key || Key <- Forbidden, maps:is_key(Key, Data)]),
+        ?assertEqual(80, maps:get(<<"heap_size_bytes">>, Data)),
+        ?assertEqual(160, maps:get(<<"total_heap_size_bytes">>, Data)),
+        ?assertEqual(<<"running">>, maps:get(<<"status">>, Data)),
+        ?assert(is_binary(maps:get(<<"group_leader">>, Data))),
+        AtomCount = erlang:system_info(atom_count),
+        Missing = <<"observer_cli_goal08_atom_that_must_not_exist_987654321">>,
+        ?assertEqual(not_found, observer_cli_snapshot:resolve_process_target(Missing, Source)),
+        ?assertEqual(
+            not_found,
+            observer_cli_snapshot:resolve_process_target(
+                <<"observer_cli_goal08_unregistered">>, Source
+            )
+        ),
+        ?assertEqual(AtomCount, erlang:system_info(atom_count)),
+        ?assertEqual(
+            {ok, Pid},
+            observer_cli_snapshot:resolve_process_target(list_to_binary(pid_to_list(Pid)), Source)
+        ),
+        ?assertEqual(
+            not_found, observer_cli_snapshot:resolve_process_target(<<"<0.bad.0>">>, Source)
+        )
+    after
+        unregister(Name),
+        exit(Pid, kill)
+    end.
+
+detail_info(Keys) ->
+    Values = #{
+        registered_name => observer_cli_goal08_fixture,
+        status => running,
+        current_function => {?MODULE, detail_info, 1},
+        initial_call => {?MODULE, detail_info, 1},
+        memory => 256,
+        message_queue_len => 0,
+        reductions => 7,
+        heap_size => 10,
+        total_heap_size => 20,
+        stack_size => 3,
+        group_leader => self(),
+        garbage_collection_info => [{heap_size, 10}, {minor_gcs, 99}, {secret, true}]
+    },
+    [{Key, maps:get(Key, Values)} || Key <- Keys].
+
 -endif.
