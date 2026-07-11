@@ -149,9 +149,20 @@ diagnostic_ets_metadata_generation_and_stable_tie_test() ->
     ExpectedIds = [list_to_binary(ref_to_list(Id)) || Id <- lists:sort([FirstId, SecondId])],
     ?assertEqual(ExpectedIds, [maps:get(<<"table_id">>, Item) || Item <- Items]),
     ?assertEqual([80, 80], [maps:get(<<"memory_bytes">>, Item) || Item <- Items]),
-    Keys = receive_ets_info_keys(18, []),
+    Keys = receive_ets_info_keys(22, []),
     ?assertEqual(
-        [id, keypos, memory, name, owner, protection, size, type],
+        [
+            id,
+            keypos,
+            memory,
+            name,
+            owner,
+            protection,
+            read_concurrency,
+            size,
+            type,
+            write_concurrency
+        ],
         lists:usort(Keys)
     ),
     ?assertEqual(<<"metadata_only">>, hd(maps:get(<<"coverage">>, table_probe(Response)))).
@@ -219,7 +230,9 @@ ets_metadata(Id, Name, Memory, Size) ->
         owner => self(),
         type => set,
         protection => public,
-        keypos => 1
+        keypos => 1,
+        write_concurrency => true,
+        read_concurrency => false
     }.
 
 diagnostic_ets(Request) ->
