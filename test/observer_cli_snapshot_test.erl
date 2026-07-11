@@ -715,7 +715,12 @@ process_inventory_boundary_and_stable_top_n_test() ->
         ?assertEqual(2, maps:get(<<"dropped_count">>, Data)),
         ?assertEqual(<<"fixture_list">>, maps:get(<<"inventory_path">>, Data)),
         [First, Second] = maps:get(<<"items">>, Data),
-        ExpectedTie = lists:sort([lists:nth(2, Pids), lists:nth(3, Pids)]),
+        ExpectedTie = [
+            Pid
+         || {Pid, _, _} <- recon_lib:sublist_top_n_attrs(
+                [{Pid, maps:get(Pid, Values), Pid} || Pid <- Pids], 2
+            )
+        ],
         ?assertEqual(
             [list_to_binary(pid_to_list(Pid)) || Pid <- ExpectedTie],
             [maps:get(<<"pid">>, First), maps:get(<<"pid">>, Second)]

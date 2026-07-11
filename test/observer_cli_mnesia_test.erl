@@ -194,7 +194,7 @@ diagnostic_mnesia_storage_units_and_lifecycle_test() ->
     ?assertEqual(<<"external_or_unknown">>, maps:get(<<"storage_type">>, External)),
     ?assertEqual(true, maps:get(<<"storage_semantics_unavailable">>, External)).
 
-diagnostic_mnesia_stable_raw_id_tie_test() ->
+diagnostic_mnesia_recon_top_n_tie_test() ->
     FirstId = make_ref(),
     SecondId = make_ref(),
     Values = #{
@@ -211,7 +211,12 @@ diagnostic_mnesia_stable_raw_id_tie_test() ->
         <<"data">>,
         diagnostic_mnesia(#{sort => memory, limit => 2, test_mnesia_source => Source})
     ),
-    Expected = [list_to_binary(ref_to_list(Id)) || Id <- lists:sort([FirstId, SecondId])],
+    Expected = [
+        list_to_binary(ref_to_list(Id))
+     || {_, _, Id} <- recon_lib:sublist_top_n_attrs(
+            [{0, 80, FirstId}, {0, 80, SecondId}], 2
+        )
+    ],
     ?assertEqual(Expected, [
         maps:get(<<"ets_table_id">>, Item)
      || Item <- maps:get(<<"items">>, Data)

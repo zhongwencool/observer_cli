@@ -677,8 +677,7 @@ diagnostic_binary_holders(Request, Context) ->
                                 },
                                 binary_reference_bytes,
                                 20,
-                                maps:get(top, Next),
-                                fun process_precedes/3
+                                maps:get(top, Next)
                             ),
                             Next#{top := Ranked};
                         {skip, Next} ->
@@ -1932,7 +1931,7 @@ collect_processes(Source, Sort, Limit, undefined, Context, Admission) ->
         working_set_estimated_bytes => maps:get(working_set_estimated_bytes, Admission)
     },
     {ok, Data, [
-        exact_top_n, stable_raw_pid_tie_break, explicit_process_info_keys, process_scan_admitted
+        exact_top_n, recon_top_n_order, explicit_process_info_keys, process_scan_admitted
     ]};
 collect_processes(Source, Sort, Limit, Duration, Context, Admission) ->
     Started = erlang:monotonic_time(millisecond),
@@ -2015,24 +2014,7 @@ scan_process(Pid, Keys, Source, Acc0) ->
     end.
 
 insert_top(Item, Sort, Limit, Items) ->
-    insert_top(Item, Sort, Limit, Items, fun process_precedes/3).
-
-insert_top(Item, Sort, Limit, Items, Precedes) ->
-    lists:sublist(insert_ranked(Item, Sort, Items, Precedes), Limit).
-
-insert_ranked(Item, _Sort, [], _Precedes) ->
-    [Item];
-insert_ranked(Item, Sort, [Head | Rest] = Items, Precedes) ->
-    case Precedes(Item, Head, Sort) of
-        true -> [Item | Items];
-        false -> [Head | insert_ranked(Item, Sort, Rest, Precedes)]
-    end.
-
-process_precedes(Left, Right, Sort) ->
-    LeftMetric = maps:get(Sort, Left),
-    RightMetric = maps:get(Sort, Right),
-    LeftMetric > RightMetric orelse
-        (LeftMetric =:= RightMetric andalso maps:get(raw_pid, Left) < maps:get(raw_pid, Right)).
+    recon_top_n([Item | Items], Sort, Limit).
 
 process_item(Pid, Info) ->
     WordSize = erlang:system_info(wordsize),
@@ -2328,15 +2310,12 @@ stable_process_window(First, Second, _Interval) ->
     }.
 
 rank_window(Values, Limit) ->
-    lists:sublist(
-        lists:sort(
-            fun({PidA, ValueA}, {PidB, ValueB}) ->
-                ValueA > ValueB orelse (ValueA =:= ValueB andalso PidA < PidB)
-            end,
-            maps:to_list(Values)
-        ),
-        Limit
-    ).
+    [
+        Item
+     || {_, _, Item} <- recon_lib:sublist_top_n_attrs(
+            [{Pid, Value, {Pid, Value}} || {Pid, Value} <- maps:to_list(Values)], Limit
+        )
+    ].
 
 window_process_item(Pid, Sort, Delta, Interval) ->
     #{
@@ -2485,9 +2464,7 @@ collect_admitted_applications(
             RunningSet = maps:from_keys([App || {App, _, _} <- Running], true),
             LoadedSet = maps:from_keys([App || {App, _, _} <- Loaded], true),
             Items0 = [application_item(App, Stats, LoadedSet, RunningSet) || App <- Apps],
-            RankedItems = lists:sublist(
-                lists:sort(fun(A, B) -> application_precedes(A, B, Sort) end, Items0), Limit
-            ),
+            RankedItems = recon_top_n(Items0, Sort, Limit),
             Items = [maps:remove(memory, Item) || Item <- RankedItems],
             Audit = audit_inventory(Acc, length(Items), ProcessStarted, ProcessFinished),
             Data = Audit#{
@@ -2575,12 +2552,6 @@ application_item(App, Stats, Loaded, Running) ->
         running => maps:is_key(App, Running)
     }.
 
-application_precedes(A, B, Sort) ->
-    AValue = maps:get(Sort, A),
-    BValue = maps:get(Sort, B),
-    AValue > BValue orelse
-        (AValue =:= BValue andalso maps:get(application, A) < maps:get(application, B)).
-
 collect_ets(Source, Sort, Limit, Context, Estimate) ->
     Started = erlang:monotonic_time(millisecond),
     Tables = (maps:get(all_fun, Source))(),
@@ -2609,7 +2580,7 @@ collect_ets(Source, Sort, Limit, Context, Estimate) ->
         explicit_ets_info_keys,
         raw_table_generation,
         exact_top_n,
-        stable_raw_table_tie_break,
+        recon_top_n_order,
         ets_scan_admitted
     ]}.
 
@@ -2666,13 +2637,7 @@ valid_raw_table_id(Id) -> is_reference(Id) orelse is_integer(Id).
 public_ets_item(Item) -> maps:without([raw_id, memory], Item).
 
 insert_table_top(Item, Sort, Limit, Items) ->
-    insert_top(Item, Sort, Limit, Items, fun table_precedes/3).
-
-table_precedes(A, B, Sort) ->
-    AValue = maps:get(Sort, A),
-    BValue = maps:get(Sort, B),
-    AValue > BValue orelse
-        (AValue =:= BValue andalso maps:get(raw_id, A) < maps:get(raw_id, B)).
+    recon_top_n([Item | Items], Sort, Limit).
 
 collect_mnesia(Source, Sort, Limit, Context) ->
     case (maps:get(available_fun, Source))() of
@@ -2761,7 +2726,7 @@ collect_admitted_mnesia(Tables, Source, Sort, Limit, Context, Estimate) ->
         staged_admission,
         storage_type_units,
         exact_main_ets_correlation,
-        stable_raw_table_tie_break
+        recon_top_n_order
     ]}.
 
 scan_mnesia_table(Table, Source, Sort, Limit, Acc0) ->
@@ -4003,21 +3968,23 @@ unavailable_delta_item(sockets, Item, State) ->
 resource_item_state(Item) -> maps:get(state, Item, available).
 
 rank_resource_items(Items, Sort, Limit) ->
-    lists:sublist(lists:sort(fun(A, B) -> resource_precedes(A, B, Sort) end, Items), Limit).
+    recon_top_n(Items, Sort, Limit).
 
-resource_precedes(A, B, Sort) ->
-    AValue = maps:get(Sort, A, null),
-    BValue = maps:get(Sort, B, null),
-    case {is_integer(AValue), is_integer(BValue)} of
-        {true, true} ->
-            AValue > BValue orelse
-                (AValue =:= BValue andalso maps:get(raw_id, A) < maps:get(raw_id, B));
-        {true, false} ->
-            true;
-        {false, true} ->
-            false;
-        {false, false} ->
-            maps:get(raw_id, A) < maps:get(raw_id, B)
+recon_top_n(Items, Sort, Limit) ->
+    [
+        Item
+     || {_, _, Item} <- recon_lib:sublist_top_n_attrs(
+            [{top_n_identity(Item), top_n_value(Item, Sort), Item} || Item <- Items], Limit
+        )
+    ].
+
+top_n_identity(#{raw_pid := Pid}) -> Pid;
+top_n_identity(_Item) -> 0.
+
+top_n_value(Item, Sort) ->
+    case maps:get(Sort, Item, null) of
+        Value when is_number(Value) -> Value;
+        _ -> -1
     end.
 
 public_resource_item(Item) -> maps:without([raw_id, counters, counter_shape], Item).

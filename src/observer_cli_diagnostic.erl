@@ -318,28 +318,10 @@ current_entity_context(Samples, Field, Metrics) ->
                 (maps:with(Metrics, Item))#{id => diagnostic_identifier(Id)}
              || {Id, Item} <- maps:to_list(Values)
             ],
-            Items = lists:sublist(
-                lists:sort(fun(A, B) -> current_item_precedes(A, B, Sort) end, Items0),
-                ?CONTEXT_LIMIT
-            ),
+            Items = recon_top_n(Items0, Sort, ?CONTEXT_LIMIT),
             #{status => ok, sort_metric => Sort, sort_semantics => current, items => Items};
         [] ->
             current_field_status(Samples, Field)
-    end.
-
-current_item_precedes(A, B, Metric) ->
-    AValue = maps:get(Metric, A, null),
-    BValue = maps:get(Metric, B, null),
-    case {is_integer(AValue), is_integer(BValue)} of
-        {true, true} ->
-            AValue > BValue orelse
-                (AValue =:= BValue andalso maps:get(id, A) < maps:get(id, B));
-        {true, false} ->
-            true;
-        {false, true} ->
-            false;
-        {false, false} ->
-            maps:get(id, A) < maps:get(id, B)
     end.
 
 current_field_status(Samples, Field) ->
@@ -660,10 +642,7 @@ valid_entity_trends(Samples, Field, ValuesKey, Metrics) ->
      || Id <- Stable
     ],
     SortMetric = hd(Metrics),
-    Items = lists:sublist(
-        lists:sort(fun(A, B) -> entity_trend_precedes(A, B, SortMetric) end, Items0),
-        ?CONTEXT_LIMIT
-    ),
+    Items = recon_top_n(Items0, SortMetric, ?CONTEXT_LIMIT),
     #{
         status => ok,
         sample_count => length(Samples),
@@ -736,12 +715,6 @@ entity_trend_item(Id, Values, Metrics, Interval) ->
         false ->
             Base
     end.
-
-entity_trend_precedes(A, B, Metric) ->
-    ADelta = maps:get(Metric, maps:get(deltas, A), 0),
-    BDelta = maps:get(Metric, maps:get(deltas, B), 0),
-    ADelta > BDelta orelse
-        (ADelta =:= BDelta andalso maps:get(raw_id, A) < maps:get(raw_id, B)).
 
 sample_interval(Samples) ->
     maps:get(monotonic_midpoint_ms, lists:last(Samples), 0) -
@@ -1273,7 +1246,7 @@ reductions_context(#{values := First} = FirstInventory, #{values := Second} = Se
      || #{reductions_delta := Delta} <- Items0, is_integer(Delta), Delta > 0
     ]),
     Items1 = [add_share(Item, Denominator) || Item <- Items0],
-    Items = lists:sublist(lists:sort(fun reduction_precedes/2, Items1), ?CONTEXT_LIMIT),
+    Items = recon_top_n(Items1, reductions_delta, ?CONTEXT_LIMIT),
     #{
         status => ok,
         denominator_semantics => all_stable_scanned_positive_reductions,
@@ -1313,13 +1286,6 @@ add_share(#{reductions_delta := Delta} = Item, Denominator) when
     Item#{share_of_stable_scanned_reductions => Delta / Denominator};
 add_share(Item, _Denominator) ->
     Item#{share_of_stable_scanned_reductions => null}.
-
-reduction_precedes(A, B) ->
-    reduction_value(A) > reduction_value(B) orelse
-        (reduction_value(A) =:= reduction_value(B) andalso maps:get(pid, A) < maps:get(pid, B)).
-
-reduction_value(#{reductions_delta := Value}) when is_integer(Value) -> Value;
-reduction_value(_Item) -> -1.
 
 optional_status(Samples) ->
     Inventories = [inventory(Sample) || Sample <- Samples],
@@ -1520,6 +1486,25 @@ ratio_key(process) -> process_usage_ratio;
 ratio_key(port) -> port_usage_ratio;
 ratio_key(atom) -> atom_usage_ratio;
 ratio_key(ets) -> ets_usage_ratio.
+
+recon_top_n(Items, Sort, Limit) ->
+    [
+        Item
+     || {_, _, Item} <- recon_lib:sublist_top_n_attrs(
+            [{top_n_identity(Item), top_n_value(Item, Sort), Item} || Item <- Items], Limit
+        )
+    ].
+
+top_n_identity(#{pid := {identifier, pid, Pid}}) -> Pid;
+top_n_identity(_Item) -> 0.
+
+top_n_value(#{deltas := Deltas}, Sort) ->
+    maps:get(Sort, Deltas, -1);
+top_n_value(Item, Sort) ->
+    case maps:get(Sort, Item, null) of
+        Value when is_number(Value) -> Value;
+        _ -> -1
+    end.
 
 indexed(List) -> indexed(List, 0).
 indexed([Item | Rest], Index) -> [{Index, Item} | indexed(Rest, Index + 1)];

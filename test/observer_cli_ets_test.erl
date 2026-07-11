@@ -126,7 +126,7 @@ render_ets_info_wide_layout_test() ->
         ets:delete(TabName)
     end.
 
-diagnostic_ets_metadata_generation_and_stable_tie_test() ->
+diagnostic_ets_metadata_generation_and_recon_top_n_test() ->
     Parent = self(),
     FirstId = make_ref(),
     SecondId = make_ref(),
@@ -146,7 +146,12 @@ diagnostic_ets_metadata_generation_and_stable_tie_test() ->
     Response = diagnostic_ets(#{sort => memory, limit => 2, test_ets_source => Source}),
     Data = maps:get(<<"data">>, Response),
     Items = maps:get(<<"items">>, Data),
-    ExpectedIds = [list_to_binary(ref_to_list(Id)) || Id <- lists:sort([FirstId, SecondId])],
+    ExpectedIds = [
+        list_to_binary(ref_to_list(Id))
+     || {_, _, Id} <- recon_lib:sublist_top_n_attrs(
+            [{0, 80, FirstId}, {0, 80, SecondId}], 2
+        )
+    ],
     ?assertEqual(ExpectedIds, [maps:get(<<"table_id">>, Item) || Item <- Items]),
     ?assertEqual([80, 80], [maps:get(<<"memory_bytes">>, Item) || Item <- Items]),
     Keys = receive_ets_info_keys(22, []),
