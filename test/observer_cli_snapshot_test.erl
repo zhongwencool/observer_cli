@@ -737,16 +737,13 @@ process_detail_collects_tui_field_gap_items_test() ->
         Data = maps:get(<<"data">>, Response),
         ?assertEqual(<<"running">>, maps:get(<<"status">>, Data)),
         assert_json_safe(Response),
-        ?assertEqual(3, maps:get(<<"binary_refs_count">>, Data)),
+        ?assertEqual(2, maps:get(<<"binary_refs_count">>, Data)),
         ?assertEqual(128, maps:get(<<"binary_refs_bytes">>, Data)),
         ?assertEqual(128, maps:get(<<"binary_memory_bytes">>, Data)),
-        ?assertEqual(5, maps:get(<<"priority">>, Data)),
+        ?assertEqual(<<"normal">>, maps:get(<<"priority">>, Data)),
         ?assertEqual(1, maps:get(<<"catchlevel">>, Data)),
         ?assertEqual(true, maps:get(<<"trap_exit">>, Data)),
-        ErrorHandler = maps:get(<<"error_handler">>, Data),
-        ?assertMatch(#{<<"arity">> := 2, <<"module">> := _, <<"function">> := _}, ErrorHandler),
-        ?assert(is_binary(maps:get(<<"module">>, ErrorHandler))),
-        ?assert(is_binary(maps:get(<<"function">>, ErrorHandler))),
+        ?assertMatch(<<"module-", _/binary>>, maps:get(<<"error_handler">>, Data)),
         ?assertMatch(
             #{
                 <<"min_bin_vheap_size">> := 2,
@@ -758,15 +755,33 @@ process_detail_collects_tui_field_gap_items_test() ->
             maps:get(<<"garbage_collection_info">>, Data)
         ),
         ?assert(type_key_present(maps:get(<<"links">>, Data))),
+        ?assertEqual(30, length(maps:get(<<"links">>, Data))),
+        ?assertEqual(35, maps:get(<<"links_total_count">>, Data)),
+        ?assertEqual(true, maps:get(<<"links_truncated">>, Data)),
         ?assert(type_key_present(maps:get(<<"monitors">>, Data))),
+        ?assertEqual(3, maps:get(<<"monitors_total_count">>, Data)),
+        ?assertEqual(false, maps:get(<<"monitors_truncated">>, Data)),
         ?assert(type_key_present(maps:get(<<"monitored_by">>, Data))),
         ?assert(is_list(maps:get(<<"suspending">>, Data))),
+        [Suspending] = maps:get(<<"suspending">>, Data),
+        ?assertEqual(1, maps:get(<<"suspending_total_count">>, Data)),
+        ?assertEqual(false, maps:get(<<"suspending_truncated">>, Data)),
+        ?assertMatch(
+            #{
+                <<"target">> := <<"pid-", _/binary>>,
+                <<"active_suspend_count">> := 1,
+                <<"outstanding_suspend_count">> := 2
+            },
+            Suspending
+        ),
         FirstStackFrame = hd(maps:get(<<"current_stacktrace">>, Data)),
         ?assertMatch(#{<<"arity">> := 2, <<"module">> := _, <<"function">> := _}, FirstStackFrame),
-        ?assert(is_binary(maps:get(<<"module">>, FirstStackFrame))),
-        ?assert(is_binary(maps:get(<<"function">>, FirstStackFrame))),
+        ?assertMatch(<<"module-", _/binary>>, maps:get(<<"module">>, FirstStackFrame)),
+        ?assertMatch(<<"function-", _/binary>>, maps:get(<<"function">>, FirstStackFrame)),
+        ?assertNot(is_map_key(<<"raw">>, FirstStackFrame)),
         ?assertNot(is_map_key(<<"messages">>, Data)),
         ?assertNot(is_map_key(<<"dictionary">>, Data)),
+        ?assertEqual(nomatch, binary:match(term_to_binary(Response), <<"secret">>)),
         receive
             {process_detail_keys, Keys} ->
                 ?assert(not lists:member(messages, Keys)),
@@ -780,6 +795,21 @@ process_detail_collects_tui_field_gap_items_test() ->
         port_close(Port),
         exit(Pid, kill)
     end.
+
+process_detail_collects_real_gc_tuning_test() ->
+    Response = inspection(process, #{target => list_to_binary(pid_to_list(self()))}),
+    GC = maps:get(<<"garbage_collection_info">>, maps:get(<<"data">>, Response)),
+    ?assert(
+        lists:all(
+            fun(Key) -> is_integer(maps:get(Key, GC)) end,
+            [
+                <<"min_bin_vheap_size">>,
+                <<"min_heap_size">>,
+                <<"fullsweep_after">>,
+                <<"minor_gcs">>
+            ]
+        )
+    ).
 
 processes_duration_supports_all_window_sorts_test() ->
     WordSize = erlang:system_info(wordsize),
@@ -1402,23 +1432,28 @@ process_detail_info(Keys, Port, Ref) ->
             {Ref, 64, 1},
             {make_ref(), 64, 2}
         ],
-        garbage_collection_info => [
+        garbage_collection => [
             {min_bin_vheap_size, 2},
             {min_heap_size, 3},
             {fullsweep_after, 11},
-            {minor_gcs, 17},
+            {minor_gcs, 17}
+        ],
+        garbage_collection_info => [
             {old_heap_size, 5}
         ],
-        priority => 5,
-        links => [self(), {process, self()}, {process, {a, node()}}, {port, Port}],
+        priority => normal,
+        links =>
+            [self(), {process, self()}, {process, {a, node()}}, {port, Port}, {unknown, Ref}] ++
+            lists:duplicate(30, self()),
         monitors => [{process, self()}, self(), {port, Port}],
         monitored_by => [{process, {b, node()}}, self()],
         catchlevel => 1,
-        suspending => [self(), {process, self()}],
-        error_handler => {goal12_error_handler, handle_error, 2},
+        suspending => [{self(), 1, 2}],
+        error_handler => goal12_error_handler,
         trap_exit => true,
         current_stacktrace => [
             {observer_cli_snapshot_test, process_detail_info, 2, [{file, "test.erl"}, {line, 1}]},
+            {observer_cli_snapshot_test, process_detail_info, [secret, Ref], []},
             {erlang, apply, 3, []}
         ]
     },

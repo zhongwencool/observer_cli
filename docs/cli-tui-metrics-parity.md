@@ -41,7 +41,7 @@ store 和 collector 进程，因此 process、port、atom、memory、reductions�
 |---|---|---|---|
 | Home 系统概要 | `snapshot`、`memory`、`schedulers` | 部分覆盖 | 主机 CPU/内存占比、active tasks、context switches、总 reductions/增量、逐 scheduler 利用率 |
 | Home 进程 Top N | `processes` | 部分覆盖 | CLI 每行不总是返回 TUI 全部列；只有 reductions 支持窗口排序 |
-| Process Info | `process TARGET`、`gen-server-state TARGET` | 已覆盖（但保留 `messages`、`dictionary` 有意排除） | signals、GC tuning、binary refs、stack；state 只返回有界 shape |
+| Process Info | `process TARGET`、`gen-server-state TARGET` | 部分覆盖 | `messages`、`dictionary` 有意排除；state 只返回有界 shape |
 | Network | `network` | 部分覆盖 | packet count、peer、queue/memory、port input/output |
 | Ports | `ports` | 部分覆盖 | controls、slot、parallelism、locking、monitor 信息及 port 详情页 |
 | Sockets | `sockets` | 部分覆盖 | general counters、endpoint/state/owner/fd、accept/max packet、详情 counters/options |
@@ -180,28 +180,28 @@ CLI 深度快照还实测得到：
 | current function | `current_function` | CLI 补充；TUI 在 Home 行显示，详情 meta 不显示 |
 | memory、reductions、message queue len | 同名/bytes 字段 | 已覆盖 |
 | heap size、total heap size、stack size | `*_bytes` | 已覆盖 |
-| priority | 无 | 已覆盖 |
-| binary refs count/bytes | 无 | 已覆盖 |
-| catchlevel | 无 | 已覆盖 |
-| suspending | 无 | 已覆盖 |
-| error_handler | 无 | 已覆盖 |
-| trap_exit | 无 | 已覆盖 |
+| priority | `priority` | 已覆盖 |
+| binary refs count/bytes | `binary_refs_count`、`binary_refs_bytes` | 已覆盖 |
+| catchlevel | `catchlevel` | 已覆盖 |
+| suspending | `suspending`、`suspending_total_count` | 已覆盖；明细最多 30 项，另标记是否截断 |
+| error_handler | `error_handler` | 已覆盖 |
+| trap_exit | `trap_exit` | 已覆盖 |
 
 ### 5.2 GC、signals 与子视图
 
 | TUI 字段/子视图 | CLI | 状态 | 说明 |
 |---|---|---|---|
-| GC min_bin_vheap_size | 无 | 已覆盖 | TUI 与 `garbage_collection_info` 同步 |
-| GC min_heap_size | 无 | 已覆盖 | TUI 与 `garbage_collection_info` 同步 |
-| GC fullsweep_after | 无 | 已覆盖 | TUI 与 `garbage_collection_info` 同步 |
-| GC minor_gcs | 无 | 已覆盖 | TUI 与 `garbage_collection_info` 同步 |
-| links | 无 | 已覆盖 | |
-| monitors | 无 | 已覆盖 | |
-| monitored_by | 无 | 已覆盖 | |
+| GC min_bin_vheap_size | `garbage_collection_info.min_bin_vheap_size` | 已覆盖 | TUI 与 `garbage_collection_info` 同步 |
+| GC min_heap_size | `garbage_collection_info.min_heap_size` | 已覆盖 | TUI 与 `garbage_collection_info` 同步 |
+| GC fullsweep_after | `garbage_collection_info.fullsweep_after` | 已覆盖 | TUI 与 `garbage_collection_info` 同步 |
+| GC minor_gcs | `garbage_collection_info.minor_gcs` | 已覆盖 | TUI 与 `garbage_collection_info` 同步 |
+| links | `links`、`links_total_count` | 已覆盖 | 明细最多 30 项，另标记是否截断 |
+| monitors | `monitors`、`monitors_total_count` | 已覆盖 | 明细最多 30 项，另标记是否截断 |
+| monitored_by | `monitored_by`、`monitored_by_total_count` | 已覆盖 | 明细最多 30 项，另标记是否截断 |
 | reductions/memory 趋势图 | 无 | 未实现 | CLI 是单次事实或显式 bounded window，不返回历史图 |
 | messages | 无 | 未实现 | 有意避免复制消息内容 |
 | dictionary | 无 | 未实现 | 有意避免复制进程字典 |
-| current stacktrace | 无 | 已覆盖 | 与 `current_stacktrace` 同步字段 |
+| current stacktrace | `current_stacktrace` | 部分覆盖 | 最多返回 30 帧；参数只返回 arity，源码路径不返回 |
 | raw state | `gen-server-state TARGET` | 部分覆盖 | CLI 在目标端复制后只返回有界、去值的 shape，不返回 TUI `recon:get_state/2` 原值 |
 
 因此，`process TARGET` 目前是安全的 metadata 详情，不是 TUI Process Info 的完整导出。

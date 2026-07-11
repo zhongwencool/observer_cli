@@ -914,6 +914,7 @@ safe_diagnostics_process_info_and_name_resolution_test() ->
                         stack_size,
                         group_leader,
                         binary,
+                        garbage_collection,
                         garbage_collection_info,
                         priority,
                         links,
@@ -974,6 +975,12 @@ detail_info(Keys) ->
         total_heap_size => 20,
         stack_size => 3,
         group_leader => self(),
+        garbage_collection => [
+            {min_bin_vheap_size, 2},
+            {min_heap_size, 3},
+            {fullsweep_after, 11},
+            {minor_gcs, 99}
+        ],
         garbage_collection_info => [{heap_size, 10}, {minor_gcs, 99}, {secret, true}]
     },
     [{Key, maps:get(Key, Values, undefined)} || Key <- Keys].

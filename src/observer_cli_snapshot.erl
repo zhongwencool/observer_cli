@@ -1758,6 +1758,7 @@ process_detail_keys() ->
         stack_size,
         group_leader,
         binary,
+        garbage_collection,
         garbage_collection_info,
         priority,
         links,
@@ -1960,27 +1961,34 @@ process_field(group_leader, Value, _WordSize, Acc) ->
 process_field(status, Value, _WordSize, Acc) ->
     Acc#{status => Value};
 process_field(garbage_collection_info, Value, _WordSize, Acc) ->
-    Acc#{garbage_collection_info => allowed_gc_info(Value)};
+    Acc#{
+        garbage_collection_info => maps:merge(
+            maps:get(garbage_collection_info, Acc, #{}), allowed_gc_info(Value)
+        )
+    };
+process_field(garbage_collection, Value, _WordSize, Acc) ->
+    Acc#{
+        garbage_collection_info => maps:merge(
+            maps:get(garbage_collection_info, Acc, #{}), allowed_gc_info(Value)
+        )
+    };
 process_field(binary, Binaries, _WordSize, Acc) ->
     {BinaryRefsCount, BinaryRefsBytes} = binary_ref_stats(Binaries),
-    BinaryMemory = binary_memory(Binaries),
     Acc#{
-        binary_memory => BinaryMemory,
+        binary_memory => BinaryRefsBytes,
         binary_refs_count => BinaryRefsCount,
         binary_refs_bytes => BinaryRefsBytes
     };
 process_field(priority, Value, _WordSize, Acc) ->
     Acc#{priority => Value};
-process_field(links, Values, _WordSize, Acc) ->
-    Acc#{links => sanitize_signal_list(Values)};
-process_field(monitors, Values, _WordSize, Acc) ->
-    Acc#{monitors => sanitize_signal_list(Values)};
-process_field(monitored_by, Values, _WordSize, Acc) ->
-    Acc#{monitored_by => sanitize_signal_list(Values)};
+process_field(Key, Values, _WordSize, Acc) when
+    Key =:= links; Key =:= monitors; Key =:= monitored_by
+->
+    bounded_process_list(Key, Values, fun sanitize_signal_list/1, Acc);
 process_field(catchlevel, Value, _WordSize, Acc) ->
     Acc#{catchlevel => Value};
 process_field(suspending, Values, _WordSize, Acc) ->
-    Acc#{suspending => sanitize_suspending_list(Values)};
+    bounded_process_list(suspending, Values, fun sanitize_suspending_list/1, Acc);
 process_field(error_handler, Value, _WordSize, Acc) ->
     Acc#{error_handler => sanitize_error_handler(Value)};
 process_field(trap_exit, Value, _WordSize, Acc) ->
@@ -1988,9 +1996,23 @@ process_field(trap_exit, Value, _WordSize, Acc) ->
 process_field(current_stacktrace, Stack, _WordSize, Acc) ->
     Acc#{current_stacktrace => sanitize_stacktrace(Stack)}.
 
-binary_memory(Binaries) ->
-    {_Refs, Bytes} = binary_ref_stats(Binaries),
-    Bytes.
+bounded_process_list(Key, Values, Sanitizer, Acc) when is_list(Values) ->
+    Items = Sanitizer(Values),
+    Total = length(Values),
+    {CountKey, TruncatedKey} = bounded_process_list_keys(Key),
+    Acc#{
+        Key => Items,
+        CountKey => Total,
+        TruncatedKey => Total > length(Items)
+    };
+bounded_process_list(Key, _Values, _Sanitizer, Acc) ->
+    {CountKey, TruncatedKey} = bounded_process_list_keys(Key),
+    Acc#{Key => [], CountKey => 0, TruncatedKey => false}.
+
+bounded_process_list_keys(links) -> {links_total_count, links_truncated};
+bounded_process_list_keys(monitors) -> {monitors_total_count, monitors_truncated};
+bounded_process_list_keys(monitored_by) -> {monitored_by_total_count, monitored_by_truncated};
+bounded_process_list_keys(suspending) -> {suspending_total_count, suspending_truncated}.
 
 binary_ref_stats(Binaries) when is_list(Binaries) ->
     lists:foldl(
@@ -1998,8 +2020,6 @@ binary_ref_stats(Binaries) when is_list(Binaries) ->
             ({_Ref, Bytes, Count}, {Refs, TotalBytes}) when
                 is_integer(Bytes), Bytes >= 0, is_integer(Count), Count >= 0
             ->
-                {Refs + max(Count, 0), TotalBytes + Bytes};
-            ({_Ref, Bytes}, {Refs, TotalBytes}) when is_integer(Bytes), Bytes >= 0 ->
                 {Refs + 1, TotalBytes + Bytes};
             (_Ref, Acc) ->
                 Acc
@@ -2011,7 +2031,7 @@ binary_ref_stats(_Binaries) ->
     {0, 0}.
 
 sanitize_signal_list(Signals) when is_list(Signals) ->
-    [sanitize_signal_item(Signal) || Signal <- Signals];
+    [sanitize_signal_item(Signal) || Signal <- lists:sublist(Signals, 30)];
 sanitize_signal_list(_Signals) ->
     [].
 
@@ -2028,14 +2048,14 @@ sanitize_signal_item({port, Port}) when is_port(Port) ->
 sanitize_signal_item({process, {Name, Node}}) when is_atom(Name), is_atom(Node) ->
     #{
         <<"type">> => <<"process">>,
-        <<"registered_name">> => Name,
-        <<"node">> => Node
+        <<"registered_name">> => {identifier, name, Name},
+        <<"node">> => {identifier, node, Node}
     };
 sanitize_signal_item({port, {Name, Node}}) when is_atom(Name), is_atom(Node) ->
     #{
         <<"type">> => <<"port">>,
-        <<"registered_name">> => Name,
-        <<"node">> => Node
+        <<"registered_name">> => {identifier, name, Name},
+        <<"node">> => {identifier, node, Node}
     };
 sanitize_signal_item(Pid) when is_pid(Pid) ->
     #{
@@ -2047,77 +2067,59 @@ sanitize_signal_item(Port) when is_port(Port) ->
         <<"type">> => <<"port">>,
         <<"target">> => {identifier, port, Port}
     };
-sanitize_signal_item(Other) ->
-    #{
-        <<"type">> => <<"other">>,
-        <<"value">> => list_to_binary(io_lib:format("~tp", [Other]))
-    }.
+sanitize_signal_item(_Other) ->
+    #{<<"type">> => <<"other">>}.
 
 sanitize_suspending_list(Suspending) when is_list(Suspending) ->
-    [sanitize_signal_item(Item) || Item <- Suspending];
+    [sanitize_suspending_item(Item) || Item <- lists:sublist(Suspending, 30)];
 sanitize_suspending_list(_Suspending) ->
     [].
 
-sanitize_error_handler({Mod, Fun, Arity}) when
-    is_atom(Mod), is_atom(Fun), is_integer(Arity), Arity >= 0
+sanitize_suspending_item({Pid, Active, Outstanding}) when
+    is_pid(Pid), is_integer(Active), Active >= 0, is_integer(Outstanding), Outstanding >= 0
 ->
-    {mfa, Mod, Fun, Arity};
-sanitize_error_handler(Value) when is_atom(Value); is_boolean(Value); is_integer(Value) ->
-    Value;
-sanitize_error_handler(Value) ->
     #{
-        <<"raw">> => list_to_binary(io_lib:format("~tp", [Value]))
-    }.
+        <<"type">> => <<"process">>,
+        <<"target">> => {identifier, pid, Pid},
+        <<"active_suspend_count">> => Active,
+        <<"outstanding_suspend_count">> => Outstanding
+    };
+sanitize_suspending_item(_Item) ->
+    #{<<"type">> => <<"other">>}.
+
+sanitize_error_handler(Value) when is_atom(Value) ->
+    {identifier, module, Value};
+sanitize_error_handler(_Value) ->
+    null.
 
 sanitize_stacktrace(Stack) when is_list(Stack) ->
-    [sanitize_stacktrace_frame(Frame) || Frame <- Stack];
+    [sanitize_stacktrace_frame(Frame) || Frame <- lists:sublist(Stack, 30)];
 sanitize_stacktrace(_Stack) ->
     [].
 
-sanitize_stacktrace_frame({Mod, Fun, Arity, Location}) when
-    is_atom(Mod), is_atom(Fun), is_integer(Arity), is_list(Location)
+sanitize_stacktrace_frame({Mod, Fun, ArityOrArgs, Location}) when
+    is_atom(Mod), is_atom(Fun), is_list(Location)
 ->
     #{
-        module => Mod,
-        function => Fun,
-        arity => Arity,
+        module => {identifier, module, Mod},
+        function => {identifier, function, Fun},
+        arity => stacktrace_arity(ArityOrArgs),
         location => sanitize_stacktrace_location(Location)
     };
-sanitize_stacktrace_frame(Frame) ->
-    #{
-        raw => list_to_binary(io_lib:format("~tp", [Frame]))
-    }.
+sanitize_stacktrace_frame(_Frame) ->
+    #{<<"type">> => <<"other">>}.
+
+stacktrace_arity(Arity) when is_integer(Arity), Arity >= 0 -> Arity;
+stacktrace_arity(Args) when is_list(Args) -> length(Args);
+stacktrace_arity(_ArityOrArgs) -> null.
 
 sanitize_stacktrace_location(Location) when is_list(Location) ->
-    File = proplists:get_value(file, Location),
     Line = proplists:get_value(line, Location),
-    case {File, Line} of
-        {undefined, undefined} ->
-            null;
-        _ ->
-            maps:from_list(
-                lists:filter(
-                    fun
-                        ({_K, undefined}) -> false;
-                        ({_K, _}) -> true
-                    end,
-                    [
-                        {<<"file">>, file_binary(File)},
-                        {<<"line">>, Line}
-                    ]
-                )
-            )
+    case is_integer(Line) andalso Line > 0 of
+        true -> #{<<"line">> => Line};
+        false -> null
     end;
 sanitize_stacktrace_location(_Location) ->
-    null.
-
-file_binary(Value) when is_binary(Value) ->
-    Value;
-file_binary(Value) when is_list(Value) ->
-    list_to_binary(Value);
-file_binary(Value) when is_atom(Value) ->
-    atom_to_binary(Value);
-file_binary(_Value) ->
     null.
 
 allowed_gc_info(Info) ->
