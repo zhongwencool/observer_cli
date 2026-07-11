@@ -106,6 +106,16 @@ command_options_test() ->
         ])
     ).
 
+deep_snapshot_option_contract_test() ->
+    ?assertMatch(
+        {ok, #{command := snapshot, arguments := [], options := #{deep := true}}},
+        observer_cli_cli:parse(["snapshot", "--deep"])
+    ),
+    assert_argument_error(
+        unsupported_command_option, observer_cli_cli:parse(["memory", "--deep"])
+    ),
+    assert_argument_error(invalid_arguments, observer_cli_cli:parse(["snapshot", "extra"])).
+
 process_inspection_option_contract_test() ->
     ?assertMatch(
         {ok, #{command := processes, options := #{sort := "reductions", duration := "250ms"}}},

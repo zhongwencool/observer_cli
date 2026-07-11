@@ -16,6 +16,7 @@
 
 -define(PROTOCOL_VERSION, 1).
 -define(TARGET_MARGIN_MS, 1000).
+-define(DEEP_FINISH_MARGIN_MS, 250).
 -define(MAX_HEAP_WORDS, 8 * 1024 * 1024).
 -define(MAX_RESPONSE_BYTES, 1024 * 1024).
 -define(MAX_RESULT_BYTES, ?MAX_RESPONSE_BYTES - 1024).
@@ -98,7 +99,16 @@ run_worker(Controller, Command, Request, Policy, TargetTimeout, MaxHeapWords) ->
     try
         {Worker, WorkerRef} = spawn_opt(
             fun() ->
-                worker(Coordinator, Controller, RunRef, Command, Request, Policy, Deadline)
+                worker(
+                    Coordinator,
+                    Controller,
+                    RunRef,
+                    Command,
+                    Request,
+                    Policy,
+                    Deadline,
+                    MaxHeapWords
+                )
             end,
             [
                 link,
@@ -177,11 +187,14 @@ worker_down(WorkerRef, Reason) ->
         end
     ).
 
-worker(Coordinator, Controller, RunRef, Command, Request, Policy, Deadline) ->
+worker(Coordinator, Controller, RunRef, Command, Request, Policy, Deadline, MaxHeapWords) ->
     Outcome =
         try
             probe(Command, Request, #{
-                deadline => Deadline, controller => Controller, coordinator => Coordinator
+                deadline => Deadline,
+                controller => Controller,
+                coordinator => Coordinator,
+                max_heap_words => MaxHeapWords
             })
         of
             {probe_error, Reason} when is_atom(Reason) ->
@@ -271,11 +284,13 @@ probe(_Command, _Request, _Context) ->
     {probe_error, capability_unavailable}.
 -endif.
 
-capture_snapshot(Request, #{deadline := Deadline, controller := Controller}) when is_map(Request) ->
+capture_snapshot(Request, #{deadline := Deadline, controller := Controller} = Context) when
+    is_map(Request)
+->
     StartedAt = erlang:system_time(millisecond),
     StartedMonotonic = erlang:monotonic_time(millisecond),
     ModuleLoaded = code:is_loaded(?MODULE) =/= false,
-    Probes = [
+    CoreProbes = [
         run_snapshot_probe(runtime, true, fun runtime_probe/0, Request, Deadline),
         run_snapshot_probe(resources, true, fun resources_probe/0, Request, Deadline),
         run_snapshot_probe(memory, true, fun memory_probe/0, Request, Deadline),
@@ -288,6 +303,7 @@ capture_snapshot(Request, #{deadline := Deadline, controller := Controller}) whe
             Deadline
         )
     ],
+    Probes = CoreProbes ++ deep_snapshot_probes(Request, Context),
     FinishedMonotonic = erlang:monotonic_time(millisecond),
     FinishedAt = erlang:system_time(millisecond),
     ProbeReports = [Report || {Report, _Data} <- Probes],
@@ -309,6 +325,160 @@ capture_snapshot(Request, #{deadline := Deadline, controller := Controller}) whe
     };
 capture_snapshot(_Request, _Context) ->
     {probe_error, invalid_request}.
+
+deep_snapshot_probes(#{deep := true} = Request, Context) ->
+    OldTrapExit = process_flag(trap_exit, true),
+    try
+        [
+            run_deep_probe(Command, deep_probe_request(Command, Request), Context)
+         || Command <- [processes, applications, ets, mnesia, network, ports, sockets]
+        ]
+    after
+        process_flag(trap_exit, OldTrapExit)
+    end;
+deep_snapshot_probes(_Request, _Context) ->
+    [].
+
+deep_probe_request(Command, Request) ->
+    FixtureKeys = [
+        test_process_source,
+        test_application_source,
+        test_ets_source,
+        test_mnesia_source,
+        test_network_source,
+        test_port_source,
+        test_socket_source,
+        test_deep_probe_outcomes
+    ],
+    maps:merge(maps:with(FixtureKeys, Request), deep_probe_defaults(Command)).
+
+deep_probe_defaults(processes) -> #{sort => memory, limit => 20};
+deep_probe_defaults(applications) -> #{sort => memory, limit => 20};
+deep_probe_defaults(ets) -> #{sort => memory, limit => 20};
+deep_probe_defaults(mnesia) -> #{sort => memory, limit => 20};
+deep_probe_defaults(network) -> #{sort => oct, limit => 20};
+deep_probe_defaults(ports) -> #{sort => queue_size, limit => 20};
+deep_probe_defaults(sockets) -> #{sort => io, limit => 20}.
+
+run_deep_probe(Command, ProbeRequest, #{deadline := Deadline} = Context) ->
+    Started = erlang:monotonic_time(millisecond),
+    Outcome = deep_probe_outcome(Command, ProbeRequest, Context, Deadline),
+    Finished = erlang:monotonic_time(millisecond),
+    deep_probe_result(Command, Outcome, Finished - Started).
+
+-ifdef(TEST).
+deep_probe_outcome(
+    Command, #{test_deep_probe_outcomes := Outcomes} = ProbeRequest, Context, Deadline
+) ->
+    case maps:find(Command, Outcomes) of
+        {ok, Outcome} -> Outcome;
+        error -> run_deep_probe_worker(Command, ProbeRequest, Context, Deadline)
+    end;
+deep_probe_outcome(Command, ProbeRequest, Context, Deadline) ->
+    run_deep_probe_worker(Command, ProbeRequest, Context, Deadline).
+-else.
+deep_probe_outcome(Command, ProbeRequest, Context, Deadline) ->
+    run_deep_probe_worker(Command, ProbeRequest, Context, Deadline).
+-endif.
+
+run_deep_probe_worker(Command, ProbeRequest, #{max_heap_words := MaxHeapWords} = Context, Deadline) ->
+    ProbeDeadline = Deadline - ?DEEP_FINISH_MARGIN_MS,
+    case remaining(ProbeDeadline) of
+        0 ->
+            {timeout, target_timeout};
+        _ ->
+            Parent = self(),
+            Ref = make_ref(),
+            ChildContext = Context#{deadline => ProbeDeadline, diagnostics_worker => Parent},
+            {Pid, Monitor} = spawn_opt(
+                fun() ->
+                    Parent ! {Ref, self(), deep_probe_capture(Command, ProbeRequest, ChildContext)}
+                end,
+                [
+                    link,
+                    monitor,
+                    {max_heap_size, #{size => MaxHeapWords, kill => true, error_logger => false}}
+                ]
+            ),
+            await_deep_probe(Pid, Monitor, Ref, ProbeDeadline)
+    end.
+
+await_deep_probe(Pid, Monitor, Ref, Deadline) ->
+    receive
+        {Ref, Pid, Outcome} ->
+            finish_deep_probe(Pid, Monitor, Outcome, Deadline);
+        {'DOWN', Monitor, process, Pid, Reason} ->
+            drain_exit(Pid),
+            {error, deep_worker_reason(Reason)};
+        {'EXIT', Pid, _Reason} ->
+            await_deep_probe(Pid, Monitor, Ref, Deadline)
+    after remaining(Deadline) ->
+        exit(Pid, kill),
+        receive
+            {'DOWN', Monitor, process, Pid, _Reason} -> ok
+        end,
+        drain_exit(Pid),
+        {timeout, target_timeout}
+    end.
+
+finish_deep_probe(Pid, Monitor, Outcome, Deadline) ->
+    receive
+        {'DOWN', Monitor, process, Pid, normal} ->
+            drain_exit(Pid),
+            Outcome;
+        {'DOWN', Monitor, process, Pid, Reason} ->
+            drain_exit(Pid),
+            {error, deep_worker_reason(Reason)};
+        {'EXIT', Pid, _Reason} ->
+            finish_deep_probe(Pid, Monitor, Outcome, Deadline)
+    after remaining(Deadline) ->
+        exit(Pid, kill),
+        receive
+            {'DOWN', Monitor, process, Pid, _Reason} -> ok
+        end,
+        drain_exit(Pid),
+        {timeout, cleanup_unconfirmed}
+    end.
+
+deep_worker_reason(killed) -> worker_heap_limit_exceeded;
+deep_worker_reason(_) -> probe_failed.
+
+deep_probe_capture(processes, Request, Context) ->
+    composed_probe(capture_processes(Request, Context));
+deep_probe_capture(applications, Request, Context) ->
+    composed_probe(capture_applications(Request, Context));
+deep_probe_capture(ets, Request, Context) ->
+    composed_probe(capture_ets(Request, Context));
+deep_probe_capture(mnesia, Request, Context) ->
+    composed_probe(capture_mnesia(Request, Context));
+deep_probe_capture(network, Request, Context) ->
+    composed_probe(capture_network(Request, Context));
+deep_probe_capture(ports, Request, Context) ->
+    composed_probe(capture_ports(Request, Context));
+deep_probe_capture(sockets, Request, Context) ->
+    composed_probe(capture_sockets(Request, Context)).
+
+composed_probe(#{capture := #{probes := [Probe]}, data := Data}) ->
+    {
+        maps:get(status, Probe),
+        maps:get(reason_code, Probe),
+        Data,
+        maps:get(samples, Probe),
+        maps:get(coverage, Probe)
+    };
+composed_probe(_Invalid) ->
+    {error, invalid_probe_result}.
+
+deep_probe_result(Id, {ok, _Reason, Data, Samples, Coverage}, Duration) ->
+    {probe_report(Id, false, ok, null, Duration, Samples, Coverage), Data};
+deep_probe_result(Id, {unavailable, Reason, Data, Samples, Coverage}, Duration) ->
+    {probe_report(Id, false, unavailable, Reason, Duration, Samples, Coverage), Data};
+deep_probe_result(Id, {timeout, Reason}, Duration) ->
+    {probe_report(Id, false, timeout, Reason, Duration, 0, []), undefined};
+deep_probe_result(Id, {error, Reason}, Duration) ->
+    {probe_report(Id, false, error, Reason, Duration, 0, []), undefined};
+deep_probe_result(Id, _Invalid, Duration) ->
+    {probe_report(Id, false, error, invalid_probe_result, Duration, 0, []), undefined}.
 
 capture_memory(Request, Context) when is_map(Request) ->
     capture_inspection(memory, memory, 1, Context, fun() ->
@@ -1068,6 +1238,8 @@ collect_admitted_applications(
             Data = Audit#{
                 items => Items,
                 dropped_count => length(Items0) - length(Items),
+                sort => Sort,
+                sort_semantics => current,
                 application_count => length(Apps),
                 admission_stage => post_enumeration,
                 attribution => group_leader_application,
@@ -1427,8 +1599,11 @@ table_status(_Count) -> ok.
 
 excluded_processes(Context) ->
     Base = #{self() => diagnostics_worker},
+    WithWorker = maybe_exclude_pid(
+        maps:get(diagnostics_worker, Context, undefined), diagnostics_worker, Base
+    ),
     WithCoordinator = maybe_exclude_pid(
-        maps:get(coordinator, Context, undefined), diagnostics_coordinator, Base
+        maps:get(coordinator, Context, undefined), diagnostics_coordinator, WithWorker
     ),
     maybe_exclude_pid(
         maps:get(controller, Context, undefined), diagnostics_controller, WithCoordinator
@@ -1679,8 +1854,8 @@ safe_resource_count(Source) ->
         _:_ -> ?SOCKET_SCAN_BUDGET + 1
     end.
 
-collect_admitted_counter_resources(Command, Source, Sort, Limit, undefined, _Context, Estimate) ->
-    case resource_sample(Command, Source) of
+collect_admitted_counter_resources(Command, Source, Sort, Limit, undefined, Context, Estimate) ->
+    case resource_sample(Command, Source, Context) of
         {ok, Sample, Audit, Coverage} ->
             Items0 = [total_resource_item(Command, Item) || Item <- maps:values(Sample)],
             Items = rank_resource_items(Items0, Sort, Limit),
@@ -1701,11 +1876,11 @@ collect_admitted_counter_resources(Command, Source, Sort, Limit, undefined, _Con
         {error, Reason} ->
             enumeration_error(Command, Reason)
     end;
-collect_admitted_counter_resources(Command, Source, Sort, Limit, Duration, _Context, Estimate) ->
-    case resource_sample(Command, Source) of
+collect_admitted_counter_resources(Command, Source, Sort, Limit, Duration, Context, Estimate) ->
+    case resource_sample(Command, Source, Context) of
         {ok, First, FirstAudit, FirstCoverage} ->
             (maps:get(sleep_fun, Source))(Duration),
-            case resource_sample(Command, Source) of
+            case resource_sample(Command, Source, Context) of
                 {ok, Second, SecondAudit, SecondCoverage} ->
                     Interval =
                         (maps:get(monotonic_fun, Source))() -
@@ -1736,26 +1911,34 @@ collect_admitted_counter_resources(Command, Source, Sort, Limit, Duration, _Cont
             enumeration_error(Command, Reason)
     end.
 
-resource_sample(network, Source) -> network_sample(Source);
-resource_sample(sockets, Source) -> socket_sample(Source).
+resource_sample(network, Source, Context) -> network_sample(Source, Context);
+resource_sample(sockets, Source, _Context) -> socket_sample(Source).
 
-network_sample(Source) ->
+network_sample(Source, Context) ->
     case (maps:get(all_fun, Source))() of
         {ok, Ports} when is_list(Ports) ->
             Started = (maps:get(monotonic_fun, Source))(),
-            {Items, Disappeared} = lists:foldl(
-                fun(Port, {Acc, Gone}) ->
-                    case network_resource(Port, Source) of
-                        skip -> {Acc, Gone};
-                        disappeared -> {Acc, Gone + 1};
-                        Item -> {Acc#{Port => Item}, Gone}
+            Excluded = observer_port_exclusions(Context),
+            {Items, Disappeared, Exclusions} = lists:foldl(
+                fun(Port, {Acc, Gone, Removed}) ->
+                    case maps:find(Port, Excluded) of
+                        {ok, Reason} ->
+                            {Acc, Gone, [port_exclusion(Port, Reason) | Removed]};
+                        error ->
+                            case network_resource(Port, Source) of
+                                skip -> {Acc, Gone, Removed};
+                                disappeared -> {Acc, Gone + 1, Removed};
+                                Item -> {Acc#{Port => Item}, Gone, Removed}
+                            end
                     end
                 end,
-                {#{}, 0},
+                {#{}, 0, []},
                 Ports
             ),
             Audit = (resource_audit(length(Ports), map_size(Items), Disappeared, Started))#{
-                vm_io_counters => network_io_counters(Source)
+                vm_io_counters => network_io_counters(Source),
+                exclusion_count => length(Exclusions),
+                exclusions => lists:reverse(Exclusions)
             },
             {ok, Items, Audit, []};
         {error, Reason} ->
@@ -1913,7 +2096,7 @@ vm_io_metrics(Counters, Semantics) ->
         #{input => Input, output => Output, io => Io}
     ).
 
-collect_ports(Source, Sort, Limit, _Context) ->
+collect_ports(Source, Sort, Limit, Context) ->
     Count = safe_resource_count(Source),
     Estimate = working_set_estimate(min(Count, Limit), 7, 1),
     case Count =< ?PORT_SCAN_BUDGET andalso Estimate =< ?MAX_WORKING_SET_BYTES of
@@ -1930,7 +2113,7 @@ collect_ports(Source, Sort, Limit, _Context) ->
         true ->
             case (maps:get(all_fun, Source))() of
                 {ok, Ports} when is_list(Ports) ->
-                    collect_port_items(Ports, Source, Sort, Limit, Estimate);
+                    collect_port_items(Ports, Source, Sort, Limit, Context, Estimate);
                 {error, Reason} ->
                     enumeration_error(ports, Reason);
                 _ ->
@@ -1938,16 +2121,22 @@ collect_ports(Source, Sort, Limit, _Context) ->
             end
     end.
 
-collect_port_items(Ports, Source, Sort, Limit, Estimate) ->
-    {Items0, Disappeared} = lists:foldl(
-        fun(Port, {Items, Gone}) ->
-            case port_resource(Port, Source) of
-                skip -> {Items, Gone};
-                disappeared -> {Items, Gone + 1};
-                Item -> {[Item | Items], Gone}
+collect_port_items(Ports, Source, Sort, Limit, Context, Estimate) ->
+    Excluded = observer_port_exclusions(Context),
+    {Items0, Disappeared, Exclusions} = lists:foldl(
+        fun(Port, {Items, Gone, Removed}) ->
+            case maps:find(Port, Excluded) of
+                {ok, Reason} ->
+                    {Items, Gone, [port_exclusion(Port, Reason) | Removed]};
+                error ->
+                    case port_resource(Port, Source) of
+                        skip -> {Items, Gone, Removed};
+                        disappeared -> {Items, Gone + 1, Removed};
+                        Item -> {[Item | Items], Gone, Removed}
+                    end
             end
         end,
-        {[], 0},
+        {[], 0, []},
         Ports
     ),
     Items = rank_resource_items(Items0, Sort, Limit),
@@ -1960,6 +2149,8 @@ collect_port_items(Ports, Source, Sort, Limit, Estimate) ->
             returned_count => length(Items),
             dropped_count => length(Items0) - length(Items),
             disappeared_count => Disappeared,
+            exclusion_count => length(Exclusions),
+            exclusions => lists:reverse(Exclusions),
             complete => true,
             sort => Sort,
             sort_semantics => current_or_lifetime,
@@ -1968,6 +2159,20 @@ collect_port_items(Ports, Source, Sort, Limit, Estimate) ->
             working_set_estimated_bytes => Estimate
         },
         [documented_port_info_keys, name_only_inet_classification, raw_port_identity]}.
+
+observer_port_exclusions(Context) ->
+    case {controller_node(maps:get(controller, Context, undefined)), safe_system_info(dist_ctrl)} of
+        {ControllerNode, {ok, Controllers}} when is_atom(ControllerNode), is_list(Controllers) ->
+            case lists:keyfind(ControllerNode, 1, Controllers) of
+                {ControllerNode, Port} when is_port(Port) -> #{Port => diagnostics_controller};
+                _ -> #{}
+            end;
+        _ ->
+            #{}
+    end.
+
+port_exclusion(Port, Reason) ->
+    #{resource => {identifier, port, Port}, reason => Reason}.
 
 port_resource(Port, Source) ->
     Info = maps:get(info_fun, Source),
@@ -2757,14 +2962,23 @@ target_from_runtime(#{node := Node, otp_release := OtpRelease}) ->
     #{node => Node, otp_release => OtpRelease}.
 
 snapshot_data(Probes) ->
-    lists:foldl(
+    Data = lists:foldl(
         fun
             ({#{id := Id, status := ok}, Data}, Acc) -> Acc#{Id => Data};
             (_Probe, Acc) -> Acc
         end,
         #{snapshot_version => 1},
         Probes
-    ).
+    ),
+    Skipped = [
+        #{probe => Id, reason_code => Reason, admission_evidence => Evidence}
+     || {#{id := Id, required := false, status := unavailable, reason_code := Reason}, Evidence} <-
+            Probes
+    ],
+    case Skipped of
+        [] -> Data;
+        _ -> Data#{skipped => Skipped}
+    end.
 
 probe_data(Id, [{#{id := Id, status := ok}, Data} | _Rest]) -> Data;
 probe_data(Id, [_Probe | Rest]) -> probe_data(Id, Rest);

@@ -152,6 +152,11 @@ validate_runtime_options(schedulers, Options) ->
         {ok, Duration} -> validate_scheduler_timeout(Options, Duration);
         {error, Reason} -> {error, Reason}
     end;
+validate_runtime_options(snapshot, Options) ->
+    case only_options(Options, [deep]) of
+        true -> validate_target_options(Options);
+        false -> {error, unsupported_command_option}
+    end;
 validate_runtime_options(distribution, #{limit := Text} = Options) ->
     case positive_integer(Text) of
         Limit when is_integer(Limit), Limit =< 200 -> validate_target_options(Options);
@@ -192,6 +197,8 @@ validate_runtime_options(process, Options) ->
         true -> validate_target_options(Options);
         false -> {error, unsupported_command_option}
     end;
+validate_runtime_options(_Command, #{deep := true}) ->
+    {error, unsupported_command_option};
 validate_runtime_options(_Command, Options) ->
     validate_target_options(Options).
 
@@ -286,6 +293,7 @@ validate_arguments(process, [_Target]) ->
 validate_arguments(process, _Arguments) ->
     {error, process_target_required};
 validate_arguments(Command, []) when
+    Command =:= snapshot;
     Command =:= processes;
     Command =:= applications;
     Command =:= ets;
@@ -296,6 +304,7 @@ validate_arguments(Command, []) when
 ->
     ok;
 validate_arguments(Command, _Arguments) when
+    Command =:= snapshot;
     Command =:= processes;
     Command =:= applications;
     Command =:= ets;

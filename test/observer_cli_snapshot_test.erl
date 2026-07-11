@@ -134,6 +134,223 @@ snapshot_probe_failure_semantics_test() ->
         maps:get(<<"errors">>, RequiredError)
     ).
 
+deep_snapshot_composes_narrow_probe_defaults_test() ->
+    Response = snapshot(#{deep => true}),
+    Capture = maps:get(<<"capture">>, Response),
+    ?assertEqual(<<"complete">>, maps:get(<<"status">>, Capture)),
+    lists:foreach(
+        fun(Id) -> assert_probe(Id, false, <<"ok">>, Capture) end,
+        [
+            <<"processes">>,
+            <<"applications">>,
+            <<"ets">>,
+            <<"mnesia">>,
+            <<"network">>,
+            <<"ports">>,
+            <<"sockets">>
+        ]
+    ),
+    Data = maps:get(<<"data">>, Response),
+    lists:foreach(
+        fun({Id, Sort, Semantics}) ->
+            ProbeData = maps:get(Id, Data),
+            ?assertEqual(Sort, maps:get(<<"sort">>, ProbeData)),
+            ?assertEqual(Semantics, maps:get(<<"sort_semantics">>, ProbeData)),
+            ?assert(maps:get(<<"returned_count">>, ProbeData) =< 20)
+        end,
+        [
+            {<<"processes">>, <<"memory">>, <<"total">>},
+            {<<"applications">>, <<"memory">>, <<"current">>},
+            {<<"ets">>, <<"memory">>, <<"current">>},
+            {<<"network">>, <<"oct">>, <<"total">>},
+            {<<"ports">>, <<"queue_size">>, <<"current_or_lifetime">>},
+            {<<"sockets">>, <<"io">>, <<"total">>}
+        ]
+    ),
+    ?assertEqual(<<"memory">>, maps:get(<<"sort">>, maps:get(<<"mnesia">>, Data))),
+    assert_json_safe(Response).
+
+deep_snapshot_shares_report_identifier_dictionary_test() ->
+    Pid = spawn(fun process_fixture/0),
+    Table = make_ref(),
+    ProcessSource = process_source([Pid], fun(Current, Keys) ->
+        process_info_fixture(Current, Keys, 100)
+    end),
+    EtsValues = #{
+        id => Table,
+        name => goal_11_table,
+        size => 1,
+        memory => 2,
+        owner => Pid,
+        type => set,
+        protection => public,
+        keypos => 1
+    },
+    EtsSource = #{
+        count_fun => fun() -> 1 end,
+        all_fun => fun() -> [Table] end,
+        info_fun => fun(_Table, Key) -> maps:get(Key, EtsValues) end,
+        word_size_fun => fun() -> 8 end
+    },
+    try
+        Response = snapshot(#{
+            deep => true,
+            test_process_source => ProcessSource,
+            test_ets_source => EtsSource,
+            test_deep_probe_outcomes => #{
+                applications =>
+                    {unavailable, scan_budget_exceeded, #{admission_stage => fixture}, 0, [
+                        admission_only
+                    ]}
+            }
+        }),
+        Data = maps:get(<<"data">>, Response),
+        [Process] = maps:get(<<"items">>, maps:get(<<"processes">>, Data)),
+        [TableItem] = maps:get(<<"items">>, maps:get(<<"ets">>, Data)),
+        ?assertEqual(maps:get(<<"pid">>, Process), maps:get(<<"owner">>, TableItem))
+    after
+        exit(Pid, kill)
+    end.
+
+deep_snapshot_refusal_and_started_failure_contract_test() ->
+    Refused = snapshot(#{
+        deep => true,
+        test_deep_probe_outcomes => #{
+            ets =>
+                {unavailable, scan_budget_exceeded,
+                    #{admission_stage => pre_enumeration, observed_table_count => 100001}, 0, [
+                        admission_only
+                    ]}
+        }
+    }),
+    ?assertEqual(<<"complete">>, maps:get(<<"status">>, maps:get(<<"capture">>, Refused))),
+    [Skipped] = maps:get(<<"skipped">>, maps:get(<<"data">>, Refused)),
+    ?assertEqual(<<"ets">>, maps:get(<<"probe">>, Skipped)),
+    ?assertEqual(
+        100001,
+        maps:get(
+            <<"observed_table_count">>, maps:get(<<"admission_evidence">>, Skipped)
+        )
+    ),
+    lists:foreach(
+        fun({Probe, Outcome}) ->
+            Response = snapshot(#{
+                deep => true, test_deep_probe_outcomes => #{Probe => Outcome}
+            }),
+            Capture = maps:get(<<"capture">>, Response),
+            ?assertEqual(<<"partial">>, maps:get(<<"status">>, Capture)),
+            ?assertNot(is_map_key(atom_to_binary(Probe), maps:get(<<"data">>, Response)))
+        end,
+        [
+            {processes, {timeout, target_timeout}},
+            {applications, {error, probe_failed}}
+        ]
+    ).
+
+deep_snapshot_heap_boundary_is_partial_test() ->
+    Parent = self(),
+    Source = process_source([self()], fun(_Pid, _Keys) -> undefined end),
+    HeapSource = Source#{
+        fold :=
+            {fixture_list, fun(_Fun, _Acc) ->
+                Parent ! {deep_heap_worker, self()},
+                length(lists:seq(1, 1000000))
+            end}
+    },
+    #{<<"status">> := <<"ok">>, <<"result">> := Response} =
+        observer_cli_snapshot:dispatch(
+            self(),
+            snapshot,
+            #{
+                deep => true,
+                test_process_source => HeapSource,
+                test_deep_probe_outcomes => #{
+                    applications =>
+                        {unavailable, scan_budget_exceeded, #{admission_stage => fixture}, 0, [
+                            admission_only
+                        ]}
+                }
+            },
+            #{timeout_ms => 5000, identifier_policy => redact, max_heap_words => 262144}
+        ),
+    Worker =
+        receive
+            {deep_heap_worker, Pid} -> Pid
+        end,
+    ?assertNot(is_process_alive(Worker)),
+    Capture = maps:get(<<"capture">>, Response),
+    ?assertEqual(<<"partial">>, maps:get(<<"status">>, Capture)),
+    [ProcessProbe] = [
+        Probe
+     || #{<<"id">> := <<"processes">>} = Probe <- maps:get(<<"probes">>, Capture)
+    ],
+    ?assertEqual(<<"worker_heap_limit_exceeded">>, maps:get(<<"reason_code">>, ProcessProbe)).
+
+deep_snapshot_started_timeout_cleans_probe_worker_test() ->
+    Parent = self(),
+    Source = (process_source([self()], fun(_Pid, _Keys) -> undefined end))#{
+        fold :=
+            {fixture_list, fun(_Fun, _Acc) ->
+                Parent ! {deep_timeout_worker, self()},
+                receive
+                    stop -> ok
+                end
+            end}
+    },
+    #{<<"status">> := <<"ok">>, <<"result">> := Response} =
+        observer_cli_snapshot:dispatch(
+            self(),
+            snapshot,
+            #{deep => true, test_process_source => Source},
+            options(2000, redact)
+        ),
+    Worker =
+        receive
+            {deep_timeout_worker, Pid} -> Pid
+        end,
+    ?assertNot(is_process_alive(Worker)),
+    Capture = maps:get(<<"capture">>, Response),
+    ?assertEqual(<<"partial">>, maps:get(<<"status">>, Capture)),
+    [ProcessProbe] = [
+        Probe
+     || #{<<"id">> := <<"processes">>} = Probe <- maps:get(<<"probes">>, Capture)
+    ],
+    ?assertEqual(<<"timeout">>, maps:get(<<"status">>, ProcessProbe)),
+    ?assertEqual(<<"target_timeout">>, maps:get(<<"reason_code">>, ProcessProbe)).
+
+deep_snapshot_controller_disconnect_cleans_probe_worker_test() ->
+    Parent = self(),
+    Controller = spawn(fun process_fixture/0),
+    Killer = spawn(fun() ->
+        receive
+            {deep_worker, Worker} ->
+                Parent ! {deep_worker, Worker},
+                exit(Controller, kill)
+        end
+    end),
+    Source = (process_source([self()], fun(_Pid, _Keys) -> undefined end))#{
+        fold :=
+            {fixture_list, fun(_Fun, _Acc) ->
+                Killer ! {deep_worker, self()},
+                receive
+                    stop -> ok
+                end
+            end}
+    },
+    Result = observer_cli_snapshot:dispatch(
+        Controller,
+        snapshot,
+        #{deep => true, test_process_source => Source},
+        options(5000, redact)
+    ),
+    Worker =
+        receive
+            {deep_worker, Pid} -> Pid
+        end,
+    ?assertEqual(<<"error">>, maps:get(<<"status">>, Result)),
+    ?assertEqual(<<"controller_disconnected">>, maps:get(<<"reason_code">>, Result)),
+    ?assertNot(is_process_alive(Worker)).
+
 local_snapshot_text_and_term_envelopes_test() ->
     Response = snapshot(#{}),
     {ok, Text} = observer_cli_cli:encode(text, Response),
