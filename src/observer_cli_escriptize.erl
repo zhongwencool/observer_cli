@@ -538,39 +538,13 @@ run_snapshot(Target, Options, Request, Remaining) ->
             true -> include;
             false -> redact
         end,
-    case command_timeout(Options, Remaining) of
-        {ok, Timeout} ->
-            DispatchOptions = #{timeout_ms => Timeout, identifier_policy => Policy},
-            try
-                erpc:call(
-                    Target,
-                    observer_cli_snapshot,
-                    dispatch,
-                    [self(), snapshot, Request, DispatchOptions],
-                    Timeout
-                )
-            of
-                #{
-                    <<"status">> := <<"ok">>,
-                    <<"result">> := Response,
-                    <<"cleanup_confirmed">> := true
-                } ->
-                    validated_response(
-                        snapshot, Policy, Target, Response, fun snapshot_response/1
-                    );
-                #{
-                    <<"status">> := <<"error">>,
-                    <<"reason_code">> := Reason,
-                    <<"cleanup_confirmed">> := true
-                } ->
-                    target_dispatch_error(Reason);
-                _Invalid ->
-                    {error, schema, invalid_snapshot_response}
-            catch
-                _Class:_Reason:_Stacktrace -> {error, required_probe, target_dispatch_failed}
-            end;
-        {error, Reason} ->
-            {error, required_probe, Reason}
+    case target_dispatch(Target, snapshot, Request, Options, Policy, Remaining) of
+        {ok, Response} ->
+            validated_response(snapshot, Policy, Target, Response, fun snapshot_response/1);
+        invalid ->
+            {error, schema, invalid_snapshot_response};
+        Error ->
+            Error
     end.
 
 snapshot_response(#{<<"capture">> := #{<<"status">> := <<"complete">>}} = Response) ->
@@ -586,47 +560,19 @@ run_dispatch(Target, Command, Request, Options, Remaining) ->
             true -> redact;
             false -> include
         end,
-    case command_timeout(Options, Remaining) of
-        {ok, Timeout} ->
-            try
-                erpc:call(
-                    Target,
-                    observer_cli_snapshot,
-                    dispatch,
-                    [
-                        self(),
-                        Command,
-                        Request,
-                        #{timeout_ms => Timeout, identifier_policy => Policy}
-                    ],
-                    Timeout
-                )
-            of
-                #{
-                    <<"status">> := <<"ok">>,
-                    <<"result">> := Response,
-                    <<"cleanup_confirmed">> := true
-                } ->
-                    validated_response(
-                        response_command(Command, Request),
-                        Policy,
-                        Target,
-                        Response,
-                        fun dispatch_response/1
-                    );
-                #{
-                    <<"status">> := <<"error">>,
-                    <<"reason_code">> := Reason,
-                    <<"cleanup_confirmed">> := true
-                } ->
-                    target_dispatch_error(Reason);
-                _Invalid ->
-                    {error, schema, invalid_command_response}
-            catch
-                _Class:_Reason:_Stacktrace -> {error, required_probe, target_dispatch_failed}
-            end;
-        {error, Reason} ->
-            {error, required_probe, Reason}
+    case target_dispatch(Target, Command, Request, Options, Policy, Remaining) of
+        {ok, Response} ->
+            validated_response(
+                response_command(Command, Request),
+                Policy,
+                Target,
+                Response,
+                fun dispatch_response/1
+            );
+        invalid ->
+            {error, schema, invalid_command_response};
+        Error ->
+            Error
     end.
 
 dispatch_response(
@@ -666,15 +612,29 @@ run_diagnose(Target, Options, Remaining) ->
             false -> redact
         end,
     Request = maps:with([observe, deep, app], Options),
+    case target_dispatch(Target, diagnose, Request, Options, Policy, Remaining) of
+        {ok, Response} ->
+            validated_response(diagnose, Policy, Target, Response, fun diagnose_response/1);
+        invalid ->
+            {error, schema, invalid_diagnose_response};
+        Error ->
+            Error
+    end.
+
+target_dispatch(Target, Command, Request, Options, Policy, Remaining) ->
     case command_timeout(Options, Remaining) of
         {ok, Timeout} ->
-            DispatchOptions = #{timeout_ms => Timeout, identifier_policy => Policy},
             try
                 erpc:call(
                     Target,
                     observer_cli_snapshot,
                     dispatch,
-                    [self(), diagnose, Request, DispatchOptions],
+                    [
+                        self(),
+                        Command,
+                        Request,
+                        #{timeout_ms => Timeout, identifier_policy => Policy}
+                    ],
                     Timeout
                 )
             of
@@ -683,9 +643,7 @@ run_diagnose(Target, Options, Remaining) ->
                     <<"result">> := Response,
                     <<"cleanup_confirmed">> := true
                 } ->
-                    validated_response(
-                        diagnose, Policy, Target, Response, fun diagnose_response/1
-                    );
+                    {ok, Response};
                 #{
                     <<"status">> := <<"error">>,
                     <<"reason_code">> := Reason,
@@ -693,7 +651,7 @@ run_diagnose(Target, Options, Remaining) ->
                 } ->
                     target_dispatch_error(Reason);
                 _Invalid ->
-                    {error, schema, invalid_diagnose_response}
+                    invalid
             catch
                 _Class:_Reason:_Stacktrace -> {error, required_probe, target_dispatch_failed}
             end;

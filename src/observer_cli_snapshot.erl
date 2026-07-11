@@ -1806,17 +1806,14 @@ valid_process_request(Sort, Limit, Duration) ->
     lists:member(
         Sort, [memory, message_queue_len, reductions, binary_memory, total_heap_size]
     ) andalso
-        is_integer(Limit) andalso Limit >= 1 andalso Limit =< 200 andalso
-        ((Duration =:= undefined) orelse
-            (is_integer(Duration) andalso Duration >= 250 andalso Duration =< 10000)).
+        valid_list_limit(Limit) andalso valid_sample_duration(Duration).
 
 valid_application_request(Sort, Limit) ->
     lists:member(Sort, [memory, process_count, reductions, message_queue_len]) andalso
-        is_integer(Limit) andalso Limit >= 1 andalso Limit =< 200.
+        valid_list_limit(Limit).
 
 valid_table_request(Sort, Limit) ->
-    lists:member(Sort, [memory, size]) andalso
-        is_integer(Limit) andalso Limit >= 1 andalso Limit =< 200.
+    lists:member(Sort, [memory, size]) andalso valid_list_limit(Limit).
 
 valid_counter_request(network, Sort, Limit, Duration) ->
     valid_counter_values(Sort, [oct, recv_oct, send_oct, cnt, recv_cnt, send_cnt], Limit, Duration);
@@ -1826,14 +1823,20 @@ valid_counter_request(sockets, Sort, Limit, Duration) ->
     ).
 
 valid_counter_values(Sort, Sorts, Limit, Duration) ->
-    lists:member(Sort, Sorts) andalso is_integer(Limit) andalso Limit >= 1 andalso
-        Limit =< 200 andalso
-        (Duration =:= undefined orelse
-            (is_integer(Duration) andalso Duration >= 250 andalso Duration =< 10000)).
+    lists:member(Sort, Sorts) andalso valid_list_limit(Limit) andalso
+        valid_sample_duration(Duration).
 
 valid_port_request(Sort, Limit) ->
     lists:member(Sort, [queue_size, memory, input, output, io]) andalso
-        is_integer(Limit) andalso Limit >= 1 andalso Limit =< 200.
+        valid_list_limit(Limit).
+
+valid_list_limit(Limit) ->
+    is_integer(Limit) andalso Limit >= 1 andalso Limit =< 200.
+
+valid_sample_duration(undefined) ->
+    true;
+valid_sample_duration(Duration) ->
+    is_integer(Duration) andalso Duration >= 250 andalso Duration =< 10000.
 
 default_counter_sort(network) -> oct;
 default_counter_sort(sockets) -> io.

@@ -205,10 +205,7 @@ validate_runtime_options(schedulers, Options) ->
             {error, unsupported_command_option}
     end;
 validate_runtime_options(snapshot, Options) ->
-    case only_options(snapshot, Options, [deep]) of
-        true -> validate_target_options(Options);
-        false -> {error, unsupported_command_option}
-    end;
+    validate_target_options(snapshot, Options, [deep]);
 validate_runtime_options(diagnose, Options) ->
     case only_options(diagnose, Options, [observe, deep, app]) of
         true -> validate_diagnose_options(Options);
@@ -262,23 +259,14 @@ validate_runtime_options(sockets, Options) ->
         sockets, Options, ["io", "read_bytes", "write_bytes", "packets", "waits", "fails"]
     );
 validate_runtime_options(process, Options) ->
-    case only_options(process, Options, [info]) of
-        true -> validate_target_options(Options);
-        false -> {error, unsupported_command_option}
-    end;
+    validate_target_options(process, Options, [info]);
 validate_runtime_options(port, Options) ->
-    case only_options(port, Options, []) of
-        true -> validate_target_options(Options);
-        false -> {error, unsupported_command_option}
-    end;
+    validate_target_options(port, Options, []);
 validate_runtime_options(gen_server_state, Options) ->
-    case only_options(gen_server_state, Options, []) of
-        true -> validate_target_options(Options);
-        false -> {error, unsupported_command_option}
-    end;
+    validate_target_options(gen_server_state, Options, []);
 validate_runtime_options(supervision_tree, #{app := App} = Options) ->
-    case only_options(supervision_tree, Options, [app]) andalso valid_application_name(App) of
-        true -> validate_target_options(Options);
+    case valid_application_name(App) of
+        true -> validate_target_options(supervision_tree, Options, [app]);
         false -> {error, unsupported_command_option}
     end;
 validate_runtime_options(supervision_tree, _Options) ->
@@ -286,7 +274,10 @@ validate_runtime_options(supervision_tree, _Options) ->
 validate_runtime_options(trace, Options) ->
     validate_trace_options(Options);
 validate_runtime_options(Command, Options) ->
-    case only_options(Command, Options, []) of
+    validate_target_options(Command, Options, []).
+
+validate_target_options(Command, Options, CommandOptions) ->
+    case only_options(Command, Options, CommandOptions) of
         true -> validate_target_options(Options);
         false -> {error, unsupported_command_option}
     end.
@@ -1054,16 +1045,14 @@ duration_ms(_Text) ->
     error.
 
 positive_integer(Text) ->
-    try list_to_integer(Text) of
-        Value when Value > 0 -> Value;
-        _ -> error
-    catch
-        error:badarg -> error
-    end.
+    integer_at_least(Text, 1).
 
 positive_integer_or_zero(Text) ->
+    integer_at_least(Text, 0).
+
+integer_at_least(Text, Minimum) ->
     try list_to_integer(Text) of
-        Value when Value >= 0 -> Value;
+        Value when Value >= Minimum -> Value;
         _ -> error
     catch
         error:badarg -> error
