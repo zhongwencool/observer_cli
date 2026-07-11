@@ -7,6 +7,8 @@
     target/1,
     cookie_source/1,
     duration/1,
+    trace_duration/1,
+    trace_limit/1,
     timeout/1,
     context_options/1,
     save_context/1,
@@ -75,19 +77,14 @@ parse_command(Command, Arguments) ->
 
 parse_command(Command, [], Positionals, Options) ->
     Arguments = lists:reverse(Positionals),
-    case validate_options(Command, Options) of
+    case validate_command(Command, Arguments, Options) of
         ok ->
-            case validate_arguments(Command, Arguments) of
-                ok ->
-                    {ok, #{
-                        route => command,
-                        command => Command,
-                        arguments => Arguments,
-                        options => Options
-                    }};
-                {error, Reason} ->
-                    argument_error(Reason)
-            end;
+            {ok, #{
+                route => command,
+                command => Command,
+                arguments => Arguments,
+                options => Options
+            }};
         {error, Reason} ->
             argument_error(Reason)
     end;
@@ -116,6 +113,56 @@ add_option(_Command, _Rest, _Positionals, Options, Key, _Value) when is_map_key(
     argument_error({duplicate_option, Key});
 add_option(Command, Rest, Positionals, Options, Key, Value) ->
     parse_command(Command, Rest, Positionals, Options#{Key => Value}).
+
+validate_command(trace, Arguments, Options) ->
+    case validate_options(trace, Options) of
+        ok -> validate_trace_command(Arguments, Options);
+        Error -> Error
+    end;
+validate_command(Command, Arguments, Options) ->
+    case validate_options(Command, Options) of
+        ok -> validate_arguments(Command, Arguments);
+        Error -> Error
+    end.
+
+validate_trace_command(["call", _MFA] = Arguments, Options) ->
+    case
+        {
+            validate_arguments(trace, Arguments),
+            maps:get(replace_existing_trace, Options, false),
+            maps:is_key(pid, Options),
+            lists:all(
+                fun(Key) ->
+                    lists:member(Key, [pid, replace_existing_trace, limit, rate, duration])
+                end,
+                trace_mode_keys(Options)
+            )
+        }
+    of
+        {ok, true, true, true} -> ok;
+        {{error, Reason}, _, _, _} -> {error, Reason};
+        {ok, false, _, _} -> {error, replace_existing_trace_required};
+        {ok, _, false, _} -> {error, trace_pid_required};
+        {ok, _, _, false} -> {error, unsupported_command_option}
+    end;
+validate_trace_command(["stop"] = Arguments, Options) ->
+    case
+        {
+            validate_arguments(trace, Arguments),
+            maps:get(all, Options, false),
+            trace_mode_keys(Options)
+        }
+    of
+        {ok, true, [all]} -> ok;
+        {ok, false, _} -> {error, trace_all_required};
+        {ok, true, _} -> {error, unsupported_command_option}
+    end;
+validate_trace_command(Arguments, _Options) ->
+    validate_arguments(trace, Arguments).
+
+trace_mode_keys(Options) ->
+    Global = [node, cookie_env, cookie_file, name_mode, format, json, timeout],
+    lists:sort(maps:keys(maps:without(Global, Options))).
 
 validate_options(Command, Options) ->
     validate_exclusive_options(
@@ -214,9 +261,32 @@ validate_runtime_options(supervision_tree, #{app := App} = Options) ->
     end;
 validate_runtime_options(supervision_tree, _Options) ->
     {error, application_required};
+validate_runtime_options(trace, Options) ->
+    validate_trace_options(Options);
 validate_runtime_options(_Command, #{deep := true}) ->
     {error, unsupported_command_option};
 validate_runtime_options(_Command, Options) ->
+    validate_target_options(Options).
+
+validate_trace_options(Options) ->
+    case only_options(Options, [pid, limit, rate, duration, replace_existing_trace, all]) of
+        true ->
+            case {trace_duration(Options), trace_limit(Options)} of
+                {{ok, Duration}, {ok, _Max}} -> validate_trace_timeout(Options, Duration);
+                {{error, Reason}, _} -> {error, Reason};
+                {_, {error, Reason}} -> {error, Reason}
+            end;
+        false ->
+            {error, unsupported_command_option}
+    end.
+
+validate_trace_timeout(#{timeout := _} = Options, Duration) ->
+    case timeout_value(Options) of
+        {ok, Timeout} when Timeout >= Duration + 5000 -> validate_target_options(Options);
+        {ok, _} -> {error, timeout_too_short};
+        Error -> Error
+    end;
+validate_trace_timeout(Options, _Duration) ->
     validate_target_options(Options).
 
 validate_counter_list_options(Options, Sorts) ->
@@ -356,6 +426,15 @@ validate_arguments(supervision_tree, []) ->
     ok;
 validate_arguments(supervision_tree, _Arguments) ->
     {error, invalid_arguments};
+validate_arguments(trace, ["call", MFA]) ->
+    case valid_mfa_text(MFA) of
+        true -> ok;
+        false -> {error, invalid_mfa}
+    end;
+validate_arguments(trace, ["stop"]) ->
+    ok;
+validate_arguments(trace, _Arguments) ->
+    {error, invalid_trace_command};
 validate_arguments(Command, []) when
     Command =:= snapshot;
     Command =:= diagnose;
@@ -458,9 +537,44 @@ duration(#{duration := Text}) ->
 duration(_Options) ->
     {ok, 1500}.
 
+-spec trace_duration(map()) -> {ok, pos_integer()} | {error, atom()}.
+trace_duration(#{duration := Text}) ->
+    case duration_ms(Text) of
+        Milliseconds when is_integer(Milliseconds), Milliseconds >= 100, Milliseconds =< 60000 ->
+            {ok, Milliseconds};
+        _ ->
+            {error, invalid_duration}
+    end;
+trace_duration(_Options) ->
+    {ok, 10000}.
+
+-spec trace_limit(map()) -> {ok, pos_integer() | {pos_integer(), 1000}} | {error, atom()}.
+trace_limit(#{rate := Text}) ->
+    case string:split(Text, "/", all) of
+        [CountText, "s"] ->
+            case positive_integer(CountText) of
+                Count when is_integer(Count), Count =< 200 -> {ok, {Count, 1000}};
+                _ -> {error, invalid_rate}
+            end;
+        _ ->
+            {error, invalid_rate}
+    end;
+trace_limit(#{limit := Text}) ->
+    case positive_integer(Text) of
+        Count when is_integer(Count), Count =< 1000 -> {ok, Count};
+        _ -> {error, invalid_limit}
+    end;
+trace_limit(_Options) ->
+    {ok, 100}.
+
 -spec timeout(map()) -> {ok, pos_integer()} | {error, atom()}.
 timeout(#{timeout := _Text} = Options) ->
     timeout_value(Options);
+timeout(#{replace_existing_trace := true} = Options) ->
+    case trace_duration(Options) of
+        {ok, Duration} -> {ok, max(10000, Duration + 5000)};
+        {error, _Reason} -> {error, invalid_duration}
+    end;
 timeout(#{duration := _Text} = Options) ->
     case duration(Options) of
         {ok, Duration} -> {ok, max(10000, Duration + 5000)};
@@ -871,6 +985,28 @@ valid_application_name(Name) when is_list(Name), Name =/= [], length(Name) =< 25
 valid_application_name(_Name) ->
     false.
 
+valid_mfa_text(Text) when is_list(Text), Text =/= [], length(Text) =< 768 ->
+    case string:split(Text, ":", all) of
+        [Module, FunctionArity] when Module =/= [] ->
+            case string:split(FunctionArity, "/", all) of
+                [Function, ArityText] when Function =/= [] ->
+                    exact_mfa_name(Module) andalso exact_mfa_name(Function) andalso
+                        case positive_integer_or_zero(ArityText) of
+                            Arity when is_integer(Arity), Arity =< 255 -> true;
+                            _ -> false
+                        end;
+                _ ->
+                    false
+            end;
+        _ ->
+            false
+    end;
+valid_mfa_text(_Text) ->
+    false.
+
+exact_mfa_name(Name) ->
+    Name =/= "_" andalso Name =/= "*" andalso valid_text(Name).
+
 duration_ms(Text) when is_list(Text) ->
     case lists:reverse(Text) of
         [$s, $m | Reversed] -> positive_integer(lists:reverse(Reversed));
@@ -883,6 +1019,14 @@ duration_ms(_Text) ->
 positive_integer(Text) ->
     try list_to_integer(Text) of
         Value when Value > 0 -> Value;
+        _ -> error
+    catch
+        error:badarg -> error
+    end.
+
+positive_integer_or_zero(Text) ->
+    try list_to_integer(Text) of
+        Value when Value >= 0 -> Value;
         _ -> error
     catch
         error:badarg -> error

@@ -279,6 +279,8 @@ probe(gen_server_state, Request, Context) ->
     capture_gen_server_state(Request, Context);
 probe(supervision_tree, Request, Context) ->
     capture_supervision_tree(Request, Context);
+probe(trace, Request, Context) ->
+    capture_trace(Request, Context);
 probe(_Command, _Request, _Context) ->
     {probe_error, capability_unavailable}.
 -else.
@@ -312,9 +314,18 @@ probe(gen_server_state, Request, Context) ->
     capture_gen_server_state(Request, Context);
 probe(supervision_tree, Request, Context) ->
     capture_supervision_tree(Request, Context);
+probe(trace, Request, Context) ->
+    capture_trace(Request, Context);
 probe(_Command, _Request, _Context) ->
     {probe_error, capability_unavailable}.
 -endif.
+
+capture_trace(#{action := call} = Request, #{controller := Controller}) ->
+    observer_cli_trace:call(Controller, maps:remove(action, Request));
+capture_trace(#{action := stop_all}, _Context) ->
+    observer_cli_trace:stop_all();
+capture_trace(_Request, _Context) ->
+    {probe_error, invalid_request}.
 
 capture_snapshot(Request, #{deadline := Deadline, controller := Controller} = Context) when
     is_map(Request)

@@ -34,6 +34,7 @@ reserved_command_words_test() ->
                     process -> [Word, "<0.1.0>"];
                     gen_server_state -> [Word, "<0.1.0>"];
                     supervision_tree -> [Word, "--app", "kernel"];
+                    trace -> [Word, "stop", "--all"];
                     _ -> [Word]
                 end,
             ?assertMatch(
@@ -106,6 +107,106 @@ command_options_test() ->
             "<0.123.0>",
             "--replace-existing-trace"
         ])
+    ).
+
+trace_command_contract_test() ->
+    ?assertMatch(
+        {ok, #{
+            command := trace,
+            arguments := ["call", "my_mod:my_fun/2"],
+            options := #{
+                pid := "<0.123.0>",
+                replace_existing_trace := true,
+                duration := "60s",
+                rate := "200/s"
+            }
+        }},
+        observer_cli_cli:parse([
+            "trace",
+            "call",
+            "my_mod:my_fun/2",
+            "--pid",
+            "<0.123.0>",
+            "--duration",
+            "60s",
+            "--rate",
+            "200/s",
+            "--replace-existing-trace"
+        ])
+    ),
+    ?assertMatch(
+        {ok, #{command := trace, arguments := ["stop"], options := #{all := true}}},
+        observer_cli_cli:parse(["trace", "stop", "--all"])
+    ),
+    ?assertEqual({ok, 10000}, observer_cli_cli:trace_duration(#{})),
+    ?assertEqual({ok, 100}, observer_cli_cli:trace_limit(#{})),
+    ?assertEqual({ok, {20, 1000}}, observer_cli_cli:trace_limit(#{rate => "20/s"})),
+    ?assertEqual({ok, 15000}, observer_cli_cli:timeout(#{replace_existing_trace => true})),
+    ?assertEqual(
+        {ok, 65000},
+        observer_cli_cli:timeout(#{replace_existing_trace => true, duration => "60s"})
+    ),
+    lists:foreach(
+        fun({Reason, Arguments}) ->
+            assert_argument_error(Reason, observer_cli_cli:parse(Arguments))
+        end,
+        [
+            {replace_existing_trace_required, [
+                "trace", "call", "my_mod:my_fun/2", "--pid", "<0.1.0>"
+            ]},
+            {trace_pid_required, ["trace", "call", "my_mod:my_fun/2", "--replace-existing-trace"]},
+            {trace_all_required, ["trace", "stop"]},
+            {invalid_mfa, [
+                "trace",
+                "call",
+                "my_mod:*/1",
+                "--pid",
+                "<0.1.0>",
+                "--replace-existing-trace"
+            ]},
+            {invalid_limit, [
+                "trace",
+                "call",
+                "my_mod:my_fun/2",
+                "--pid",
+                "<0.1.0>",
+                "--limit",
+                "1001",
+                "--replace-existing-trace"
+            ]},
+            {invalid_rate, [
+                "trace",
+                "call",
+                "my_mod:my_fun/2",
+                "--pid",
+                "<0.1.0>",
+                "--rate",
+                "201/s",
+                "--replace-existing-trace"
+            ]},
+            {invalid_duration, [
+                "trace",
+                "call",
+                "my_mod:my_fun/2",
+                "--pid",
+                "<0.1.0>",
+                "--duration",
+                "99ms",
+                "--replace-existing-trace"
+            ]},
+            {{mutually_exclusive_options, limit, rate}, [
+                "trace",
+                "call",
+                "my_mod:my_fun/2",
+                "--pid",
+                "<0.1.0>",
+                "--limit",
+                "10",
+                "--rate",
+                "2/s",
+                "--replace-existing-trace"
+            ]}
+        ]
     ).
 
 deep_snapshot_option_contract_test() ->
