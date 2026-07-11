@@ -123,13 +123,31 @@ quick_diagnose_option_contract_test() ->
         {ok, #{command := diagnose, arguments := [], options := #{}}},
         observer_cli_cli:parse(["diagnose"])
     ),
+    ?assertMatch(
+        {ok, #{options := #{observe := "5s"}}},
+        observer_cli_cli:parse(["diagnose", "--observe", "5s"])
+    ),
+    ?assertMatch(
+        {ok, #{options := #{observe := "60s", deep := true}}},
+        observer_cli_cli:parse(["diagnose", "--observe", "60s", "--deep"])
+    ),
+    ?assertMatch(
+        {ok, #{options := #{observe := "30s", app := "kernel"}}},
+        observer_cli_cli:parse(["diagnose", "--observe", "30s", "--app", "kernel"])
+    ),
     lists:foreach(
         fun(Arguments) ->
-            assert_argument_error(
-                unsupported_command_option, observer_cli_cli:parse(["diagnose" | Arguments])
+            ?assertMatch(
+                {error, #{exit_code := 2}}, observer_cli_cli:parse(["diagnose" | Arguments])
             )
         end,
-        [["--observe", "30s"], ["--deep"], ["--app", "kernel"]]
+        [
+            ["--deep"],
+            ["--app", "kernel"],
+            ["--observe", "4s"],
+            ["--observe", "61s"],
+            ["--observe", "30s", "--deep", "--app", "kernel"]
+        ]
     ),
     assert_argument_error(invalid_arguments, observer_cli_cli:parse(["diagnose", "extra"])).
 

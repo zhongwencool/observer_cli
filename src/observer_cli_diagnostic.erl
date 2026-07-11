@@ -3,7 +3,14 @@
 -export([capture/2]).
 
 -ifdef(TEST).
--export([build_report/4, limit_findings/1, reductions_context/2]).
+-export([
+    build_report/4,
+    limit_findings/1,
+    reductions_context/2,
+    scheduler_findings/1,
+    application_trend/1,
+    observation_report/6
+]).
 -endif.
 
 -define(DEFAULT_INTERVAL_MS, 1500).
@@ -13,6 +20,14 @@
 
 -spec capture(map(), map()) -> map() | {probe_error, atom()}.
 capture(Request, #{controller := Controller} = Context) when is_map(Request) ->
+    case maps:find(observe, Request) of
+        {ok, Observe} -> capture_observation(Request, Context, Controller, Observe);
+        error -> capture_quick(Request, Context, Controller)
+    end;
+capture(_Request, _Context) ->
+    {probe_error, invalid_request}.
+
+capture_quick(Request, Context, Controller) ->
     StartedAt = erlang:system_time(millisecond),
     Started = erlang:monotonic_time(millisecond),
     ModuleLoaded = code:is_loaded(?MODULE) =/= false,
@@ -31,9 +46,116 @@ capture(Request, #{controller := Controller} = Context) when is_map(Request) ->
             module_loaded_before_sample => ModuleLoaded
         },
         distribution(Controller)
-    );
-capture(_Request, _Context) ->
-    {probe_error, invalid_request}.
+    ).
+
+capture_observation(Request, Context, Controller, Observe) ->
+    case observation_duration(Observe) of
+        {ok, Duration} ->
+            Mode = observation_mode(Request),
+            Count =
+                case Mode of
+                    deep -> 7;
+                    _ -> 5
+                end,
+            StartedAt = erlang:system_time(millisecond),
+            Started = erlang:monotonic_time(millisecond),
+            Plan = observation_plan(Started, Duration, Count),
+            ModuleLoaded = code:is_loaded(?MODULE) =/= false,
+            _ = observer_cli_snapshot:diagnostic_scheduler_flag(true),
+            try
+                Samples = capture_observation_samples(Request, Context, Plan),
+                Holder = final_binary_holders(Mode, Request, Context),
+                Finished = erlang:monotonic_time(millisecond),
+                observation_report(
+                    Mode,
+                    Samples,
+                    Plan,
+                    Holder,
+                    #{
+                        started_at => rfc3339(StartedAt),
+                        finished_at => rfc3339(erlang:system_time(millisecond)),
+                        duration_ms => Finished - Started,
+                        controller => Controller,
+                        module_loaded_before_sample => ModuleLoaded
+                    },
+                    distribution(Controller)
+                )
+            after
+                _ = observer_cli_snapshot:diagnostic_scheduler_flag(false)
+            end;
+        error ->
+            {probe_error, invalid_duration}
+    end.
+
+observation_duration(Text) when is_list(Text) ->
+    observation_duration(unicode:characters_to_binary(Text));
+observation_duration(Text) when is_binary(Text) ->
+    case re:run(Text, <<"^([0-9]+)(ms|s)?$">>, [{capture, [1, 2], binary}]) of
+        {match, [Digits, <<"s">>]} ->
+            valid_observation_ms(binary_to_integer(Digits) * 1000);
+        {match, [Digits, _]} ->
+            valid_observation_ms(binary_to_integer(Digits));
+        nomatch ->
+            error
+    end;
+observation_duration(_) ->
+    error.
+
+valid_observation_ms(Duration) when Duration >= 5000, Duration =< 60000 -> {ok, Duration};
+valid_observation_ms(_Duration) -> error.
+
+observation_mode(#{deep := true}) -> deep;
+observation_mode(#{app := _}) -> application;
+observation_mode(_) -> observation.
+
+observation_plan(Started, Duration, Count) ->
+    [Started + ((Duration * Index) div (Count - 1)) || Index <- lists:seq(0, Count - 1)].
+
+capture_observation_samples(Request, Context, Plan) ->
+    capture_observation_samples(Request, Context, Plan, 0, undefined, []).
+
+capture_observation_samples(_Request, _Context, [], _Index, _PreviousFinish, Acc) ->
+    lists:reverse(Acc);
+capture_observation_samples(Request, Context, [Target | Rest], Index, PreviousFinish, Acc) ->
+    case PreviousFinish =/= undefined andalso PreviousFinish > Target of
+        true ->
+            Gap = #{status => error, reason_code => sampling_gap, target_monotonic_ms => Target},
+            capture_observation_samples(Request, Context, Rest, Index + 1, PreviousFinish, [
+                Gap | Acc
+            ]);
+        false ->
+            sleep_until(Target),
+            SchedulerEnd =
+                case Acc of
+                    [] -> undefined;
+                    _ -> safe_scheduler_sample()
+                end,
+            Sample0 = capture_sample(Request, Context, Index, Target),
+            SchedulerBaseline = safe_scheduler_sample(),
+            Sample = Sample0#{
+                target_monotonic_ms => Target,
+                scheduler_end => SchedulerEnd,
+                scheduler_baseline => SchedulerBaseline
+            },
+            Finish = maps:get(monotonic_finish_ms, Sample, erlang:monotonic_time(millisecond)),
+            capture_observation_samples(Request, Context, Rest, Index + 1, Finish, [Sample | Acc])
+    end.
+
+safe_scheduler_sample() ->
+    try
+        observer_cli_snapshot:diagnostic_scheduler_sample()
+    catch
+        _:_ -> #{status => error, reason_code => scheduler_sample_failed}
+    end.
+
+final_binary_holders(deep, Request, Context) ->
+    try
+        observer_cli_snapshot:diagnostic_binary_holders(Request, Context)
+    catch
+        _:_ -> #{status => error, reason_code => binary_holder_scan_failed}
+    end;
+final_binary_holders(_Mode, _Request, _Context) ->
+    #{status => unavailable, reason_code => deep_not_requested}.
 
 capture_samples(Request, Context, [First, Second]) ->
     FirstSample = capture_sample(Request, Context, 0, First),
@@ -121,6 +243,515 @@ build_report(Samples, Plan, Timing, Distribution) ->
         warnings => [],
         errors => capture_errors(RequiredComplete, ProcessStatus, DistributionStatus)
     }.
+
+observation_report(Mode, Samples, Plan, Holder, Timing, Distribution) ->
+    RequiredComplete = observation_required_complete(Mode, Samples),
+    OptionalStatuses = observation_optional_statuses(Mode, Samples, Holder, Distribution),
+    Status = capture_status(RequiredComplete, OptionalStatuses),
+    RuntimeSamples = runtime_samples(Samples),
+    Windows = scheduler_windows(Samples),
+    Findings =
+        case RequiredComplete of
+            true -> limit_findings(RuntimeSamples) ++ scheduler_findings(Windows);
+            false -> []
+        end,
+    #{
+        schema => <<"observer_cli.cli/v1">>,
+        command => diagnose,
+        target => #{
+            node => {identifier, node, node()},
+            otp_release => unicode:characters_to_binary(erlang:system_info(otp_release))
+        },
+        capture => #{
+            status => Status,
+            started_at => maps:get(started_at, Timing),
+            finished_at => maps:get(finished_at, Timing),
+            duration_ms => maps:get(duration_ms, Timing),
+            probes => observation_probe_reports(Mode, Samples, Holder, RequiredComplete),
+            observer_effects => [
+                #{
+                    id => scheduler_wall_time,
+                    temporary_enable => true,
+                    observer_contaminated => true
+                }
+                | observer_effects(Timing)
+            ]
+        },
+        data => #{
+            ruleset => ruleset(Mode),
+            ruleset_version => ?RULESET_VERSION,
+            sampling_plan => observation_sampling_plan(Mode, Plan, Samples),
+            findings => Findings,
+            suspects => [],
+            context => #{
+                snapshot => #{runtime_samples => RuntimeSamples},
+                trends => observation_trends(Samples),
+                scheduler_windows => Windows,
+                application => application_trend(Samples),
+                binary_holders => Holder,
+                distribution => Distribution
+            },
+            skipped => observation_skipped(Mode, Samples, Holder),
+            summary => observation_summary(Mode, Status, Findings)
+        },
+        warnings => [],
+        errors => observation_errors(Mode, Samples, Holder, RequiredComplete, OptionalStatuses)
+    }.
+
+ruleset(observation) -> <<"observer_cli.observation">>;
+ruleset(deep) -> <<"observer_cli.deep_observation">>;
+ruleset(application) -> <<"observer_cli.application_observation">>.
+
+observation_required_complete(Mode, Samples) ->
+    Expected =
+        case Mode of
+            deep -> 7;
+            _ -> 5
+        end,
+    length(Samples) =:= Expected andalso
+        lists:all(
+            fun(Sample) ->
+                valid_required_sample(Sample) andalso valid_memory_sample(Sample) andalso
+                    valid_application_sample(Mode, Sample)
+            end,
+            Samples
+        ).
+
+valid_memory_sample(#{memory := #{status := ok, values := Values}}) ->
+    is_map(Values) andalso maps:is_key(total_bytes, Values) andalso
+        maps:is_key(binary_bytes, Values);
+valid_memory_sample(_) ->
+    false.
+
+valid_application_sample(application, #{application := #{status := Status}}) ->
+    Status =:= ok orelse Status =:= not_running;
+valid_application_sample(application, _) ->
+    false;
+valid_application_sample(_Mode, _Sample) ->
+    true.
+
+observation_optional_statuses(Mode, Samples, Holder, Distribution) ->
+    Statuses =
+        lists:append([
+            [optional_field_status(Sample, Field) || Sample <- Samples]
+         || Field <- [process_inventory, ets_inventory, port_inventory]
+        ]) ++
+            [scheduler_status(scheduler_windows(Samples)), distribution_status(Distribution)],
+    case Mode of
+        deep -> [map_status(Holder) | Statuses];
+        _ -> Statuses
+    end.
+
+optional_field_status(Sample, Field) -> map_status(maps:get(Field, Sample, #{})).
+map_status(#{status := Status}) when Status =:= error; Status =:= timeout -> error;
+map_status(#{status := ok}) -> ok;
+map_status(_) -> unavailable.
+
+scheduler_status(Windows) ->
+    case lists:any(fun(#{status := Status}) -> Status =:= error end, Windows) of
+        true ->
+            error;
+        false ->
+            case Windows of
+                [] -> unavailable;
+                _ -> ok
+            end
+    end.
+
+scheduler_windows(Samples) ->
+    scheduler_windows(Samples, []).
+
+scheduler_windows([First, Second | Rest], Acc) ->
+    Window =
+        case {maps:find(scheduler_baseline, First), maps:find(scheduler_end, Second)} of
+            {{ok, Baseline}, {ok, End}} ->
+                (observer_cli_snapshot:diagnostic_scheduler_window(Baseline, End))#{
+                    heavy_probe_overlap => false,
+                    from_sample_index => length(Acc),
+                    to_sample_index => length(Acc) + 1
+                };
+            _ ->
+                #{status => invalid, reason_code => sampling_gap, heavy_probe_overlap => false}
+        end,
+    scheduler_windows([Second | Rest], [Window | Acc]);
+scheduler_windows(_, Acc) ->
+    lists:reverse(Acc).
+
+-ifdef(TEST).
+-spec scheduler_findings([map()]) -> [map()].
+-endif.
+scheduler_findings(Windows) ->
+    lists:filtermap(fun(Pool) -> scheduler_finding(Pool, Windows) end, [normal, dirty_cpu]).
+
+scheduler_finding(Pool, Windows) ->
+    case consecutive_pressure(Pool, Windows, 0, []) of
+        {true, Evidence} ->
+            {true, #{
+                id => <<"vm.scheduler_pressure">>,
+                severity => warning,
+                entity => #{type => scheduler_pool, id => atom_to_binary(Pool)},
+                summary => <<"Scheduler pool reached sustained pressure during capture.">>,
+                ruleset_version => ?RULESET_VERSION,
+                evidence => Evidence,
+                recommendations => [
+                    <<"Inspect runnable work and reductions context before tuning schedulers.">>
+                ]
+            }};
+        false ->
+            false
+    end.
+
+consecutive_pressure(_Pool, [], _Run, _Evidence) ->
+    false;
+consecutive_pressure(Pool, [Window | Rest], Run, Evidence) ->
+    case pressure_window(Pool, Window) of
+        {true, Item} when Run + 1 >= 2 -> {true, lists:reverse([Item | Evidence])};
+        {true, Item} -> consecutive_pressure(Pool, Rest, Run + 1, [Item | Evidence]);
+        false -> consecutive_pressure(Pool, Rest, 0, [])
+    end.
+
+pressure_window(
+    Pool,
+    #{
+        status := valid,
+        heavy_probe_overlap := false,
+        run_queues := RunQueues
+    } = Window
+) ->
+    PoolData = maps:get(Pool, Window, #{}),
+    Queue = maps:get(Pool, RunQueues, #{}),
+    Ratio = maps:get(utilization_ratio, PoolData, 0),
+    Runnable = maps:get(end_observed_runnable_count_including_observer, Queue, 0),
+    case
+        maps:get(status, PoolData, unavailable) =:= available andalso
+            scheduler_over_threshold(PoolData) andalso
+            Runnable > 0
+    of
+        true ->
+            {true, #{
+                path => <<"/data/context/scheduler_windows">>,
+                pool => Pool,
+                utilization_ratio => Ratio,
+                observed_runnable_count_including_observer => Runnable,
+                wall_time_unit => opaque_same_window,
+                run_queue_snapshot_atomic => false,
+                heavy_probe_overlap => false
+            }};
+        false ->
+            false
+    end;
+pressure_window(_Pool, _Window) ->
+    false.
+
+scheduler_over_threshold(#{active_delta := #{value := Active}, total_delta := #{value := Total}}) when
+    is_integer(Active), is_integer(Total), Total > 0
+->
+    Active * 100 >= Total * 80;
+scheduler_over_threshold(#{utilization_ratio := Ratio}) ->
+    Ratio >= 0.8;
+scheduler_over_threshold(_) ->
+    false.
+
+observation_trends(Samples) ->
+    Valid = [Sample || Sample <- Samples, maps:get(status, Sample, error) =:= ok],
+    #{
+        global_memory => map_gauge_trend(Valid, memory, values),
+        processes => entity_trends(
+            Valid,
+            process_inventory,
+            values,
+            [message_queue_len, memory_bytes]
+        ),
+        ets => entity_trends(Valid, ets_inventory, values, [size, memory_words]),
+        ports => entity_trends(Valid, port_inventory, values, [queue_size, memory, input, output])
+    }.
+
+map_gauge_trend([], _Field, _Values) ->
+    #{status => unavailable};
+map_gauge_trend(Samples, Field, ValuesKey) ->
+    First = maps:get(ValuesKey, maps:get(Field, hd(Samples), #{}), #{}),
+    Last = maps:get(ValuesKey, maps:get(Field, lists:last(Samples), #{}), #{}),
+    Interval = sample_interval(Samples),
+    Deltas = gauge_deltas(First, Last),
+    #{
+        status => ok,
+        sample_count => length(Samples),
+        interval_ms => Interval,
+        deltas => Deltas,
+        rates_per_second => rates(Deltas, Interval)
+    }.
+
+gauge_deltas(First, Last) ->
+    maps:from_list([
+        {Key, maps:get(Key, Last) - maps:get(Key, First)}
+     || Key <- maps:keys(First),
+        is_integer(maps:get(Key, First)),
+        is_integer(maps:get(Key, Last, undefined))
+    ]).
+
+entity_trends([], _Field, _Values, _Metrics) ->
+    #{status => unavailable, items => []};
+entity_trends(Samples, Field, ValuesKey, Metrics) ->
+    ValueMaps = [maps:get(ValuesKey, maps:get(Field, Sample, #{}), #{}) || Sample <- Samples],
+    First = hd(ValueMaps),
+    Last = lists:last(ValueMaps),
+    Shared = lists:foldl(
+        fun(Values, Ids) ->
+            ordsets:intersection(Ids, lists:sort(maps:keys(Values)))
+        end,
+        lists:sort(maps:keys(First)),
+        tl(ValueMaps)
+    ),
+    Stable = [Id || Id <- Shared, same_generation([maps:get(Id, Values) || Values <- ValueMaps])],
+    Interval = sample_interval(Samples),
+    Items = [
+        entity_trend_item(Id, [maps:get(Id, Values) || Values <- ValueMaps], Metrics, Interval)
+     || Id <- Stable
+    ],
+    #{
+        status => ok,
+        sample_count => length(Samples),
+        born_count => maps:size(Last) - length(Stable),
+        dead_count => maps:size(First) - length(Stable),
+        interval_ms => Interval,
+        items => lists:sublist(Items, ?CONTEXT_LIMIT)
+    }.
+
+same_generation([#{generation := Generation} | Rest]) ->
+    lists:all(
+        fun
+            (#{generation := ItemGeneration}) -> ItemGeneration =:= Generation;
+            (_) -> false
+        end,
+        Rest
+    );
+same_generation(_Items) ->
+    true.
+
+entity_trend_item(Id, Values, Metrics, Interval) ->
+    Deltas = metric_deltas(hd(Values), lists:last(Values), Metrics),
+    Base = #{
+        id => diagnostic_identifier(Id),
+        deltas => Deltas,
+        rates_per_second => rates(Deltas, Interval)
+    },
+    case lists:member(message_queue_len, Metrics) of
+        true ->
+            Base#{
+                message_queue_positive_step_ratio => positive_step_ratio(
+                    [maps:get(message_queue_len, Value, undefined) || Value <- Values]
+                )
+            };
+        false ->
+            Base
+    end.
+
+sample_interval(Samples) ->
+    maps:get(monotonic_midpoint_ms, lists:last(Samples), 0) -
+        maps:get(monotonic_midpoint_ms, hd(Samples), 0).
+
+rates(Deltas, Interval) when Interval > 0 ->
+    maps:from_list([
+        {Key, Value * 1000 / Interval}
+     || {Key, Value} <- maps:to_list(Deltas),
+        is_integer(Value)
+    ]);
+rates(_Deltas, _Interval) ->
+    #{}.
+
+positive_step_ratio(Values) ->
+    Steps = [{A, B} || {A, B} <- lists:zip(Values, tl(Values)), is_integer(A), is_integer(B)],
+    case Steps of
+        [] -> null;
+        _ -> length([ok || {A, B} <- Steps, B > A]) / length(Steps)
+    end.
+
+diagnostic_identifier(Id) when is_pid(Id) -> {identifier, pid, Id};
+diagnostic_identifier(Id) when is_port(Id) -> {identifier, port, Id};
+diagnostic_identifier(Id) -> {identifier, table, Id}.
+
+metric_deltas(First, Last, Metrics) ->
+    lists:foldl(fun(Key, Acc) -> metric_delta(Key, First, Last, Acc) end, #{}, Metrics).
+
+metric_delta(Key, First, Last, Acc) ->
+    case {maps:get(Key, First, undefined), maps:get(Key, Last, undefined)} of
+        {Before, After} when
+            is_integer(Before),
+            is_integer(After),
+            (Key =:= input orelse Key =:= output),
+            After < Before
+        ->
+            Acc#{
+                Key => null, iolist_to_binary([atom_to_binary(Key), <<"_state">>]) => counter_reset
+            };
+        {Before, After} when is_integer(Before), is_integer(After) ->
+            Acc#{Key => After - Before};
+        _ ->
+            Acc
+    end.
+
+-ifdef(TEST).
+-spec application_trend([map()]) -> map().
+-endif.
+application_trend(Samples) ->
+    AppSamples = [
+        App
+     || #{application := App} <- Samples,
+        maps:get(status, App, unavailable) =:= ok
+    ],
+    case AppSamples of
+        [] ->
+            #{status => unavailable, items => []};
+        _ ->
+            First = application_children(hd(AppSamples)),
+            Last = application_children(lists:last(AppSamples)),
+            Stable = ordsets:intersection(
+                lists:sort(maps:keys(First)), lists:sort(maps:keys(Last))
+            ),
+            Items = [
+                #{
+                    id => Id,
+                    pid_changed => maps:get(Id, First) =/= maps:get(Id, Last),
+                    change_semantics => restart_deploy_or_manual_change
+                }
+             || Id <- Stable
+            ],
+            #{
+                status => ok,
+                sample_count => length(AppSamples),
+                items => Items,
+                born_count => maps:size(Last) - length(Stable),
+                dead_count => maps:size(First) - length(Stable),
+                identity_unavailable_count => lists:sum([
+                    maps:get(identity_unavailable_count, A, 0)
+                 || A <- AppSamples
+                ])
+            }
+    end.
+
+application_children(App) ->
+    maps:from_list([
+        {Id, maps:get(pid, Child, null)}
+     || #{identity := available, id := Id, child := Child} <- maps:get(children, App, [])
+    ]).
+
+observation_sampling_plan(Mode, Plan, Samples) ->
+    #{
+        mode => Mode,
+        planned_sample_count => length(Plan),
+        planned_duration_ms => lists:last(Plan) - hd(Plan),
+        target_monotonic_times_ms => Plan,
+        actual_samples => [
+            #{
+                sample_index => Index,
+                target_monotonic_ms => lists:nth(Index + 1, Plan),
+                started_monotonic_ms => maps:get(monotonic_start_ms, Sample, null),
+                finished_monotonic_ms => maps:get(monotonic_finish_ms, Sample, null),
+                status => maps:get(status, Sample, error),
+                reason_code => maps:get(reason_code, Sample, null)
+            }
+         || {Index, Sample} <- indexed(Samples)
+        ]
+    }.
+
+observation_probe_reports(Mode, Samples, Holder, RequiredComplete) ->
+    [
+        #{
+            id => core_limits_and_memory,
+            required => true,
+            status => status(RequiredComplete),
+            reason_code => reason(RequiredComplete, required_coverage_incomplete),
+            duration_ms => sample_duration(Samples),
+            samples => length([
+                ok
+             || S <- Samples, valid_required_sample(S) andalso valid_memory_sample(S)
+            ]),
+            coverage => [
+                target_identity,
+                process_count_limit,
+                port_count_limit,
+                atom_count_limit,
+                ets_count_limit,
+                global_memory
+            ]
+        },
+        #{
+            id => scheduler_pressure,
+            required => false,
+            status => scheduler_status(scheduler_windows(Samples)),
+            reason_code => null,
+            duration_ms => sample_duration(Samples),
+            samples => length(scheduler_windows(Samples)),
+            coverage => [low_cost_windows, online_topology, opaque_same_window_units]
+        },
+        #{
+            id => binary_holders,
+            required => false,
+            status =>
+                case Mode of
+                    deep -> map_status(Holder);
+                    _ -> unavailable
+                end,
+            reason_code => maps:get(reason_code, Holder, null),
+            duration_ms => 0,
+            samples =>
+                case maps:get(status, Holder, unavailable) of
+                    ok -> 1;
+                    _ -> 0
+                end,
+            coverage => [final_independent_admission, current_context_only]
+        }
+    ].
+
+observation_skipped(Mode, Samples, Holder) ->
+    Growth = [
+        mailbox_backlog_suspects,
+        memory_growth_suspects,
+        ets_growth_suspects,
+        port_queue_backlog_suspects,
+        supervisor_restart_suspects
+    ],
+    Binary =
+        case Mode of
+            deep -> [#{id => binary_retention_suspects, reason_code => ruleset_not_calibrated}];
+            _ -> [#{id => binary_retention_suspects, reason_code => deep_not_requested}]
+        end,
+    Refusals =
+        lists:usort([
+            #{id => Field, reason_code => maps:get(reason_code, Value)}
+         || Sample <- Samples,
+            Field <- [process_inventory, ets_inventory, port_inventory],
+            Value <- [maps:get(Field, Sample, #{})],
+            maps:get(status, Value, ok) =:= unavailable
+        ]) ++
+            case maps:get(status, Holder, ok) of
+                unavailable ->
+                    [#{id => binary_holders, reason_code => maps:get(reason_code, Holder)}];
+                _ ->
+                    []
+            end,
+    [#{id => Id, reason_code => ruleset_not_calibrated} || Id <- Growth] ++ Binary ++ Refusals.
+
+observation_summary(Mode, partial, _Findings) ->
+    iolist_to_binary(
+        io_lib:format("~p diagnostics capture is partial; findings suppressed.", [Mode])
+    );
+observation_summary(Mode, complete, Findings) ->
+    iolist_to_binary(
+        io_lib:format("~p diagnostics completed with ~B finding(s).", [Mode, length(Findings)])
+    ).
+
+observation_errors(_Mode, _Samples, _Holder, false, _Statuses) ->
+    [#{class => required_probe, probe => observation, reason_code => required_coverage_incomplete}];
+observation_errors(_Mode, _Samples, _Holder, true, Statuses) ->
+    [
+        #{
+            class => partial,
+            probe => observation_optional,
+            reason_code => started_optional_probe_failed
+        }
+     || lists:member(error, Statuses)
+    ].
 
 required_complete(Samples) ->
     length(Samples) =:= 2 andalso lists:all(fun valid_required_sample/1, Samples).

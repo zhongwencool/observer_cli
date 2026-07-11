@@ -2,7 +2,11 @@
 
 -export([
     capabilities/0,
+    diagnostic_binary_holders/2,
     diagnostic_distribution/1,
+    diagnostic_scheduler_flag/1,
+    diagnostic_scheduler_sample/0,
+    diagnostic_scheduler_window/2,
     diagnostic_sample/2,
     dispatch/4,
     normalize/2,
@@ -366,6 +370,10 @@ diagnostic_sample(Request, Context) when is_map(Request), is_map(Context) ->
             _Class:_Reason:_Stacktrace ->
                 #{status => error, reason_code => process_inventory_failed}
         end,
+    Memory = diagnostic_memory(Request),
+    Ets = diagnostic_ets(Request),
+    Ports = diagnostic_ports(Request, Context),
+    Application = diagnostic_application(Request),
     Finished = erlang:monotonic_time(millisecond),
     #{
         status => ok,
@@ -373,8 +381,148 @@ diagnostic_sample(Request, Context) when is_map(Request), is_map(Context) ->
         monotonic_finish_ms => Finished,
         monotonic_midpoint_ms => Started + ((ResourceFinished - Started) div 2),
         resources => Resources,
-        process_inventory => Inventory
+        process_inventory => Inventory,
+        memory => Memory,
+        ets_inventory => Ets,
+        port_inventory => Ports,
+        application => Application
     }.
+
+diagnostic_memory(#{observe := _}) ->
+    case memory_probe() of
+        {ok, Memory, _} -> #{status => ok, values => maps:get(beam, Memory)};
+        _ -> #{status => error, reason_code => memory_probe_failed}
+    end;
+diagnostic_memory(_Request) ->
+    #{status => unavailable, reason_code => observation_not_requested}.
+
+diagnostic_ets(#{observe := _}) ->
+    Count = erlang:system_info(ets_count),
+    Samples = 7,
+    case
+        Count =< ?ETS_SCAN_BUDGET andalso
+            working_set_estimate(Count, 3, Samples) =< ?MAX_WORKING_SET_BYTES
+    of
+        true ->
+            Tables = ets:all(),
+            Values = maps:from_list([
+                {Table, #{
+                    generation => diagnostic_ets_info(Table, id),
+                    size => diagnostic_ets_info(Table, size),
+                    memory_words => diagnostic_ets_info(Table, memory)
+                }}
+             || Table <- Tables, diagnostic_ets_info(Table, id) =/= undefined
+            ]),
+            #{status => ok, values => Values};
+        false ->
+            #{status => unavailable, reason_code => scan_budget_exceeded}
+    end;
+diagnostic_ets(_Request) ->
+    #{status => unavailable, reason_code => observation_not_requested}.
+
+diagnostic_ets_info(Table, Key) ->
+    try
+        ets:info(Table, Key)
+    catch
+        _:_ -> undefined
+    end.
+
+diagnostic_ports(#{observe := _}, Context) ->
+    Source = default_port_source(),
+    Count = safe_resource_count(Source),
+    case
+        Count =< ?PORT_SCAN_BUDGET andalso
+            working_set_estimate(Count, 4, 7) =< ?MAX_WORKING_SET_BYTES
+    of
+        true ->
+            case (maps:get(all_fun, Source))() of
+                {ok, Ports} ->
+                    Excluded = observer_port_exclusions(Context),
+                    Values = maps:from_list([
+                        {Port, diagnostic_port(Port, Source)}
+                     || Port <- Ports, not maps:is_key(Port, Excluded)
+                    ]),
+                    #{status => ok, values => Values};
+                _ ->
+                    #{status => error, reason_code => port_inventory_failed}
+            end;
+        false ->
+            #{status => unavailable, reason_code => scan_budget_exceeded}
+    end;
+diagnostic_ports(_Request, _Context) ->
+    #{status => unavailable, reason_code => observation_not_requested}.
+
+diagnostic_port(Port, Source) ->
+    lists:foldl(
+        fun(Key, Acc) ->
+            case (maps:get(info_fun, Source))(Port, Key) of
+                {Key, Value} when is_integer(Value), Value >= 0 -> Acc#{Key => Value};
+                _ -> Acc
+            end
+        end,
+        #{},
+        [queue_size, memory, input, output]
+    ).
+
+diagnostic_application(#{observe := _, app := App} = Request) ->
+    case collect_supervision_tree(App, application_source(Request)) of
+        {ok, Data, _} -> Data;
+        {unavailable, Reason, Data} -> Data#{status => unavailable, reason_code => Reason};
+        {error, Reason, Data} -> Data#{status => error, reason_code => Reason}
+    end;
+diagnostic_application(_Request) ->
+    #{status => unavailable, reason_code => application_not_requested}.
+
+-spec diagnostic_scheduler_flag(boolean()) -> term().
+diagnostic_scheduler_flag(Enabled) ->
+    erlang:system_flag(scheduler_wall_time, Enabled).
+
+-spec diagnostic_scheduler_sample() -> map().
+diagnostic_scheduler_sample() ->
+    scheduler_sample().
+
+-spec diagnostic_scheduler_window(map(), map()) -> map().
+diagnostic_scheduler_window(First, Second) ->
+    scheduler_window(First, Second).
+
+-spec diagnostic_binary_holders(map(), map()) -> map().
+diagnostic_binary_holders(Request, Context) ->
+    Source = process_source(Request),
+    case admit_process_scan(Source, binary_memory, 1, 1, {top, 20}) of
+        {ok, Admission} ->
+            Acc = fold_processes(
+                Source,
+                fun(Pid, State) ->
+                    case scan_process(Pid, [binary], Source, State) of
+                        {ok, Item, Next} ->
+                            Bytes = maps:get(binary_memory, Item, 0),
+                            Ranked = insert_top(
+                                #{
+                                    raw_pid => Pid,
+                                    pid => {identifier, pid, Pid},
+                                    binary_reference_bytes => Bytes
+                                },
+                                binary_reference_bytes,
+                                20,
+                                maps:get(top, Next),
+                                fun process_precedes/3
+                            ),
+                            Next#{top := Ranked};
+                        {skip, Next} ->
+                            Next
+                    end
+                end,
+                (inventory_acc(Context, 20))#{top => []}
+            ),
+            #{
+                status => ok,
+                admission => Admission,
+                retention_semantics => current_context_only,
+                items => [maps:remove(raw_pid, Item) || Item <- maps:get(top, Acc)]
+            };
+        {unavailable, Details} ->
+            Details
+    end.
 
 -spec diagnostic_distribution(pid()) -> map().
 diagnostic_distribution(Controller) ->
@@ -383,7 +531,17 @@ diagnostic_distribution(Controller) ->
 
 diagnostic_process_inventory(Request, Context) ->
     Source = process_source(Request),
-    case admit_process_scan(Source, reductions, 3, 2, all) of
+    Samples =
+        case maps:get(deep, Request, false) of
+            true ->
+                7;
+            false ->
+                case maps:is_key(observe, Request) of
+                    true -> 5;
+                    false -> 2
+                end
+        end,
+    case admit_process_scan(Source, reductions, 3, Samples, all) of
         {ok, Admission} ->
             Started = erlang:monotonic_time(millisecond),
             Initial = inventory_acc(Context, 1),

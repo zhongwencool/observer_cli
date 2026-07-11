@@ -211,12 +211,13 @@ run_diagnose(Target, Options) ->
             false -> redact
         end,
     DispatchOptions = #{timeout_ms => Timeout, identifier_policy => Policy},
+    Request = maps:with([observe, deep, app], Options),
     try
         erpc:call(
             Target,
             observer_cli_snapshot,
             dispatch,
-            [self(), diagnose, #{}, DispatchOptions],
+            [self(), diagnose, Request, DispatchOptions],
             Timeout
         )
     of

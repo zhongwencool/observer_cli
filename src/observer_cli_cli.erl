@@ -158,8 +158,8 @@ validate_runtime_options(snapshot, Options) ->
         false -> {error, unsupported_command_option}
     end;
 validate_runtime_options(diagnose, Options) ->
-    case only_options(Options, []) of
-        true -> validate_target_options(Options);
+    case only_options(Options, [observe, deep, app]) of
+        true -> validate_diagnose_options(Options);
         false -> {error, unsupported_command_option}
     end;
 validate_runtime_options(distribution, #{limit := Text} = Options) ->
@@ -253,6 +253,45 @@ only_options(Options, CommandOptions) ->
         include_identifiers
     ],
     lists:all(fun(Key) -> lists:member(Key, Global ++ CommandOptions) end, maps:keys(Options)).
+
+validate_diagnose_options(Options) ->
+    Observe = maps:find(observe, Options),
+    Deep = maps:is_key(deep, Options),
+    App = maps:find(app, Options),
+    case {Observe, Deep, App} of
+        {error, false, error} ->
+            validate_target_options(Options);
+        {error, true, _} ->
+            {error, observe_required};
+        {error, _, {ok, _}} ->
+            {error, observe_required};
+        {{ok, _}, true, {ok, _}} ->
+            {error, {mutually_exclusive_options, deep, app}};
+        {{ok, Text}, _, _} ->
+            case duration_ms(Text) of
+                Duration when is_integer(Duration), Duration >= 5000, Duration =< 60000 ->
+                    case App of
+                        {ok, Name} ->
+                            case valid_application_name(Name) of
+                                true -> validate_observation_timeout(Options, Duration);
+                                false -> {error, invalid_application}
+                            end;
+                        error ->
+                            validate_observation_timeout(Options, Duration)
+                    end;
+                _ ->
+                    {error, invalid_observation_duration}
+            end
+    end.
+
+validate_observation_timeout(#{timeout := _} = Options, Duration) ->
+    case timeout_value(Options) of
+        {ok, Timeout} when Timeout >= Duration + 5000 -> validate_target_options(Options);
+        {ok, _} -> {error, timeout_too_short};
+        Error -> Error
+    end;
+validate_observation_timeout(Options, _Duration) ->
+    validate_target_options(Options).
 
 validate_processes_options(Options) ->
     case
@@ -426,6 +465,13 @@ timeout(#{duration := _Text} = Options) ->
     case duration(Options) of
         {ok, Duration} -> {ok, max(10000, Duration + 5000)};
         {error, _Reason} -> {error, invalid_duration}
+    end;
+timeout(#{observe := Text}) ->
+    case duration_ms(Text) of
+        Duration when is_integer(Duration), Duration >= 5000, Duration =< 60000 ->
+            {ok, Duration + 5000};
+        _ ->
+            {error, invalid_observation_duration}
     end;
 timeout(_Options) ->
     {ok, 10000}.

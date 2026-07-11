@@ -141,6 +141,191 @@ dispatch_validates_evidence_and_redacts_context_test() ->
         exit(Pid, kill)
     end.
 
+two_complete_low_cost_scheduler_windows_are_required_test() ->
+    High = scheduler_window(0.85, 1),
+    ?assertEqual([], observer_cli_diagnostic:scheduler_findings([High])),
+    [Finding] = observer_cli_diagnostic:scheduler_findings([High, High]),
+    ?assertEqual(<<"vm.scheduler_pressure">>, maps:get(id, Finding)),
+    ?assertEqual(
+        [],
+        observer_cli_diagnostic:scheduler_findings([
+            High, High#{heavy_probe_overlap := true}
+        ])
+    ),
+    ?assertEqual(
+        [],
+        observer_cli_diagnostic:scheduler_findings([
+            High, High#{status := invalid, reason_code => topology_changed}
+        ])
+    ).
+
+scheduler_counter_reset_and_offline_topology_are_invalid_test() ->
+    Topology = #{
+        schedulers_configured => 4,
+        schedulers_online => 2,
+        dirty_cpu_schedulers_configured => 3,
+        dirty_cpu_schedulers_online => 1
+    },
+    First = scheduler_sample(
+        Topology,
+        [{1, 0, 10}, {2, 0, 10}, {3, 999, 1000}, {5, 0, 10}],
+        [0, 0, 0],
+        0
+    ),
+    Second = scheduler_sample(
+        Topology,
+        [{1, 9, 20}, {2, 9, 20}, {3, 999, 2000}, {5, 9, 20}],
+        [1, 0, 1],
+        100
+    ),
+    Window = observer_cli_snapshot:scheduler_window(First, Second),
+    ?assertEqual(valid, maps:get(status, Window)),
+    ?assertEqual(0.9, maps:get(utilization_ratio, maps:get(normal, Window))),
+    Reset = observer_cli_snapshot:scheduler_window(Second, First),
+    ?assertEqual(invalid, maps:get(status, Reset)),
+    Changed = observer_cli_snapshot:scheduler_window(
+        First, Second#{topology := Topology#{schedulers_online := 1}}
+    ),
+    ?assertEqual(topology_changed, maps:get(reason_code, Changed)).
+
+application_trend_correlates_only_available_direct_child_ids_test() ->
+    FirstPid = spawn(fun wait/0),
+    SecondPid = spawn(fun wait/0),
+    try
+        Samples = [
+            #{
+                application => #{
+                    status => ok,
+                    identity_unavailable_count => 2,
+                    children => [app_child(<<"atom:worker">>, FirstPid), unavailable_app_child()]
+                }
+            },
+            #{
+                application => #{
+                    status => ok,
+                    identity_unavailable_count => 2,
+                    children => [app_child(<<"atom:worker">>, SecondPid), unavailable_app_child()]
+                }
+            }
+        ],
+        Trend = observer_cli_diagnostic:application_trend(Samples),
+        [Item] = maps:get(items, Trend),
+        ?assertEqual(true, maps:get(pid_changed, Item)),
+        ?assertEqual(4, maps:get(identity_unavailable_count, Trend))
+    after
+        exit(FirstPid, kill),
+        exit(SecondPid, kill)
+    end.
+
+observation_required_sets_optional_outcomes_and_exit_precedence_test() ->
+    Plan5 = lists:seq(0, 4000, 1000),
+    CompleteSamples = [observation_sample(Index, unavailable) || Index <- lists:seq(0, 4)],
+    Complete = observer_cli_diagnostic:observation_report(
+        observation, CompleteSamples, Plan5, unavailable_holder(), timing(), #{}
+    ),
+    ?assertEqual(complete, maps:get(status, maps:get(capture, Complete))),
+    ?assertEqual(1, length(maps:get(findings, maps:get(data, Complete)))),
+    StartedFailureSamples = [observation_sample(0, error) | tl(CompleteSamples)],
+    StartedFailure = observer_cli_diagnostic:observation_report(
+        observation, StartedFailureSamples, Plan5, unavailable_holder(), timing(), #{}
+    ),
+    ?assertEqual(partial, maps:get(status, maps:get(capture, StartedFailure))),
+    GapSamples = [
+        observation_sample(0, unavailable),
+        #{
+            status => error,
+            reason_code => sampling_gap
+        }
+        | lists:nthtail(2, CompleteSamples)
+    ],
+    Gap = observer_cli_diagnostic:observation_report(
+        observation, GapSamples, Plan5, unavailable_holder(), timing(), #{}
+    ),
+    ?assertEqual(partial, maps:get(status, maps:get(capture, Gap))),
+    ?assertEqual([], maps:get(findings, maps:get(data, Gap))),
+    Plan7 = lists:seq(0, 6000, 1000),
+    Deep = observer_cli_diagnostic:observation_report(
+        deep,
+        [observation_sample(I, unavailable) || I <- lists:seq(0, 6)],
+        Plan7,
+        unavailable_holder(),
+        timing(),
+        #{}
+    ),
+    ?assertEqual(complete, maps:get(status, maps:get(capture, Deep))),
+    App = observer_cli_diagnostic:observation_report(
+        application,
+        [
+            (observation_sample(I, unavailable))#{application := #{status => not_running}}
+         || I <- lists:seq(0, 4)
+        ],
+        Plan5,
+        unavailable_holder(),
+        timing(),
+        #{}
+    ),
+    ?assertEqual(complete, maps:get(status, maps:get(capture, App))).
+
+observation_sample(Index, InventoryStatus) ->
+    Inventory =
+        case InventoryStatus of
+            unavailable -> unavailable_inventory();
+            error -> #{status => error, reason_code => process_inventory_failed}
+        end,
+    (sample(Index, resources(96, 100), Inventory))#{
+        memory => #{
+            status => ok,
+            values => #{
+                total_bytes => 100 + Index,
+                binary_bytes => 10 + Index
+            }
+        },
+        ets_inventory => #{status => unavailable, reason_code => scan_budget_exceeded},
+        port_inventory => #{status => unavailable, reason_code => scan_budget_exceeded},
+        application => #{status => unavailable, reason_code => application_not_requested}
+    }.
+
+unavailable_holder() ->
+    #{status => unavailable, reason_code => scan_budget_exceeded}.
+
+scheduler_window(Ratio, Runnable) ->
+    Pool = #{
+        status => available,
+        utilization_ratio => Ratio,
+        active_delta => #{value => round(Ratio * 100), unit => opaque_same_window},
+        total_delta => #{value => 100, unit => opaque_same_window}
+    },
+    DirtyPool = Pool#{
+        utilization_ratio := 0.0,
+        active_delta := #{value => 0, unit => opaque_same_window}
+    },
+    Queue = #{end_observed_runnable_count_including_observer => Runnable},
+    #{
+        status => valid,
+        heavy_probe_overlap => false,
+        normal => Pool,
+        dirty_cpu => DirtyPool,
+        run_queues => #{normal => Queue, dirty_cpu => Queue}
+    }.
+
+scheduler_sample(Topology, Wall, Queues, Monotonic) ->
+    #{
+        topology => Topology,
+        wall_time => Wall,
+        run_queue_lengths => Queues,
+        monotonic_ms => Monotonic
+    }.
+
+app_child(Id, Pid) ->
+    #{
+        identity => available,
+        id => {identifier, child, Id},
+        child => #{pid => {identifier, pid, Pid}}
+    }.
+
+unavailable_app_child() ->
+    #{identity => unavailable, id => null, child => #{pid => null}}.
+
 runtime_sample(Index, Process, ProcessLimit, Port, PortLimit, Atom, AtomLimit, Ets, EtsLimit) ->
     #{
         sample_index => Index,

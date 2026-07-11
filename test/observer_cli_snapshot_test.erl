@@ -119,6 +119,33 @@ default_snapshot_and_diagnose_never_get_gen_server_state_test() ->
         exit(Tracer, kill)
     end.
 
+deep_binary_holder_scan_is_independently_admitted_and_does_not_force_gc_test() ->
+    Parent = self(),
+    Pid = spawn(fun() ->
+        receive
+            stop -> ok
+        end
+    end),
+    Source = process_source([Pid], fun(ItemPid, Keys) ->
+        Parent ! {binary_holder_keys, Keys},
+        [{binary, [{make_ref(), 123, 1}]} || ItemPid =:= Pid, Keys =:= [binary]]
+    end),
+    try
+        Result = observer_cli_snapshot:diagnostic_binary_holders(
+            #{test_process_source => Source}, #{controller => self()}
+        ),
+        ?assertEqual(ok, maps:get(status, Result)),
+        [Item] = maps:get(items, Result),
+        ?assertEqual(123, maps:get(binary_reference_bytes, Item)),
+        receive
+            {binary_holder_keys, [binary]} -> ok
+        after 1000 -> ?assert(false)
+        end,
+        ?assertEqual(nomatch, binary:match(term_to_binary(Result), <<"bin_leak">>))
+    after
+        Pid ! stop
+    end.
+
 gen_server_state_shape_is_value_free_and_bounded_test_() ->
     {timeout, 10, fun gen_server_state_shape_is_value_free_and_bounded/0}.
 
