@@ -20,51 +20,85 @@ Observer CLI is a library to be dropped into any BEAM nodes, to be used to help 
 
 ---
 
-## 2.0 diagnostics
+## Observer CLI 2.0: diagnostics for humans and automation
 
-The 2.0 command-first interface adds bounded machine-readable diagnostics while
-preserving the positional TUI path. The target must already have a protocol-compatible
-`observer_cli` build for its OTP major; these commands never inject BEAM files.
+Observer CLI 2.0 adds a command-first diagnostics interface alongside the existing
+interactive TUI. It can collect a bounded snapshot, identify likely VM problems with
+supporting evidence, inspect individual runtime resources, and run an explicitly
+bounded function trace. Text is intended for operators; Erlang terms and JSON are
+stable machine-readable envelopes for scripts and agents.
 
-Build the escript with `rebar3 escriptize`. The CLI provides an overview plus
-command-specific options and examples:
+The legacy entry point remains available:
 
 ```sh
+observer_cli test@127.0.0.1 your-cookie
+```
+
+### Build and discover
+
+Build the standalone command, then use its built-in command help:
+
+```sh
+rebar3 escriptize
+export PATH="$PWD/_build/default/bin:$PATH"
+
 observer_cli --help
+observer_cli diagnose --help
 observer_cli processes --help
 ```
 
-Save a target context for repeated commands:
+The target must already run a protocol-compatible `observer_cli` build for its OTP
+major. The diagnostics interface does not inject BEAM files into the target.
+
+### Connect once, diagnose repeatedly
+
+For example, to inspect `test@127.0.0.1` without putting its cookie on the command
+line:
 
 ```sh
 export OBSERVER_CLI_COOKIE='replace-me'
-observer_cli connect --node app@host --cookie-env OBSERVER_CLI_COOKIE
+observer_cli connect --node test@127.0.0.1 --cookie-env OBSERVER_CLI_COOKIE
 observer_cli status
 observer_cli diagnose --format json
+observer_cli snapshot --format term
+observer_cli processes --sort reductions --limit 20
 observer_cli disconnect
 ```
 
-Alternatively, pass an explicit target and cookie source to each command:
+`connect` verifies the target and saves only its node name and cookie-source metadata
+in a `0600` context file. It never stores the cookie or keeps a daemon connection.
+Every later command reconnects and probes the target; `disconnect` removes the saved
+context.
+
+For stateless automation, pass the target and cookie source on every invocation:
 
 ```sh
 export OBSERVER_CLI_COOKIE='replace-me'
-observer_cli snapshot --node app@host --cookie-env OBSERVER_CLI_COOKIE --format term
-observer_cli diagnose --node app@host --cookie-env OBSERVER_CLI_COOKIE --format json
-observer_cli processes --node app@host --cookie-env OBSERVER_CLI_COOKIE --sort reductions --limit 20
+observer_cli diagnose --node test@127.0.0.1 \
+  --cookie-env OBSERVER_CLI_COOKIE --format json
 ```
 
-`connect` stores only the node name and cookie-source metadata in a `0600` context
-file; it never stores the cookie or keeps a daemon connection. `status` probes the
-target afresh and `disconnect` removes the context. Explicit `--node` always requires
-exactly one of `--cookie-env` or `--cookie-file`.
+Explicit `--node` requires exactly one of `--cookie-env` or `--cookie-file`.
 
-Commands are `snapshot`, `diagnose`, `memory`, `schedulers`, `distribution`,
-`processes`, `process`, `applications`, `ets`, `mnesia`, `network`, `ports`,
-`sockets`, `gen-server-state`, `supervision-tree`, and `trace`. Text and consultable
-Erlang-term envelopes work on OTP 26-29; JSON uses OTP's `json` module and therefore
-requires an OTP 27+ controller. See the exact schema, exit codes, command flags, and
-measured release evidence in
-`docs/observer-cli-2.0-diagnostics-validation.md`.
+### Command map
+
+| Goal | Commands |
+|---|---|
+| Detect problems | `diagnose`, `snapshot` |
+| Inspect VM health | `memory`, `schedulers`, `distribution`, `network` |
+| Inspect runtime resources | `processes`, `process`, `applications`, `ets`, `mnesia`, `ports`, `sockets` |
+| Inspect OTP structures | `gen-server-state`, `supervision-tree` |
+| Run bounded instrumentation | `trace call`, `trace stop --all` |
+
+Use `--timeout` to set a command deadline of up to 120 seconds. Text and consultable
+Erlang-term envelopes work on OTP 26-29. JSON uses OTP's `json` module and therefore
+requires an OTP 27+ controller. Machine-readable success and error responses share
+one versioned envelope, so callers can rely on the exit code and structured response
+instead of scraping terminal text.
+
+See [`docs/observer-cli-2.0-diagnostics-validation.md`](docs/observer-cli-2.0-diagnostics-validation.md)
+for the exact schemas, exit codes, command flags, compatibility matrix, and measured
+validation evidence.
 
 ### Safety boundaries
 
