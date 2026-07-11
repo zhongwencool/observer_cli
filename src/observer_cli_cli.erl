@@ -402,13 +402,9 @@ validate_processes_options(Options) ->
         ok ->
             case maps:find(duration, Options) of
                 {ok, _} ->
-                    case {maps:get(sort, Options, "memory"), duration(Options)} of
-                        {"reductions", {ok, Duration}} ->
-                            validate_scheduler_timeout(Options, Duration);
-                        {"reductions", {error, Reason}} ->
-                            {error, Reason};
-                        {_Sort, _Duration} ->
-                            {error, duration_requires_reductions_sort}
+                    case duration(Options) of
+                        {ok, Duration} -> validate_scheduler_timeout(Options, Duration);
+                        {error, Reason} -> {error, Reason}
                     end;
                 error ->
                     validate_target_options(Options)

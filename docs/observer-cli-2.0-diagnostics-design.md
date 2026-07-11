@@ -248,7 +248,7 @@ observer_cli tui diagnose COOKIE 1500
 - text 模式成功结果写 stdout、错误写 stderr；JSON/term 在 parser 和 encoder 可用后，无论成功失败都输出同一 envelope。bootstrap/encoder 不可用错误使用稳定纯文本 stderr。
 - byte、count、ratio、millisecond 保留数值，单位写入字段名。
 - 列表稳定排序；值相同时使用规范化 resource identifier 打破平局。
-- `--timeout` 是整个命令 deadline：不含采样窗口的普通命令默认 10 s、硬上限 120 s。任何 duration-bearing command（schedulers/network/sockets、reductions window、observe、trace）的默认 timeout 为 `max(10 s, duration + 5 s)`；显式 timeout 小于 `duration + 5 s` 时直接拒绝。当前所有 duration 硬上限不超过 60 s，因此不会撞到 120 s command cap。
+- `--timeout` 是整个命令 deadline：不含采样窗口的普通命令默认 10 s、硬上限 120 s。任何 duration-bearing command（schedulers/network/sockets、processes duration window、observe、trace）的默认 timeout 为 `max(10 s, duration + 5 s)`；显式 timeout 小于 `duration + 5 s` 时直接拒绝。当前所有 duration 硬上限不超过 60 s，因此不会撞到 120 s command cap。
 - target deadline 比 controller deadline 至少早 1 s；所有 probes 共用 remaining budget，不能每个 optional probe 各消耗一份完整 timeout。
 - target-side normalized response 结构上限为 1 MiB；controller 编码后再次检查 1 MiB。超过时截断有界列表并设置 `truncated=true`，不返回任意大 term。
 - 不增加 `--output`；使用 shell redirect。
@@ -284,7 +284,7 @@ observer_cli tui diagnose COOKIE 1500
 | `ports` | best-effort 非 inet Erlang Port queue/memory/connected PID | `--sort`、`--limit` | 分类只靠 documented port name heuristic；不是 TCP/UDP port number |
 | `sockets` | OTP socket registry-known overview/counters | `--sort`、`--duration`、`--limit` | 不可见 registry-disabled sockets；enumeration error 不得伪装成 empty |
 
-`schedulers --duration` 使用两个 wall-time 样本，默认 1500 ms，最短 250 ms、最长 10 s；`network`/`sockets` 和 `processes --sort reductions --duration` 使用同一 250 ms–10 s 范围。它们只输出 measurement/context，不单独产生诊断 finding。`diagnose --observe` 范围 5–60 s；Trace 范围见第 11 节。`memory` v1 只采单点；增长判断统一由 `diagnose --observe` 完成。
+`schedulers --duration` 使用两个 wall-time 样本，默认 1500 ms，最短 250 ms、最长 10 s；`network`/`sockets` 和 `processes --duration` 使用同一 250 ms–10 s 范围。它们只输出 measurement/context，不单独产生诊断 finding。`diagnose --observe` 范围 5–60 s；Trace 范围见第 11 节。`memory` v1 只采单点；增长判断统一由 `diagnose --observe` 完成。
 
 `network`/`sockets` 无 duration 时输出 lifetime total 并标记 `sort_semantics=total`；有 duration 时只对两个样本中 generation 稳定的资源计算 delta 并标记 `sort_semantics=delta`。新生资源是 `baseline_missing`，counter 下降是 `counter_reset`，不能像当前 socket collector 一样 clamp 为 0。
 
@@ -294,7 +294,7 @@ v1 `--sort` 是固定 allowlist；unknown key 退出 2。CLI key 保持简短，
 
 | Command | Default | Accepted keys | Unit / semantics |
 | --- | --- | --- | --- |
-| `processes` | `memory` | `memory`、`message_queue_len`、`reductions`、`binary_memory`、`total_heap_size` | bytes/count；只有 reductions 可按 duration 变成 delta/rate |
+| `processes` | `memory` | `memory`、`message_queue_len`、`reductions`、`binary_memory`、`total_heap_size` | bytes/count；lifetime total 或 duration delta/rate |
 | `applications` | `memory` | `memory`、`process_count`、`reductions`、`message_queue_len` | bytes/count；current/lifetime aggregate |
 | `ets` | `memory` | `memory`、`size` | bytes/rows；current gauge |
 | `mnesia` | `memory` | `memory`、`size` | local in-memory bytes/rows；disc_only/external storage 不 eligible for memory sort |
@@ -360,7 +360,7 @@ binary_memory
 total_heap_size
 ```
 
-`reductions` 无 duration 时表示累计值；指定 `--duration` 时表示窗口 delta/rate。v1 只有 `--sort reductions` 接受 duration。两个样本按 PID 求交集，只对 stable PID 计算 delta；born/died PID 单列 lifecycle context，不能使用 `recon:proc_window/3` 的结果。输出必须记录实际 monotonic interval 和 `sort_semantics=total|delta`。
+`--sort reductions` 无 duration 时表示累计值；所有 sort 支持指定 `--duration` 时输出窗口 delta/rate。两个样本按 PID 求交集，只对 stable PID 计算 delta；born/died PID 单列 lifecycle context，不能使用 `recon:proc_window/3` 的结果。输出必须记录实际 monotonic interval 和 `sort_semantics=total|delta`。
 
 `binary_memory` 需要读取每进程 binary refs，成本高于普通 process_info；它必须显式执行、使用更低 scan budget。timeout 返回无 ranking 的 `status=timeout`，不能伪装成完整或 partial Top N。
 

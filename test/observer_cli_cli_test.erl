@@ -268,8 +268,8 @@ process_inspection_option_contract_test() ->
     assert_argument_error(invalid_sort, observer_cli_cli:parse(["processes", "--sort", "cpu"])),
     assert_argument_error(invalid_sort, observer_cli_cli:parse(["applications", "--sort", "cpu"])),
     assert_argument_error(invalid_limit, observer_cli_cli:parse(["processes", "--limit", "201"])),
-    assert_argument_error(
-        duration_requires_reductions_sort,
+    ?assertMatch(
+        {ok, #{command := processes, options := #{sort := "memory", duration := "250ms"}}},
         observer_cli_cli:parse(["processes", "--sort", "memory", "--duration", "250ms"])
     ),
     assert_argument_error(process_target_required, observer_cli_cli:parse(["process"])),

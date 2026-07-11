@@ -1701,11 +1701,12 @@ capture_scan_inspection(Command, ProbeId, Samples, #{controller := Controller}, 
     }.
 
 valid_process_request(Sort, Limit, Duration) ->
-    lists:member(Sort, [memory, message_queue_len, reductions, binary_memory, total_heap_size]) andalso
+    lists:member(
+        Sort, [memory, message_queue_len, reductions, binary_memory, total_heap_size]
+    ) andalso
         is_integer(Limit) andalso Limit >= 1 andalso Limit =< 200 andalso
         ((Duration =:= undefined) orelse
-            (Sort =:= reductions andalso is_integer(Duration) andalso Duration >= 250 andalso
-                Duration =< 10000)).
+            (is_integer(Duration) andalso Duration >= 250 andalso Duration =< 10000)).
 
 valid_application_request(Sort, Limit) ->
     lists:member(Sort, [memory, process_count, reductions, message_queue_len]) andalso
@@ -1819,25 +1820,25 @@ collect_processes(Source, Sort, Limit, undefined, Context, Admission) ->
     {ok, Data, [
         exact_top_n, stable_raw_pid_tie_break, explicit_process_info_keys, process_scan_admitted
     ]};
-collect_processes(Source, reductions, Limit, Duration, Context, Admission) ->
+collect_processes(Source, Sort, Limit, Duration, Context, Admission) ->
     Started = erlang:monotonic_time(millisecond),
-    First = collect_reduction_sample(Source, Context),
+    First = collect_process_sample(Sort, Source, Context),
     (maps:get(sleep_fun, Source))(Duration),
-    Second = collect_reduction_sample(Source, Context),
+    Second = collect_process_sample(Sort, Source, Context),
     Finished = erlang:monotonic_time(millisecond),
     Interval = max(1, maps:get(monotonic_ms, Second) - maps:get(monotonic_ms, First)),
     Window = stable_process_window(
         maps:get(values, First), maps:get(values, Second), Interval
     ),
     Ranked = rank_window(maps:get(stable, Window), Limit),
-    Items = [window_process_item(Pid, Delta, Interval) || {Pid, Delta} <- Ranked],
+    Items = [window_process_item(Pid, Sort, Delta, Interval) || {Pid, Delta} <- Ranked],
     FirstAudit = maps:get(audit, First),
     SecondAudit = maps:get(audit, Second),
     Data = (audit_inventory(SecondAudit, length(Items), Started, Finished))#{
         items => Items,
         dropped_count => maps:size(maps:get(stable, Window)) - length(Items),
         truncated => false,
-        sort => reductions,
+        sort => Sort,
         sort_semantics => delta,
         interval_ms => Interval,
         baseline_count => maps:size(maps:get(values, First)),
@@ -1998,14 +1999,21 @@ audit_inventory(Acc, Returned, Started, Finished) ->
         scan_finished_monotonic_ms => Finished
     }.
 
-collect_reduction_sample(Source, Context) ->
+collect_process_sample(Sort, Source, Context) ->
+    SampleKeys = process_sample_keys(Sort),
+    ValueKey = process_sample_key(Sort),
     Acc0 = (inventory_acc(Context, 1))#{values => #{}},
     Acc = fold_processes(
         Source,
         fun(Pid, State) ->
-            case scan_process(Pid, [reductions], Source, State) of
-                {ok, #{reductions := Reductions}, Next} ->
-                    Next#{values := (maps:get(values, Next))#{Pid => Reductions}};
+            case scan_process(Pid, SampleKeys, Source, State) of
+                {ok, Item, Next} ->
+                    case maps:find(ValueKey, Item) of
+                        {ok, Value} when is_integer(Value) ->
+                            Next#{values := (maps:get(values, Next))#{Pid => Value}};
+                        _ ->
+                            Next
+                    end;
                 {skip, Next} ->
                     Next
             end
@@ -2017,6 +2025,12 @@ collect_reduction_sample(Source, Context) ->
         audit => Acc,
         monotonic_ms => (maps:get(monotonic_fun, Source))()
     }.
+
+process_sample_keys(binary_memory) -> [binary];
+process_sample_keys(Sort) -> [Sort].
+
+process_sample_key(binary_memory) -> binary_memory;
+process_sample_key(Sort) -> Sort.
 
 stable_process_window(First, Second, _Interval) ->
     FirstPids = maps:keys(First),
@@ -2052,12 +2066,29 @@ rank_window(Values, Limit) ->
         Limit
     ).
 
-window_process_item(Pid, Delta, Interval) ->
+window_process_item(Pid, Sort, Delta, Interval) ->
     #{
         pid => {identifier, pid, Pid},
-        reductions_delta => Delta,
-        reductions_per_second => Delta * 1000 / Interval
+        process_window_field_key(Sort, delta) => Delta,
+        process_window_field_key(Sort, per_second) => Delta * 1000 / Interval
     }.
+
+process_window_field_key(Sort, delta) ->
+    maps:get(Sort, #{
+        memory => memory_delta,
+        message_queue_len => message_queue_len_delta,
+        reductions => reductions_delta,
+        binary_memory => binary_memory_delta,
+        total_heap_size => total_heap_size_delta
+    });
+process_window_field_key(Sort, per_second) ->
+    maps:get(Sort, #{
+        memory => memory_per_second,
+        message_queue_len => message_queue_len_per_second,
+        reductions => reductions_per_second,
+        binary_memory => binary_memory_per_second,
+        total_heap_size => total_heap_size_per_second
+    }).
 
 collect_process(Target, Source) ->
     case resolve_process_target(Target, Source) of
@@ -2930,15 +2961,19 @@ network_resource(Port, Source) ->
                     skip;
                 Protocol ->
                     try (maps:get(stat_fun, Source))(Port) of
-                        {ok, Stats} when is_list(Stats) ->
-                            Counters = maps:from_list(Stats),
-                            #{
-                                raw_id => Port,
-                                resource => {identifier, port, Port},
-                                protocol => Protocol,
-                                counters => Counters,
-                                counter_shape => lists:sort(maps:keys(Counters))
-                            };
+                        {ok, Stats} ->
+                            case parse_network_counters(Stats) of
+                                {ok, Counters} ->
+                                    #{
+                                        raw_id => Port,
+                                        resource => {identifier, port, Port},
+                                        protocol => Protocol,
+                                        counters => Counters,
+                                        counter_shape => lists:sort(maps:keys(Counters))
+                                    };
+                                error ->
+                                    disappeared
+                            end;
                         _ ->
                             disappeared
                     catch
@@ -2947,6 +2982,21 @@ network_resource(Port, Source) ->
             end;
         missing ->
             disappeared
+    end.
+
+parse_network_counters(Stats) ->
+    case
+        is_list(Stats) andalso
+            lists:all(
+                fun
+                    ({Key, _Value}) when is_atom(Key) -> true;
+                    (_Other) -> false
+                end,
+                Stats
+            )
+    of
+        true -> {ok, maps:from_list(Stats)};
+        false -> error
     end.
 
 inet_protocol("tcp_inet") -> tcp;

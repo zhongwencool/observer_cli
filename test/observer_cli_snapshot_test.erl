@@ -721,6 +721,122 @@ binary_memory_is_explicit_and_refs_do_not_escape_test() ->
         exit(Pid, kill)
     end.
 
+processes_duration_supports_all_window_sorts_test() ->
+    WordSize = erlang:system_info(wordsize),
+    lists:foreach(
+        fun({Sort, Factor}) ->
+            assert_process_window_sort(
+                Sort,
+                Factor
+            )
+        end,
+        [
+            {memory, 1},
+            {message_queue_len, 1},
+            {reductions, 1},
+            {binary_memory, 1},
+            {total_heap_size, WordSize}
+        ]
+    ).
+
+assert_process_window_sort(Sort, Factor) ->
+    Pids = [spawn(fun process_fixture/0) || _ <- lists:seq(1, 5)],
+    [Stable, LateHot, Reset, Dead, Born] = Pids,
+    Key = process_window_key(Sort, delta),
+    RateKey = process_window_key(Sort, per_second),
+    try
+        Source = #{
+            count_fun => fun() -> 5 end,
+            fold =>
+                {fixture_window, fun(Fun, Acc) ->
+                    Sample =
+                        case get({process_window_sort, Sort}) of
+                            undefined -> 1;
+                            N -> N + 1
+                        end,
+                    put({process_window_sort, Sort}, Sample),
+                    Current =
+                        case Sample of
+                            1 -> [Stable, LateHot, Reset, Dead];
+                            2 -> [Stable, LateHot, Reset, Born]
+                        end,
+                    lists:foldl(Fun, Acc, Current)
+                end},
+            info_fun => fun(Pid, _Keys) ->
+                Sample = get({process_window_sort, Sort}),
+                Values0 = #{
+                    Stable => 10,
+                    LateHot => 11,
+                    Reset => 100,
+                    Dead => 1,
+                    Born => 9999
+                },
+                Values1 = #{
+                    Stable => 15,
+                    LateHot => 1010,
+                    Reset => 2,
+                    Dead => 0,
+                    Born => 9999
+                },
+                Value =
+                    maps:get(
+                        Pid,
+                        case Sample of
+                            1 -> Values0;
+                            2 -> Values1
+                        end
+                    ),
+                case Sort of
+                    binary_memory ->
+                        [{binary, [{erlang:make_ref(), Value, 1}]}];
+                    _ ->
+                        [{Sort, Value}]
+                end
+            end,
+            sleep_fun => fun(_Duration) -> ok end,
+            monotonic_fun => fun() ->
+                case get({process_window_clock, Sort}) of
+                    undefined ->
+                        put({process_window_clock, Sort}, 250),
+                        0;
+                    N ->
+                        N
+                end
+            end,
+            whereis_fun => fun erlang:whereis/1,
+            alive_fun => fun erlang:is_process_alive/1
+        },
+        Response = inspection_include(processes, #{
+            sort => Sort, limit => 1, duration_ms => 250, test_process_source => Source
+        }),
+        Data = maps:get(<<"data">>, Response),
+        [Item] = maps:get(<<"items">>, Data),
+        Delta = 999 * Factor,
+        ?assertEqual(list_to_binary(pid_to_list(LateHot)), maps:get(<<"pid">>, Item)),
+        ?assertEqual(Delta, maps:get(Key, Item)),
+        ?assertEqual(Delta * 1000 / 250, maps:get(RateKey, Item)),
+        ?assertEqual(4, maps:get(<<"baseline_count">>, Data)),
+        ?assertEqual(1, maps:get(<<"born_count">>, Data)),
+        ?assertEqual(1, maps:get(<<"dead_count">>, Data)),
+        ?assertEqual(1, maps:get(<<"reset_count">>, Data)),
+        ?assertEqual(2, maps:get(<<"retained_sample_count">>, Data))
+    after
+        lists:foreach(fun(Pid) -> exit(Pid, kill) end, Pids),
+        erase({process_window_sort, Sort}),
+        erase({process_window_clock, Sort})
+    end.
+
+process_window_key(memory, delta) -> <<"memory_delta">>;
+process_window_key(message_queue_len, delta) -> <<"message_queue_len_delta">>;
+process_window_key(reductions, delta) -> <<"reductions_delta">>;
+process_window_key(binary_memory, delta) -> <<"binary_memory_delta">>;
+process_window_key(total_heap_size, delta) -> <<"total_heap_size_delta">>;
+process_window_key(memory, per_second) -> <<"memory_per_second">>;
+process_window_key(message_queue_len, per_second) -> <<"message_queue_len_per_second">>;
+process_window_key(reductions, per_second) -> <<"reductions_per_second">>;
+process_window_key(binary_memory, per_second) -> <<"binary_memory_per_second">>;
+process_window_key(total_heap_size, per_second) -> <<"total_heap_size_per_second">>.
+
 stable_process_window_lifecycle_and_late_hot_test() ->
     Pids = [spawn(fun process_fixture/0) || _ <- lists:seq(1, 5)],
     [Stable, LateHot, Reset, Dead, Born] = Pids,
@@ -794,6 +910,66 @@ reduction_window_keeps_full_baseline_and_stable_pids_test() ->
         ?assertEqual(1, maps:get(<<"reset_count">>, Data)),
         ?assertEqual(2, maps:get(<<"retained_sample_count">>, Data)),
         ?assert(maps:get(<<"working_set_estimated_bytes">>, Data) > 0)
+    after
+        lists:foreach(fun(Pid) -> exit(Pid, kill) end, Pids)
+    end.
+
+memory_window_keeps_full_baseline_and_stable_pids_test() ->
+    Pids = [spawn(fun process_fixture/0) || _ <- lists:seq(1, 5)],
+    [Stable, LateHot, Reset, Dead, Born] = Pids,
+    try
+        Source = #{
+            count_fun => fun() -> 5 end,
+            fold =>
+                {fixture_window, fun(Fun, Acc) ->
+                    Sample =
+                        case get(goal12_sample) of
+                            undefined -> 1;
+                            N -> N + 1
+                        end,
+                    put(goal12_sample, Sample),
+                    Current =
+                        case Sample of
+                            1 -> [Stable, LateHot, Reset, Dead];
+                            2 -> [Stable, LateHot, Reset, Born]
+                        end,
+                    lists:foldl(Fun, Acc, Current)
+                end},
+            info_fun => fun(Pid, [memory]) ->
+                Sample = get(goal12_sample),
+                Values =
+                    case Sample of
+                        1 -> #{Stable => 10, LateHot => 11, Reset => 100, Dead => 1};
+                        2 -> #{Stable => 15, LateHot => 1010, Reset => 2, Born => 9999}
+                    end,
+                [{memory, maps:get(Pid, Values)}]
+            end,
+            sleep_fun => fun(_Duration) -> ok end,
+            monotonic_fun => fun() ->
+                case get(goal12_clock) of
+                    undefined ->
+                        put(goal12_clock, 250),
+                        0;
+                    N ->
+                        N
+                end
+            end,
+            whereis_fun => fun erlang:whereis/1,
+            alive_fun => fun erlang:is_process_alive/1
+        },
+        Response = inspection_include(processes, #{
+            sort => memory, limit => 1, duration_ms => 250, test_process_source => Source
+        }),
+        Data = maps:get(<<"data">>, Response),
+        [Item] = maps:get(<<"items">>, Data),
+        ?assertEqual(list_to_binary(pid_to_list(LateHot)), maps:get(<<"pid">>, Item)),
+        ?assertEqual(999, maps:get(<<"memory_delta">>, Item)),
+        ?assertEqual(3996.0, maps:get(<<"memory_per_second">>, Item)),
+        ?assertEqual(4, maps:get(<<"baseline_count">>, Data)),
+        ?assertEqual(1, maps:get(<<"born_count">>, Data)),
+        ?assertEqual(1, maps:get(<<"dead_count">>, Data)),
+        ?assertEqual(1, maps:get(<<"reset_count">>, Data)),
+        ?assertEqual(2, maps:get(<<"retained_sample_count">>, Data))
     after
         lists:foreach(fun(Pid) -> exit(Pid, kill) end, Pids)
     end.

@@ -86,6 +86,25 @@ network_port_disappearing_during_stat_read_test() ->
         port_close(Port)
     end.
 
+network_resource_bad_stat_shape_is_treated_as_disappeared_test() ->
+    Port = open_port({spawn, "cat"}, []),
+    Source = #{
+        count_fun => fun() -> 1 end,
+        all_fun => fun() -> {ok, [Port]} end,
+        name_fun => fun(_Port) -> {ok, "tcp_inet"} end,
+        stat_fun => fun(_Port) -> {ok, [{recv_oct, 10}, {send_oct}]} end,
+        io_fun => fun() -> {{input, 0}, {output, 0}} end,
+        sleep_fun => fun(_Duration) -> ok end,
+        monotonic_fun => fun() -> 0 end
+    },
+    try
+        Data = diagnostic_data(network, #{sort => oct, limit => 20, test_network_source => Source}),
+        ?assertEqual(1, maps:get(<<"disappeared_count">>, Data)),
+        ?assertEqual([], maps:get(<<"items">>, Data))
+    after
+        port_close(Port)
+    end.
+
 start_manager_branches_test() ->
     Inputs = [
         "ic\n",

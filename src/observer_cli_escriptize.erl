@@ -235,9 +235,11 @@ command_help("processes") ->
         "  --sort KEY           memory (default), message_queue_len, reductions,\n"
         "                       binary_memory, or total_heap_size\n"
         "  --limit N            1..200; 20 by default\n"
-        "  --duration DURATION  250ms..10s; only with --sort reductions\n",
+        "  --duration DURATION  250ms..10s\n",
         "  observer_cli processes --sort memory --limit 20\n"
         "  observer_cli processes --sort reductions --duration 1500ms\n"
+        "  observer_cli processes --sort memory --duration 1500ms\n"
+        "  observer_cli processes --sort message_queue_len --duration 2s\n"
     );
 command_help("process") ->
     remote_help(
