@@ -332,7 +332,7 @@ escript_command_exits() ->
     ),
     Contents = io_lib:format(
         "#!/usr/bin/env escript~n%%! -pa ~ts -pa ~ts~n"
-        "main([\"command\"]) -> observer_cli_escriptize:main([\"memory\", \"--format\", \"term\"]);~n"
+        "main([\"command\"]) -> observer_cli_escriptize:main([\"memory\", \"--format\", \"term\", \"--invalid\"]);~n"
         "main([Category]) -> erlang:halt(observer_cli_cli:exit_code(list_to_atom(Category))).~n",
         [CliBeamDir, EscriptizeBeamDir]
     ),
