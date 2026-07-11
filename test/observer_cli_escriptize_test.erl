@@ -617,7 +617,7 @@ dynamic_controller_handshake() ->
                             Controller, erpc:call(ConnectedTarget, erlang, nodes, [visible])
                         )
                     ),
-                    {ok, EpmdNames} = net_adm:names(),
+                    {ok, EpmdNames} = net_adm:names("localhost"),
                     ControllerName = hd(string:split(atom_to_list(Controller), "@")),
                     ?assertNot(lists:keymember(ControllerName, 1, EpmdNames)),
                     {ok, Capabilities}
