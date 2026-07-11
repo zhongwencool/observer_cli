@@ -3,6 +3,7 @@
 -ifdef(TEST).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("kernel/include/file.hrl").
 
 required_modules_test_() ->
     [
@@ -34,6 +35,8 @@ required_modules_test_() ->
         {"refuse pre-distributed controller", fun refuse_pre_distributed_controller/0},
         {"stop before connect on random failure", fun random_failure_stops_before_connect/0},
         {"dynamic controller handshake", {timeout, 20000, fun dynamic_controller_handshake/0}},
+        {"active context lifecycle", {timeout, 40000, fun active_context_lifecycle/0}},
+        {"connect missing diagnostics", {timeout, 30000, fun connect_missing_diagnostics/0}},
         {"missing capability", {timeout, 20000, fun missing_capability/0}},
         {"incompatible capability", {timeout, 20000, fun incompatible_capability/0}}
     ].
@@ -626,6 +629,102 @@ dynamic_controller_handshake() ->
     end,
     ?assertEqual(nonode@nohost, node()).
 
+active_context_lifecycle() ->
+    ?assertEqual(nonode@nohost, node()),
+    Cookie = observer_cli_context_target_cookie,
+    CookieText = atom_to_list(Cookie),
+    {Port, Target} = start_target(shortnames, Cookie, [snapshot_beam_dir()]),
+    {Escript, Script} = context_escript(),
+    Root = temporary_directory("observer_cli_context_home"),
+    CookieEnv = "OBSERVER_CLI_CONTEXT_COOKIE",
+    PreviousHome = os:getenv("HOME"),
+    true = os:putenv("HOME", Root),
+    true = os:putenv(CookieEnv, CookieText),
+    TargetText = atom_to_list(Target),
+    try
+        {0, Connect} = run_escript(Escript, [
+            Script, "connect", "--node", TargetText, "--cookie-env", CookieEnv
+        ]),
+        ?assertNotEqual(
+            nomatch,
+            binary:match(Connect, iolist_to_binary(["Selected ", TargetText, "; probe succeeded."]))
+        ),
+        ?assertNotEqual(
+            nomatch, binary:match(Connect, <<"No persistent connection is kept.">>)
+        ),
+        ?assertEqual(nomatch, binary:match(Connect, list_to_binary(CookieText))),
+        ContextPath = observer_cli_cli:context_path(),
+        {ok, #file_info{mode = ContextMode}} = file:read_file_info(ContextPath),
+        ?assertEqual(8#600, ContextMode band 8#777),
+        {ok, ContextBytes} = file:read_file(ContextPath),
+        ?assertEqual(nomatch, binary:match(ContextBytes, list_to_binary(CookieText))),
+        {0, Status} = run_escript(Escript, [Script, "status"]),
+        ?assertNotEqual(nomatch, binary:match(Status, <<"probe succeeded">>)),
+        ?assertNotEqual(nomatch, binary:match(Status, <<"diagnostics_module=available">>)),
+        ?assertEqual(nomatch, binary:match(Status, list_to_binary(CookieText))),
+        {2, StatelessError} = run_escript(Escript, [
+            Script, "snapshot", "--node", TargetText
+        ]),
+        ?assertNotEqual(nomatch, binary:match(StatelessError, <<"missing_cookie_source">>)),
+        {0, Disconnect} = run_escript(Escript, [Script, "disconnect"]),
+        ?assertNotEqual(nomatch, binary:match(Disconnect, <<"Disconnected ">>)),
+        ?assertEqual({error, enoent}, file:read_file_info(ContextPath)),
+        {0, Again} = run_escript(Escript, [Script, "disconnect"]),
+        ?assertEqual(<<"No active context.\n">>, Again)
+    after
+        true = os:unsetenv(CookieEnv),
+        restore_os_env("HOME", PreviousHome),
+        file:delete(Script),
+        file:del_dir_r(Root),
+        stop_target(Port)
+    end,
+    ?assertEqual(nonode@nohost, node()).
+
+connect_missing_diagnostics() ->
+    ?assertEqual(nonode@nohost, node()),
+    Cookie = observer_cli_missing_context_cookie,
+    {Port, Target} = start_target(shortnames, Cookie, []),
+    {Escript, Script} = context_escript(),
+    Root = temporary_directory("observer_cli_missing_context_home"),
+    CookieEnv = "OBSERVER_CLI_MISSING_CONTEXT_COOKIE",
+    PreviousHome = os:getenv("HOME"),
+    true = os:putenv("HOME", Root),
+    true = os:putenv(CookieEnv, atom_to_list(Cookie)),
+    try
+        {0, Output} = run_escript(Escript, [
+            Script,
+            "connect",
+            "--node",
+            atom_to_list(Target),
+            "--cookie-env",
+            CookieEnv
+        ]),
+        ?assertNotEqual(nomatch, binary:match(Output, <<"diagnostics_module=missing">>))
+    after
+        true = os:unsetenv(CookieEnv),
+        restore_os_env("HOME", PreviousHome),
+        file:delete(Script),
+        file:del_dir_r(Root),
+        stop_target(Port)
+    end,
+    ?assertEqual(nonode@nohost, node()).
+
+context_escript() ->
+    Escript = os:find_executable("escript"),
+    AppDir = code:lib_dir(observer_cli),
+    Script = filename:join(
+        os:getenv("TMPDIR", "/tmp"),
+        "observer_cli_context_" ++
+            integer_to_list(erlang:unique_integer([positive])) ++ ".escript"
+    ),
+    Contents = io_lib:format(
+        "#!/usr/bin/env escript~n%%! -pa ~ts/ebin~n"
+        "main(Args) -> observer_cli_escriptize:main(Args).~n",
+        [AppDir]
+    ),
+    ok = file:write_file(Script, Contents),
+    {Escript, Script}.
+
 snapshot_escript_envelopes_test_() ->
     {timeout, 30, fun snapshot_escript_envelopes/0}.
 
@@ -862,5 +961,10 @@ restore_env(App, Key, {ok, Value}) ->
     application:set_env(App, Key, Value);
 restore_env(App, Key, undefined) ->
     application:unset_env(App, Key).
+
+restore_os_env(Name, false) ->
+    os:unsetenv(Name);
+restore_os_env(Name, Value) ->
+    os:putenv(Name, Value).
 
 -endif.

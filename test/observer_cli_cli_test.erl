@@ -3,6 +3,7 @@
 -ifdef(TEST).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("kernel/include/file.hrl").
 
 reserved_command_words_test() ->
     Commands = [
@@ -233,6 +234,105 @@ cookie_source_test() ->
         )
     end).
 
+context_file_test() ->
+    with_context_path(fun(Path) ->
+        Secret = <<"must_not_be_stored">>,
+        Context = context_term(<<"first@host">>, <<"env">>, <<"OBSERVER_COOKIE">>),
+        ?assertEqual(ok, observer_cli_cli:write_context(Path, Context)),
+        {ok, #file_info{mode = DirMode}} = file:read_file_info(filename:dirname(Path)),
+        {ok, #file_info{mode = FileMode}} = file:read_file_info(Path),
+        ?assertEqual(8#700, DirMode band 8#777),
+        ?assertEqual(8#600, FileMode band 8#777),
+        {ok, Bytes} = file:read_file(Path),
+        ?assertEqual(nomatch, binary:match(Bytes, Secret)),
+        ?assertEqual({ok, Context}, observer_cli_cli:read_context(Path)),
+        ?assertEqual(
+            {ok, #{
+                node => "first@host", name_mode => "short", cookie_env => "OBSERVER_COOKIE"
+            }},
+            observer_cli_cli:decode_context(Context)
+        ),
+        ?assertEqual(ok, observer_cli_cli:delete_context(Path)),
+        ?assertEqual(ok, observer_cli_cli:delete_context(Path))
+    end),
+    {ok, FileOptions} = observer_cli_cli:context_options(#{
+        node => "target@host", cookie_file => "relative-cookie"
+    }),
+    ?assertEqual(absolute, filename:pathtype(maps:get(cookie_file, FileOptions))).
+
+invalid_context_files_test() ->
+    with_context_path(fun(Path) ->
+        Valid = context_term(<<"target@host">>, <<"env">>, <<"OBSERVER_COOKIE">>),
+        ok = observer_cli_cli:write_context(Path, Valid),
+        ok = file:change_mode(filename:dirname(Path), 8#755),
+        ?assertEqual(
+            {error, context_directory_permissions}, observer_cli_cli:read_context(Path)
+        ),
+        ok = file:change_mode(filename:dirname(Path), 8#700),
+        write_context_bytes(
+            Path, term_to_binary(#{payload => binary:copy(<<"x">>, 1000)}, [compressed])
+        ),
+        ?assertEqual({error, invalid_context}, observer_cli_cli:read_context(Path)),
+        write_context_bytes(Path, <<131, 255, 0>>),
+        ?assertEqual({error, invalid_context}, observer_cli_cli:read_context(Path)),
+        write_context_bytes(Path, binary:copy(<<0>>, 8193)),
+        ?assertEqual({error, context_too_large}, observer_cli_cli:read_context(Path)),
+        write_context_bytes(Path, term_to_binary(Valid)),
+        ok = file:change_mode(Path, 8#644),
+        ?assertEqual({error, context_file_permissions}, observer_cli_cli:read_context(Path)),
+        ok = file:delete(Path),
+        ok = file:make_dir(Path),
+        ?assertEqual({error, invalid_context_file}, observer_cli_cli:read_context(Path)),
+        ok = file:del_dir(Path),
+        Target = Path ++ ".target",
+        ok = file:write_file(Target, term_to_binary(Valid)),
+        ok = file:make_symlink(Target, Path),
+        ?assertEqual({error, invalid_context_file}, observer_cli_cli:read_context(Path)),
+        ?assertEqual({error, invalid_context_file}, observer_cli_cli:delete_context(Path)),
+        ok = file:delete(Path),
+        ok = file:delete(Target)
+    end),
+    ?assertEqual(
+        {error, invalid_context},
+        observer_cli_cli:decode_context(
+            (context_term(<<"target@host">>, <<"env">>, <<"OBSERVER_COOKIE">>))#{
+                <<"extra">> => true
+            }
+        )
+    ),
+    ?assertEqual(
+        {error, invalid_context},
+        observer_cli_cli:decode_context(
+            context_term(<<"target@host">>, <<"plain">>, <<"secret">>)
+        )
+    ).
+
+concurrent_context_replace_test() ->
+    with_context_path(fun(Path) ->
+        Parent = self(),
+        Contexts = [
+            context_term(<<"first@host">>, <<"env">>, <<"FIRST_COOKIE">>),
+            context_term(<<"second@host">>, <<"env">>, <<"SECOND_COOKIE">>)
+        ],
+        [
+            spawn(fun() -> Parent ! observer_cli_cli:write_context(Path, Context) end)
+         || Context <- Contexts
+        ],
+        ?assertEqual(
+            [ok, ok],
+            lists:sort([
+                receive
+                    Result -> Result
+                end
+             || _ <- Contexts
+            ])
+        ),
+        {ok, Winner} = observer_cli_cli:read_context(Path),
+        ?assert(lists:member(Winner, Contexts)),
+        {ok, Files} = file:list_dir(filename:dirname(Path)),
+        ?assertEqual(["context.etf"], Files)
+    end).
+
 timeout_validation_test() ->
     ?assertEqual({ok, 10000}, observer_cli_cli:timeout(#{})),
     ?assertEqual({ok, 1500}, observer_cli_cli:timeout(#{timeout => "1500ms"})),
@@ -367,5 +467,36 @@ with_cookie_file(Contents, Mode, Fun) ->
     after
         file:delete(Path)
     end.
+
+with_context_path(Fun) ->
+    Root = filename:join(
+        os:getenv("TMPDIR", "/tmp"),
+        "observer_cli_context_" ++ integer_to_list(erlang:unique_integer([positive]))
+    ),
+    Path = filename:join([Root, "observer_cli", "context.etf"]),
+    ok = file:make_dir(Root),
+    try
+        Fun(Path)
+    after
+        file:del_dir_r(Root)
+    end.
+
+context_term(Node, SourceType, SourceValue) ->
+    Source =
+        case SourceType of
+            <<"env">> -> #{<<"type">> => SourceType, <<"name">> => SourceValue};
+            <<"file">> -> #{<<"type">> => SourceType, <<"path">> => SourceValue};
+            _ -> #{<<"type">> => SourceType, <<"value">> => SourceValue}
+        end,
+    #{
+        <<"version">> => 1,
+        <<"node">> => Node,
+        <<"name_mode">> => <<"short">>,
+        <<"cookie_source">> => Source
+    }.
+
+write_context_bytes(Path, Bytes) ->
+    ok = file:write_file(Path, Bytes),
+    file:change_mode(Path, 8#600).
 
 -endif.

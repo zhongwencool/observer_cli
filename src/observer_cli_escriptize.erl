@@ -24,7 +24,8 @@
     remote_load/1,
     run_command/2,
     with_target/2,
-    connect_target/7
+    connect_target/7,
+    probe_target/7
 ]).
 -endif.
 
@@ -79,10 +80,90 @@ run_command(snapshot, Options) ->
     with_target(Options, fun(Target, _Capabilities) ->
         run_snapshot(Target, Options)
     end);
+run_command(connect, Options) ->
+    run_connect(Options);
+run_command(status, Options) ->
+    run_status(Options);
+run_command(disconnect, _Options) ->
+    run_disconnect();
 run_command(_Command, Options) ->
     with_target(Options, fun(_Target, _Capabilities) ->
         {error, capability, command_unavailable}
     end).
+
+run_connect(Options) ->
+    case observer_cli_cli:context_options(Options) of
+        {ok, ContextOptions} ->
+            probe_options(ContextOptions, fun(_Target, CapabilityResult) ->
+                case observer_cli_cli:save_context(ContextOptions) of
+                    ok -> probe_response(connect, ContextOptions, CapabilityResult);
+                    {error, Reason} -> {error, internal, Reason}
+                end
+            end);
+        {error, Reason} ->
+            {error, argument, Reason}
+    end.
+
+run_status(Options) ->
+    case observer_cli_cli:load_context() of
+        {ok, ContextOptions} ->
+            ProbeOptions = maps:merge(ContextOptions, maps:with([timeout], Options)),
+            probe_options(ProbeOptions, fun(_Target, CapabilityResult) ->
+                probe_response(status, ContextOptions, CapabilityResult)
+            end);
+        {error, no_active_context} ->
+            {error, capability, no_active_context};
+        {error, Reason} ->
+            {error, internal, Reason}
+    end.
+
+run_disconnect() ->
+    case observer_cli_cli:load_context() of
+        {ok, #{node := Node}} ->
+            case observer_cli_cli:delete_context() of
+                ok -> disconnect_response(list_to_binary(Node));
+                {error, Reason} -> {error, internal, Reason}
+            end;
+        {error, no_active_context} ->
+            disconnect_response(null);
+        {error, Reason} ->
+            {error, internal, Reason}
+    end.
+
+probe_response(Command, #{node := Node}, CapabilityResult) ->
+    {DiagnosticsModule, Warnings} =
+        case CapabilityResult of
+            {ok, _Capabilities} ->
+                {<<"available">>, []};
+            {error, capability, capability_unavailable} ->
+                {<<"missing">>, [observer_cli_cli:error(capability, capability_unavailable)]}
+        end,
+    NodeBinary = list_to_binary(Node),
+    Response = observer_cli_cli:envelope(
+        Command,
+        #{<<"node">> => NodeBinary},
+        #{<<"status">> => <<"complete">>},
+        #{
+            <<"node">> => NodeBinary,
+            <<"probe">> => <<"succeeded">>,
+            <<"diagnostics_module">> => DiagnosticsModule,
+            <<"persistent_connection">> => false
+        },
+        Warnings,
+        []
+    ),
+    {ok, Response, observer_cli_cli:exit_code(success)}.
+
+disconnect_response(Node) ->
+    Response = observer_cli_cli:envelope(
+        disconnect,
+        null,
+        null,
+        #{<<"node">> => Node, <<"disconnected">> => true},
+        [],
+        []
+    ),
+    {ok, Response, observer_cli_cli:exit_code(success)}.
 
 run_snapshot(Target, Options) ->
     {ok, Timeout} = observer_cli_cli:timeout(Options),
@@ -120,6 +201,38 @@ snapshot_response(_Invalid) ->
 
 with_target(Options, Fun) ->
     case node() of
+        nonode@nohost -> with_active_target(Options, Fun);
+        _Distributed -> {error, controller, controller_already_distributed}
+    end.
+
+with_active_target(Options, Fun) ->
+    case active_options(Options) of
+        {ok, TargetOptions} ->
+            probe_options(TargetOptions, fun(Target, CapabilityResult) ->
+                case CapabilityResult of
+                    {ok, Capabilities} -> Fun(Target, Capabilities);
+                    Error -> Error
+                end
+            end);
+        {error, no_active_context} ->
+            {error, capability, no_active_context};
+        {error, Reason} ->
+            {error, internal, Reason}
+    end.
+
+active_options(#{node := _Node} = Options) ->
+    {ok, Options};
+active_options(Options) ->
+    case observer_cli_cli:load_context() of
+        {ok, ContextOptions} ->
+            CommandOptions = maps:without([cookie_env, cookie_file, name_mode], Options),
+            {ok, maps:merge(ContextOptions, CommandOptions)};
+        Error ->
+            Error
+    end.
+
+probe_options(Options, Fun) ->
+    case node() of
         nonode@nohost ->
             case {observer_cli_cli:target(Options), observer_cli_cli:cookie_source(Options)} of
                 {{ok, {TargetText, NameMode}}, {ok, CookieBinary}} ->
@@ -127,7 +240,7 @@ with_target(Options, Fun) ->
                         {ok, Timeout} ->
                             Target = list_to_atom(TargetText),
                             Cookie = binary_to_atom(CookieBinary),
-                            connect_target(Target, NameMode, Cookie, Timeout, Fun);
+                            probe_target(Target, NameMode, Cookie, Timeout, Fun);
                         {error, Reason} ->
                             {error, argument, Reason}
                     end;
@@ -144,8 +257,26 @@ with_target(Options, Fun) ->
             {error, controller, controller_already_distributed}
     end.
 
-connect_target(Target, NameMode, Cookie, Timeout, Fun) ->
-    connect_target(
+-ifdef(TEST).
+connect_target(Target, NameMode, Cookie, Timeout, RandomFun, ConnectFun, Fun) ->
+    probe_target(
+        Target,
+        NameMode,
+        Cookie,
+        Timeout,
+        RandomFun,
+        ConnectFun,
+        fun(ConnectedTarget, CapabilityResult) ->
+            case CapabilityResult of
+                {ok, Capabilities} -> Fun(ConnectedTarget, Capabilities);
+                Error -> Error
+            end
+        end
+    ).
+-endif.
+
+probe_target(Target, NameMode, Cookie, Timeout, Fun) ->
+    probe_target(
         Target,
         NameMode,
         Cookie,
@@ -155,7 +286,7 @@ connect_target(Target, NameMode, Cookie, Timeout, Fun) ->
         Fun
     ).
 
-connect_target(Target, NameMode, Cookie, Timeout, RandomFun, ConnectFun, Fun) ->
+probe_target(Target, NameMode, Cookie, Timeout, RandomFun, ConnectFun, Fun) ->
     Deadline = erlang:monotonic_time(millisecond) + Timeout,
     case node() of
         nonode@nohost ->
@@ -188,10 +319,7 @@ connect_started(Target, Cookie, Deadline, RandomFun, ConnectFun, Fun) ->
             true = erlang:set_cookie(Target, Cookie),
             case connect_before(Target, ConnectFun, remaining(Deadline)) of
                 ok ->
-                    case capabilities(Target, remaining(Deadline)) of
-                        {ok, Capabilities} -> Fun(Target, Capabilities);
-                        Error -> Error
-                    end;
+                    Fun(Target, capabilities(Target, remaining(Deadline)));
                 Error ->
                     Error
             end;
