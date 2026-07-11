@@ -63,6 +63,7 @@ required_modules_test_() ->
         {"run unreachable node", {timeout, 20000, fun run_unreachable_node_test/0}},
         {"refuse pre-distributed controller", fun refuse_pre_distributed_controller/0},
         {"stop before connect on random failure", fun random_failure_stops_before_connect/0},
+        {"forward remaining command deadline", fun forward_remaining_command_deadline/0},
         {"dynamic controller handshake", {timeout, 20000, fun dynamic_controller_handshake/0}},
         {"active context lifecycle", {timeout, 40000, fun active_context_lifecycle/0}},
         {"connect missing diagnostics", {timeout, 30000, fun connect_missing_diagnostics/0}},
@@ -405,6 +406,450 @@ escript_command_exits() ->
         file:delete(Script)
     end.
 
+command_deadline_uses_remaining_budget_test() ->
+    ?assertEqual({ok, 1234}, observer_cli_escriptize:command_timeout(#{}, 1234)),
+    ?assertEqual(
+        {ok, 1000}, observer_cli_escriptize:command_timeout(#{timeout => "1s"}, 2000)
+    ),
+    ?assertEqual({error, target_timeout}, observer_cli_escriptize:command_timeout(#{}, 0)).
+
+target_error_exit_classification_test() ->
+    ?assertEqual(
+        {error, schema, invalid_schema},
+        observer_cli_escriptize:target_dispatch_error(<<"invalid_schema">>)
+    ),
+    lists:foreach(
+        fun(Reason) ->
+            ?assertEqual(
+                {error, schema, binary_to_existing_atom(Reason)},
+                observer_cli_escriptize:target_dispatch_error(Reason)
+            )
+        end,
+        [
+            <<"field_too_large">>,
+            <<"response_too_deep">>,
+            <<"response_too_large">>,
+            <<"invalid_evidence_pointer">>,
+            <<"invalid_identifier">>,
+            <<"invalid_identifier_policy">>
+        ]
+    ),
+    ?assertEqual(
+        {error, cleanup, cleanup_unconfirmed},
+        observer_cli_escriptize:target_dispatch_error(<<"cleanup_unconfirmed">>)
+    ),
+    ?assertEqual(
+        {error, internal, internal_error},
+        observer_cli_escriptize:target_dispatch_error(<<"internal_error">>)
+    ),
+    ?assertEqual(
+        {error, capability, capability_unavailable},
+        observer_cli_escriptize:target_dispatch_error(<<"capability_unavailable">>)
+    ),
+    ?assertEqual(
+        {error, safety_refusal, worker_heap_limit_exceeded},
+        observer_cli_escriptize:target_dispatch_error(<<"worker_heap_limit_exceeded">>)
+    ),
+    ?assertEqual(
+        {error, required_probe, <<"target_timeout">>},
+        observer_cli_escriptize:target_dispatch_error(<<"target_timeout">>)
+    ).
+
+direct_unavailable_exit_classification_test() ->
+    Response = fun(Reason) ->
+        #{
+            <<"capture">> => #{
+                <<"probes">> => [
+                    #{<<"status">> => <<"unavailable">>, <<"reason_code">> => Reason}
+                ]
+            }
+        }
+    end,
+    Capability = Response(<<"capability_unavailable">>),
+    ?assertEqual(
+        {ok, Capability, 2}, observer_cli_escriptize:dispatch_response(Capability)
+    ),
+    Budget = Response(<<"scan_budget_exceeded">>),
+    ?assertEqual({ok, Budget, 3}, observer_cli_escriptize:dispatch_response(Budget)).
+
+controller_response_validation_test() ->
+    Response = valid_controller_response(memory, <<"node@host">>),
+    Target = 'node@host',
+    ?assertEqual(ok, observer_cli_escriptize:validate_response(memory, include, Target, Response)),
+    lists:foreach(
+        fun(Malformed) ->
+            ?assertMatch(
+                {error, invalid_command_response},
+                observer_cli_escriptize:validate_response(memory, include, Target, Malformed)
+            )
+        end,
+        [
+            Response#{<<"schema">> := <<"observer_cli.cli/v2">>},
+            Response#{<<"command">> := <<"snapshot">>},
+            Response#{<<"extra">> => true},
+            Response#{<<"data">> := #{<<"unsafe">> => self()}},
+            Response#{<<"capture">> := #{<<"status">> => <<"complete">>}},
+            Response#{
+                <<"target">> := #{<<"node">> => <<"other@host">>, <<"otp_release">> => <<"29">>}
+            },
+            Response#{
+                <<"target">> := #{<<"node">> => <<"node@host">>, <<"otp_release">> => <<"latest">>}
+            },
+            Response#{
+                <<"capture">> := (maps:get(<<"capture">>, Response))#{
+                    <<"started_at">> := <<"yesterday">>
+                }
+            },
+            Response#{
+                <<"capture">> := (maps:get(<<"capture">>, Response))#{<<"probes">> := []}
+            }
+        ]
+    ),
+    Redacted = valid_controller_response(memory, <<"node-1">>),
+    ?assertEqual(ok, observer_cli_escriptize:validate_response(memory, redact, Target, Redacted)),
+    ?assertMatch(
+        {error, invalid_command_response},
+        observer_cli_escriptize:validate_response(memory, redact, Target, Response)
+    ),
+    lists:foreach(
+        fun(Node) ->
+            Invalid = Redacted#{
+                <<"target">> := #{<<"node">> => Node, <<"otp_release">> => <<"29">>}
+            },
+            ?assertMatch(
+                {error, invalid_command_response},
+                observer_cli_escriptize:validate_response(memory, redact, Target, Invalid)
+            )
+        end,
+        [<<"node-secret">>, <<"node-0">>, <<"node-01">>]
+    ).
+
+controller_response_contract_rejections_test() ->
+    Target = 'node@host',
+    Response = valid_controller_response(memory, <<"node@host">>),
+    ErrorResponse = Response#{
+        <<"capture">> := null,
+        <<"data">> := null,
+        <<"errors">> := [
+            #{<<"class">> => <<"capability">>, <<"reason_code">> => <<"cleanup_unconfirmed">>}
+        ]
+    },
+    Wrapper = #{
+        <<"items">> => [],
+        <<"scanned_count">> => -1,
+        <<"eligible_count">> => 0,
+        <<"returned_count">> => 1,
+        <<"dropped_count">> => 0,
+        <<"complete">> => true,
+        <<"truncated">> => false
+    },
+    Diagnose0 = diagnostic_response(complete, []),
+    Finding = #{<<"evidence">> => [#{<<"path">> => <<"/data/context/missing">>}]},
+    Diagnose = Diagnose0#{
+        <<"data">> := (maps:get(<<"data">>, Diagnose0))#{<<"findings">> := [Finding]}
+    },
+    InvalidPointer0 = diagnostic_response(complete, [#{<<"id">> => <<"invalid.pointer">>}]),
+    InvalidPointerData0 = maps:get(<<"data">>, InvalidPointer0),
+    InvalidPointerContext0 = maps:get(<<"context">>, InvalidPointerData0),
+    [InvalidPointerFinding0] = maps:get(<<"findings">>, InvalidPointerData0),
+    [InvalidPointerEvidence0] = maps:get(<<"evidence">>, InvalidPointerFinding0),
+    InvalidPointer = InvalidPointer0#{
+        <<"data">> := InvalidPointerData0#{
+            <<"context">> := InvalidPointerContext0#{<<"~2">> => true},
+            <<"findings">> := [
+                InvalidPointerFinding0#{
+                    <<"evidence">> := [
+                        InvalidPointerEvidence0#{<<"path">> := <<"/data/context/~2">>}
+                    ]
+                }
+            ]
+        }
+    },
+    OffsetTime = Response#{
+        <<"capture">> := (maps:get(<<"capture">>, Response))#{
+            <<"started_at">> := <<"2026-07-11T00:00:00+08:00">>,
+            <<"finished_at">> := <<"2026-07-11T00:00:01+08:00">>
+        }
+    },
+    Leaked0 = diagnostic_response(complete, []),
+    LeakedData0 = maps:get(<<"data">>, Leaked0),
+    LeakedContext0 = maps:get(<<"context">>, LeakedData0),
+    Leaked = Leaked0#{
+        <<"data">> := LeakedData0#{
+            <<"context">> := LeakedContext0#{<<"leaked_pid">> => <<"<0.123.0>">>}
+        }
+    },
+    lists:foreach(
+        fun({Command, Policy, Malformed}) ->
+            ?assertMatch(
+                {error, invalid_command_response},
+                observer_cli_escriptize:validate_response(Command, Policy, Target, Malformed)
+            )
+        end,
+        [
+            {memory, include, ErrorResponse},
+            {memory, include, ErrorResponse#{
+                <<"errors">> := [
+                    #{
+                        <<"class">> => <<"cleanup">>,
+                        <<"reason_code">> => <<"cleanup_unconfirmed">>,
+                        <<"extra">> => true
+                    }
+                ]
+            }},
+            {memory, include, Response#{<<"data">> := Wrapper}},
+            {memory, include, OffsetTime},
+            {diagnose, redact, Diagnose0#{<<"data">> := #{}}},
+            {diagnose, redact, Diagnose},
+            {diagnose, redact, InvalidPointer},
+            {diagnose, redact, Leaked}
+        ]
+    ).
+
+controller_validates_real_resource_responses_test() ->
+    #{<<"status">> := <<"ok">>, <<"result">> := MissingProcess} =
+        observer_cli_snapshot:dispatch(
+            self(), process, #{target => <<"definitely_missing">>}, #{
+                timeout_ms => 5000, identifier_policy => include
+            }
+        ),
+    ?assertEqual(
+        ok,
+        observer_cli_escriptize:validate_response(
+            process, include, node(), MissingProcess
+        )
+    ),
+    lists:foreach(
+        fun({Command, Request}) ->
+            #{<<"status">> := <<"ok">>, <<"result">> := Response} =
+                observer_cli_snapshot:dispatch(self(), Command, Request, #{
+                    timeout_ms => 5000, identifier_policy => include
+                }),
+            ?assertEqual(
+                ok,
+                observer_cli_escriptize:validate_response(
+                    Command, include, node(), Response
+                )
+            )
+        end,
+        [
+            {processes, #{sort => memory, limit => 1}},
+            {ets, #{sort => memory, limit => 1}},
+            {sockets, #{sort => io, limit => 1}}
+        ]
+    ),
+    #{<<"status">> := <<"ok">>, <<"result">> := ProcessResponse} =
+        observer_cli_snapshot:dispatch(
+            self(), processes, #{sort => memory, limit => 1}, #{
+                timeout_ms => 5000, identifier_policy => include
+            }
+        ),
+    ?assertMatch(
+        {error, invalid_command_response},
+        observer_cli_escriptize:validate_response(
+            processes, include, node(), ProcessResponse#{<<"data">> := #{}}
+        )
+    ),
+    ProcessData = maps:get(<<"data">>, ProcessResponse),
+    ?assertMatch(
+        {error, invalid_command_response},
+        observer_cli_escriptize:validate_response(
+            processes,
+            include,
+            node(),
+            ProcessResponse#{
+                <<"data">> := ProcessData#{<<"dropped_count">> := 999999}
+            }
+        )
+    ),
+    Response = valid_controller_response(memory, atom_to_binary(node())),
+    ResponseData = maps:get(<<"data">>, Response),
+    ?assertEqual(
+        ok,
+        observer_cli_escriptize:validate_response(
+            memory,
+            include,
+            node(),
+            Response#{
+                <<"data">> := ResponseData#{
+                    <<"audit">> => #{<<"returned_count">> => 1}
+                }
+            }
+        )
+    ),
+    #{<<"status">> := <<"ok">>, <<"result">> := Unavailable} =
+        observer_cli_snapshot:dispatch(
+            self(),
+            sockets,
+            #{
+                sort => io,
+                limit => 1,
+                test_socket_source => #{available_fun => fun() -> false end}
+            },
+            #{timeout_ms => 5000, identifier_policy => include}
+        ),
+    ?assertEqual(
+        ok,
+        observer_cli_escriptize:validate_response(sockets, include, node(), Unavailable)
+    ),
+    ?assertMatch({ok, Unavailable, 2}, observer_cli_escriptize:dispatch_response(Unavailable)),
+    #{<<"status">> := <<"ok">>, <<"result">> := Refused} =
+        observer_cli_snapshot:dispatch(
+            self(),
+            processes,
+            #{
+                sort => memory,
+                limit => 1,
+                test_process_source => #{count_fun => fun() -> 100001 end}
+            },
+            #{timeout_ms => 5000, identifier_policy => include}
+        ),
+    ?assertEqual(
+        ok,
+        observer_cli_escriptize:validate_response(processes, include, node(), Refused)
+    ),
+    ?assertMatch({ok, Refused, 3}, observer_cli_escriptize:dispatch_response(Refused)).
+
+oversized_structured_output_keeps_error_envelope_test() ->
+    Escript = os:find_executable("escript"),
+    AppDir = code:lib_dir(observer_cli),
+    Script = filename:join(
+        os:getenv("TMPDIR", "/tmp"),
+        "observer_cli_oversized_output_" ++ integer_to_list(erlang:unique_integer([positive]))
+    ),
+    Contents = io_lib:format(
+        "#!/usr/bin/env escript~n%%! -pa ~ts/ebin~n"
+        "main([Format]) ->~n"
+        "  Response = observer_cli_cli:envelope(memory, null, null, "
+        "#{<<\"huge\">> => binary:copy(<<\"x\">>, 1048576)}, [], []),~n"
+        "  observer_cli_escriptize:command_output(#{format => Format}, Response, 0).~n",
+        [AppDir]
+    ),
+    ok = file:write_file(Script, Contents),
+    try
+        {4, Term} = run_escript(Escript, [Script, "term"]),
+        ?assertNotEqual(nomatch, binary:match(Term, <<"observer_cli.cli/v1">>)),
+        ?assertNotEqual(nomatch, binary:match(Term, <<"response_too_large">>)),
+        case code:ensure_loaded(json) of
+            {module, json} ->
+                {4, Json} = run_escript(Escript, [Script, "json"]),
+                ?assertNotEqual(
+                    nomatch, binary:match(Json, <<"\"schema\":\"observer_cli.cli/v1\"">>)
+                ),
+                ?assertNotEqual(nomatch, binary:match(Json, <<"response_too_large">>));
+            {error, _Reason} ->
+                {2, JsonError} = run_escript(Escript, [Script, "json"]),
+                ?assertNotEqual(nomatch, binary:match(JsonError, <<"JSON output requires OTP 27">>))
+        end
+    after
+        file:delete(Script)
+    end.
+
+cleanup_and_error_priority_test() ->
+    PartialCleanup = (valid_controller_response(trace_call, <<"node@host">>))#{
+        <<"capture">> := (maps:get(
+            <<"capture">>, valid_controller_response(trace_call, <<"node@host">>)
+        ))#{
+            <<"status">> := <<"partial">>
+        },
+        <<"errors">> := [
+            #{<<"class">> => <<"cleanup">>, <<"reason_code">> => <<"cleanup_unconfirmed">>}
+        ]
+    },
+    ?assertEqual(
+        {ok, PartialCleanup, 4}, observer_cli_escriptize:dispatch_response(PartialCleanup)
+    ),
+    PartialCapability = PartialCleanup#{
+        <<"errors">> := [
+            #{<<"class">> => <<"capability">>, <<"reason_code">> => <<"unavailable">>}
+        ]
+    },
+    ?assertEqual(
+        {ok, PartialCapability, 3},
+        observer_cli_escriptize:dispatch_response(PartialCapability)
+    ),
+    ?assertEqual(
+        {error, cleanup, cleanup_unconfirmed},
+        observer_cli_escriptize:cleanup_outcome({ok, PartialCleanup, 0}, {
+            error, cleanup_unconfirmed
+        })
+    ).
+
+capability_error_classification_test() ->
+    ?assertEqual(
+        {error, capability, capability_unavailable},
+        observer_cli_escriptize:capability_error(error, undef)
+    ),
+    ?assertEqual(
+        {error, required_probe, target_timeout},
+        observer_cli_escriptize:capability_error(error, {erpc, timeout})
+    ),
+    ?assertEqual(
+        {error, connection, connection_failed},
+        observer_cli_escriptize:capability_error(error, {erpc, noconnection})
+    ),
+    ?assertEqual(
+        {error, required_probe, capability_probe_failed},
+        observer_cli_escriptize:capability_error(error, remote_crash)
+    ),
+    ?assertEqual(
+        {error, required_probe, target_timeout},
+        observer_cli_escriptize:probe_response(
+            status, #{node => "node@host"}, {error, required_probe, target_timeout}
+        )
+    ),
+    ?assertEqual(
+        {error, connection, connection_failed},
+        observer_cli_escriptize:probe_response(
+            status, #{node => "node@host"}, {error, connection, connection_failed}
+        )
+    ).
+
+valid_controller_response(Command, Node) ->
+    #{
+        <<"schema">> => <<"observer_cli.cli/v1">>,
+        <<"command">> => atom_to_binary(Command),
+        <<"target">> => #{<<"node">> => Node, <<"otp_release">> => <<"29">>},
+        <<"capture">> => #{
+            <<"status">> => <<"complete">>,
+            <<"started_at">> => <<"2026-07-11T00:00:00Z">>,
+            <<"finished_at">> => <<"2026-07-11T00:00:01Z">>,
+            <<"duration_ms">> => 1000,
+            <<"probes">> => fixture_probes(Command),
+            <<"observer_effects">> => []
+        },
+        <<"data">> => fixture_data(Command),
+        <<"warnings">> => [],
+        <<"errors">> => []
+    }.
+
+fixture_probes(snapshot) ->
+    [fixture_probe(Id) || Id <- [<<"runtime">>, <<"resources">>, <<"memory">>]];
+fixture_probes(diagnose) ->
+    [fixture_probe(<<"core_limits">>)];
+fixture_probes(trace_call) ->
+    [fixture_probe(<<"trace">>)];
+fixture_probes(Command) ->
+    [fixture_probe(atom_to_binary(Command))].
+
+fixture_probe(Id) ->
+    #{
+        <<"id">> => Id,
+        <<"required">> => true,
+        <<"status">> => <<"ok">>,
+        <<"reason_code">> => null,
+        <<"duration_ms">> => 1,
+        <<"samples">> => 1,
+        <<"coverage">> => []
+    }.
+
+fixture_data(memory) ->
+    #{<<"runtime">> => #{}, <<"memory">> => #{}};
+fixture_data(trace_call) ->
+    #{<<"reason">> => <<"completed">>, <<"trace">> => #{}};
+fixture_data(_Command) ->
+    #{}.
+
 run_escript(Escript, Args) ->
     Port = open_port(
         {spawn_executable, Escript},
@@ -669,6 +1114,25 @@ random_failure_stops_before_connect() ->
     end,
     ?assertEqual(nonode@nohost, node()).
 
+forward_remaining_command_deadline() ->
+    ?assertEqual(nonode@nohost, node()),
+    Timeout = 3000,
+    Remaining = observer_cli_escriptize:probe_target(
+        missing@host,
+        shortnames,
+        observer_cli_target_cookie,
+        Timeout,
+        fun() -> binary:copy(<<16#aa>>, 24) end,
+        fun(_Target) ->
+            timer:sleep(100),
+            true
+        end,
+        fun(_Target, _CapabilityResult, Budget) -> Budget end
+    ),
+    ?assert(Remaining > 0),
+    ?assert(Remaining =< Timeout - 1100),
+    ?assertEqual(nonode@nohost, node()).
+
 dynamic_controller_handshake() ->
     ?assertEqual(nonode@nohost, node()),
     Cookie = observer_cli_dynamic_target_cookie,
@@ -827,7 +1291,7 @@ diagnose_escript_exit_codes() ->
             end,
             [
                 {0, complete, []},
-                {1, complete, [#{id => <<"vm.process_limit_pressure">>}]},
+                {1, complete, [#{<<"id">> => <<"vm.process_limit_pressure">>}]},
                 {3, partial, []}
             ]
         ),
@@ -846,7 +1310,11 @@ diagnose_escript_exit_case(Escript, Script, CookieEnv, ExitCode, CaptureStatus, 
         CookieEnv,
         ExitCode,
         io_lib:format("~tp", [
-            #{<<"status">> => <<"ok">>, <<"result">> => Response}
+            #{
+                <<"status">> => <<"ok">>,
+                <<"result">> => Response,
+                <<"cleanup_confirmed">> => true
+            }
         ])
     ).
 
@@ -891,14 +1359,60 @@ diagnose_escript_with_dispatch(Escript, Script, CookieEnv, ExitCode, DispatchRes
     end.
 
 diagnostic_response(Status, Findings) ->
-    #{
-        <<"schema">> => <<"observer_cli.cli/v1">>,
-        <<"command">> => <<"diagnose">>,
-        <<"target">> => null,
-        <<"capture">> => #{<<"status">> => atom_to_binary(Status)},
-        <<"data">> => #{<<"findings">> => Findings},
-        <<"warnings">> => [],
-        <<"errors">> => []
+    Response = valid_controller_response(diagnose, <<"node-1">>),
+    NormalizedFindings = [
+        Finding#{
+            <<"severity">> => <<"warning">>,
+            <<"entity">> => #{<<"type">> => <<"node">>, <<"id">> => <<"node-1">>},
+            <<"summary">> => <<"fixture finding">>,
+            <<"ruleset_version">> => 1,
+            <<"evidence">> => [
+                #{
+                    <<"path">> => <<"/data/context/snapshot/fixture">>,
+                    <<"sample_index">> => 0,
+                    <<"monotonic_midpoint_ms">> => 0,
+                    <<"observed">> => 1.0,
+                    <<"operator">> => <<">">>,
+                    <<"threshold">> => 0.85
+                }
+            ],
+            <<"recommendations">> => [<<"inspect the fixture">>]
+        }
+     || Finding <- Findings
+    ],
+    Response#{
+        <<"capture">> := (maps:get(<<"capture">>, Response))#{
+            <<"status">> := atom_to_binary(Status),
+            <<"probes">> := [
+                #{
+                    <<"id">> => <<"core_limits">>,
+                    <<"required">> => true,
+                    <<"status">> =>
+                        case Status of
+                            complete -> <<"ok">>;
+                            partial -> <<"error">>
+                        end,
+                    <<"reason_code">> =>
+                        case Status of
+                            complete -> null;
+                            partial -> <<"required_coverage_incomplete">>
+                        end,
+                    <<"duration_ms">> => 1,
+                    <<"samples">> => 1,
+                    <<"coverage">> => []
+                }
+            ]
+        },
+        <<"data">> := #{
+            <<"ruleset">> => <<"observer_cli.quick">>,
+            <<"ruleset_version">> => 1,
+            <<"sampling_plan">> => #{},
+            <<"findings">> => NormalizedFindings,
+            <<"suspects">> => [],
+            <<"context">> => #{<<"snapshot">> => #{<<"fixture">> => true}},
+            <<"skipped">> => [],
+            <<"summary">> => <<"fixture">>
+        }
     }.
 
 snapshot_escript_envelopes() ->
@@ -955,18 +1469,47 @@ snapshot_escript_envelopes() ->
 assert_partial_snapshot_exit(Escript, Script, CookieEnv) ->
     Dir = temporary_directory("observer_cli_partial_snapshot"),
     Source = filename:join(Dir, "observer_cli_snapshot.erl"),
+    Response0 = valid_controller_response(snapshot, <<"node-1">>),
+    Probes = [
+        case Probe of
+            #{<<"id">> := <<"memory">>} ->
+                Probe#{
+                    <<"status">> := <<"timeout">>,
+                    <<"reason_code">> := <<"target_timeout">>,
+                    <<"samples">> := 0
+                };
+            _ ->
+                Probe
+        end
+     || Probe <- maps:get(<<"probes">>, maps:get(<<"capture">>, Response0))
+    ],
+    Response = Response0#{
+        <<"capture">> := (maps:get(<<"capture">>, Response0))#{
+            <<"status">> := <<"partial">>, <<"probes">> := Probes
+        },
+        <<"errors">> := [
+            #{
+                <<"class">> => <<"required_probe">>,
+                <<"probe">> => <<"memory">>,
+                <<"reason_code">> => <<"target_timeout">>
+            }
+        ]
+    },
     ok = file:write_file(
         Source,
-        <<
-            "-module(observer_cli_snapshot).\n"
-            "-export([capabilities/0,dispatch/4]).\n"
-            "capabilities() -> #{protocol_version => 1}.\n"
-            "dispatch(_,snapshot,_,_) -> #{<<\"status\">> => <<\"ok\">>, "
-            "<<\"result\">> => #{<<\"schema\">> => <<\"observer_cli.cli/v1\">>, "
-            "<<\"command\">> => <<\"snapshot\">>, <<\"target\">> => null, "
-            "<<\"capture\">> => #{<<\"status\">> => <<\"partial\">>}, "
-            "<<\"data\">> => #{}, <<\"warnings\">> => [], <<\"errors\">> => []}}.\n"
-        >>
+        io_lib:format(
+            "-module(observer_cli_snapshot).~n"
+            "-export([capabilities/0,dispatch/4]).~n"
+            "capabilities() -> #{protocol_version => 1}.~n"
+            "dispatch(_,snapshot,_,_) -> ~tp.~n",
+            [
+                #{
+                    <<"status">> => <<"ok">>,
+                    <<"result">> => Response,
+                    <<"cleanup_confirmed">> => true
+                }
+            ]
+        )
     ),
     {ok, observer_cli_snapshot} = compile:file(Source, [{outdir, Dir}]),
     Cookie = observer_cli_partial_snapshot_cookie,

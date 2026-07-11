@@ -9,6 +9,7 @@
     diagnostic_scheduler_flag/1,
     diagnostic_scheduler_sample/0,
     diagnostic_scheduler_window/2,
+    diagnostic_socket_trend/1,
     diagnostic_sample/2,
     dispatch/4,
     normalize/2,
@@ -352,8 +353,8 @@ trace_response(Command, Fun, #{controller := Controller}) ->
             _ ->
                 #{
                     status =>
-                        case Status of
-                            ok -> complete;
+                        case maps:get(status, TraceCapture, partial) of
+                            complete -> complete;
                             _ -> partial
                         end,
                     started_at => rfc3339(StartedAt),
@@ -389,7 +390,11 @@ trace_response(Command, Fun, #{controller := Controller}) ->
         command => Command,
         target => target_from_runtime(Runtime),
         capture => Capture,
-        data => #{reason => Reason, trace => TraceCapture},
+        data =>
+            case TraceCapture of
+                null -> null;
+                _ -> #{reason => Reason, trace => TraceCapture}
+            end,
         warnings => maps:get(warnings, Result),
         errors =>
             case Status of
@@ -455,6 +460,7 @@ diagnostic_sample(Request, Context) when is_map(Request), is_map(Context) ->
     Memory = diagnostic_memory(Request),
     Ets = diagnostic_ets(Request),
     Ports = diagnostic_ports(Request, Context),
+    Sockets = diagnostic_sockets(Request),
     Application = diagnostic_application(Request),
     Finished = erlang:monotonic_time(millisecond),
     #{
@@ -467,6 +473,8 @@ diagnostic_sample(Request, Context) when is_map(Request), is_map(Context) ->
         memory => Memory,
         ets_inventory => Ets,
         port_inventory => Ports,
+        socket_inventory => Sockets,
+        quick_scheduler_sample => scheduler_sample(),
         application => Application
     }.
 
@@ -478,45 +486,77 @@ diagnostic_memory(#{observe := _}) ->
 diagnostic_memory(_Request) ->
     #{status => unavailable, reason_code => observation_not_requested}.
 
-diagnostic_ets(#{observe := _}) ->
-    Count = erlang:system_info(ets_count),
-    Samples = 7,
+diagnostic_ets(#{observe := _} = Request) ->
+    diagnostic_ets_inventory(Request);
+diagnostic_ets(#{sample_index := 0} = Request) ->
+    diagnostic_ets_inventory(Request);
+diagnostic_ets(_Request) ->
+    #{status => unavailable, reason_code => observation_not_requested}.
+
+diagnostic_ets_inventory(Request) ->
+    Source = ets_source(Request),
+    Count = (maps:get(count_fun, Source))(),
+    Samples = diagnostic_retained_samples(Request),
     case
         Count =< ?ETS_SCAN_BUDGET andalso
             working_set_estimate(Count, 3, Samples) =< ?MAX_WORKING_SET_BYTES
     of
         true ->
-            Tables = ets:all(),
-            Values = maps:from_list([
-                {Table, #{
-                    generation => diagnostic_ets_info(Table, id),
-                    size => diagnostic_ets_info(Table, size),
-                    memory_words => diagnostic_ets_info(Table, memory)
-                }}
-             || Table <- Tables, diagnostic_ets_info(Table, id) =/= undefined
-            ]),
-            #{status => ok, values => Values};
+            Started = erlang:monotonic_time(millisecond),
+            Tables = (maps:get(all_fun, Source))(),
+            Values = maps:from_list(
+                lists:filtermap(
+                    fun(Table) -> diagnostic_ets_item(Table, Source) end,
+                    Tables
+                )
+            ),
+            Finished = erlang:monotonic_time(millisecond),
+            #{
+                status => ok,
+                values => Values,
+                audit => diagnostic_scan_audit(Started, Finished)
+            };
         false ->
             #{status => unavailable, reason_code => scan_budget_exceeded}
-    end;
-diagnostic_ets(_Request) ->
-    #{status => unavailable, reason_code => observation_not_requested}.
-
-diagnostic_ets_info(Table, Key) ->
-    try
-        ets:info(Table, Key)
-    catch
-        _:_ -> undefined
     end.
 
-diagnostic_ports(#{observe := _}, Context) ->
-    Source = default_port_source(),
+diagnostic_ets_item(Table, Source) ->
+    Info = maps:get(info_fun, Source),
+    try
+        FirstId = Info(Table, id),
+        Size = Info(Table, size),
+        Memory = Info(Table, memory),
+        LastId = Info(Table, id),
+        case
+            valid_raw_table_id(FirstId) andalso FirstId =:= LastId andalso
+                is_integer(Size) andalso is_integer(Memory)
+        of
+            true ->
+                {true, {Table, #{generation => FirstId, size => Size, memory_words => Memory}}};
+            false ->
+                false
+        end
+    catch
+        _:_ -> false
+    end.
+
+diagnostic_ports(#{observe := _} = Request, Context) ->
+    diagnostic_ports_inventory(Request, Context);
+diagnostic_ports(#{sample_index := 0} = Request, Context) ->
+    diagnostic_ports_inventory(Request, Context);
+diagnostic_ports(_Request, _Context) ->
+    #{status => unavailable, reason_code => observation_not_requested}.
+
+diagnostic_ports_inventory(Request, Context) ->
+    Source = port_source(Request),
     Count = safe_resource_count(Source),
     case
         Count =< ?PORT_SCAN_BUDGET andalso
-            working_set_estimate(Count, 4, 7) =< ?MAX_WORKING_SET_BYTES
+            working_set_estimate(Count, 4, diagnostic_retained_samples(Request)) =<
+                ?MAX_WORKING_SET_BYTES
     of
         true ->
+            Started = erlang:monotonic_time(millisecond),
             case (maps:get(all_fun, Source))() of
                 {ok, Ports} ->
                     Excluded = observer_port_exclusions(Context),
@@ -524,21 +564,63 @@ diagnostic_ports(#{observe := _}, Context) ->
                         {Port, diagnostic_port(Port, Source)}
                      || Port <- Ports, not maps:is_key(Port, Excluded)
                     ]),
-                    #{status => ok, values => Values};
+                    Finished = erlang:monotonic_time(millisecond),
+                    #{
+                        status => ok,
+                        values => Values,
+                        audit => diagnostic_scan_audit(Started, Finished)
+                    };
                 _ ->
                     #{status => error, reason_code => port_inventory_failed}
             end;
         false ->
             #{status => unavailable, reason_code => scan_budget_exceeded}
+    end.
+
+diagnostic_sockets(#{observe := _} = Request) ->
+    Source = socket_source(Request),
+    case (maps:get(available_fun, Source))() of
+        true -> diagnostic_socket_scan(Source, diagnostic_retained_samples(Request));
+        false -> #{status => unavailable, reason_code => capability_unavailable}
     end;
-diagnostic_ports(_Request, _Context) ->
+diagnostic_sockets(_Request) ->
     #{status => unavailable, reason_code => observation_not_requested}.
+
+diagnostic_socket_scan(Source, Samples) ->
+    Count = safe_resource_count(Source),
+    case
+        Count =< ?SOCKET_SCAN_BUDGET andalso
+            working_set_estimate(Count, tracked_counter_fields(sockets), Samples) =<
+                ?MAX_WORKING_SET_BYTES
+    of
+        true ->
+            case socket_sample(Source) of
+                {ok, Values, Audit, Coverage} ->
+                    #{
+                        status => ok,
+                        values => Values,
+                        audit => Audit,
+                        coverage => lists:usort(Coverage)
+                    };
+                {error, Reason} ->
+                    #{status => error, reason_code => Reason}
+            end;
+        false ->
+            #{status => unavailable, reason_code => scan_budget_exceeded}
+    end.
+
+diagnostic_retained_samples(#{deep := true}) -> 7;
+diagnostic_retained_samples(#{observe := _}) -> 5;
+diagnostic_retained_samples(_Request) -> 1.
+
+diagnostic_scan_audit(Started, Finished) ->
+    #{scan_started_monotonic_ms => Started, scan_finished_monotonic_ms => Finished}.
 
 diagnostic_port(Port, Source) ->
     lists:foldl(
         fun(Key, Acc) ->
             case (maps:get(info_fun, Source))(Port, Key) of
-                {Key, Value} when is_integer(Value), Value >= 0 -> Acc#{Key => Value};
+                {ok, Value} when is_integer(Value), Value >= 0 -> Acc#{Key => Value};
                 _ -> Acc
             end
         end,
@@ -566,6 +648,10 @@ diagnostic_scheduler_sample() ->
 -spec diagnostic_scheduler_window(map(), map()) -> map().
 diagnostic_scheduler_window(First, Second) ->
     scheduler_window(First, Second).
+
+-spec diagnostic_socket_trend([map()]) -> map().
+diagnostic_socket_trend(ValueMaps) ->
+    socket_series_trend(ValueMaps).
 
 -spec diagnostic_binary_holders(map(), map()) -> map().
 diagnostic_binary_holders(Request, Context) ->
@@ -1722,6 +1808,7 @@ collect_processes(Source, Sort, Limit, undefined, Context, Admission) ->
     Data = (audit_inventory(Acc, length(Items), Started, Finished))#{
         items => Items,
         dropped_count => Eligible - length(Items),
+        truncated => false,
         sort => Sort,
         sort_semantics => total,
         baseline_count => 0,
@@ -1749,6 +1836,7 @@ collect_processes(Source, reductions, Limit, Duration, Context, Admission) ->
     Data = (audit_inventory(SecondAudit, length(Items), Started, Finished))#{
         items => Items,
         dropped_count => maps:size(maps:get(stable, Window)) - length(Items),
+        truncated => false,
         sort => reductions,
         sort_semantics => delta,
         interval_ms => Interval,
@@ -2101,7 +2189,10 @@ collect_admitted_applications(
             Audit = audit_inventory(Acc, length(Items), ProcessStarted, ProcessFinished),
             Data = Audit#{
                 items => Items,
+                eligible_count => length(Items0),
+                process_eligible_count => maps:get(eligible, Acc),
                 dropped_count => length(Items0) - length(Items),
+                truncated => false,
                 sort => Sort,
                 sort_semantics => current,
                 application_count => length(Apps),
@@ -2203,6 +2294,7 @@ collect_ets(Source, Sort, Limit, Context, Estimate) ->
         status => table_status(Eligible),
         items => Items,
         dropped_count => Eligible - length(Items),
+        truncated => false,
         sort => Sort,
         sort_semantics => current,
         tracked_field_count => 8,
@@ -2317,6 +2409,7 @@ empty_mnesia_data(Status, Sort) ->
         eligible_count => 0,
         returned_count => 0,
         dropped_count => 0,
+        truncated => false,
         disappeared_count => 0,
         complete => true,
         admission_stage => post_enumeration,
@@ -2341,6 +2434,7 @@ collect_admitted_mnesia(Tables, Source, Sort, Limit, Context, Estimate) ->
         status => ok,
         items => Items,
         dropped_count => Eligible - length(Items),
+        truncated => false,
         admission_stage => post_enumeration,
         sort => Sort,
         sort_semantics => current,
@@ -2741,6 +2835,7 @@ collect_admitted_counter_resources(Command, Source, Sort, Limit, undefined, Cont
                     items => [public_resource_item(Item) || Item <- Items],
                     returned_count => length(Items),
                     dropped_count => length(Items0) - length(Items),
+                    truncated => false,
                     sort => Sort,
                     sort_semantics => total,
                     baseline_count => 0,
@@ -2769,6 +2864,7 @@ collect_admitted_counter_resources(Command, Source, Sort, Limit, Duration, Conte
                             items => [public_resource_item(Item) || Item <- Items],
                             returned_count => length(Items),
                             dropped_count => length(maps:get(items, Window)) - length(Items),
+                            truncated => false,
                             sort => Sort,
                             sort_semantics => delta,
                             requested_duration_ms => Duration,
@@ -3027,6 +3123,7 @@ collect_port_items(Ports, Source, Sort, Limit, Context, Estimate) ->
             eligible_count => length(Items0),
             returned_count => length(Items),
             dropped_count => length(Items0) - length(Items),
+            truncated => false,
             disappeared_count => Disappeared,
             exclusion_count => length(Exclusions),
             exclusions => lists:reverse(Exclusions),
@@ -3147,14 +3244,24 @@ counter_metric(Counters, Required, Optional) ->
         true ->
             #{status => counter_reset};
         false ->
-            case lists:all(fun valid_counter/1, RequiredValues) of
-                true ->
+            case
+                {
+                    lists:all(fun valid_counter/1, RequiredValues),
+                    lists:all(
+                        fun(Value) -> Value =:= missing orelse valid_counter(Value) end,
+                        OptionalValues
+                    )
+                }
+            of
+                {true, true} ->
                     Value =
                         lists:sum(RequiredValues) +
                             lists:sum([V || V <- OptionalValues, valid_counter(V)]),
                     #{status => available, value => Value};
-                false ->
-                    #{status => missing_core}
+                {false, _} ->
+                    #{status => missing_core};
+                {true, false} ->
+                    #{status => invalid_optional}
             end
     end.
 
@@ -3195,6 +3302,69 @@ counter_window(Command, First, Second) ->
             resource_item_state(Item) =:= shape_change
         ]
     }.
+
+socket_series_trend([]) ->
+    #{status => unavailable, items => []};
+socket_series_trend(ValueMaps) ->
+    First = hd(ValueMaps),
+    Last = lists:last(ValueMaps),
+    Shared = lists:foldl(
+        fun(Values, Ids) -> ordsets:intersection(Ids, lists:sort(maps:keys(Values))) end,
+        lists:sort(maps:keys(First)),
+        tl(ValueMaps)
+    ),
+    Items0 = [socket_series_item([maps:get(Id, Values) || Values <- ValueMaps]) || Id <- Shared],
+    Items = rank_resource_items(Items0, io, 20),
+    #{
+        status => ok,
+        sample_count => length(ValueMaps),
+        born_count => length(ordsets:subtract(lists:sort(maps:keys(Last)), Shared)),
+        dead_count => length(ordsets:subtract(lists:sort(maps:keys(First)), Shared)),
+        sort_metric => io,
+        sort_semantics => delta_descending,
+        items => [public_resource_item(Item) || Item <- Items]
+    }.
+
+socket_series_item(Items) ->
+    Last = lists:last(Items),
+    Shapes = [maps:get(counter_shape, Item) || Item <- Items],
+    case lists:usort(Shapes) of
+        [_Shape] ->
+            Deltas = socket_series_deltas([maps:get(counters, Item) || Item <- Items]),
+            Result = add_socket_metrics(Last, Deltas),
+            States = maps:values(maps:get(metric_states, Result)),
+            Result#{
+                state =>
+                    case lists:member(counter_reset, States) of
+                        true -> counter_reset;
+                        false -> available
+                    end
+            };
+        _ ->
+            unavailable_delta_item(sockets, Last, shape_change)
+    end.
+
+socket_series_deltas(Counters) ->
+    maps:from_list([
+        {Key, counter_series_delta([maps:get(Key, Values) || Values <- Counters])}
+     || Key <- maps:keys(hd(Counters))
+    ]).
+
+counter_series_delta(Values) ->
+    case lists:all(fun valid_counter/1, Values) of
+        false ->
+            invalid_counter;
+        true ->
+            case
+                lists:any(
+                    fun({Before, After}) -> After < Before end,
+                    lists:zip(lists:droplast(Values), tl(Values))
+                )
+            of
+                true -> counter_reset;
+                false -> lists:last(Values) - hd(Values)
+            end
+    end.
 
 counter_delta_item(Command, First, Second) ->
     FirstCounters = maps:get(counters, First),

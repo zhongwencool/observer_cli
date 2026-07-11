@@ -38,9 +38,26 @@ trace_dispatch_uses_cli_envelope_test() ->
         ),
     ?assertEqual(<<"observer_cli.cli/v1">>, maps:get(<<"schema">>, Response)),
     ?assertEqual(null, maps:get(<<"capture">>, Response)),
+    ?assertEqual(null, maps:get(<<"data">>, Response)),
     [Error] = maps:get(<<"errors">>, Response),
     ?assertEqual(<<"argument">>, maps:get(<<"class">>, Error)),
     ?assertEqual(<<"replace_existing_trace_required">>, maps:get(<<"reason_code">>, Error)).
+
+forced_trace_dispatch_marks_outer_capture_partial_test() ->
+    Request = #{
+        action => call,
+        mfa => <<"erlang:node/0">>,
+        pid => list_to_binary(pid_to_list(self())),
+        duration_ms => 100,
+        max => 1,
+        replace_existing_trace => true
+    },
+    #{<<"status">> := <<"ok">>, <<"result">> := Response} =
+        observer_cli_snapshot:dispatch(self(), trace, Request, options(2000, include)),
+    ?assertEqual(<<"partial">>, maps:get(<<"status">>, maps:get(<<"capture">>, Response))),
+    Trace = maps:get(<<"trace">>, maps:get(<<"data">>, Response)),
+    ?assertEqual(<<"partial">>, maps:get(<<"status">>, Trace)),
+    ?assertEqual(false, maps:get(<<"trace_complete">>, Trace)).
 
 default_snapshot_is_scan_free_fact_package_test() ->
     Response = snapshot(#{}),
@@ -1254,5 +1271,169 @@ assert_json_safe(Value) when is_binary(Value); is_integer(Value); is_float(Value
     ok;
 assert_json_safe(Value) when Value =:= true; Value =:= false; Value =:= null ->
     ok.
+
+socket_trend_stable_reset_and_shape_test() ->
+    Socket = make_ref(),
+    First = #{Socket => socket_trend_item(Socket, 10, false)},
+    Second = #{Socket => socket_trend_item(Socket, 20, false)},
+    Stable = observer_cli_snapshot:diagnostic_socket_trend([First, Second]),
+    [StableItem] = maps:get(items, Stable),
+    ?assertEqual(20, maps:get(io, StableItem)),
+    Reset = observer_cli_snapshot:diagnostic_socket_trend([
+        First, #{Socket => socket_trend_item(Socket, 5, false)}, Second
+    ]),
+    [ResetItem] = maps:get(items, Reset),
+    ?assertEqual(counter_reset, maps:get(state, ResetItem)),
+    Shape = observer_cli_snapshot:diagnostic_socket_trend([
+        First, #{Socket => socket_trend_item(Socket, 20, true)}
+    ]),
+    [ShapeItem] = maps:get(items, Shape),
+    ?assertEqual(shape_change, maps:get(state, ShapeItem)).
+
+socket_present_invalid_optional_counter_is_not_zero_test() ->
+    Metrics = observer_cli_snapshot:socket_metrics(#{
+        read_byte => 1,
+        write_byte => 2,
+        sendfile_byte => invalid,
+        read_pkg => 1,
+        write_pkg => 1,
+        acc_waits => 1,
+        read_waits => 1,
+        write_waits => 1,
+        acc_fails => 1,
+        read_fails => 1,
+        write_fails => 1
+    }),
+    ?assertEqual(invalid_optional, maps:get(status, maps:get(io, Metrics))),
+    ?assertEqual(invalid_optional, maps:get(status, maps:get(write_bytes, Metrics))).
+
+diagnostic_inventory_admission_uses_mode_sample_count_test() ->
+    Request = diagnostic_inventory_request(),
+    Context = #{controller => self()},
+    Quick = observer_cli_snapshot:diagnostic_sample(Request#{sample_index => 0}, Context),
+    Observe = observer_cli_snapshot:diagnostic_sample(Request#{observe => <<"5s">>}, Context),
+    Deep = observer_cli_snapshot:diagnostic_sample(
+        Request#{observe => <<"5s">>, deep => true}, Context
+    ),
+    lists:foreach(
+        fun(Field) ->
+            ?assertEqual(ok, maps:get(status, maps:get(Field, Quick))),
+            ?assertEqual(ok, maps:get(status, maps:get(Field, Observe))),
+            ?assertEqual(scan_budget_exceeded, maps:get(reason_code, maps:get(Field, Deep)))
+        end,
+        [ets_inventory, port_inventory]
+    ),
+    ?assertEqual(
+        observation_not_requested,
+        maps:get(
+            reason_code, maps:get(socket_inventory, Quick)
+        )
+    ),
+    ?assertEqual(ok, maps:get(status, maps:get(socket_inventory, Observe))),
+    ?assertEqual(
+        scan_budget_exceeded,
+        maps:get(
+            reason_code, maps:get(socket_inventory, Deep)
+        )
+    ).
+
+diagnostic_ets_replacement_during_sample_is_dropped_test() ->
+    FirstGeneration = make_ref(),
+    SecondGeneration = make_ref(),
+    put(diagnostic_ets_info_calls, 0),
+    Info = fun(_Table, Key) ->
+        Call = get(diagnostic_ets_info_calls),
+        put(diagnostic_ets_info_calls, Call + 1),
+        case {Call, Key} of
+            {0, id} -> FirstGeneration;
+            {1, size} -> 10;
+            {2, memory} -> 20;
+            {3, id} -> SecondGeneration
+        end
+    end,
+    Request = (diagnostic_inventory_request())#{
+        sample_index => 0,
+        test_ets_source => #{
+            count_fun => fun() -> 1 end,
+            all_fun => fun() -> [named_table] end,
+            info_fun => Info,
+            word_size_fun => fun() -> erlang:system_info(wordsize) end
+        }
+    },
+    Sample = observer_cli_snapshot:diagnostic_sample(Request, #{controller => self()}),
+    ?assertEqual(#{}, maps:get(values, maps:get(ets_inventory, Sample))).
+
+diagnostic_port_uses_default_source_result_shape_test() ->
+    Port = open_port({spawn, "cat"}, []),
+    try
+        Request = (diagnostic_inventory_request())#{
+            observe => <<"5s">>,
+            test_port_source => #{
+                count_fun => fun() -> 1 end,
+                all_fun => fun() -> {ok, [Port]} end,
+                info_fun => fun(_Item, Key) ->
+                    {ok, maps:get(Key, #{queue_size => 9, memory => 8, input => 7, output => 6})}
+                end
+            }
+        },
+        Sample = observer_cli_snapshot:diagnostic_sample(Request, #{controller => self()}),
+        Values = maps:get(values, maps:get(port_inventory, Sample)),
+        ?assertEqual(
+            #{queue_size => 9, memory => 8, input => 7, output => 6},
+            maps:get(Port, Values)
+        )
+    after
+        port_close(Port)
+    end.
+
+diagnostic_inventory_request() ->
+    #{
+        test_process_source => process_source([], fun(_Pid, _Keys) -> undefined end),
+        test_ets_source => #{
+            count_fun => fun() -> 60000 end,
+            all_fun => fun() -> [] end,
+            info_fun => fun(_Table, _Key) -> undefined end,
+            word_size_fun => fun() -> erlang:system_info(wordsize) end
+        },
+        test_port_source => #{
+            count_fun => fun() -> 40000 end,
+            all_fun => fun() -> {ok, []} end,
+            info_fun => fun(_Port, _Key) -> missing end
+        },
+        test_socket_source => #{
+            available_fun => fun() -> true end,
+            count_fun => fun() -> 12000 end,
+            global_fun => fun() -> #{use_registry => true} end,
+            all_fun => fun() -> {ok, []} end,
+            info_fun => fun(_Socket) -> #{} end,
+            sleep_fun => fun(_Duration) -> ok end,
+            monotonic_fun => fun() -> erlang:monotonic_time(millisecond) end
+        }
+    }.
+
+socket_trend_item(Socket, Value, Sendfile) ->
+    Counters0 = #{
+        read_byte => Value,
+        write_byte => Value,
+        read_pkg => Value,
+        write_pkg => Value,
+        acc_waits => Value,
+        read_waits => Value,
+        write_waits => Value,
+        acc_fails => Value,
+        read_fails => Value,
+        write_fails => Value
+    },
+    Counters =
+        case Sendfile of
+            true -> Counters0#{sendfile_byte => Value};
+            false -> Counters0
+        end,
+    #{
+        raw_id => Socket,
+        resource => {identifier, socket, Socket},
+        counters => Counters,
+        counter_shape => lists:sort(maps:keys(Counters))
+    }.
 
 -endif.

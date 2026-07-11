@@ -4,10 +4,15 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--export([fixture/0]).
+-export([fixture/0, recursive_fixture/1]).
 
 fixture() ->
     ok.
+
+recursive_fixture(0) ->
+    ok;
+recursive_fixture(Count) ->
+    recursive_fixture(Count - 1).
 
 validation_and_admission_do_not_clear_test_() ->
     {timeout, 10, fun validation_and_admission_do_not_clear/0}.
@@ -69,6 +74,54 @@ setup_replaces_global_trace_and_fixed_collision() ->
 response_cap_continues_natural_drain_test_() ->
     {timeout, 10, fun response_cap_continues_natural_drain/0}.
 
+helper_finalize_failure_is_not_complete_test_() ->
+    [
+        {atom_to_list(Helper), fun() -> helper_finalize_failure(Helper) end}
+     || Helper <- [collector, silent_io]
+    ].
+
+missing_recon_process_after_calls_fails_immediately_test_() ->
+    [
+        {atom_to_list(Name), fun() -> missing_recon_process_after_calls(Name) end}
+     || Name <- [recon_trace_tracer, recon_trace_formatter]
+    ].
+
+setup_failure_prefers_queued_tracee_down_test_() ->
+    {timeout, 10, fun setup_failure_prefers_queued_tracee_down/0}.
+
+global_scope_excludes_local_recursion_test_() ->
+    {timeout, 10, fun global_scope_excludes_local_recursion/0}.
+
+formatter_crash_forces_cleanup_test_() ->
+    {timeout, 10, fun formatter_crash_forces_cleanup/0}.
+
+dispatcher_loss_forces_cleanup_test_() ->
+    {timeout, 10, fun dispatcher_loss_forces_cleanup/0}.
+
+module_reload_marks_capture_partial_test_() ->
+    {timeout, 10, fun module_reload_marks_capture_partial/0}.
+
+owner_absent_stop_clears_static_trace_conservatively_test_() ->
+    {timeout, 10, fun owner_absent_stop_clears_static_trace_conservatively/0}.
+
+silent_io_handles_protocol_without_output_test_() ->
+    {timeout, 10, fun silent_io_handles_protocol_without_output/0}.
+
+active_session_busy_does_not_clear_first_test_() ->
+    {timeout, 10, fun active_session_busy_does_not_clear_first/0}.
+
+unverified_recon_version_is_rejected_before_clear_test_() ->
+    {timeout, 10, fun unverified_recon_version_is_rejected_before_clear/0}.
+
+finalize_exception_is_capture_failure_test_() ->
+    {timeout, 10, fun finalize_exception_is_capture_failure/0}.
+
+entered_exception_is_capture_failure_test_() ->
+    {timeout, 10, fun entered_exception_is_capture_failure/0}.
+
+dispatcher_timeout_is_bounded_and_owner_cleans_later_test_() ->
+    {timeout, 10, fun dispatcher_timeout_is_bounded_and_owner_cleans_later/0}.
+
 response_cap_continues_natural_drain() ->
     cleanup(),
     Tracee = tracee(),
@@ -89,6 +142,295 @@ response_cap_continues_natural_drain() ->
     assert_clean(Tracee),
     Tracee ! stop.
 
+helper_finalize_failure(Helper) ->
+    cleanup(),
+    Tracee = tracee(),
+    CrashHelper = fun() ->
+        Helpers = get(observer_cli_trace_helpers),
+        exit(maps:get(Helper, Helpers), kill)
+    end,
+    Request = (request(Tracee))#{
+        duration_ms => 3000,
+        test_before_helper_stop => CrashHelper
+    },
+    {Caller, Ref} = start_call(self(), Request),
+    wait_trace_active(Tracee, {?MODULE, fixture, 0}),
+    Tracee ! {call, self(), 1},
+    receive
+        called -> ok
+    after 1000 -> error(tracee_timeout)
+    end,
+    Result = receive_result(Caller, Ref),
+    ?assertEqual(error, maps:get(status, Result)),
+    ?assertEqual(capture_internal_error, maps:get(reason, Result)),
+    assert_forced(Result),
+    assert_clean(Tracee),
+    Tracee ! stop.
+
+missing_recon_process_after_calls(Name) ->
+    cleanup(),
+    Tracee = tracee(),
+    KillRegistered = fun() -> kill_registered(Name) end,
+    Started = erlang:monotonic_time(millisecond),
+    Result = observer_cli_trace:call(
+        self(),
+        (request(Tracee))#{duration_ms => 3000, test_after_calls => KillRegistered}
+    ),
+    ?assertEqual(error, maps:get(status, Result)),
+    ?assertEqual(capture_internal_error, maps:get(reason, Result)),
+    ?assert(erlang:monotonic_time(millisecond) - Started < 2000),
+    assert_forced(Result),
+    assert_clean(Tracee),
+    Tracee ! stop.
+
+setup_failure_prefers_queued_tracee_down() ->
+    cleanup(),
+    Tracee = tracee(),
+    FailSetup = fun() ->
+        exit(Tracee, kill),
+        wait_until(fun() -> not is_process_alive(Tracee) end),
+        kill_if_registered(recon_trace_formatter)
+    end,
+    Result = observer_cli_trace:call(
+        self(),
+        (request(Tracee))#{test_after_calls => FailSetup}
+    ),
+    ?assertEqual(error, maps:get(status, Result)),
+    ?assertEqual(tracee_exited, maps:get(reason, Result)),
+    assert_forced(Result),
+    assert_clean(Tracee).
+
+global_scope_excludes_local_recursion() ->
+    cleanup(),
+    Tracee = tracee(),
+    Request = (request(Tracee))#{
+        mfa => <<"observer_cli_trace_test:recursive_fixture/1">>,
+        max => 10,
+        duration_ms => 5000
+    },
+    {Caller, Ref} = start_call(self(), Request),
+    wait_trace_active(Tracee, {?MODULE, recursive_fixture, 1}),
+    Tracee ! {recursive, self(), 5},
+    receive
+        called -> ok
+    after 1000 -> error(tracee_timeout)
+    end,
+    #{collector := Collector} = wait_helpers(),
+    wait_until(fun() -> collector_count(Collector) =:= 1 end),
+    Stop = observer_cli_trace:stop_all(),
+    ?assertEqual(ok, maps:get(status, Stop)),
+    Result = receive_result(Caller, Ref),
+    ?assertEqual(external_global_calls_only, maps:get(coverage, maps:get(capture, Result))),
+    assert_clean_mfa(Tracee, {?MODULE, recursive_fixture, 1}),
+    Tracee ! stop.
+
+formatter_crash_forces_cleanup() ->
+    cleanup(),
+    Tracee = tracee(),
+    {Caller, Ref} = start_call(self(), (request(Tracee))#{duration_ms => 5000}),
+    wait_trace_active(Tracee, {?MODULE, fixture, 0}),
+    exit(whereis(recon_trace_formatter), kill),
+    Result = receive_result(Caller, Ref),
+    ?assertEqual(capture_internal_error, maps:get(reason, Result)),
+    assert_forced(Result),
+    assert_clean(Tracee),
+    Tracee ! stop.
+
+dispatcher_loss_forces_cleanup() ->
+    cleanup(),
+    Tracee = tracee(),
+    {Dispatcher, _Ref} = start_call(self(), (request(Tracee))#{duration_ms => 5000}),
+    wait_trace_active(Tracee, {?MODULE, fixture, 0}),
+    DispatcherMon = erlang:monitor(process, Dispatcher),
+    exit(Dispatcher, kill),
+    receive
+        {'DOWN', DispatcherMon, process, Dispatcher, _Reason} -> ok
+    after 1000 -> error(dispatcher_down_timeout)
+    end,
+    wait_until(fun() -> whereis(observer_cli_trace_owner) =:= undefined end),
+    assert_clean(Tracee),
+    Tracee ! stop.
+
+module_reload_marks_capture_partial() ->
+    cleanup(),
+    Tracee = tracee(),
+    Request = (request(Tracee))#{
+        duration_ms => 3000,
+        test_end_module_md5 => <<"changed-generation">>
+    },
+    {Caller, Ref} = start_call(self(), Request),
+    wait_trace_active(Tracee, {?MODULE, fixture, 0}),
+    Tracee ! {call, self(), 1},
+    receive
+        called -> ok
+    after 1000 -> error(tracee_timeout)
+    end,
+    Result = receive_result(Caller, Ref),
+    Capture = maps:get(capture, Result),
+    ?assertEqual(partial, maps:get(status, Capture)),
+    ?assertEqual(false, maps:get(trace_complete, Capture)),
+    ?assertEqual(true, maps:get(module_reloaded, Capture)),
+    assert_clean(Tracee),
+    Tracee ! stop.
+
+owner_absent_stop_clears_static_trace_conservatively() ->
+    cleanup(),
+    MFA = {erlang, node, 0},
+    1 = erlang:trace_pattern(MFA, true, []),
+    Result = observer_cli_trace:stop_all(),
+    ?assertEqual(cleanup_unconfirmed, maps:get(reason, Result)),
+    ?assertEqual({traced, false}, erlang:trace_info(MFA, traced)),
+    ?assertEqual(undefined, whereis(observer_cli_trace_owner)).
+
+silent_io_handles_protocol_without_output() ->
+    cleanup(),
+    Tracee = tracee(),
+    {Caller, Ref} = start_call(self(), (request(Tracee))#{duration_ms => 5000}),
+    wait_trace_active(Tracee, {?MODULE, fixture, 0}),
+    #{silent_io := SilentIO} = wait_helpers(),
+    ?assertEqual(ok, io_request(SilentIO, {put_chars, <<27, "]0;secret", 7>>})),
+    ?assertEqual(ok, io_request(SilentIO, {put_chars, unicode, <<"secret">>})),
+    ?assertEqual({error, enotsup}, io_request(SilentIO, {get_geometry, columns})),
+    ?assertEqual(
+        {error, enotsup},
+        io_request(SilentIO, {requests, [{put_chars, <<"hidden">>}, {get_geometry, rows}]})
+    ),
+    _ = observer_cli_trace:stop_all(),
+    Result = receive_result(Caller, Ref),
+    ?assertEqual(external_global_calls_only, maps:get(coverage, maps:get(capture, Result))),
+    assert_clean(Tracee),
+    Tracee ! stop.
+
+active_session_busy_does_not_clear_first() ->
+    cleanup(),
+    Tracee = tracee(),
+    {Caller, Ref} = start_call(self(), (request(Tracee))#{duration_ms => 5000}),
+    wait_trace_active(Tracee, {?MODULE, fixture, 0}),
+    Busy = observer_cli_trace:call(self(), request(Tracee)),
+    ?assertEqual(trace_busy, maps:get(reason, Busy)),
+    wait_trace_active(Tracee, {?MODULE, fixture, 0}),
+    Tracee ! {call, self(), 1},
+    receive
+        called -> ok
+    after 1000 -> error(tracee_timeout)
+    end,
+    First = receive_result(Caller, Ref),
+    ?assertEqual(ok, maps:get(status, First)),
+    ?assertEqual(true, maps:get(trace_complete, maps:get(capture, First))),
+    assert_clean(Tracee),
+    Tracee ! stop.
+
+unverified_recon_version_is_rejected_before_clear() ->
+    cleanup(),
+    MFA = {?MODULE, fixture, 0},
+    1 = erlang:trace_pattern(MFA, true, []),
+    Result = observer_cli_trace:call(
+        self(), (request(self()))#{test_recon_version => "0.0.0"}
+    ),
+    ?assertEqual(capability_unavailable, maps:get(reason, Result)),
+    ?assertEqual({traced, global}, erlang:trace_info(MFA, traced)),
+    1 = erlang:trace_pattern(MFA, false, []).
+
+finalize_exception_is_capture_failure() ->
+    cleanup(),
+    Tracee = tracee(),
+    Request = (request(Tracee))#{
+        duration_ms => 3000,
+        test_before_helper_stop => fun() -> error(finalize_failed) end
+    },
+    {Caller, Ref} = start_call(self(), Request),
+    wait_trace_active(Tracee, {?MODULE, fixture, 0}),
+    Tracee ! {call, self(), 1},
+    receive
+        called -> ok
+    after 1000 -> error(tracee_timeout)
+    end,
+    Result = receive_result(Caller, Ref),
+    ?assertEqual(error, maps:get(status, Result)),
+    ?assertEqual(capture_internal_error, maps:get(reason, Result)),
+    ?assert(is_map(maps:get(capture, Result))),
+    assert_forced(Result),
+    assert_clean(Tracee),
+    Tracee ! stop.
+
+entered_exception_is_capture_failure() ->
+    cleanup(),
+    Tracee = tracee(),
+    Result = observer_cli_trace:call(
+        self(),
+        (request(Tracee))#{test_after_calls => fun() -> error(entered_failed) end}
+    ),
+    ?assertEqual(error, maps:get(status, Result)),
+    ?assertEqual(capture_internal_error, maps:get(reason, Result)),
+    ?assert(is_map(maps:get(capture, Result))),
+    assert_forced(Result),
+    assert_clean(Tracee),
+    Tracee ! stop.
+
+dispatcher_timeout_is_bounded_and_owner_cleans_later() ->
+    cleanup(),
+    Tracee = tracee(),
+    Test = self(),
+    BlockAfterCalls = fun() ->
+        Test ! {after_calls, self()},
+        receive
+            release -> ok
+        end
+    end,
+    Request = (request(Tracee))#{
+        duration_ms => 5000,
+        test_after_calls => BlockAfterCalls,
+        test_dispatch_timeout_ms => 50
+    },
+    {Caller, Ref} = start_call(self(), Request),
+    CallerMon = erlang:monitor(process, Caller),
+    Owner =
+        receive
+            {after_calls, Pid} -> Pid
+        after 1000 -> error(after_calls_timeout)
+        end,
+    Result = receive_result(Caller, Ref),
+    ?assertEqual(cleanup_unconfirmed, maps:get(reason, Result)),
+    receive
+        {'DOWN', CallerMon, process, Caller, _Reason} -> ok
+    after 1000 -> error(dispatcher_down_timeout)
+    end,
+    Owner ! release,
+    wait_until(fun() -> whereis(observer_cli_trace_owner) =:= undefined end),
+    assert_clean(Tracee),
+    Tracee ! stop.
+
+kill_registered(Name) ->
+    Pid = whereis(Name),
+    Mon = erlang:monitor(process, Pid),
+    exit(Pid, kill),
+    receive
+        {'DOWN', Mon, process, Pid, _Reason} -> ok
+    after 1000 -> error(recon_process_down_timeout)
+    end.
+
+kill_if_registered(Name) ->
+    case whereis(Name) of
+        undefined -> ok;
+        _Pid -> kill_registered(Name)
+    end.
+
+collector_count(Collector) ->
+    Ref = make_ref(),
+    Collector ! {test_count, self(), Ref},
+    receive
+        {Ref, Count} -> Count
+    after 1000 -> error(collector_count_timeout)
+    end.
+
+io_request(IO, Request) ->
+    Ref = make_ref(),
+    IO ! {io_request, self(), Ref, Request},
+    receive
+        {io_reply, Ref, Reply} -> Reply
+    after 1000 -> error(io_reply_timeout)
+    end.
+
 natural_capture(Max, Calls, Reason) ->
     cleanup(),
     Tracee = tracee(),
@@ -104,6 +446,7 @@ natural_capture(Max, Calls, Reason) ->
     ?assertEqual(Reason, maps:get(reason, Result)),
     Capture = maps:get(capture, Result),
     ?assertEqual(true, maps:get(trace_complete, Capture)),
+    ?assertEqual(external_global_calls_only, maps:get(coverage, Capture)),
     ?assertEqual(Calls, length(maps:get(events, Capture))),
     assert_clean(Tracee),
     Tracee ! stop.
@@ -261,6 +604,10 @@ tracee_loop() ->
     receive
         {call, Caller, Count} ->
             lists:foreach(fun(_) -> erlang:apply(?MODULE, fixture, []) end, lists:seq(1, Count)),
+            Caller ! called,
+            tracee_loop();
+        {recursive, Caller, Count} ->
+            erlang:apply(?MODULE, recursive_fixture, [Count]),
             Caller ! called,
             tracee_loop();
         stop ->

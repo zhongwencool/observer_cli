@@ -195,32 +195,47 @@ validate_format_options(Command, Options) ->
     validate_runtime_options(Command, Options).
 
 validate_runtime_options(schedulers, Options) ->
-    case duration(Options) of
-        {ok, Duration} -> validate_scheduler_timeout(Options, Duration);
-        {error, Reason} -> {error, Reason}
+    case only_options(schedulers, Options, [duration]) of
+        true ->
+            case duration(Options) of
+                {ok, Duration} -> validate_scheduler_timeout(Options, Duration);
+                {error, Reason} -> {error, Reason}
+            end;
+        false ->
+            {error, unsupported_command_option}
     end;
 validate_runtime_options(snapshot, Options) ->
-    case only_options(Options, [deep]) of
+    case only_options(snapshot, Options, [deep]) of
         true -> validate_target_options(Options);
         false -> {error, unsupported_command_option}
     end;
 validate_runtime_options(diagnose, Options) ->
-    case only_options(Options, [observe, deep, app]) of
+    case only_options(diagnose, Options, [observe, deep, app]) of
         true -> validate_diagnose_options(Options);
         false -> {error, unsupported_command_option}
     end;
 validate_runtime_options(distribution, #{limit := Text} = Options) ->
-    case positive_integer(Text) of
-        Limit when is_integer(Limit), Limit =< 200 -> validate_target_options(Options);
-        _ -> {error, invalid_limit}
+    case only_options(distribution, Options, [limit]) of
+        true ->
+            case positive_integer(Text) of
+                Limit when is_integer(Limit), Limit =< 200 -> validate_target_options(Options);
+                _ -> {error, invalid_limit}
+            end;
+        false ->
+            {error, unsupported_command_option}
+    end;
+validate_runtime_options(distribution, Options) ->
+    case only_options(distribution, Options, [limit]) of
+        true -> validate_target_options(Options);
+        false -> {error, unsupported_command_option}
     end;
 validate_runtime_options(processes, Options) ->
-    case only_options(Options, [sort, limit, duration]) of
+    case only_options(processes, Options, [sort, limit, duration]) of
         true -> validate_processes_options(Options);
         false -> {error, unsupported_command_option}
     end;
 validate_runtime_options(applications, Options) ->
-    case only_options(Options, [sort, limit]) of
+    case only_options(applications, Options, [sort, limit]) of
         true ->
             validate_list_options(
                 Options, ["memory", "process_count", "reductions", "message_queue_len"]
@@ -229,33 +244,33 @@ validate_runtime_options(applications, Options) ->
             {error, unsupported_command_option}
     end;
 validate_runtime_options(Command, Options) when Command =:= ets; Command =:= mnesia ->
-    case only_options(Options, [sort, limit]) of
+    case only_options(Command, Options, [sort, limit]) of
         true -> validate_list_options(Options, ["memory", "size"]);
         false -> {error, unsupported_command_option}
     end;
 validate_runtime_options(network, Options) ->
-    validate_counter_list_options(Options, ["oct", "recv_oct", "send_oct"]);
+    validate_counter_list_options(network, Options, ["oct", "recv_oct", "send_oct"]);
 validate_runtime_options(ports, Options) ->
-    case only_options(Options, [sort, limit]) of
+    case only_options(ports, Options, [sort, limit]) of
         true -> validate_list_options(Options, ["queue_size", "memory", "input", "output", "io"]);
         false -> {error, unsupported_command_option}
     end;
 validate_runtime_options(sockets, Options) ->
     validate_counter_list_options(
-        Options, ["io", "read_bytes", "write_bytes", "packets", "waits", "fails"]
+        sockets, Options, ["io", "read_bytes", "write_bytes", "packets", "waits", "fails"]
     );
 validate_runtime_options(process, Options) ->
-    case only_options(Options, [info]) of
+    case only_options(process, Options, [info]) of
         true -> validate_target_options(Options);
         false -> {error, unsupported_command_option}
     end;
 validate_runtime_options(gen_server_state, Options) ->
-    case only_options(Options, []) of
+    case only_options(gen_server_state, Options, []) of
         true -> validate_target_options(Options);
         false -> {error, unsupported_command_option}
     end;
 validate_runtime_options(supervision_tree, #{app := App} = Options) ->
-    case only_options(Options, [app]) andalso valid_application_name(App) of
+    case only_options(supervision_tree, Options, [app]) andalso valid_application_name(App) of
         true -> validate_target_options(Options);
         false -> {error, unsupported_command_option}
     end;
@@ -263,13 +278,14 @@ validate_runtime_options(supervision_tree, _Options) ->
     {error, application_required};
 validate_runtime_options(trace, Options) ->
     validate_trace_options(Options);
-validate_runtime_options(_Command, #{deep := true}) ->
-    {error, unsupported_command_option};
-validate_runtime_options(_Command, Options) ->
-    validate_target_options(Options).
+validate_runtime_options(Command, Options) ->
+    case only_options(Command, Options, []) of
+        true -> validate_target_options(Options);
+        false -> {error, unsupported_command_option}
+    end.
 
 validate_trace_options(Options) ->
-    case only_options(Options, [pid, limit, rate, duration, replace_existing_trace, all]) of
+    case only_options(trace, Options, [pid, limit, rate, duration, replace_existing_trace, all]) of
         true ->
             case {trace_duration(Options), trace_limit(Options)} of
                 {{ok, Duration}, {ok, _Max}} -> validate_trace_timeout(Options, Duration);
@@ -289,8 +305,8 @@ validate_trace_timeout(#{timeout := _} = Options, Duration) ->
 validate_trace_timeout(Options, _Duration) ->
     validate_target_options(Options).
 
-validate_counter_list_options(Options, Sorts) ->
-    case only_options(Options, [sort, limit, duration]) of
+validate_counter_list_options(Command, Options, Sorts) ->
+    case only_options(Command, Options, [sort, limit, duration]) of
         true -> validate_counter_list_values(Options, Sorts);
         false -> {error, unsupported_command_option}
     end.
@@ -309,19 +325,31 @@ validate_optional_duration(#{duration := _} = Options) ->
 validate_optional_duration(Options) ->
     validate_target_options(Options).
 
-only_options(Options, CommandOptions) ->
-    Global = [
+only_options(Command, Options, CommandOptions) ->
+    lists:all(
+        fun(Key) -> lists:member(Key, global_options(Command) ++ CommandOptions) end,
+        maps:keys(Options)
+    ).
+
+global_options(connect) ->
+    remote_options();
+global_options(status) ->
+    [format, json, timeout];
+global_options(disconnect) ->
+    [format, json];
+global_options(_Command) ->
+    remote_options() ++ [redact, include_identifiers].
+
+remote_options() ->
+    [
         node,
         cookie_env,
         cookie_file,
         name_mode,
         format,
         json,
-        timeout,
-        redact,
-        include_identifiers
-    ],
-    lists:all(fun(Key) -> lists:member(Key, Global ++ CommandOptions) end, maps:keys(Options)).
+        timeout
+    ].
 
 validate_diagnose_options(Options) ->
     Observe = maps:find(observe, Options),
@@ -459,8 +487,10 @@ validate_arguments(Command, _Arguments) when
     Command =:= sockets
 ->
     {error, invalid_arguments};
+validate_arguments(_Command, []) ->
+    ok;
 validate_arguments(_Command, _Arguments) ->
-    ok.
+    {error, invalid_arguments}.
 
 validate_scheduler_timeout(#{timeout := _} = Options, Duration) ->
     case timeout_value(Options) of

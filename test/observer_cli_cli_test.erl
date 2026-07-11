@@ -344,6 +344,62 @@ invalid_option_test() ->
         observer_cli_cli:parse(["memory", "--json", "--json"])
     ).
 
+command_specific_arguments_and_options_test() ->
+    ExtraArguments = [
+        ["connect", "extra"],
+        ["status", "extra"],
+        ["disconnect", "extra"],
+        ["snapshot", "extra"],
+        ["memory", "extra"],
+        ["schedulers", "extra"],
+        ["distribution", "extra"],
+        ["processes", "extra"],
+        ["process", "one", "two"],
+        ["applications", "extra"],
+        ["ets", "extra"],
+        ["mnesia", "extra"],
+        ["network", "extra"],
+        ["ports", "extra"],
+        ["sockets", "extra"],
+        ["gen-server-state", "one", "two"],
+        ["supervision-tree", "extra", "--app", "kernel"],
+        ["trace", "stop", "extra", "--all"],
+        ["diagnose", "extra"]
+    ],
+    lists:foreach(
+        fun(Arguments) ->
+            ?assertMatch({error, #{exit_code := 2}}, observer_cli_cli:parse(Arguments))
+        end,
+        ExtraArguments
+    ),
+    IgnoredOptions = [
+        ["connect", "--sort", "memory"],
+        ["status", "--node", "target@host", "--cookie-env", "COOKIE"],
+        ["disconnect", "--timeout", "10s"],
+        ["memory", "--app", "kernel"],
+        ["schedulers", "--limit", "20"],
+        ["distribution", "--duration", "250ms"],
+        ["processes", "--app", "kernel"],
+        ["process", "<0.1.0>", "--sort", "memory"],
+        ["applications", "--duration", "250ms"],
+        ["ets", "--duration", "250ms"],
+        ["mnesia", "--duration", "250ms"],
+        ["network", "--app", "kernel"],
+        ["ports", "--duration", "250ms"],
+        ["sockets", "--app", "kernel"],
+        ["gen-server-state", "server", "--info"],
+        ["supervision-tree", "--app", "kernel", "--sort", "memory"],
+        ["trace", "stop", "--all", "--sort", "memory"]
+    ],
+    lists:foreach(
+        fun(Arguments) ->
+            assert_argument_error(
+                unsupported_command_option, observer_cli_cli:parse(Arguments)
+            )
+        end,
+        IgnoredOptions
+    ).
+
 mutually_exclusive_options_test() ->
     lists:foreach(
         fun({Arguments, Left, Right}) ->

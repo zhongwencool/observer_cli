@@ -1,7 +1,7 @@
 # observer_cli 2.0 AI-native diagnostics CLI design
 
-状态：Revised proposal（完成源码/OTP 事实核查，尚无实现证明）
-日期：2026-07-10
+状态：Design-reviewed（实现与发布矩阵通过；repeatable release runner 待入库）
+日期：2026-07-11
 目标版本：2.0
 实施拆分：`.agents/observer-cli-2-diagnostics-goals/MANIFEST.md`（17 个串行 goal objectives）
 
@@ -1157,25 +1157,17 @@ git diff --check
 - Trace 只用 recon 2.5.6 public `calls/3`/`clear/0` 控制面，并补齐 owner/helper、IO、drain barrier、forced-loss、global cleanup verification；
 - 所有 private/unbounded/sensitive acquisition、observer contamination 和无法证明的 suspect 都被删除、降级或标成明确 High-risk/proof gate。
 
-这个 PASS 最初只表示文档自洽。2026-07-11 的实现发布矩阵现已通过，当前状态为 **release-ready**；逐项机器证据、实测版本、跨节点组合、资源预算与剩余边界见 `docs/observer-cli-2.0-diagnostics-validation.md`。
+这个 PASS 只表示文档自洽。2026-07-11 的后续对抗审查修复了 Trace helper、diagnostics trend、controller deadline/schema/privacy 和 response envelope 缺口，并补齐对应 tracked fixtures；修复后的 OTP 26–29 focused suites、16 组交叉节点矩阵和 disposable resource/Trace proofs 均已重跑通过。当前状态仍为 **design-reviewed**，直到这些一次性 proof commands 进入 tracked repeatable runner；证据和未关闭项见 `docs/observer-cli-2.0-diagnostics-validation.md`。
 
 ### 23.4 当前验证证据
 
-本次文档核查实际运行：
+Goal 17 曾运行 focused/full EUnit、compile、CI compile、xref、Dialyzer、OTP 26–29 和跨节点矩阵，并记录 disposable resource/Trace measurements。本轮修复后，OTP 29 本地 full EUnit、compile、CI compile、xref、Dialyzer、lint、format 和文档检查重新通过，两条独立最终审查线均未发现可复现 P1/P2。
 
-```text
-rebar3 eunit   # 403 tests, 0 failures
-rebar3 compile # pass
-rebar3 xref    # pass
-rebar3 as ci compile # pass；仅出现丢弃旧 ci compiler cache DAG 的非失败提示
-Markdown 结构/表格/fence/trailing whitespace 与 diff --check # pass
-```
-
-这些命令只证明当前 legacy/TUI baseline 没坏，不证明本文尚未实现的 CLI。现有 tests 里 collectors 多在 `TEST` 下导出，也不能替代 production remote API、跨节点 cleanup 或故障注入证明。
+当前实现矩阵已通过；在 release proof commands 进入可复现 runner 前仍不标记 `release-ready`。当前精确覆盖和开放项记录在 validation 文档中。
 
 ### 23.5 不能伪造的“100%”
 
-当前对“实现事实上 100% 正确”的信心不能是 100%，因为实现还不存在。即使实现完成，以下物理边界也只能被限制和验证，不能被文档消除：
+当前对“实现事实上 100% 正确”的信心不能是 100%。即使实现和 proof matrix 都完成，以下物理边界也只能被限制和验证，不能被文档消除：
 
 1. 全资源 scan 在极端节点上的 CPU/内存成本；
 2. `sys:get_state` 的完整 state copy 和 timeout 后 late execution；

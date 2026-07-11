@@ -2,15 +2,16 @@
 
 Date: 2026-07-11
 Design: `docs/observer-cli-2.0-diagnostics-design.md`, sections 17-23
-Result: **release gates passed**
+Result: **design-reviewed; current gates pass, repeatable release runner pending**
 
-This is current machine evidence. All runtime targets were disposable local
-nodes, loaded modules from their own OTP-specific build, and received no remote
-BEAM injection.
+The results below include the post-review rerun. All runtime targets were
+disposable local nodes, loaded modules from their own OTP-specific build, and
+received no remote BEAM injection. The adversarially discovered implementation
+and proof gaps were repaired before this rerun.
 
 ## Supported combinations
 
-The 138-test focused parser, snapshot, diagnostic, trace, and escript suite plus
+The 181-test focused parser, snapshot, diagnostic, trace, and escript suite plus
 compile and escriptize passed on OTP 26.2.5.2, 27.3.4.2, 28.5, and 29.0.3.
 OTP 26/27 exercised the list inventory path; OTP 28/29 exercised iterators.
 Term output passed on all four. JSON passed on OTP 27-29 and intentionally
@@ -21,10 +22,10 @@ Every controller/target cell ran a real `snapshot --format term`, asserted exit
 
 | Controller / Target | 26 | 27 | 28 | 29 |
 | --- | ---: | ---: | ---: | ---: |
-| 26 | 238 ms | 180 ms | 195 ms | 174 ms |
-| 27 | 152 ms | 134 ms | 134 ms | 135 ms |
-| 28 | 156 ms | 149 ms | 142 ms | 147 ms |
-| 29 | 171 ms | 155 ms | 144 ms | 143 ms |
+| 26 | 554 ms | 171 ms | 169 ms | 173 ms |
+| 27 | 397 ms | 129 ms | 132 ms | 131 ms |
+| 28 | 407 ms | 139 ms | 138 ms | 139 ms |
+| 29 | 408 ms | 140 ms | 141 ms | 139 ms |
 
 All 16 cells passed. This proves protocol compatibility, not BEAM compatibility:
 the target must install `observer_cli` built for its own OTP major.
@@ -61,17 +62,24 @@ PID flag and MFA pattern.
   stable reductions share, signed gauges, resets/gaps, context-only growth,
   online normal/dirty scheduler topology, run-queue wording, and paired
   scheduler wall-time cleanup.
-- **Trace:** trace tests cover exact MFA/PID admission, recon 2.5.6 gating,
-  external global-call coverage, replacement consent, count/rate/duration,
-  busy/collision/zero-match paths, ACK-based natural drain, response caps,
-  forced loss, controller/tracee/owner/helper failure, silent IO, legal stop,
-  emergency clear, fixed names, PID call flag, and MFA pattern cleanup.
+- **Trace:** trace tests cover exact MFA/PID admission with the locked recon
+  version and rejection of another profile, external-global versus local-call
+  coverage, replacement consent, active-session busy/name-collision and
+  zero-match paths, count/rate/duration, ACK-based natural drain, response caps,
+  forced loss, controller/dispatcher/tracee/owner/formatter/collector/silent-IO
+  failure, module reload, legal and emergency stop, fixed names, silent IO
+  protocol behavior, PID call-flag cleanup, and exact MFA pattern cleanup.
 - **TUI parity:** `tui_resource_counts_match_snapshot_window_test` compares the
   existing System collector and the diagnostics resource snapshot in one
   sampling window with bounded observer drift.
 
-Full EUnit is the machine check for the detailed fixtures enumerated in design
-section 21; this summary does not replace those assertions.
+Full EUnit now covers the detailed tracked Trace fixtures enumerated in design
+section 21.
+
+## Open release blockers
+
+- Move the disposable cross-version and 10,000/100,000-resource proof commands
+  out of temporary files into a tracked, repeatable release runner.
 
 ## Disposable budgets
 
@@ -79,10 +87,10 @@ OTP 29.0.3 ran with `+P 300000 +Q 300000`. Production target dispatch measured:
 
 | Resource | Created | Outcome | Capture | Wall | Peak worker heap |
 | --- | ---: | --- | ---: | ---: | ---: |
-| Processes | 10,000 | 10,051 scanned | 14 ms | 19 ms | 53,874 words |
+| Processes | 10,000 | 10,051 scanned | 14 ms | 18 ms | 54,078 words |
 | ETS tables | 10,000 | 10,019 scanned | 11 ms | 11 ms | 139,267 words |
 | Ports (`ram_file_drv`) | 10,000 | 10,001 scanned | 13 ms | 14 ms | 1,029,676 words |
-| Processes | 100,000 | refused at 100,051 | 0 ms | 4 ms | below sample interval |
+| Processes | 100,000 | refused at 100,051 | 0 ms | 5 ms | below sample interval |
 | ETS tables | 100,000 | refused at 100,019 | 0 ms | 1 ms | 1,597 words |
 | Ports | 100,000 | refused before enumeration | 0 ms | 1 ms | 1,597 words |
 
@@ -91,8 +99,8 @@ processes remained, ETS returned to 19 tables, ports returned to one, and the
 scheduler wall-time flag was false.
 
 With 100,000 disposable processes, `recon_trace:calls/3` matched one exact MFA;
-implicit-clear setup took 9 ms and final `clear/0` took 5 ms. The wrapper became
-active in 12 ms and naturally drained one event in 18 ms total. Cleanup left no
+implicit-clear setup took 7 ms and final `clear/0` took 4 ms. The wrapper became
+active in 11 ms and naturally drained one event in 16 ms total. Cleanup left no
 fixture worker, owner, tracer, formatter, PID call flag, or MFA pattern. Count
 and rate bound captured events, not recon's node-global setup/cleanup cost.
 
