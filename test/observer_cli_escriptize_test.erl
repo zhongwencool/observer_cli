@@ -13,6 +13,10 @@ command_request_converts_validated_cli_values_test() ->
         )
     ),
     ?assertEqual(
+        #{target => "#Port<0.1>"},
+        observer_cli_escriptize:command_request(port, ["#Port<0.1>"], #{})
+    ),
+    ?assertEqual(
         #{
             action => call,
             mfa => "erlang:node/0",
@@ -348,6 +352,7 @@ command_help_test() ->
         "mnesia",
         "network",
         "ports",
+        "port",
         "sockets",
         "gen-server-state",
         "supervision-tree",
@@ -618,6 +623,16 @@ controller_validates_real_resource_responses_test() ->
         observer_cli_escriptize:validate_response(
             process, include, node(), MissingProcess
         )
+    ),
+    #{<<"status">> := <<"ok">>, <<"result">> := MissingPort} =
+        observer_cli_snapshot:dispatch(
+            self(), port, #{target => <<"#Port<0.999999999>">>}, #{
+                timeout_ms => 5000, identifier_policy => include
+            }
+        ),
+    ?assertEqual(
+        ok,
+        observer_cli_escriptize:validate_response(port, include, node(), MissingPort)
     ),
     lists:foreach(
         fun({Command, Request}) ->

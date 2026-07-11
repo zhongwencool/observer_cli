@@ -264,6 +264,11 @@ validate_runtime_options(process, Options) ->
         true -> validate_target_options(Options);
         false -> {error, unsupported_command_option}
     end;
+validate_runtime_options(port, Options) ->
+    case only_options(port, Options, []) of
+        true -> validate_target_options(Options);
+        false -> {error, unsupported_command_option}
+    end;
 validate_runtime_options(gen_server_state, Options) ->
     case only_options(gen_server_state, Options, []) of
         true -> validate_target_options(Options);
@@ -442,6 +447,10 @@ validate_arguments(process, [_Target]) ->
     ok;
 validate_arguments(process, _Arguments) ->
     {error, process_target_required};
+validate_arguments(port, [_Target]) ->
+    ok;
+validate_arguments(port, _Arguments) ->
+    {error, port_target_required};
 validate_arguments(gen_server_state, [_Target]) ->
     ok;
 validate_arguments(gen_server_state, _Arguments) ->
@@ -1098,6 +1107,7 @@ command("ets") -> ets;
 command("mnesia") -> mnesia;
 command("network") -> network;
 command("ports") -> ports;
+command("port") -> port;
 command("sockets") -> sockets;
 command("gen-server-state") -> gen_server_state;
 command("supervision-tree") -> supervision_tree;

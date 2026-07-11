@@ -16,10 +16,9 @@
 值得补进当前 `observer_cli` 的缺口主要是这些小字段：
 
 1. **Process detail**：`current_function`、`priority`、`stack_size`、`binary` refs 摘要、`last_calls`、`catchlevel`、`trace`、`suspending`、`sequential_trace_token`、`error_handler`。
-2. **Ports**：增加“所有 ports”列表；port 详情补 `slot`、`controls`、`parallelism`、`locking`、`monitored_by` 和 observer_backend 的完整 inet options。
-3. **ETS/Mnesia metadata**：ETS 补 `id`、`reg_name`、`heir`、`compressed`、`fixed`；Mnesia 补 `keypos`、`fixed`、`compressed`。
-4. **System/Allocator**：System 页补 `ETS count / ets_limit` 和全局 `dist_buf_busy_limit`；Allocator 页可补 observer 的 `block size / carrier size / max carrier size`。
-5. **Sockets**：OTP `socket` API 有独立 Sockets 页；如果目标系统使用 `socket` 而不是 `gen_tcp`/`inet` ports，应做一个单独页面，否则先不加。
+2. **ETS/Mnesia metadata**：ETS 补 `id`、`reg_name`、`heir`、`compressed`、`fixed`；Mnesia 补 `keypos`、`fixed`、`compressed`。
+3. **System/Allocator**：System 页补 `ETS count / ets_limit` 和全局 `dist_buf_busy_limit`；Allocator 页可补 observer 的 `block size / carrier size / max carrier size`。
+4. **Sockets**：OTP `socket` API 有独立 Sockets 页；如果目标系统使用 `socket` 而不是 `gen_tcp`/`inet` ports，应做一个单独页面，否则先不加。
 
 不建议直接加入当前核心：Trace UI、Crashdump Viewer、表内容浏览、进程/port 破坏性操作、完整 wx 风格历史图表。这些要么侵入性高，要么会拖慢 live 节点，要么超出 `observer_cli` 的终端诊断定位。
 
@@ -52,7 +51,7 @@ observer wx notebook 里有 `System`、`Load Charts`、`Memory Allocators`、`Ap
 | Memory Allocators | System | `observer_cli` 有 recon_alloc 视角；缺 observer 的 block/carrier/max carrier 汇总。 |
 | Applications | App | `observer_cli` 反而有聚合指标；缺 supervision tree 和交互操作，不是指标缺口。 |
 | Processes | Home Top N + Process detail | Top N 更适合终端；detail 少一些 `process_info/2` 字段。 |
-| Ports | Network + Port detail | 缺“所有 ports”列表；detail 少一些 port_info 字段。 |
+| Ports | `ports` + `port TARGET` | 已覆盖列表、port_info 字段、有界 signals 及 inet detail。 |
 | Sockets | 无 | 这是最大独立缺口；只在使用 OTP `socket` API 时值得加。 |
 | Table Viewer | ETS + Mnesia | 表概要有；缺 metadata detail 和表内容浏览。 |
 | Trace Overview | 无 | 不是指标，侵入性强，不建议进核心。 |
@@ -100,12 +99,10 @@ observer Ports 页面列所有 ports：`Id`、`Connected`、`Name`、`Controls`�
 
 | 缺失参数/能力 | observer_cli 现状 | 是否适合加入 | 建议 |
 |---|---|---|---|
-| 所有 ports 列表 | 只有 Network 的 inet top；非 inet ports 只能通过别的路径间接看到 | 适合 | 增一个极简 `Ports` 页，按 `queue_size`/`memory` 排序即可。 |
-| `controls` | 未显示 | 适合 | 对 port 类型定位有用。 |
-| `slot` | detail `id` 类似但不等价；未单独显示 | 可选 | 从完整 `erlang:port_info(P)` 读取，补上。 |
-| `parallelism` | 未显示 | 可选 | 低成本。 |
-| `locking` | 未显示 | 可选 | 低成本，主要调度/driver 排查。 |
-| `monitored_by` | Process detail 有；Port detail 没有 | 适合 | 与 observer 对齐。 |
+| 所有 ports 列表 | `ports` 列非 inet ports | 已覆盖 | aliases 从既有字段派生，不增加采集。 |
+| `controls` / `slot` | `name` / `display_id` aliases | 已覆盖 | alias 同值同类型。 |
+| `parallelism` / `locking` | `ports` 与 `port TARGET` | 已覆盖 | `locking` 属于实现相关信息。 |
+| `monitored_by` | `port TARGET` | 已覆盖 | 与 links/monitors 一样限制 30 项。 |
 | `local_address/local_port/remote_address/remote_port` 拆分 | observer_cli 显示 sockname/peername 字符串 | 可选 | 当前够用；拆分只为排序/对齐。 |
 | port close / trace selected ports | 无 | 不建议 | 破坏性或侵入性操作，违背生产低风险定位。 |
 
@@ -119,7 +116,7 @@ observer_backend 的 inet options 全量列表来源：`observer_backend.erl:226
 
 缺失但 observer 会尝试显示：`bind_to_device`、`deliver`、`high_msgq_watermark`、`ipv6_v6only`、`low_msgq_watermark`、`netns`、`read_packets`、`send_timeout_close`、`show_econnreset`、`tos`、`tclass`。
 
-适配建议：适合补齐，但不要手写 30 个固定格子；最懒方案是复用现有 `render_opts/1` 思路，把 options 作为可分页 key/value 表渲染。这样未来 OTP 增减 option 也不用改布局。
+命令式 `port TARGET` 复用 TUI 的固定 allowlist，并对每项返回 `available|unsupported|error`；只允许已知标量和结构化 linger，不透传任意 term。
 
 ### 4. Sockets
 
@@ -179,7 +176,7 @@ observer Trace Overview 与 Trace Options 覆盖：trace function call、arity�
 | General | slogan、node name、crashdump created on、system version、compiled、taints、memory allocated、memory maximum、atoms、processes、ETS tables、timers、funs、calling thread | 不适合核心；可做独立 `observer_cli_cdv`。来源：`cdv_gen_cb.erl:35-50`。 |
 | Atoms | creation order、atom | 不适合 live 核心。来源：`cdv_atom_cb.erl:39-41`。 |
 | Processes | internal state、started、parent、run queue、program counter、continuation pointer、arity、old heap、heap unused、binary vheap、heap fragments、heap addresses | 不适合 live 核心；部分字段是 dump 内部结构。来源：`cdv_proc_cb.erl:127-166`。 |
-| Ports | state、task flags、input/output bytes、queue bytes、port data、suspended | 不适合 live 核心；live port 页可只补 `controls/slot/parallelism/locking/monitored_by`。来源：`cdv_port_cb.erl:102-115`。 |
+| Ports | state、task flags、input/output bytes、queue bytes、port data、suspended | dump 内部字段不适合 live 核心；低成本的 `controls/slot/parallelism/locking/monitored_by` 已覆盖。来源：`cdv_port_cb.erl:102-115`。 |
 | Distribution | name、connection type、controller、channel、creation、remote links/monitors/monitored_by | 不适合 core；live System 已有 dist queue/address/in/out/type/state。来源：`cdv_dist_cb.erl:50-96`。 |
 | Schedulers | current process/port、run queue length、port queue length、sleep flags/aux、priority queue lengths、current process stack/PC/CP | 不适合 live core；当前只保留 scheduler utilization 即可。来源：`cdv_sched_cb.erl:52-113`。 |
 | Timers | owner、owner name、message、time left | 可独立考虑，但不建议默认加入；遍历 timers 对生产排查价值有限。来源：`cdv_timer_cb.erl:45-49`。 |

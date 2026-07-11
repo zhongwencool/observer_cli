@@ -43,7 +43,7 @@ store 和 collector 进程，因此 process、port、atom、memory、reductions�
 | Home 进程 Top N | `processes` | 部分覆盖 | CLI 每行不总是返回 TUI 全部列；只有 reductions 支持窗口排序 |
 | Process Info | `process TARGET`、`gen-server-state TARGET` | 部分覆盖 | `messages`、`dictionary` 有意排除；state 只返回有界 shape |
 | Network | `network` | 部分覆盖 | packet count、peer、queue/memory、port input/output |
-| Ports | `ports` | 部分覆盖 | controls、slot、parallelism、locking、monitor 信息及 port 详情页 |
+| Ports | `ports`、`port TARGET` | 已覆盖 | 列表字段及有界详情均覆盖；`locking` 为实现相关信息 |
 | Sockets | `sockets` | 部分覆盖 | general counters、endpoint/state/owner/fd、accept/max packet、详情 counters/options |
 | System | `snapshot`、`memory`、`schedulers`、`distribution`、`network` | 部分覆盖 | 主机 RSS/VSZ、CPU 拓扑细项、allocator 全页、distribution 连接细节 |
 | ETS | `ets` | 部分覆盖 | write/read concurrency |
@@ -234,19 +234,19 @@ TUI 与 CLI 都排除 `tcp_inet`、`udp_inet`、`sctp_inet`，只在 Ports 页�
 |---|---|---|---|
 | port/id | `resource`、`display_id` | 已覆盖 | |
 | connected | `connected_pid` | 已覆盖 | |
-| name | `name` | 已覆盖 | 当前 JSON 中 charlist 会表现为整数数组 |
+| name | `name`、`controls` | 已覆盖 | `controls` 是同值同类型 alias |
 | queue_size | `queue_size` | 已覆盖 | 可排序 |
 | memory | `memory` | 已覆盖 | 可排序 |
 | input/output/io | 同名字段 | CLI 补充 | TUI list 不展示，detail 可见部分 stats |
-| controls | 无 | 未实现 | |
-| slot | 无 | 未实现 | |
-| parallelism | 无 | 未实现 | |
-| locking | 无 | 未实现 | |
-| monitors | 无 | 未实现 | |
-| monitored_by | 无 | 未实现 | |
-| port detail：links/monitor | 无 port detail command | 未实现 | |
-| port detail：sockname/peername | 无 | 未实现 | inet port 已归 Network，不在 CLI ports item 中 |
-| port detail：inet statistics/options | 无 | 未实现 | |
+| controls | `controls` | 已覆盖 | `name` alias，不重复采集 |
+| slot | `slot` | 已覆盖 | `display_id` alias，不作为跨采样 identity |
+| parallelism | `parallelism` | 已覆盖 | 缺失为 `null` 并进入 `field_errors` |
+| locking | `locking` | 已覆盖 | 实现相关信息；缺失为 `null` |
+| os_pid | `port TARGET.os_pid` | 已覆盖 | 缺失为 `null` |
+| monitors/monitored_by | `port TARGET` 同名字段 | 已覆盖 | 各自最多 30 项，另有 total/truncated |
+| port detail：links/monitor | `port TARGET` | 已覆盖 | 只接受目标节点本地 raw `#Port<0.N>` 文本 |
+| port detail：sockname/peername | `port TARGET.inet` | 已覆盖 | 默认显示，`--redact` 使用报告内稳定 endpoint ID |
+| port detail：inet statistics/options | `port TARGET.inet` | 已覆盖 | 固定 10 项 stats；TUI allowlist options 逐项标状态 |
 
 ## 8. Sockets 页面逐项对比
 
@@ -381,7 +381,7 @@ CLI 只列 local tables，并明确区分 RAM/disc memory bytes 与 disc-only di
 ### P2：成本或暴露面较高
 
 1. System allocator block size、SBCS/MBCS、cache hit 全页。
-2. Port 与 socket 的完整详情、完整 counters/options。
+2. Socket 的完整详情、完整 counters/options。
 3. Process messages、dictionary（保留有意不返回）。
 4. TUI plugin sheet 的通用 CLI 执行协议。
 
@@ -396,6 +396,7 @@ socket options 塞进 `snapshot`。这些数据复制成本和敏感信息风险
 - `connect`、`status`、`disconnect` 的持久目标上下文；
 - `snapshot` 的稳定 schema、probe coverage、observer effects、扫描审计和 redaction；
 - `diagnose` 的 findings/suspects/context；
+- `port TARGET` 的有界 signals、endpoint、statistics 和固定 allowlist options；
 - `gen-server-state` 的 value-free bounded shape；
 - `supervision-tree --app APP` 的一层 public supervision 结构；
 - `trace call MFA` / `trace stop --all` 的 bounded instrumentation；

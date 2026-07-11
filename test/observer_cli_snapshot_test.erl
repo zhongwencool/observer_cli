@@ -811,6 +811,150 @@ process_detail_collects_real_gc_tuning_test() ->
         )
     ).
 
+port_inventory_aliases_and_missing_fields_test() ->
+    Port = open_port({spawn, "cat"}, [binary]),
+    try
+        Values = #{
+            name => "cat",
+            connected => self(),
+            queue_size => 1,
+            memory => 2,
+            id => 3,
+            input => 4,
+            output => 5
+        },
+        Source = #{
+            count_fun => fun() -> 1 end,
+            all_fun => fun() -> {ok, [Port]} end,
+            info_fun => fun(_Item, Key) ->
+                case maps:find(Key, Values) of
+                    {ok, Value} -> {ok, Value};
+                    error -> missing
+                end
+            end
+        },
+        Response = inspection_include(ports, #{test_port_source => Source}),
+        Data = maps:get(<<"data">>, Response),
+        ?assertEqual(9, maps:get(<<"tracked_field_count">>, Data)),
+        [Item] = maps:get(<<"items">>, Data),
+        ?assertEqual(maps:get(<<"name">>, Item), maps:get(<<"controls">>, Item)),
+        ?assertEqual(maps:get(<<"display_id">>, Item), maps:get(<<"slot">>, Item)),
+        ?assertEqual(null, maps:get(<<"parallelism">>, Item)),
+        ?assertEqual(null, maps:get(<<"locking">>, Item)),
+        ?assertEqual(
+            [<<"parallelism">>, <<"locking">>],
+            maps:get(<<"field_errors">>, Item)
+        )
+    after
+        port_close(Port)
+    end.
+
+port_detail_is_bounded_and_redacts_inet_identifiers_test() ->
+    Port = open_port({spawn, "cat"}, [binary]),
+    try
+        Stats = [
+            {recv_oct, 1},
+            {recv_cnt, 2},
+            {recv_max, 3},
+            {recv_avg, 4},
+            {recv_dvi, 5},
+            {send_oct, 6},
+            {send_cnt, 7},
+            {send_max, 8},
+            {send_avg, 9},
+            {send_pend, 10}
+        ],
+        Info = #{
+            name => "tcp_inet",
+            connected => self(),
+            queue_size => 1,
+            memory => 2,
+            id => 3,
+            input => 4,
+            output => 5,
+            parallelism => true,
+            locking => port_level,
+            os_pid => undefined,
+            links => lists:duplicate(35, self()),
+            monitors => [{process, self()}],
+            monitored_by => [self()]
+        },
+        Source = #{
+            info_fun => fun
+                (_Item, os_pid) -> missing;
+                (_Item, Key) -> {ok, maps:get(Key, Info)}
+            end,
+            sockname_fun => fun(_Item) -> {ok, {{127, 0, 0, 1}, 1883}} end,
+            peername_fun => fun(_Item) -> {ok, {{10, 0, 0, 1}, 2883}} end,
+            stat_fun => fun(_Item, _Keys) -> {ok, Stats} end,
+            getopts_fun => fun
+                (_Item, [linger]) -> {ok, [{linger, {true, 5}}]};
+                (_Item, [bind_to_device]) -> {ok, [{bind_to_device, <<"en0">>}]};
+                (_Item, [netns]) -> {ok, [{netns, <<"/var/run/netns/prod">>}]};
+                (_Item, [packet]) -> {ok, [{packet, {unknown, term}}]};
+                (_Item, [Option]) -> {ok, [{Option, false}]}
+            end
+        },
+        Target = list_to_binary(port_to_list(Port)),
+        Response = inspection(port, #{target => Target, test_port_source => Source}),
+        ?assertEqual(
+            ok, observer_cli_escriptize:validate_response(port, redact, node(), Response)
+        ),
+        lists:foreach(
+            fun(Format) -> ?assertMatch({ok, _}, observer_cli_cli:encode(Format, Response)) end,
+            [text, term, json]
+        ),
+        Data = maps:get(<<"data">>, Response),
+        ?assertEqual(<<"running">>, maps:get(<<"status">>, Data)),
+        ?assertMatch(<<"port-", _/binary>>, maps:get(<<"resource">>, Data)),
+        ?assertEqual(30, length(maps:get(<<"links">>, Data))),
+        ?assertEqual(35, maps:get(<<"links_total_count">>, Data)),
+        ?assertEqual(true, maps:get(<<"links_truncated">>, Data)),
+        Inet = maps:get(<<"inet">>, Data),
+        ?assertMatch(<<"endpoint-", _/binary>>, maps:get(<<"sockname">>, Inet)),
+        ?assertMatch(<<"endpoint-", _/binary>>, maps:get(<<"peername">>, Inet)),
+        Statistics = maps:get(<<"statistics">>, Inet),
+        ?assertEqual(10, maps:get(<<"send_pend">>, Statistics)),
+        Options = maps:get(<<"options">>, Inet),
+        ?assertEqual(31, length(Options)),
+        ?assertMatch(
+            #{<<"status">> := <<"available">>, <<"value">> := <<"interface-", _/binary>>},
+            option_by_name(<<"bind_to_device">>, Options)
+        ),
+        ?assertMatch(
+            #{<<"status">> := <<"available">>, <<"value">> := <<"netns-", _/binary>>},
+            option_by_name(<<"netns">>, Options)
+        ),
+        ?assertEqual(<<"error">>, maps:get(<<"status">>, option_by_name(<<"packet">>, Options))),
+        ?assertEqual(
+            #{<<"enabled">> => true, <<"seconds">> => 5},
+            maps:get(<<"value">>, option_by_name(<<"linger">>, Options))
+        ),
+        ?assertEqual(nomatch, binary:match(term_to_binary(Response), <<"127.0.0.1">>)),
+        ?assertEqual(nomatch, binary:match(term_to_binary(Response), <<"/var/run/netns/prod">>))
+    after
+        port_close(Port)
+    end.
+
+port_detail_not_found_and_non_inet_test() ->
+    ?assertEqual(
+        <<"not_found">>,
+        maps:get(<<"status">>, maps:get(<<"data">>, inspection(port, #{target => <<"port-1">>})))
+    ),
+    Port = open_port({spawn, "cat"}, [binary]),
+    Target = list_to_binary(port_to_list(Port)),
+    try
+        Data = maps:get(<<"data">>, inspection_include(port, #{target => Target})),
+        ?assertEqual(<<"not_inet">>, maps:get(<<"status">>, maps:get(<<"inet">>, Data)))
+    after
+        port_close(Port)
+    end,
+    Gone = maps:get(<<"data">>, inspection(port, #{target => Target})),
+    ?assertEqual(<<"not_found">>, maps:get(<<"status">>, Gone)).
+
+option_by_name(Name, Options) ->
+    hd([Option || #{<<"name">> := OptionName} = Option <- Options, OptionName =:= Name]).
+
 processes_duration_supports_all_window_sorts_test() ->
     WordSize = erlang:system_info(wordsize),
     lists:foreach(

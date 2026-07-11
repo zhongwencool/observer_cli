@@ -24,9 +24,9 @@ diagnostic_ports_use_explicit_keys_and_raw_identity_test() ->
         ?assertEqual(2, length(Items)),
         ?assertEqual([12, 12], [maps:get(<<"io">>, Item) || Item <- Items]),
         ?assertEqual(1, length(lists:usort([maps:get(<<"display_id">>, Item) || Item <- Items]))),
-        Calls = collect_port_info_calls(14, []),
+        Calls = collect_port_info_calls(18, []),
         ?assertEqual(
-            [connected, id, input, memory, name, output, queue_size],
+            [connected, id, input, locking, memory, name, output, parallelism, queue_size],
             lists:usort([Key || {_Port, Key} <- Calls])
         )
     after
@@ -40,7 +40,9 @@ diagnostic_port_field(queue_size) -> {ok, 3};
 diagnostic_port_field(memory) -> {ok, 4};
 diagnostic_port_field(id) -> {ok, 7};
 diagnostic_port_field(input) -> {ok, 5};
-diagnostic_port_field(output) -> {ok, 7}.
+diagnostic_port_field(output) -> {ok, 7};
+diagnostic_port_field(parallelism) -> missing;
+diagnostic_port_field(locking) -> missing.
 
 collect_port_info_calls(0, Acc) ->
     Acc;

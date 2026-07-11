@@ -2,7 +2,7 @@
 
 -include("observer_cli.hrl").
 
--export([start/1, start/2]).
+-export([start/1, start/2, sock_opts/0]).
 
 -ifdef(TEST).
 -export([
@@ -24,7 +24,6 @@
     render_stats/1,
     render_opts/1,
     select_port/2,
-    sock_opts/0,
     render_menu/2,
     output_die_view/2,
     get_menu_title/1

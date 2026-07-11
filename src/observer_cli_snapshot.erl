@@ -268,6 +268,8 @@ probe(processes, Request, Context) ->
     capture_processes(Request, Context);
 probe(process, Request, Context) ->
     capture_process(Request, Context);
+probe(port, Request, Context) ->
+    capture_port(Request, Context);
 probe(applications, Request, Context) ->
     capture_applications(Request, Context);
 probe(ets, Request, Context) ->
@@ -303,6 +305,8 @@ probe(processes, Request, Context) ->
     capture_processes(Request, Context);
 probe(process, Request, Context) ->
     capture_process(Request, Context);
+probe(port, Request, Context) ->
+    capture_port(Request, Context);
 probe(applications, Request, Context) ->
     capture_applications(Request, Context);
 probe(ets, Request, Context) ->
@@ -1004,6 +1008,14 @@ capture_process(#{target := Target} = Request, Context) ->
         process, process_info, 1, Context, fun() -> collect_process(Target, Source) end
     );
 capture_process(_Request, _Context) ->
+    {probe_error, invalid_request}.
+
+capture_port(#{target := Target} = Request, Context) ->
+    Source = port_source(Request),
+    capture_scan_inspection(
+        port, port_info, 1, Context, fun() -> collect_port(Target, Source) end
+    );
+capture_port(_Request, _Context) ->
     {probe_error, invalid_request}.
 
 capture_gen_server_state(#{target := Target} = Request, Context) ->
@@ -2926,7 +2938,11 @@ default_port_source() ->
     #{
         count_fun => fun() -> erlang:system_info(port_count) end,
         all_fun => fun safe_ports/0,
-        info_fun => fun safe_port_info/2
+        info_fun => fun safe_port_info/2,
+        sockname_fun => fun inet:sockname/1,
+        peername_fun => fun inet:peername/1,
+        stat_fun => fun inet:getstat/2,
+        getopts_fun => fun inet:getopts/2
     }.
 
 socket_source(Request) ->
@@ -2966,6 +2982,7 @@ safe_sockets() ->
 
 safe_port_info(Port, Key) ->
     try erlang:port_info(Port, Key) of
+        {Key, undefined} -> missing;
         {Key, Value} -> {ok, Value};
         undefined -> missing
     catch
@@ -3171,6 +3188,9 @@ parse_network_counters(Stats) ->
 inet_protocol("tcp_inet") -> tcp;
 inet_protocol("udp_inet") -> udp;
 inet_protocol("sctp_inet") -> sctp;
+inet_protocol(<<"tcp_inet">>) -> tcp;
+inet_protocol(<<"udp_inet">>) -> udp;
+inet_protocol(<<"sctp_inet">>) -> sctp;
 inet_protocol(_) -> undefined.
 
 socket_sample(Source) ->
@@ -3294,7 +3314,7 @@ vm_io_metrics(Counters, Semantics) ->
 
 collect_ports(Source, Sort, Limit, Context) ->
     Count = safe_resource_count(Source),
-    Estimate = working_set_estimate(min(Count, Limit), 7, 1),
+    Estimate = working_set_estimate(min(Count, Limit), 9, 1),
     case Count =< ?PORT_SCAN_BUDGET andalso Estimate =< ?MAX_WORKING_SET_BYTES of
         false ->
             {unavailable, scan_budget_exceeded, #{
@@ -3351,7 +3371,7 @@ collect_port_items(Ports, Source, Sort, Limit, Context, Estimate) ->
             complete => true,
             sort => Sort,
             sort_semantics => current_or_lifetime,
-            tracked_field_count => 7,
+            tracked_field_count => 9,
             retained_sample_count => 1,
             working_set_estimated_bytes => Estimate
         },
@@ -3377,7 +3397,9 @@ port_resource(Port, Source) ->
         {ok, Name} ->
             case inet_protocol(Name) of
                 undefined ->
-                    Fields = [connected, queue_size, memory, id, input, output],
+                    Fields = [
+                        connected, queue_size, memory, id, input, output, parallelism, locking
+                    ],
                     Values = maps:from_list([{Key, port_field(Info(Port, Key))} || Key <- Fields]),
                     Input = maps:get(input, Values),
                     Output = maps:get(output, Values),
@@ -3390,13 +3412,17 @@ port_resource(Port, Source) ->
                         raw_id => Port,
                         resource => {identifier, port, Port},
                         name => Name,
+                        controls => Name,
                         connected_pid => port_identifier(maps:get(connected, Values)),
                         queue_size => maps:get(queue_size, Values),
                         memory => maps:get(memory, Values),
                         display_id => maps:get(id, Values),
+                        slot => maps:get(id, Values),
                         input => Input,
                         output => Output,
                         io => Io,
+                        parallelism => maps:get(parallelism, Values),
+                        locking => maps:get(locking, Values),
                         field_errors => [Key || Key <- Fields, maps:get(Key, Values) =:= null]
                     };
                 _ ->
@@ -3405,6 +3431,235 @@ port_resource(Port, Source) ->
         missing ->
             disappeared
     end.
+
+collect_port(Target, Source) ->
+    case resolve_port_target(Target) of
+        {ok, Port} -> collect_port_detail(Port, Source);
+        not_found -> {ok, #{status => not_found}, [target_side_resolution, raw_port_text_only]}
+    end.
+
+resolve_port_target(Target) ->
+    case target_binary(Target) of
+        {ok, Text} when byte_size(Text) =< 64 ->
+            case re:run(Text, <<"^#Port<0\\.[0-9]+>$">>, [{capture, none}]) of
+                match ->
+                    try list_to_port(binary_to_list(Text)) of
+                        Port ->
+                            case list_to_binary(port_to_list(Port)) =:= Text of
+                                true -> {ok, Port};
+                                false -> not_found
+                            end
+                    catch
+                        error:badarg -> not_found
+                    end;
+                nomatch ->
+                    not_found
+            end;
+        _ ->
+            not_found
+    end.
+
+collect_port_detail(Port, Source) ->
+    Info = maps:get(info_fun, Source),
+    case Info(Port, name) of
+        {ok, Name} ->
+            Fields = [
+                connected,
+                queue_size,
+                memory,
+                id,
+                input,
+                output,
+                parallelism,
+                locking,
+                os_pid,
+                links,
+                monitors,
+                monitored_by
+            ],
+            Values = maps:from_list([{Key, port_field(Info(Port, Key))} || Key <- Fields]),
+            Base0 = #{
+                status => running,
+                resource => {identifier, port, Port},
+                name => Name,
+                controls => Name,
+                display_id => maps:get(id, Values),
+                slot => maps:get(id, Values),
+                connected_pid => port_identifier(maps:get(connected, Values)),
+                os_pid => maps:get(os_pid, Values),
+                queue_size => maps:get(queue_size, Values),
+                memory => maps:get(memory, Values),
+                input => maps:get(input, Values),
+                output => maps:get(output, Values),
+                parallelism => maps:get(parallelism, Values),
+                locking => maps:get(locking, Values),
+                field_errors => [Key || Key <- Fields, maps:get(Key, Values) =:= null]
+            },
+            Base1 = bounded_process_list(
+                links, port_list_field(maps:get(links, Values)), fun sanitize_signal_list/1, Base0
+            ),
+            Base2 = bounded_process_list(
+                monitors,
+                port_list_field(maps:get(monitors, Values)),
+                fun sanitize_signal_list/1,
+                Base1
+            ),
+            Base = bounded_process_list(
+                monitored_by,
+                port_list_field(maps:get(monitored_by, Values)),
+                fun sanitize_signal_list/1,
+                Base2
+            ),
+            {ok, Base#{inet => collect_port_inet(Port, Name, Source)}, [
+                target_side_resolution,
+                documented_port_info_keys,
+                bounded_signal_lists,
+                fixed_inet_allowlists
+            ]};
+        missing ->
+            {ok, #{status => not_found}, [target_side_resolution, raw_port_text_only]}
+    end.
+
+port_list_field(Value) when is_list(Value) -> Value;
+port_list_field(_Value) -> [].
+
+collect_port_inet(Port, Name, Source) ->
+    case inet_protocol(Name) of
+        undefined ->
+            #{
+                status => not_inet,
+                protocol => null,
+                sockname => null,
+                peername => null,
+                statistics => #{status => not_inet},
+                options => []
+            };
+        Protocol ->
+            #{
+                status => ok,
+                protocol => Protocol,
+                sockname => port_endpoint(call_port_fun(sockname_fun, Port, Source)),
+                peername => port_endpoint(call_port_fun(peername_fun, Port, Source)),
+                statistics => port_statistics(Port, Source),
+                options => [port_option(Port, Opt, Source) || Opt <- observer_cli_port:sock_opts()]
+            }
+    end.
+
+call_port_fun(Key, Port, Source) ->
+    try (maps:get(Key, Source))(Port) of
+        Result -> Result
+    catch
+        _:_ -> {error, failed}
+    end.
+
+port_endpoint({ok, {Address, Port}}) when is_integer(Port), Port >= 0, Port =< 65535 ->
+    case inet:ntoa(Address) of
+        {error, einval} ->
+            null;
+        AddressText ->
+            {identifier, endpoint, iolist_to_binary([AddressText, $:, integer_to_binary(Port)])}
+    end;
+port_endpoint({ok, {local, Path}}) ->
+    case bounded_identifier_text(Path) of
+        {ok, Text} -> {identifier, endpoint, Text};
+        error -> null
+    end;
+port_endpoint(_Result) ->
+    null.
+
+port_statistics(Port, Source) ->
+    Keys = [
+        recv_oct,
+        recv_cnt,
+        recv_max,
+        recv_avg,
+        recv_dvi,
+        send_oct,
+        send_cnt,
+        send_max,
+        send_avg,
+        send_pend
+    ],
+    Result =
+        try (maps:get(stat_fun, Source))(Port, Keys) of
+            Value -> Value
+        catch
+            _:_ -> {error, failed}
+        end,
+    case Result of
+        {ok, Stats} when is_list(Stats) ->
+            Values = maps:from_list(Stats),
+            (maps:from_list([
+                {Key, stat_value(maps:get(Key, Values, null))}
+             || Key <- Keys
+            ]))#{
+                status => available
+            };
+        _ ->
+            (maps:from_list([{Key, null} || Key <- Keys]))#{status => error}
+    end.
+
+stat_value(Value) when is_integer(Value), Value >= 0 -> Value;
+stat_value(_Value) -> null.
+
+port_option(Port, Option, Source) ->
+    Result =
+        try (maps:get(getopts_fun, Source))(Port, [Option]) of
+            GetoptsResult -> GetoptsResult
+        catch
+            _:_ -> {error, failed}
+        end,
+    case Result of
+        {ok, [{Option, Value}]} ->
+            case safe_port_option_value(Option, Value) of
+                {ok, Safe} -> #{name => Option, status => available, value => Safe};
+                error -> #{name => Option, status => error, value => null}
+            end;
+        {ok, []} ->
+            #{name => Option, status => unsupported, value => null};
+        {error, einval} ->
+            #{name => Option, status => unsupported, value => null};
+        {error, Reason} when is_atom(Reason) ->
+            #{name => Option, status => error, reason => Reason, value => null};
+        _ ->
+            #{name => Option, status => error, value => null}
+    end.
+
+safe_port_option_value(linger, {Enabled, Seconds}) when
+    is_boolean(Enabled), is_integer(Seconds), Seconds >= 0
+->
+    {ok, #{enabled => Enabled, seconds => Seconds}};
+safe_port_option_value(bind_to_device, Value) ->
+    port_option_identifier(interface, Value);
+safe_port_option_value(netns, Value) ->
+    port_option_identifier(netns, Value);
+safe_port_option_value(_Option, Value) when
+    is_boolean(Value); is_integer(Value); is_atom(Value); is_binary(Value)
+->
+    {ok, Value};
+safe_port_option_value(_Option, Value) when is_list(Value) ->
+    case bounded_identifier_text(Value) of
+        {ok, Text} -> {ok, Text};
+        error -> error
+    end;
+safe_port_option_value(_Option, _Value) ->
+    error.
+
+port_option_identifier(Type, Value) ->
+    case bounded_identifier_text(Value) of
+        {ok, Text} -> {ok, {identifier, Type, Text}};
+        error -> error
+    end.
+
+bounded_identifier_text(Value) when is_list(Value) ->
+    try unicode:characters_to_binary(Value) of
+        Text when is_binary(Text), byte_size(Text) =< ?MAX_FIELD_BYTES -> {ok, Text};
+        _ -> error
+    catch
+        _:_ -> error
+    end;
+bounded_identifier_text(Value) ->
+    identifier_text(Value).
 
 port_field({ok, Value}) -> Value;
 port_field(missing) -> null.
@@ -4463,6 +4718,9 @@ identifier_binary(Type, Value) when
     Type =:= module;
     Type =:= function;
     Type =:= peer;
+    Type =:= endpoint;
+    Type =:= interface;
+    Type =:= netns;
     Type =:= table;
     Type =:= application
 ->

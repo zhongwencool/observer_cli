@@ -119,6 +119,7 @@ usage() ->
         "  mnesia              List local Mnesia tables\n"
         "  network             Show VM network I/O\n"
         "  ports               List Erlang ports\n"
+        "  port TARGET         Inspect one Erlang port\n"
         "  sockets             List OTP sockets\n"
         "  gen-server-state TARGET\n"
         "                      Inspect a bounded gen_server state shape\n"
@@ -278,6 +279,13 @@ command_help("ports") ->
         "List non-inet Erlang Port metadata and counters, not TCP or UDP port numbers.",
         "queue_size (default), memory, input, output, io"
     );
+command_help("port") ->
+    remote_help(
+        "port '#Port<0.N>' [--redact]",
+        "Inspect one target-local Erlang port by its raw Port text.",
+        "  --redact  Hide port, process, endpoint, interface, and netns identifiers\n",
+        "  observer_cli port '#Port<0.12>'\n"
+    );
 command_help("sockets") ->
     counter_help(
         "sockets",
@@ -399,6 +407,8 @@ command_request(trace, ["call", MFA], Options) ->
 command_request(trace, ["stop"], _Options) ->
     #{action => stop_all};
 command_request(process, [Target], Options) ->
+    (request_options(Options))#{target => Target};
+command_request(port, [Target], Options) ->
     (request_options(Options))#{target => Target};
 command_request(gen_server_state, [Target], Options) ->
     (request_options(Options))#{target => Target};
@@ -1168,6 +1178,8 @@ valid_command_payload(Command, #{<<"data">> := Data} = Response, Probes) ->
             ]);
         process ->
             valid_map_fields(Data, [<<"status">>]);
+        port ->
+            valid_map_fields(Data, [<<"status">>]);
         gen_server_state ->
             valid_map_fields(Data, [<<"status">>, <<"risk_level">>]);
         supervision_tree ->
@@ -1238,6 +1250,7 @@ required_probe_id(schedulers) -> <<"scheduler_wall_time">>;
 required_probe_id(distribution) -> <<"distribution">>;
 required_probe_id(processes) -> <<"process_inventory">>;
 required_probe_id(process) -> <<"process_info">>;
+required_probe_id(port) -> <<"port_info">>;
 required_probe_id(applications) -> <<"application_inventory">>;
 required_probe_id(ets) -> <<"ets_inventory">>;
 required_probe_id(mnesia) -> <<"mnesia_inventory">>;
@@ -1392,6 +1405,8 @@ identifier_field_prefix(<<"application">>) -> <<"application-">>;
 identifier_field_prefix(<<"table">>) -> <<"table-">>;
 identifier_field_prefix(<<"socket">>) -> <<"socket-">>;
 identifier_field_prefix(<<"port">>) -> <<"port-">>;
+identifier_field_prefix(<<"sockname">>) -> <<"endpoint-">>;
+identifier_field_prefix(<<"peername">>) -> <<"endpoint-">>;
 identifier_field_prefix(<<"registered_name">>) -> <<"name-">>;
 identifier_field_prefix(_Key) -> undefined.
 

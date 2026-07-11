@@ -255,7 +255,7 @@ observer_cli tui diagnose COOKIE 1500
 
 ### Identifier 默认策略
 
-- 窄 inspection 命令默认输出真实 identifier，用于同一报告内关联；只有已经存在对应 consumer 的 identifier（v1 主要是 process PID/name）才承诺下一条命令可以 drill-down。ports/sockets/ETS v1 没有 detail command，不作该承诺。
+- 窄 inspection 命令默认输出真实 identifier，用于同一报告内关联；`process TARGET` 与 `port '#Port<0.N>'` 可在同一目标生命周期内 drill-down。`port` 不接受 report-scoped `port-1`、注册名或任意 Erlang term；sockets/ETS 不作跨命令承诺。
 - `snapshot` 和 `diagnose` 默认脱敏，使用单次报告内稳定 ID；`--include-identifiers` 显式放开 node/PID/name/MFA。
 - `--redact` 可强制窄命令脱敏。
 - identifier 可见不代表 messages、dictionary、state 或 trace payload 会被自动读取。
@@ -282,6 +282,7 @@ observer_cli tui diagnose COOKIE 1500
 | `mnesia` | table metadata、storage、size、memory | `--sort`、`--limit` | 未运行是 `not_running`，不是故障 |
 | `network` | VM port-driver IO 与 legacy inet TCP/UDP/SCTP counters | `--sort`、`--duration`、`--limit` | 不是主机全部网络流量 |
 | `ports` | best-effort 非 inet Erlang Port queue/memory/connected PID | `--sort`、`--limit` | 分类只靠 documented port name heuristic；不是 TCP/UDP port number |
+| `port TARGET` | 单个 Port 的 scalars、signals 和 inet detail | `--redact` | raw target-local `#Port<0.N>`；signals 每组最多 30 项 |
 | `sockets` | OTP socket registry-known overview/counters | `--sort`、`--duration`、`--limit` | 不可见 registry-disabled sockets；enumeration error 不得伪装成 empty |
 
 `schedulers --duration` 使用两个 wall-time 样本，默认 1500 ms，最短 250 ms、最长 10 s；`network`/`sockets` 和 `processes --duration` 使用同一 250 ms–10 s 范围。它们只输出 measurement/context，不单独产生诊断 finding。`diagnose --observe` 范围 5–60 s；Trace 范围见第 11 节。`memory` v1 只采单点；增长判断统一由 `diagnose --observe` 完成。
@@ -387,7 +388,8 @@ Top N 在 target 侧使用 `{metric, canonical_raw_id}` 作为选择 key，再�
 - ETS `memory_bytes = ets:info(Table, memory) * wordsize`，generation 使用 `ets:info(Table, id)`，不能使用可复用的 named-table atom。
 - Mnesia 使用 `mnesia:system_info(is_running)` 和 `local_tables`；每表 race 单独记录，并先读 documented `storage_type` 再解释 `table_info(Table, memory)`：`ram_copies|disc_copies` 的值是本节点 allocated words，输出 `memory_bytes = Value * target wordsize`、`disk_bytes=null`；`disc_only_copies` 的同一 API 值是 on-disk bytes，输出 `memory_bytes=null, disk_bytes=Value`，绝不乘 wordsize；external/unknown storage 两者都为 null 并标 `storage_semantics_unavailable`。memory sort 只纳入有 `memory_bytes` 的 local table，size sort 可纳入其它 local storage。
 - 只有 local `ram_copies|disc_copies` Mnesia main table 能通过 public `ets:whereis(Table)` + exact raw `ets:info(Tid,id)` 与本次 ETS inventory 唯一匹配时，才标记 `managed_by=mnesia_main_table`。Mnesia internal/index ETS 没有 public arbitrary Tid→table mapping，统一 `management_unknown`，不能按 owner/name 猜测。v1 growth 只输出 context，本就不生成重复 suspect/finding；future 去重只允许使用上述 exact evidence。
-- Ports 只逐项调用 documented `port_info(Port, name|connected|queue_size|memory|id|input|output)`；不调用会连同 `monitors`/`monitored_by` 一次物化的 `port_info(Port)`。v1 只以 name 是否为已知 `tcp_inet|udp_inet|sctp_inet` 做 best-effort 分类，不读取当前 collector 的 `controls` fallback；`input`/`output` 只是 driver 支持时的 Erlang Port byte counters。缺失/死亡字段输出 `null` 和 field error，不默认成 0，`connected_pid` 不能错误命名为 owner。
+- `ports` 只逐项调用 documented `port_info(Port, name|connected|queue_size|memory|id|input|output|parallelism|locking)`；不调用完整 `port_info(Port)`。`controls=name`、`slot=display_id` 直接派生；`locking` 是实现相关信息。分类仍只以 name 是否为已知 `tcp_inet|udp_inet|sctp_inet` 做 best-effort 判断。缺失/死亡字段输出 `null` 和 field error，不默认成 0，`connected_pid` 不能错误命名为 owner。
+- `port TARGET` 显式逐键读取基础字段及 links/monitors/monitored_by，每组 signals 最多 30 项；inet detail 固定为 sockname/peername、官方 10 项 statistics 和 TUI option allowlist。options 逐项标 `available|unsupported|error`，只允许标量及结构化 linger。endpoint、interface、netns 默认显示，`--redact` 映射为报告内稳定 ID。解析仅在 target side 对长度、格式和 round-trip 校验后的 raw Port 文本调用 `list_to_port/1`；非法或已消失对象统一 `status=not_found`。
 - Cross-sample correlation 在 target side 使用完整 raw identity：process 用 PID；ETS 用 `ets:info(Table,id)`；legacy inet/network 和 port 用完整 raw `Port` term；socket 用完整 opaque raw Socket term/ref。绝不使用可复用的 port slot/`port_info(id)`、socket fd、name 或展示字符串作为 generation。完成 stable intersection/born/dead 分类后才映射 report ID；同 fd/slot 重用不能拼接成一条 delta。
 - `socket:number_of/0` 与 `socket:which_sockets/0` 只覆盖 socket registry 已知对象。probe 固定输出 `coverage=registry_known_sockets` 和 `socket:info().use_registry`；即使全局为 true，per-open override 仍让 completeness 不可证明。admission count 也是 registry-known count；空结果只能写 `no_registry_known_sockets`，绝不能写“no sockets”或据此判断 healthy。
 - v1 network/socket probes 只输出 counters、raw-ID 映射和 domain/type/protocol 等非 endpoint metadata；不调用 `inet:peername|sockname` 或 `socket:peername|sockname`，因此不采 IP:port 或 Unix socket path。未来若加入 endpoint，必须纳入 identifier/redaction policy，不能沿用当前 TUI renderer 直接输出。
@@ -1005,9 +1007,9 @@ Trace 因 count/rate 自然停止时仍是成功 capture，response 标记 `limi
 - Mnesia ram_copies/disc_copies words→bytes、disc_only bytes-on-disk 不乘 wordsize、external/unknown null；remote-only table 不进 `local_tables` report；
 - socket enumeration error 不伪装成 empty；Mnesia/socket unavailable 不等于健康或故障；
 - `socket:use_registry(false)`/per-open override 的 live socket 不可枚举 fixture；coverage 固定为 registry-known，empty 只表示 `no_registry_known_sockets`；
-- network/socket probe 不调用 peername/sockname；fixture IP:port/Unix path 不进入任何 v1 format；
+- network/socket probe 不调用 peername/sockname；只有显式 `port TARGET` 返回 endpoint，并受 redaction policy 约束；
 - OTP 26–29 socket counter-shape fixtures：core key missing 使 metric unavailable；sendfile optional absent 贡献 0 且进入 coverage；composite 任一已有 counter reset 使 delta invalid；
-- ports probe 不调用 `port_info/1`，不会隐式读取 monitors/monitored_by；name heuristic 误分类用 fixture 固定为 best-effort；
+- ports inventory 不调用 `port_info/1`，不会隐式读取 monitors/monitored_by；只有显式 `port TARGET` 逐键读取有界 signals；name heuristic 误分类用 fixture 固定为 best-effort；
 - 10 万级 disposable process/table/port 的 scan admission、peak worker heap、timeout 与 controller-disconnect cleanup；
 - delta/trend admission 按 resource×field×sample working-set estimate 拒绝超预算节点；首点冷、后续突然变热的 PID/socket/table 仍进入 exact Top N；baseline state 不落 target ETS；
 - Mnesia table list 与 loaded/running application list 的 `post_enumeration` staged admission、peak heap 和“拒绝后不做 per-table/process attribution”；

@@ -21,6 +21,7 @@ reserved_command_words_test() ->
         {"mnesia", mnesia},
         {"network", network},
         {"ports", ports},
+        {"port", port},
         {"sockets", sockets},
         {"gen-server-state", gen_server_state},
         {"supervision-tree", supervision_tree},
@@ -32,6 +33,7 @@ reserved_command_words_test() ->
             Arguments =
                 case Command of
                     process -> [Word, "<0.1.0>"];
+                    port -> [Word, "#Port<0.1>"];
                     gen_server_state -> [Word, "<0.1.0>"];
                     supervision_tree -> [Word, "--app", "kernel"];
                     trace -> [Word, "stop", "--all"];
@@ -360,6 +362,7 @@ command_specific_arguments_and_options_test() ->
         ["mnesia", "extra"],
         ["network", "extra"],
         ["ports", "extra"],
+        ["port", "one", "two"],
         ["sockets", "extra"],
         ["gen-server-state", "one", "two"],
         ["supervision-tree", "extra", "--app", "kernel"],
@@ -386,6 +389,7 @@ command_specific_arguments_and_options_test() ->
         ["mnesia", "--duration", "250ms"],
         ["network", "--app", "kernel"],
         ["ports", "--duration", "250ms"],
+        ["port", "#Port<0.1>", "--sort", "memory"],
         ["sockets", "--app", "kernel"],
         ["gen-server-state", "server", "--info"],
         ["supervision-tree", "--app", "kernel", "--sort", "memory"],
