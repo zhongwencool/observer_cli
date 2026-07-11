@@ -13,7 +13,7 @@ jobs:
       matrix:
         include:
           - otp: '29'
-            rebar3: '3.26'
+            rebar3: '3.27'
           - otp: '28'
             rebar3: '3.24'
           - otp: '27'
