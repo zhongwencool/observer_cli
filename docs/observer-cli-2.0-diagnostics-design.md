@@ -106,7 +106,7 @@ observer_cli diagnose --observe 30s --app my_app
 
 | 领域 | 当前可复用边界 | 需要补的 CLI 边界 |
 | --- | --- | --- |
-| Runtime/System | `observer_cli_system` runtime 与 memory 字段 | 从 public BIF 重建不枚举 process/table/port/socket 的窄 probe；OS/allocator 默认不采 |
+| Runtime/System | `observer_cli_system` runtime、memory 与 allocator collector | 从 public BIF 重建 runtime/memory 窄 probe；显式 `memory` 复用现有 `recon_alloc` collector，snapshot/diagnose 默认不采 allocator |
 | Home/Processes | 当前 Top N 字段和 TUI 语义 | 新扫描器；机器诊断不能直接复用 `recon:proc_window/3` |
 | Process detail | 当前字段映射可参考 | 新的 explicit-key `process_info/2` probe；不能直接调用 `collect_process_info/1` |
 | Application | `observer_cli_application` 的 group-leader attribution 语义 | 用 public OTP API 重建有限 attribution；不复用 private `application:info/0` |
@@ -272,7 +272,7 @@ observer_cli tui diagnose COOKIE 1500
 | Command | 默认事实 | 关键选项 | 安全/成本边界 |
 | --- | --- | --- | --- |
 | `snapshot` | scan-free runtime、limits、memory、IO/GC、run-queue/peer context | `--deep`、`--json` | 默认不枚举 process/table/port/socket；scheduler/peer list 仍随 topology 增长 |
-| `memory` | `erlang:memory()`、persistent term summary、basic runtime | — | 单点 BEAM memory，不等于整机 RSS；默认不执行 `ps`/allocator scan |
+| `memory` | `erlang:memory()`、persistent term summary、basic runtime、allocator block size/ratio/cache hit | — | 单点 BEAM 与 `recon_alloc` 视角，不等于整机 RSS；不执行 `ps` 或资源枚举 |
 | `schedulers` | normal/dirty CPU utilization、run queue lengths | `--duration` | 临时 wall-time measurement，有 observer effect |
 | `distribution` | public connected visible/hidden peer 集合、controller queue/limit capability | `--limit` | controller peer 排除；不承诺 per-peer state 或 in/out |
 | `processes` | process Top N + safe metadata | `--sort`、`--limit`、`--duration` | 不读取 messages/dictionary/state |
@@ -286,6 +286,8 @@ observer_cli tui diagnose COOKIE 1500
 | `sockets` | OTP socket registry-known overview/counters | `--sort`、`--duration`、`--limit` | 不可见 registry-disabled sockets；enumeration error 不得伪装成 empty |
 
 `schedulers --duration` 使用两个 wall-time 样本，默认 1500 ms，最短 250 ms、最长 10 s；`network`/`sockets` 和 `processes --duration` 使用同一 250 ms–10 s 范围。它们只输出 measurement/context，不单独产生诊断 finding。`diagnose --observe` 范围 5–60 s；Trace 范围见第 11 节。`memory` v1 只采单点；增长判断统一由 `diagnose --observe` 完成。
+
+`memory` 的 allocator 子结构固定返回九种 util allocator 的 current/max MBCS、SBCS average block size（bytes）和 SBCS-to-MBCS ratio，以及按 instance 排序的 mseg cache hits、calls、hit rate。它复用 System TUI 已有的五次 `recon_alloc` 调用，不加入 snapshot/diagnose，也不扩展到 fragmentation、carrier size 或自动调参建议。
 
 `network`/`sockets` 无 duration 时输出 lifetime total 并标记 `sort_semantics=total`；有 duration 时只对两个样本中 generation 稳定的资源计算 delta 并标记 `sort_semantics=delta`。新生资源是 `baseline_missing`，counter 下降是 `counter_reset`，不能像当前 socket collector 一样 clamp 为 0。
 
@@ -943,6 +945,7 @@ Trace 因 count/rate 自然停止时仍是成功 capture，response 标记 `limi
 ### Slice D：Core inspection
 
 - `memory`、`schedulers`、`distribution`；
+- `memory` 显式补齐 System TUI 的 allocator block-size、ratio 与 cache-hit 结构化视角；
 - `processes/process`、`applications`；
 - `ets/mnesia`、`network/ports/sockets`；
 - 每个命令独立提交；只复用不触发敏感/无界读取的现有 helper。
@@ -989,6 +992,7 @@ Trace 因 count/rate 自然停止时仍是成功 capture，response 标记 `limi
 
 - 每个 command 的固定 sort allowlist/default/unit/total-vs-delta、unknown sort exit 2、stable tie；snapshot deep metrics 固定；
 - GC reclaimed words/optional bytes 与 IO bytes 的 target-wordsize/unit assertion；
+- `memory` allocator 九种类型、bytes/ratio 单位、instance 稳定排序、零 calls 和缺失 ratio；默认 snapshot/diagnose 不调用 allocator collector；
 - global GC counters 在 deep scan 下标 observer-contaminated；scheduler wall raw units 只能 opaque_same_window，不能出现 ns/us/ms 后缀；
 - equal-metric tie 在 hard-limit 边界仍确定；
 - JSON-safe recursive assertion；

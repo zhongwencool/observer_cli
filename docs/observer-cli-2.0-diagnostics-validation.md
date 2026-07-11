@@ -35,6 +35,10 @@ End-to-end OTP 29 escript checks also passed for `memory`, `processes`,
 `observer_cli.cli/v1`. The trace used a disposable node and cleaned the exact
 PID flag and MFA pattern.
 
+The allocator extension was rechecked on an OTP 29 disposable `-noshell` node.
+Both term and JSON `memory` commands exited 0 with complete `memory` and
+`allocator` probes, nine ordered util allocator rows, and cache instances 0-8.
+
 ## Section 21 proof map
 
 - **Parser/context:** `observer_cli_cli_test` covers all reserved verbs, legacy
@@ -47,7 +51,8 @@ PID flag and MFA pattern.
   cookie ordering, pre-distributed refusal, legacy startup once, exits 0-4,
   JSON-safe normalization, term round trips, redaction, UTF-8 tagging, caps,
   evidence pointers, and timeout/crash/heap/controller cleanup.
-- **Inspection:** snapshot and resource-specific tests cover exact allowlists,
+- **Inspection:** snapshot and resource-specific tests cover allocator block-size,
+  ratio, cache-hit schema and snapshot exclusion, exact allowlists,
   stable raw generations, atom-safe lookup, born/dead/reset handling,
   deterministic Top N, staged admission, observer exclusions, Mnesia units and
   ownership, socket registry coverage, no endpoint acquisition, counter-shape

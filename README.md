@@ -70,6 +70,9 @@ in a `0600` context file. It never stores the cookie or keeps a daemon connectio
 Every later command reconnects and probes the target; `disconnect` removes the saved
 context.
 
+`observer_cli memory` returns both BEAM memory totals and the System page's
+`recon_alloc` block-size, SBCS/MBCS ratio, and allocator cache-hit metrics.
+
 For stateless automation, pass the target and cookie source on every invocation:
 
 ```sh
@@ -102,7 +105,8 @@ validation evidence.
 
 ### Safety boundaries
 
-- **Low:** scan-free runtime and memory facts.
+- **Low:** scan-free snapshot runtime/memory facts and bounded allocator reads in the
+  explicit `memory` command.
 - **Medium:** inventories, sampling windows, deep snapshots, and diagnostics may scan
   admitted resources and perturb counters.
 - **High:** `gen-server-state`, application supervision inspection, and call tracing

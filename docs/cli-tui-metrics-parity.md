@@ -45,7 +45,7 @@ store 和 collector 进程，因此 process、port、atom、memory、reductions�
 | Network | `network` | 部分覆盖 | packet count、peer、queue/memory、port input/output |
 | Ports | `ports`、`port TARGET` | 已覆盖 | 列表字段及有界详情均覆盖；`locking` 为实现相关信息 |
 | Sockets | `sockets` | 部分覆盖 | general counters、endpoint/state/owner/fd、accept/max packet、详情 counters/options |
-| System | `snapshot`、`memory`、`schedulers`、`distribution`、`network` | 部分覆盖 | 主机 RSS/VSZ、CPU 拓扑细项、allocator 全页、distribution 连接细节 |
+| System | `snapshot`、`memory`、`schedulers`、`distribution`、`network` | 部分覆盖 | 主机 RSS/VSZ、CPU 拓扑细项、distribution 连接细节 |
 | ETS | `ets` | 已覆盖 | 包含 write/read concurrency |
 | Mnesia | `mnesia` | 部分覆盖 | type、owner、index、registered name |
 | App | `applications` | 部分覆盖 | version；`no_group` 只有数量，没有完整资源聚合行 |
@@ -293,14 +293,15 @@ CLI 的 `registry_known_count`、`use_registry`、born/gone/reset/shape-change l
 
 ### 9.2 Allocator
 
-System 页以下 allocator 指标在命令式 CLI 中全部未实现：
+`memory.data.memory.allocator` 已结构化覆盖 System 页的 allocator 指标：
 
 - 各 util allocator 的 current/max MBCS average block size；
 - current/max SBCS average block size；
 - current/max SBCS-to-MBCS ratio；
 - 每个 allocator instance 的 hits、calls、cache hit rate。
 
-CLI `memory` 只返回 `erlang:memory()` 视角，不能替代 TUI 的 `recon_alloc` 视角。
+block size 使用 bytes，ratio 保留原始数值；cache hit rows 按 instance ID 排序。默认
+`snapshot` 和 `diagnose` 仍不采 allocator，只有显式 `memory` 执行现有 `recon_alloc` collector。
 
 ### 9.3 Distribution
 
@@ -379,10 +380,9 @@ CLI 只列 local tables，并明确区分 RAM/disc memory bytes 与 disc-only di
 
 ### P2：成本或暴露面较高
 
-1. System allocator block size、SBCS/MBCS、cache hit 全页。
-2. Socket 的完整详情、完整 counters/options。
-3. Process messages、dictionary（保留有意不返回）。
-4. TUI plugin sheet 的通用 CLI 执行协议。
+1. Socket 的完整详情、完整 counters/options。
+2. Process messages、dictionary（保留有意不返回）。
+3. TUI plugin sheet 的通用 CLI 执行协议。
 
 不建议为了“字段完全相等”直接把 process state、messages、dictionary、完整 stacktrace 或完整
 socket options 塞进 `snapshot`。这些数据复制成本和敏感信息风险高；若要补，应保持独立、
@@ -404,4 +404,4 @@ socket options 塞进 `snapshot`。这些数据复制成本和敏感信息风险
 
 结论：命令式 CLI 已实现 TUI 的主要“资源是什么、当前多大、Top N 是谁”，但尚未实现
 TUI 的全部“详情和辅助上下文”。最明显的缺口集中在 Network、Process signals/GC、
-Ports detail、Sockets detail、System allocator，以及各页面只为人读而存在的扩展字段。
+Ports detail、Sockets detail，以及各页面只为人读而存在的扩展字段。

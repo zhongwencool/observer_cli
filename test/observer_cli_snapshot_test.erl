@@ -9,6 +9,57 @@
 capabilities_test() ->
     ?assertEqual(#{protocol_version => 1}, observer_cli_snapshot:capabilities()).
 
+allocator_data_test() ->
+    Data = observer_cli_snapshot:allocator_data(#{
+        average_block_curs => [
+            {binary_alloc, [{mbcs, 10.5}, {sbcs, 20}]},
+            {eheap_alloc, [{mbcs, 30}, {sbcs, 40}]}
+        ],
+        average_block_maxes => [
+            {binary_alloc, [{mbcs, 50}, {sbcs, 60}]},
+            {eheap_alloc, [{mbcs, 70}, {sbcs, 80}]}
+        ],
+        sbcs_to_mbcs_curs => [{binary_alloc, 0.25}],
+        sbcs_to_mbcs_maxes => [{binary_alloc, 0.5}],
+        cache_hit_info => [
+            {{instance, 2}, [{hit_rate, 0.5}, {hits, 2}, {calls, 4}]},
+            {{instance, 0}, [{hit_rate, 1.0}, {hits, 0}, {calls, 0}]}
+        ]
+    }),
+    [Binary, Eheap] = maps:get(util_allocators, Data),
+    ?assertEqual(binary_alloc, maps:get(allocator, Binary)),
+    ?assertEqual(10.5, maps:get(current_mbcs_average_block_size_bytes, Binary)),
+    ?assertEqual(0.5, maps:get(max_sbcs_to_mbcs_ratio, Binary)),
+    ?assertEqual(eheap_alloc, maps:get(allocator, Eheap)),
+    ?assertEqual(null, maps:get(current_sbcs_to_mbcs_ratio, Eheap)),
+    [First, Second] = maps:get(cache_hit_rates, Data),
+    ?assertEqual(0, maps:get(instance, First)),
+    ?assertEqual(0, maps:get(calls, First)),
+    ?assertEqual(2, maps:get(instance, Second)).
+
+memory_command_includes_allocator_metrics_test() ->
+    #{<<"status">> := <<"ok">>, <<"result">> := Response} =
+        observer_cli_snapshot:dispatch(self(), memory, #{}, options(5000, include)),
+    Capture = maps:get(<<"capture">>, Response),
+    assert_probe(<<"memory">>, true, <<"ok">>, Capture),
+    assert_probe(<<"allocator">>, true, <<"ok">>, Capture),
+    Allocator = maps:get(<<"allocator">>, maps:get(<<"memory">>, maps:get(<<"data">>, Response))),
+    ?assertEqual(9, length(maps:get(<<"util_allocators">>, Allocator))),
+    ?assert(lists:all(fun is_map/1, maps:get(<<"cache_hit_rates">>, Allocator))),
+    assert_json_safe(Response).
+
+memory_command_keeps_beam_data_when_allocator_fails_test() ->
+    Request = #{test_probe_outcomes => #{allocator => {error, probe_failed}}},
+    #{<<"status">> := <<"ok">>, <<"result">> := Response} =
+        observer_cli_snapshot:dispatch(self(), memory, Request, options(5000, include)),
+    ?assertEqual(<<"partial">>, maps:get(<<"status">>, maps:get(<<"capture">>, Response))),
+    Memory = maps:get(<<"memory">>, maps:get(<<"data">>, Response)),
+    ?assert(is_map(maps:get(<<"beam">>, Memory))),
+    ?assertEqual(null, maps:get(<<"allocator">>, Memory)),
+    [Error] = maps:get(<<"errors">>, Response),
+    ?assertEqual(<<"allocator">>, maps:get(<<"probe">>, Error)),
+    ?assertEqual(<<"probe_failed">>, maps:get(<<"reason_code">>, Error)).
+
 tui_resource_counts_match_snapshot_window_test() ->
     Tui = maps:get(
         sys_info,
@@ -133,7 +184,10 @@ default_snapshot_does_not_call_full_enumerators_test() ->
         {application, loaded_applications, 0},
         {application, which_applications, 0},
         {application, which_applications, 1},
-        {mnesia, system_info, 1}
+        {mnesia, system_info, 1},
+        {recon_alloc, average_block_sizes, 1},
+        {recon_alloc, sbcs_to_mbcs, 1},
+        {recon_alloc, cache_hit_rates, 0}
     ],
     lists:foreach(fun(MFA) -> erlang:trace_pattern(MFA, true, [local]) end, Enumerators),
     erlang:trace(new, true, [call, {tracer, Tracer}]),
@@ -621,7 +675,7 @@ runtime_inspection_commands() ->
     ),
     MemoryFacts = maps:get(<<"memory">>, maps:get(<<"data">>, Memory)),
     ?assertEqual(
-        [<<"beam">>, <<"persistent_term">>],
+        [<<"allocator">>, <<"beam">>, <<"persistent_term">>],
         lists:sort(maps:keys(MemoryFacts))
     ),
     Schedulers = inspection(schedulers, #{duration_ms => 250}),

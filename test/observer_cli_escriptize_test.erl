@@ -369,6 +369,10 @@ command_help_test() ->
         end,
         Commands
     ),
+    {ok, MemoryHelp} = observer_cli_test_io:capture_with_geometry(
+        24, 80, [], fun() -> observer_cli_escriptize:main(["memory", "--help"]) end
+    ),
+    observer_cli_test_io:assert_stable_fragments(MemoryHelp, ["BEAM memory", "allocator"]),
     {ok, ProcessesHelp} = observer_cli_test_io:capture_with_geometry(
         24, 80, [], fun() -> observer_cli_escriptize:main(["processes", "--help"]) end
     ),
@@ -842,6 +846,8 @@ fixture_probes(snapshot) ->
     [fixture_probe(Id) || Id <- [<<"runtime">>, <<"resources">>, <<"memory">>]];
 fixture_probes(diagnose) ->
     [fixture_probe(<<"core_limits">>)];
+fixture_probes(memory) ->
+    [fixture_probe(Id) || Id <- [<<"memory">>, <<"allocator">>]];
 fixture_probes(trace_call) ->
     [fixture_probe(<<"trace">>)];
 fixture_probes(Command) ->
@@ -859,7 +865,7 @@ fixture_probe(Id) ->
     }.
 
 fixture_data(memory) ->
-    #{<<"runtime">> => #{}, <<"memory">> => #{}};
+    #{<<"runtime">> => #{}, <<"memory">> => #{<<"allocator">> => #{}}};
 fixture_data(trace_call) ->
     #{<<"reason">> => <<"completed">>, <<"trace">> => #{}};
 fixture_data(_Command) ->

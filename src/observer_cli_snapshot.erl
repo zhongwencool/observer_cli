@@ -18,6 +18,7 @@
 
 -ifdef(TEST).
 -export([
+    allocator_data/1,
     scheduler_window/2,
     measure_scheduler/4,
     distribution_context/7,
@@ -911,15 +912,105 @@ deep_probe_result(Id, {error, Reason}, Duration) ->
 deep_probe_result(Id, _Invalid, Duration) ->
     {probe_report(Id, false, error, invalid_probe_result, Duration, 0, []), undefined}.
 
-capture_memory(Request, Context) when is_map(Request) ->
-    capture_inspection(memory, memory, 1, Context, fun() ->
-        {ok, Runtime, _} = runtime_probe(),
-        {ok, Memory, _Coverage} = memory_probe(),
-        {Runtime, #{runtime => Runtime, memory => maps:with([beam, persistent_term], Memory)},
-            [target_identity, otp_runtime, beam_memory, persistent_term_summary], []}
-    end);
+capture_memory(Request, #{deadline := Deadline, controller := Controller}) when is_map(Request) ->
+    StartedAt = erlang:system_time(millisecond),
+    StartedMonotonic = erlang:monotonic_time(millisecond),
+    ModuleLoaded = module_loaded(),
+    Probes = [
+        run_snapshot_probe(memory, true, fun memory_command_probe/0, Request, Deadline),
+        run_snapshot_probe(allocator, true, fun allocator_probe/0, Request, Deadline)
+    ],
+    FinishedMonotonic = erlang:monotonic_time(millisecond),
+    FinishedAt = erlang:system_time(millisecond),
+    ProbeReports = [Report || {Report, _Data} <- Probes],
+    MemoryData = memory_command_data(Probes),
+    #{
+        schema => <<"observer_cli.cli/v1">>,
+        command => memory,
+        target => memory_command_target(MemoryData),
+        capture => #{
+            status => capture_status(ProbeReports),
+            started_at => rfc3339(StartedAt),
+            finished_at => rfc3339(FinishedAt),
+            duration_ms => FinishedMonotonic - StartedMonotonic,
+            probes => ProbeReports,
+            observer_effects => observer_effects(ModuleLoaded, Controller)
+        },
+        data => MemoryData,
+        warnings => probe_warnings(ProbeReports),
+        errors => probe_errors(ProbeReports)
+    };
 capture_memory(_Request, _Context) ->
     {probe_error, invalid_request}.
+
+memory_command_probe() ->
+    {ok, Runtime, _} = runtime_probe(),
+    {ok, Memory, _} = memory_probe(),
+    {ok, #{runtime => Runtime, memory => maps:with([beam, persistent_term], Memory)}, [
+        target_identity, otp_runtime, beam_memory, persistent_term_summary
+    ]}.
+
+allocator_probe() ->
+    {ok, allocator_data(observer_cli_system:collect_allocator_info()), [
+        allocator_average_block_sizes, allocator_sbcs_to_mbcs, allocator_cache_hit_rates
+    ]}.
+
+memory_command_data(Probes) ->
+    case probe_data(memory, Probes) of
+        #{memory := Memory} = Data ->
+            Data#{memory := Memory#{allocator => allocator_probe_data(Probes)}};
+        _ ->
+            null
+    end.
+
+allocator_probe_data(Probes) ->
+    case probe_data(allocator, Probes) of
+        Data when is_map(Data) -> Data;
+        _ -> null
+    end.
+
+memory_command_target(#{runtime := Runtime}) -> target_from_runtime(Runtime);
+memory_command_target(_) -> null.
+
+allocator_data(#{
+    average_block_curs := Current,
+    average_block_maxes := Max,
+    sbcs_to_mbcs_curs := CurrentRatios,
+    sbcs_to_mbcs_maxes := MaxRatios,
+    cache_hit_info := CacheHitInfo
+}) ->
+    CurrentMap = maps:from_list(Current),
+    MaxMap = maps:from_list(Max),
+    CurrentRatioMap = maps:from_list(CurrentRatios),
+    MaxRatioMap = maps:from_list(MaxRatios),
+    #{
+        util_allocators => [
+            allocator_row(Type, CurrentMap, MaxMap, CurrentRatioMap, MaxRatioMap)
+         || Type <- lists:sort(maps:keys(CurrentMap))
+        ],
+        cache_hit_rates => [cache_hit_row(Item) || Item <- lists:keysort(1, CacheHitInfo)]
+    }.
+
+allocator_row(Type, Current, Max, CurrentRatios, MaxRatios) ->
+    CurrentValues = maps:get(Type, Current, []),
+    MaxValues = maps:get(Type, Max, []),
+    #{
+        allocator => Type,
+        current_mbcs_average_block_size_bytes => proplists:get_value(mbcs, CurrentValues, null),
+        max_mbcs_average_block_size_bytes => proplists:get_value(mbcs, MaxValues, null),
+        current_sbcs_average_block_size_bytes => proplists:get_value(sbcs, CurrentValues, null),
+        max_sbcs_average_block_size_bytes => proplists:get_value(sbcs, MaxValues, null),
+        current_sbcs_to_mbcs_ratio => maps:get(Type, CurrentRatios, null),
+        max_sbcs_to_mbcs_ratio => maps:get(Type, MaxRatios, null)
+    }.
+
+cache_hit_row({{instance, Instance}, Values}) ->
+    #{
+        instance => Instance,
+        hits => proplists:get_value(hits, Values),
+        calls => proplists:get_value(calls, Values),
+        cache_hit_rate => proplists:get_value(hit_rate, Values)
+    }.
 
 capture_schedulers(#{duration_ms := Duration}, Context) when
     is_integer(Duration), Duration >= 250, Duration =< 10000

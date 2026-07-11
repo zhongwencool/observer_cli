@@ -109,7 +109,7 @@ usage() ->
         "  snapshot            Collect a point-in-time VM fact bundle\n"
         "\n"
         "Inspection:\n"
-        "  memory              Show VM memory usage\n"
+        "  memory              Show VM memory and allocator usage\n"
         "  schedulers          Measure scheduler utilization and run queues\n"
         "  distribution        Show connected Erlang nodes\n"
         "  processes           List top processes\n"
@@ -211,7 +211,7 @@ command_help("diagnose") ->
 command_help("memory") ->
     remote_help(
         "memory",
-        "Show point-in-time BEAM memory and runtime facts. This is not host RSS.",
+        "Show point-in-time BEAM memory, allocator, and runtime facts. This is not host RSS.",
         "",
         "  observer_cli memory\n"
     );
@@ -1169,7 +1169,7 @@ valid_command_payload(Command, #{<<"data">> := Data} = Response, Probes) ->
         snapshot ->
             is_map(Data);
         memory ->
-            valid_map_fields(Data, [<<"runtime">>, <<"memory">>]);
+            valid_memory_data(Data);
         schedulers ->
             valid_map_fields(Data, [<<"status">>]);
         distribution ->
@@ -1197,6 +1197,11 @@ valid_map_fields(Data, Fields) when is_map(Data) ->
 valid_map_fields(_Data, _Fields) ->
     false.
 
+valid_memory_data(#{<<"runtime">> := Runtime, <<"memory">> := Memory}) ->
+    is_map(Runtime) andalso is_map(Memory) andalso maps:is_key(<<"allocator">>, Memory);
+valid_memory_data(_Data) ->
+    false.
+
 valid_list_command_payload(Command, Data, [Probe]) when
     Command =:= processes;
     Command =:= applications;
@@ -1221,6 +1226,11 @@ valid_required_probes(snapshot, Status, Probes) ->
 valid_required_probes(diagnose, Status, Probes) ->
     Required = [Probe || #{<<"required">> := true} = Probe <- Probes],
     [maps:get(<<"id">>, Probe) || Probe <- Required] =:= [<<"core_limits">>] andalso
+        probe_statuses_match_capture(Status, Required, Probes);
+valid_required_probes(memory, Status, Probes) ->
+    Required = [Probe || #{<<"required">> := true} = Probe <- Probes],
+    lists:sort([maps:get(<<"id">>, Probe) || Probe <- Required]) =:=
+        [<<"allocator">>, <<"memory">>] andalso
         probe_statuses_match_capture(Status, Required, Probes);
 valid_required_probes(Command, Status, Probes) ->
     RequiredId = required_probe_id(Command),

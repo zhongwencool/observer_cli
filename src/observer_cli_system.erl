@@ -7,7 +7,7 @@
 -include_lib("kernel/include/net_address.hrl").
 
 %% API
--export([start/1]).
+-export([start/1, collect_allocator_info/0]).
 
 -ifdef(TEST).
 -export([
@@ -97,6 +97,7 @@ split_os_process_info(SysInfo) ->
         SysInfo
     ).
 
+-spec collect_allocator_info() -> map().
 collect_allocator_info() ->
     #{
         cache_hit_info => recon_alloc:cache_hit_rates(),
