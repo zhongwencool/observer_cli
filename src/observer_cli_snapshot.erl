@@ -2,6 +2,10 @@
 
 -export([capabilities/0, dispatch/4, normalize/2, truncate/1]).
 
+-ifdef(TEST).
+-export([scheduler_window/2, measure_scheduler/4, distribution_context/7]).
+-endif.
+
 -define(PROTOCOL_VERSION, 1).
 -define(TARGET_MARGIN_MS, 1000).
 -define(MAX_HEAP_WORDS, 8 * 1024 * 1024).
@@ -193,11 +197,23 @@ probe(test_heap, Observer, _Context) ->
     lists:seq(1, 1000000);
 probe(snapshot, Request, Context) ->
     capture_snapshot(Request, Context);
+probe(memory, Request, Context) ->
+    capture_memory(Request, Context);
+probe(schedulers, Request, Context) ->
+    capture_schedulers(Request, Context);
+probe(distribution, Request, Context) ->
+    capture_distribution(Request, Context);
 probe(_Command, _Request, _Context) ->
     {probe_error, capability_unavailable}.
 -else.
 probe(snapshot, Request, Context) ->
     capture_snapshot(Request, Context);
+probe(memory, Request, Context) ->
+    capture_memory(Request, Context);
+probe(schedulers, Request, Context) ->
+    capture_schedulers(Request, Context);
+probe(distribution, Request, Context) ->
+    capture_distribution(Request, Context);
 probe(_Command, _Request, _Context) ->
     {probe_error, capability_unavailable}.
 -endif.
@@ -240,6 +256,81 @@ capture_snapshot(Request, #{deadline := Deadline, controller := Controller}) whe
     };
 capture_snapshot(_Request, _Context) ->
     {probe_error, invalid_request}.
+
+capture_memory(Request, Context) when is_map(Request) ->
+    capture_inspection(memory, memory, 1, Context, fun() ->
+        {ok, Runtime, _} = runtime_probe(),
+        {ok, Memory, _Coverage} = memory_probe(),
+        {Runtime, #{runtime => Runtime, memory => maps:with([beam, persistent_term], Memory)},
+            [target_identity, otp_runtime, beam_memory, persistent_term_summary], []}
+    end);
+capture_memory(_Request, _Context) ->
+    {probe_error, invalid_request}.
+
+capture_schedulers(#{duration_ms := Duration}, Context) when
+    is_integer(Duration), Duration >= 250, Duration =< 10000
+->
+    capture_inspection(schedulers, scheduler_wall_time, 2, Context, fun() ->
+        {ok, Runtime, _} = runtime_probe(),
+        Window = measure_scheduler(
+            Duration,
+            fun(Enabled) -> erlang:system_flag(scheduler_wall_time, Enabled) end,
+            fun scheduler_sample/0,
+            fun timer:sleep/1
+        ),
+        {Runtime, Window, [scheduler_wall_time, scheduler_topology, run_queue_non_atomic], [
+            #{
+                id => scheduler_wall_time,
+                temporary_enable => true,
+                observer_contaminated => true
+            }
+        ]}
+    end);
+capture_schedulers(_Request, _Context) ->
+    {probe_error, invalid_duration}.
+
+capture_distribution(Request, #{controller := Controller} = Context) when is_map(Request) ->
+    Limit = maps:get(limit, Request, 20),
+    case is_integer(Limit) andalso Limit >= 1 andalso Limit =< 200 of
+        true ->
+            capture_inspection(distribution, distribution, 1, Context, fun() ->
+                {ok, Runtime, _} = runtime_probe(),
+                {ok, Distribution, Coverage} = distribution_probe(Controller, Limit),
+                {Runtime, Distribution, Coverage, []}
+            end);
+        false ->
+            {probe_error, invalid_limit}
+    end;
+capture_distribution(_Request, _Context) ->
+    {probe_error, invalid_request}.
+
+capture_inspection(Command, ProbeId, Samples, #{controller := Controller}, Fun) ->
+    StartedAt = erlang:system_time(millisecond),
+    StartedMonotonic = erlang:monotonic_time(millisecond),
+    ModuleLoaded = code:is_loaded(?MODULE) =/= false,
+    {Runtime, Data, Coverage, ExtraEffects} = Fun(),
+    FinishedMonotonic = erlang:monotonic_time(millisecond),
+    FinishedAt = erlang:system_time(millisecond),
+    #{
+        schema => <<"observer_cli.cli/v1">>,
+        command => Command,
+        target => target_from_runtime(Runtime),
+        capture => #{
+            status => complete,
+            started_at => rfc3339(StartedAt),
+            finished_at => rfc3339(FinishedAt),
+            duration_ms => FinishedMonotonic - StartedMonotonic,
+            probes => [
+                probe_report(
+                    ProbeId, true, ok, null, FinishedMonotonic - StartedMonotonic, Samples, Coverage
+                )
+            ],
+            observer_effects => observer_effects(ModuleLoaded, Controller) ++ ExtraEffects
+        },
+        data => Data,
+        warnings => [],
+        errors => []
+    }.
 
 run_snapshot_probe(Id, Required, Fun, Request, Deadline) ->
     Started = erlang:monotonic_time(millisecond),
@@ -388,14 +479,231 @@ schedulers_probe() ->
         },
         [scheduler_topology, run_queue_non_atomic]}.
 
+measure_scheduler(Duration, FlagFun, SampleFun, SleepFun) ->
+    _ = FlagFun(true),
+    try
+        First = SampleFun(),
+        ok = SleepFun(Duration),
+        Second = SampleFun(),
+        scheduler_window(First, Second)
+    after
+        _ = FlagFun(false)
+    end.
+
+scheduler_sample() ->
+    #{
+        topology => scheduler_topology(),
+        wall_time => erlang:statistics(scheduler_wall_time),
+        run_queue_lengths => erlang:statistics(run_queue_lengths),
+        monotonic_ms => erlang:monotonic_time(millisecond)
+    }.
+
+scheduler_topology() ->
+    #{
+        schedulers_configured => erlang:system_info(schedulers),
+        schedulers_online => erlang:system_info(schedulers_online),
+        dirty_cpu_schedulers_configured => erlang:system_info(dirty_cpu_schedulers),
+        dirty_cpu_schedulers_online => erlang:system_info(dirty_cpu_schedulers_online)
+    }.
+
+scheduler_window(#{topology := Topology} = First, #{topology := Topology} = Second) ->
+    case scheduler_window_data(Topology, First, Second) of
+        {ok, Window} -> Window#{status => valid};
+        {error, Reason} -> invalid_scheduler_window(Reason)
+    end;
+scheduler_window(#{topology := _}, #{topology := _}) ->
+    invalid_scheduler_window(topology_changed);
+scheduler_window(_First, _Second) ->
+    invalid_scheduler_window(invalid_sample).
+
+scheduler_window_data(Topology, First, Second) ->
+    Schedulers = maps:get(schedulers_configured, Topology),
+    SchedulersOnline = maps:get(schedulers_online, Topology),
+    DirtyOnline = maps:get(dirty_cpu_schedulers_online, Topology),
+    NormalIds = lists:seq(1, SchedulersOnline),
+    DirtyIds = lists:seq(Schedulers + 1, Schedulers + DirtyOnline),
+    with_wall_maps(First, Second, fun(FirstWall, SecondWall) ->
+        case
+            {
+                pool_delta(NormalIds, FirstWall, SecondWall),
+                pool_delta(DirtyIds, FirstWall, SecondWall),
+                run_queue_window(SchedulersOnline, First, Second),
+                interval_ms(First, Second)
+            }
+        of
+            {{ok, Normal}, {ok, Dirty}, {ok, RunQueues}, {ok, Interval}} ->
+                {ok, #{
+                    interval_ms => Interval,
+                    topology => Topology,
+                    normal => Normal,
+                    dirty_cpu => Dirty,
+                    run_queues => RunQueues,
+                    wall_time_unit => opaque_same_window,
+                    observer_effects => [scheduler_wall_time_worker, run_queue_sampler]
+                }};
+            {{error, Reason}, _, _, _} ->
+                {error, Reason};
+            {_, {error, Reason}, _, _} ->
+                {error, Reason};
+            {_, _, {error, Reason}, _} ->
+                {error, Reason};
+            {_, _, _, {error, Reason}} ->
+                {error, Reason}
+        end
+    end).
+
+with_wall_maps(First, Second, Fun) ->
+    case
+        {
+            wall_map(maps:get(wall_time, First, invalid)),
+            wall_map(maps:get(wall_time, Second, invalid))
+        }
+    of
+        {{ok, FirstWall}, {ok, SecondWall}} -> Fun(FirstWall, SecondWall);
+        {{error, Reason}, _} -> {error, Reason};
+        {_, {error, Reason}} -> {error, Reason}
+    end.
+
+wall_map(WallTime) when is_list(WallTime) ->
+    wall_map(WallTime, #{});
+wall_map(_WallTime) ->
+    {error, invalid_counter_shape}.
+
+wall_map([{Id, Active, Total} | Rest], Acc) when
+    is_integer(Id), is_integer(Active), Active >= 0, is_integer(Total), Total >= 0
+->
+    case maps:is_key(Id, Acc) of
+        true -> {error, duplicate_scheduler_id};
+        false -> wall_map(Rest, Acc#{Id => {Active, Total}})
+    end;
+wall_map([], Acc) ->
+    {ok, Acc};
+wall_map(_Invalid, _Acc) ->
+    {error, invalid_counter_shape}.
+
+pool_delta([], _First, _Second) ->
+    {ok, #{status => unavailable, reason_code => no_online_schedulers}};
+pool_delta(Ids, First, Second) ->
+    case pool_counters(Ids, First, Second, 0, 0) of
+        {ok, ActiveDelta, TotalDelta} when TotalDelta > 0 ->
+            {ok, #{
+                status => available,
+                utilization_ratio => ActiveDelta / TotalDelta,
+                active_delta => #{value => ActiveDelta, unit => opaque_same_window},
+                total_delta => #{value => TotalDelta, unit => opaque_same_window}
+            }};
+        {ok, _ActiveDelta, _TotalDelta} ->
+            {error, zero_denominator};
+        Error ->
+            Error
+    end.
+
+pool_counters([Id | Rest], First, Second, ActiveAcc, TotalAcc) ->
+    case {maps:find(Id, First), maps:find(Id, Second)} of
+        {{ok, {FirstActive, FirstTotal}}, {ok, {SecondActive, SecondTotal}}} when
+            SecondActive >= FirstActive, SecondTotal >= FirstTotal
+        ->
+            pool_counters(
+                Rest,
+                First,
+                Second,
+                ActiveAcc + SecondActive - FirstActive,
+                TotalAcc + SecondTotal - FirstTotal
+            );
+        {{ok, _}, {ok, _}} ->
+            {error, counter_reset};
+        _ ->
+            {error, missing_scheduler_id}
+    end;
+pool_counters([], _First, _Second, ActiveAcc, TotalAcc) ->
+    {ok, ActiveAcc, TotalAcc}.
+
+run_queue_window(SchedulersOnline, First, Second) ->
+    case
+        {
+            run_queue_sample(SchedulersOnline, maps:get(run_queue_lengths, First, invalid)),
+            run_queue_sample(SchedulersOnline, maps:get(run_queue_lengths, Second, invalid))
+        }
+    of
+        {{ok, FirstNormal, FirstDirty}, {ok, SecondNormal, SecondDirty}} ->
+            {ok, #{
+                snapshot_atomic => false,
+                semantics => runnable_or_running_observation_not_backlog,
+                observer_contaminated => true,
+                normal => #{
+                    start_observed_runnable_count_including_observer => FirstNormal,
+                    end_observed_runnable_count_including_observer => SecondNormal
+                },
+                dirty_cpu => #{
+                    start_observed_runnable_count_including_observer => FirstDirty,
+                    end_observed_runnable_count_including_observer => SecondDirty
+                }
+            }};
+        _ ->
+            {error, invalid_run_queue_shape}
+    end.
+
+run_queue_sample(SchedulersOnline, Queues) when
+    is_list(Queues), length(Queues) > SchedulersOnline
+->
+    case lists:all(fun(Value) -> is_integer(Value) andalso Value >= 0 end, Queues) of
+        true ->
+            {ok, lists:sum(lists:sublist(Queues, SchedulersOnline)), lists:last(Queues)};
+        false ->
+            error
+    end;
+run_queue_sample(_SchedulersOnline, _Queues) ->
+    error.
+
+interval_ms(#{monotonic_ms := First}, #{monotonic_ms := Second}) when Second >= First ->
+    {ok, Second - First};
+interval_ms(_First, _Second) ->
+    {error, invalid_interval}.
+
+invalid_scheduler_window(Reason) ->
+    #{
+        status => invalid,
+        reason_code => Reason,
+        wall_time_unit => opaque_same_window,
+        run_queue_snapshot_atomic => false,
+        run_queue_semantics => runnable_or_running_observation_not_backlog,
+        observer_contaminated => true
+    }.
+
 distribution_probe(Controller) ->
-    Connected = erlang:nodes(connected),
-    Visible = erlang:nodes(visible),
-    Hidden = erlang:nodes(hidden),
-    ControllerNode = controller_node(Controller),
-    KeptConnected = exclude_node(ControllerNode, Connected),
-    KeptVisible = exclude_node(ControllerNode, Visible),
-    KeptHidden = exclude_node(ControllerNode, Hidden),
+    distribution_probe(Controller, infinity).
+
+distribution_probe(Controller, Limit) ->
+    DistCtrl = safe_system_info(dist_ctrl),
+    BusyLimit = safe_system_info(dist_buf_busy_limit),
+    Data = distribution_context(
+        controller_node(Controller),
+        erlang:nodes(connected),
+        erlang:nodes(visible),
+        erlang:nodes(hidden),
+        DistCtrl,
+        BusyLimit,
+        fun(Port) -> erlang:port_info(Port, queue_size) end
+    ),
+    {ok, limit_distribution(Data, Limit), [
+        public_connected_peers,
+        visible_hidden_classification,
+        documented_controller_queue_context
+    ]}.
+
+safe_system_info(Key) ->
+    try erlang:system_info(Key) of
+        Value -> {ok, Value}
+    catch
+        _:_ -> {unavailable, capability_unavailable}
+    end.
+
+distribution_context(
+    ControllerNode, Connected, Visible, Hidden, DistCtrl, BusyLimit, PortInfoFun
+) ->
+    KeptConnected = lists:sort(exclude_node(ControllerNode, Connected)),
+    KeptVisible = lists:sort(exclude_node(ControllerNode, Visible)),
+    KeptHidden = lists:sort(exclude_node(ControllerNode, Hidden)),
     Exclusions =
         case ControllerNode =/= undefined andalso lists:member(ControllerNode, Connected) of
             true ->
@@ -403,15 +711,86 @@ distribution_probe(Controller) ->
             false ->
                 []
         end,
-    {ok,
+    #{
+        state => peer_state(KeptConnected),
+        connected_peer_count => length(KeptConnected),
+        connected_peers => peer_identifiers(KeptConnected),
+        visible_peers => peer_identifiers(KeptVisible),
+        hidden_peers => peer_identifiers(KeptHidden),
+        excluded_peers => Exclusions,
+        controller_queue_capability => controller_queue_capability(DistCtrl, BusyLimit),
+        controller_queues => controller_queues(
+            KeptConnected, DistCtrl, BusyLimit, PortInfoFun
+        ),
+        queue_semantics => context_only_not_backlog_health
+    }.
+
+controller_queue_capability({ok, Controllers}, {ok, BusyLimit}) when
+    is_list(Controllers), is_integer(BusyLimit), BusyLimit >= 0
+->
+    #{status => available};
+controller_queue_capability(_DistCtrl, _BusyLimit) ->
+    #{status => unavailable, reason_code => capability_unavailable}.
+
+controller_queues(Peers, {ok, Controllers}, {ok, BusyLimit}, PortInfoFun) when
+    is_list(Controllers), is_integer(BusyLimit), BusyLimit >= 0
+->
+    [controller_queue(Peer, Controllers, BusyLimit, PortInfoFun) || Peer <- Peers];
+controller_queues(Peers, _DistCtrl, _BusyLimit, _PortInfoFun) ->
+    [
         #{
-            state => peer_state(KeptConnected),
-            connected_peers => peer_identifiers(KeptConnected),
-            visible_peers => peer_identifiers(KeptVisible),
-            hidden_peers => peer_identifiers(KeptHidden),
-            excluded_peers => Exclusions
-        },
-        [public_connected_peers, visible_hidden_classification]}.
+            peer => {identifier, peer, Peer},
+            status => unavailable,
+            reason_code => capability_unavailable
+        }
+     || Peer <- Peers
+    ].
+
+controller_queue(Peer, Controllers, BusyLimit, PortInfoFun) ->
+    case lists:keyfind(Peer, 1, Controllers) of
+        {Peer, Port} when is_port(Port) ->
+            try PortInfoFun(Port) of
+                {queue_size, QueueSize} when is_integer(QueueSize), QueueSize >= 0 ->
+                    #{
+                        peer => {identifier, peer, Peer},
+                        status => available,
+                        observed_queue_size_bytes => QueueSize,
+                        busy_limit_bytes => BusyLimit,
+                        health_inference => unavailable
+                    };
+                _ ->
+                    unavailable_controller_queue(Peer)
+            catch
+                _:_ -> unavailable_controller_queue(Peer)
+            end;
+        _ ->
+            unavailable_controller_queue(Peer)
+    end.
+
+unavailable_controller_queue(Peer) ->
+    #{
+        peer => {identifier, peer, Peer},
+        status => unavailable,
+        reason_code => capability_unavailable
+    }.
+
+limit_distribution(Data, infinity) ->
+    Data#{truncated => false};
+limit_distribution(Data, Limit) ->
+    Connected = maps:get(connected_peers, Data),
+    Kept = lists:sublist(Connected, Limit),
+    Data#{
+        connected_peers => Kept,
+        visible_peers => [Peer || Peer <- maps:get(visible_peers, Data), lists:member(Peer, Kept)],
+        hidden_peers => [Peer || Peer <- maps:get(hidden_peers, Data), lists:member(Peer, Kept)],
+        controller_queues => [
+            Queue
+         || #{peer := Peer} = Queue <- maps:get(controller_queues, Data),
+            lists:member(Peer, Kept)
+        ],
+        returned_peer_count => length(Kept),
+        truncated => length(Connected) > Limit
+    }.
 
 controller_node(Controller) when is_pid(Controller) -> node(Controller);
 controller_node(_Controller) -> undefined.
@@ -429,11 +808,14 @@ text_system_info(Key) ->
 
 target_from_probes(Probes) ->
     case probe_data(runtime, Probes) of
-        #{node := Node, otp_release := OtpRelease} ->
-            #{node => Node, otp_release => OtpRelease};
+        Runtime when is_map(Runtime) ->
+            target_from_runtime(Runtime);
         _ ->
             null
     end.
+
+target_from_runtime(#{node := Node, otp_release := OtpRelease}) ->
+    #{node => Node, otp_release => OtpRelease}.
 
 snapshot_data(Probes) ->
     lists:foldl(

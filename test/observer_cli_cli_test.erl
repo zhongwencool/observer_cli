@@ -347,6 +347,41 @@ timeout_validation_test() ->
         ["0", "121s", "forever"]
     ).
 
+scheduler_duration_and_deadline_validation_test() ->
+    ?assertEqual({ok, 1500}, observer_cli_cli:duration(#{})),
+    ?assertEqual({ok, 250}, observer_cli_cli:duration(#{duration => "250ms"})),
+    ?assertEqual({ok, 10000}, observer_cli_cli:duration(#{duration => "10s"})),
+    ?assertEqual({ok, 15000}, observer_cli_cli:timeout(#{duration => "10s"})),
+    lists:foreach(
+        fun(Text) ->
+            assert_argument_error(
+                invalid_duration,
+                observer_cli_cli:parse(["schedulers", "--duration", Text])
+            )
+        end,
+        ["249ms", "10001ms", "forever"]
+    ),
+    assert_argument_error(
+        timeout_too_short,
+        observer_cli_cli:parse([
+            "schedulers", "--duration", "10s", "--timeout", "14999ms"
+        ])
+    ),
+    ?assertMatch(
+        {ok, #{command := schedulers}},
+        observer_cli_cli:parse([
+            "schedulers", "--duration", "10s", "--timeout", "15s"
+        ])
+    ),
+    ?assertMatch(
+        {ok, #{command := distribution}},
+        observer_cli_cli:parse(["distribution", "--limit", "200"])
+    ),
+    assert_argument_error(
+        invalid_limit,
+        observer_cli_cli:parse(["distribution", "--limit", "201"])
+    ).
+
 response_envelope_test() ->
     Capture = #{<<"status">> => <<"complete">>},
     Data = #{<<"memory_bytes">> => 42},

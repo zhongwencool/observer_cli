@@ -6,6 +6,7 @@
     parse/1,
     target/1,
     cookie_source/1,
+    duration/1,
     timeout/1,
     context_options/1,
     save_context/1,
@@ -73,7 +74,7 @@ parse_command(Command, Arguments) ->
     parse_command(Command, Arguments, [], #{}).
 
 parse_command(Command, [], Positionals, Options) ->
-    case validate_options(Options) of
+    case validate_options(Command, Options) of
         ok ->
             {ok, #{
                 route => command,
@@ -110,8 +111,9 @@ add_option(_Command, _Rest, _Positionals, Options, Key, _Value) when is_map_key(
 add_option(Command, Rest, Positionals, Options, Key, Value) ->
     parse_command(Command, Rest, Positionals, Options#{Key => Value}).
 
-validate_options(Options) ->
+validate_options(Command, Options) ->
     validate_exclusive_options(
+        Command,
         Options,
         [
             {cookie_env, cookie_file},
@@ -120,23 +122,45 @@ validate_options(Options) ->
         ]
     ).
 
-validate_exclusive_options(Options, [{Left, Right} | Rest]) ->
+validate_exclusive_options(Command, Options, [{Left, Right} | Rest]) ->
     case maps:is_key(Left, Options) andalso maps:is_key(Right, Options) of
         true ->
             {error, {mutually_exclusive_options, Left, Right}};
         false ->
-            validate_exclusive_options(Options, Rest)
+            validate_exclusive_options(Command, Options, Rest)
     end;
-validate_exclusive_options(Options, []) ->
-    validate_format_options(Options).
+validate_exclusive_options(Command, Options, []) ->
+    validate_format_options(Command, Options).
 
-validate_format_options(#{json := true, format := Format}) when Format =/= "json" ->
+validate_format_options(_Command, #{json := true, format := Format}) when Format =/= "json" ->
     {error, {mutually_exclusive_options, json, format}};
-validate_format_options(#{format := Format}) when
+validate_format_options(_Command, #{format := Format}) when
     Format =/= "text", Format =/= "json", Format =/= "term"
 ->
     {error, {unsupported_format, Format}};
-validate_format_options(Options) ->
+validate_format_options(Command, Options) ->
+    validate_runtime_options(Command, Options).
+
+validate_runtime_options(schedulers, Options) ->
+    case duration(Options) of
+        {ok, Duration} -> validate_scheduler_timeout(Options, Duration);
+        {error, Reason} -> {error, Reason}
+    end;
+validate_runtime_options(distribution, #{limit := Text} = Options) ->
+    case positive_integer(Text) of
+        Limit when is_integer(Limit), Limit =< 200 -> validate_target_options(Options);
+        _ -> {error, invalid_limit}
+    end;
+validate_runtime_options(_Command, Options) ->
+    validate_target_options(Options).
+
+validate_scheduler_timeout(#{timeout := _} = Options, Duration) ->
+    case timeout_value(Options) of
+        {ok, Timeout} when Timeout >= Duration + 5000 -> validate_target_options(Options);
+        {ok, _Timeout} -> {error, timeout_too_short};
+        {error, Reason} -> {error, Reason}
+    end;
+validate_scheduler_timeout(Options, _Duration) ->
     validate_target_options(Options).
 
 validate_target_options(#{name_mode := Mode}) when Mode =/= "short", Mode =/= "long" ->
@@ -194,16 +218,35 @@ cookie_source(#{cookie_file := Path}) ->
 cookie_source(_Options) ->
     {error, missing_cookie_source}.
 
+-spec duration(map()) -> {ok, pos_integer()} | {error, atom()}.
+duration(#{duration := Text}) ->
+    case duration_ms(Text) of
+        Milliseconds when is_integer(Milliseconds), Milliseconds >= 250, Milliseconds =< 10000 ->
+            {ok, Milliseconds};
+        _ ->
+            {error, invalid_duration}
+    end;
+duration(_Options) ->
+    {ok, 1500}.
+
 -spec timeout(map()) -> {ok, pos_integer()} | {error, atom()}.
-timeout(#{timeout := Text}) ->
+timeout(#{timeout := _Text} = Options) ->
+    timeout_value(Options);
+timeout(#{duration := _Text} = Options) ->
+    case duration(Options) of
+        {ok, Duration} -> {ok, max(10000, Duration + 5000)};
+        {error, _Reason} -> {error, invalid_duration}
+    end;
+timeout(_Options) ->
+    {ok, 10000}.
+
+timeout_value(#{timeout := Text}) ->
     case duration_ms(Text) of
         Milliseconds when is_integer(Milliseconds), Milliseconds > 0, Milliseconds =< 120000 ->
             {ok, Milliseconds};
         _ ->
             {error, invalid_timeout}
-    end;
-timeout(_Options) ->
-    {ok, 10000}.
+    end.
 
 -spec context_options(map()) -> {ok, map()} | {error, atom()}.
 context_options(#{node := _Node} = Options) ->

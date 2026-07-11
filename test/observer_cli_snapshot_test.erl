@@ -142,6 +142,147 @@ local_snapshot_text_and_term_envelopes_test() ->
     {ok, Tokens, _EndLocation} = erl_scan:string(binary_to_list(Term)),
     ?assertEqual({ok, Response}, erl_parse:parse_term(Tokens)).
 
+runtime_inspection_commands_test_() ->
+    {timeout, 10, fun runtime_inspection_commands/0}.
+
+runtime_inspection_commands() ->
+    Memory = inspection(memory, #{}),
+    ?assertMatch(
+        #{
+            <<"command">> := <<"memory">>,
+            <<"data">> := #{
+                <<"runtime">> := #{<<"word_size_bytes">> := _},
+                <<"memory">> := #{<<"beam">> := #{<<"total_bytes">> := _}}
+            }
+        },
+        Memory
+    ),
+    MemoryFacts = maps:get(<<"memory">>, maps:get(<<"data">>, Memory)),
+    ?assertEqual(
+        [<<"beam">>, <<"persistent_term">>],
+        lists:sort(maps:keys(MemoryFacts))
+    ),
+    Schedulers = inspection(schedulers, #{duration_ms => 250}),
+    Measurement = maps:get(<<"data">>, Schedulers),
+    ?assertEqual(<<"valid">>, maps:get(<<"status">>, Measurement)),
+    ?assertEqual(<<"opaque_same_window">>, maps:get(<<"wall_time_unit">>, Measurement)),
+    ?assertEqual(
+        <<"runnable_or_running_observation_not_backlog">>,
+        maps:get(<<"semantics">>, maps:get(<<"run_queues">>, Measurement))
+    ),
+    ?assertEqual(false, maps:get(<<"snapshot_atomic">>, maps:get(<<"run_queues">>, Measurement))),
+    ?assertNot(is_map_key(<<"utilization_ns">>, Measurement)),
+    Distribution = inspection(distribution, #{limit => 20}),
+    DistributionData = maps:get(<<"data">>, Distribution),
+    ?assertEqual(
+        <<"context_only_not_backlog_health">>,
+        maps:get(<<"queue_semantics">>, DistributionData)
+    ),
+    ?assert(is_list(maps:get(<<"controller_queues">>, DistributionData))).
+
+scheduler_window_invalidates_unsafe_samples_test() ->
+    First = scheduler_sample_fixture(#{1 => {10, 20}, 3 => {5, 10}}, 0),
+    Valid = observer_cli_snapshot:scheduler_window(
+        First,
+        scheduler_sample_fixture(#{1 => {20, 40}, 3 => {10, 20}}, 250)
+    ),
+    ?assertEqual(valid, maps:get(status, Valid)),
+    ?assertEqual(0.5, maps:get(utilization_ratio, maps:get(normal, Valid))),
+    assert_invalid_scheduler_window(
+        topology_changed,
+        observer_cli_snapshot:scheduler_window(
+            First,
+            (scheduler_sample_fixture(#{1 => {20, 40}, 3 => {10, 20}}, 250))#{
+                topology => (maps:get(topology, First))#{schedulers_online => 2}
+            }
+        )
+    ),
+    assert_invalid_scheduler_window(
+        missing_scheduler_id,
+        observer_cli_snapshot:scheduler_window(
+            First,
+            scheduler_sample_fixture(#{1 => {20, 40}}, 250)
+        )
+    ),
+    assert_invalid_scheduler_window(
+        zero_denominator,
+        observer_cli_snapshot:scheduler_window(First, First#{monotonic_ms => 250})
+    ).
+
+scheduler_wall_time_cleanup_is_paired_test() ->
+    put(scheduler_flags, []),
+    FlagFun = fun(Enabled) -> put(scheduler_flags, [Enabled | get(scheduler_flags)]) end,
+    ?assertException(
+        error,
+        sample_failed,
+        observer_cli_snapshot:measure_scheduler(
+            250,
+            FlagFun,
+            fun() -> erlang:error(sample_failed) end,
+            fun(_Duration) -> ok end
+        )
+    ),
+    ?assertEqual([false, true], get(scheduler_flags)),
+    CleanupFlagFun = fun
+        (true) -> ok;
+        (false) -> erlang:error(cleanup_failed)
+    end,
+    ?assertException(
+        error,
+        cleanup_failed,
+        observer_cli_snapshot:measure_scheduler(
+            250,
+            CleanupFlagFun,
+            fun() -> scheduler_sample_fixture(#{1 => {10, 20}, 3 => {5, 10}}, 0) end,
+            fun(_Duration) -> ok end
+        )
+    ),
+    erase(scheduler_flags).
+
+distribution_controller_exclusion_and_capability_test() ->
+    Controller = 'controller@host',
+    Visible = 'visible@host',
+    Hidden = 'hidden@host',
+    Port = open_port({spawn, "cat"}, []),
+    try
+        Data = observer_cli_snapshot:distribution_context(
+            Controller,
+            [Hidden, Controller, Visible],
+            [Controller, Visible],
+            [Hidden],
+            {ok, [{Visible, Port}, {Controller, Port}, {Hidden, alternative_carrier}]},
+            {ok, 1048576},
+            fun(P) -> erlang:port_info(P, queue_size) end
+        ),
+        ?assertEqual(2, maps:get(connected_peer_count, Data)),
+        ?assertEqual(
+            [#{peer => {identifier, peer, Controller}, reason => diagnostics_controller}],
+            maps:get(excluded_peers, Data)
+        ),
+        [HiddenQueue, VisibleQueue] = maps:get(controller_queues, Data),
+        ?assertEqual(unavailable, maps:get(status, HiddenQueue)),
+        ?assertEqual(capability_unavailable, maps:get(reason_code, HiddenQueue)),
+        ?assertEqual(available, maps:get(status, VisibleQueue)),
+        ?assertEqual(unavailable, maps:get(health_inference, VisibleQueue)),
+        Unavailable = observer_cli_snapshot:distribution_context(
+            undefined,
+            [Visible],
+            [Visible],
+            [],
+            {unavailable, capability_unavailable},
+            {unavailable, capability_unavailable},
+            fun(_P) -> erlang:error(unexpected_port_info) end
+        ),
+        ?assertEqual(
+            #{status => unavailable, reason_code => capability_unavailable},
+            maps:get(controller_queue_capability, Unavailable)
+        ),
+        [UnavailableQueue] = maps:get(controller_queues, Unavailable),
+        ?assertEqual(capability_unavailable, maps:get(reason_code, UnavailableQueue))
+    after
+        port_close(Port)
+    end.
+
 normalization_and_identifier_policy_test() ->
     Reference = make_ref(),
     Raw = #{
@@ -322,6 +463,35 @@ snapshot(Request) ->
             options(3000, redact)
         ),
     Response.
+
+inspection(Command, Request) ->
+    #{<<"status">> := <<"ok">>, <<"result">> := Response} =
+        observer_cli_snapshot:dispatch(
+            self(),
+            Command,
+            Request,
+            options(3000, redact)
+        ),
+    Response.
+
+scheduler_sample_fixture(Wall, Monotonic) ->
+    #{
+        topology => #{
+            schedulers_configured => 2,
+            schedulers_online => 1,
+            dirty_cpu_schedulers_configured => 1,
+            dirty_cpu_schedulers_online => 1
+        },
+        wall_time => [{Id, Active, Total} || {Id, {Active, Total}} <- maps:to_list(Wall)],
+        run_queue_lengths => [0, 0, 0],
+        monotonic_ms => Monotonic
+    }.
+
+assert_invalid_scheduler_window(Reason, Window) ->
+    ?assertEqual(invalid, maps:get(status, Window)),
+    ?assertEqual(Reason, maps:get(reason_code, Window)),
+    ?assertEqual(opaque_same_window, maps:get(wall_time_unit, Window)),
+    ?assertEqual(false, maps:get(run_queue_snapshot_atomic, Window)).
 
 assert_probe(Id, Required, Status, Capture) ->
     Probes = maps:get(<<"probes">>, Capture),
