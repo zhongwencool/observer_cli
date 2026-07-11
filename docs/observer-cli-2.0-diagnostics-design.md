@@ -33,7 +33,7 @@
 ### Context 与现有 TUI
 
 ```text
-observer_cli connect myapp@host --cookie-env ERL_COOKIE
+observer_cli connect --node myapp@host --cookie-env ERL_COOKIE
 observer_cli status
 observer_cli disconnect
 

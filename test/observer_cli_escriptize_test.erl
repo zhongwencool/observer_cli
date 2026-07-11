@@ -50,6 +50,7 @@ required_modules_test_() ->
         {"run command args", fun run_command_args_test/0},
         {"run args usage", fun run_args_usage/0},
         {"main usage", fun main_usage_test/0},
+        {"command help", fun command_help_test/0},
         {"escript command exits", fun escript_command_exits/0},
         {"remote load local", fun remote_load_local_test/0},
         {"remote load peer node", fun remote_load_peer_node_test/0},
@@ -320,6 +321,60 @@ main_usage_test() ->
             ?assertEqual(ok, observer_cli_escriptize:main([]))
         end
     ).
+
+command_help_test() ->
+    {ok, TopHelp} = observer_cli_test_io:capture_with_geometry(
+        24, 80, [], fun() -> observer_cli_escriptize:main(["--help"]) end
+    ),
+    observer_cli_test_io:assert_stable_fragments(TopHelp, [
+        "observer_cli connect --node NODE",
+        "Diagnostics:",
+        "Run 'observer_cli COMMAND --help'"
+    ]),
+    Commands = [
+        "connect",
+        "status",
+        "disconnect",
+        "snapshot",
+        "diagnose",
+        "memory",
+        "schedulers",
+        "distribution",
+        "processes",
+        "process",
+        "applications",
+        "ets",
+        "mnesia",
+        "network",
+        "ports",
+        "sockets",
+        "gen-server-state",
+        "supervision-tree",
+        "trace"
+    ],
+    lists:foreach(
+        fun(Command) ->
+            {ok, Help} = observer_cli_test_io:capture_with_geometry(
+                24, 80, [], fun() -> observer_cli_escriptize:main([Command, "--help"]) end
+            ),
+            observer_cli_test_io:assert_stable_fragments(Help, [
+                "Usage:", "observer_cli " ++ Command
+            ])
+        end,
+        Commands
+    ),
+    {ok, ProcessesHelp} = observer_cli_test_io:capture_with_geometry(
+        24, 80, [], fun() -> observer_cli_escriptize:main(["processes", "--help"]) end
+    ),
+    observer_cli_test_io:assert_stable_fragments(ProcessesHelp, [
+        "message_queue_len", "250ms..10s", "--sort reductions"
+    ]),
+    {ok, TraceHelp} = observer_cli_test_io:capture_with_geometry(
+        24, 80, [], fun() -> observer_cli_escriptize:main(["trace", "--help"]) end
+    ),
+    observer_cli_test_io:assert_stable_fragments(TraceHelp, [
+        "--replace-existing-trace", "--rate N/s", "trace stop --all"
+    ]).
 
 escript_command_exits() ->
     Escript = os:find_executable("escript"),

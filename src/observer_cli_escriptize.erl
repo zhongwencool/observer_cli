@@ -33,6 +33,10 @@
 %% @doc escript main
 -spec main([string()]) -> ok | no_return().
 
+main(["--help"]) ->
+    usage();
+main([Command, "--help"]) ->
+    command_help(Command);
 main(Options) ->
     case parse_args(Options) of
         {ok, #{route := tui, target := TargetNode, cookie := Cookie, interval := Interval}} ->
@@ -78,16 +82,268 @@ run_args(Options, RunFun) ->
 usage() ->
     io:put_chars(
         "Usage:\n"
-        "  observer_cli TARGETNODE [TARGETCOOKIE REFRESHMS]\n"
-        "  observer_cli tui TARGETNODE [TARGETCOOKIE REFRESHMS]\n"
-        "  observer_cli connect|status|disconnect [OPTIONS]\n"
-        "  observer_cli snapshot|diagnose|memory|schedulers|distribution [OPTIONS]\n"
-        "  observer_cli processes|process|applications|ets|mnesia|network|ports|sockets [OPTIONS]\n"
-        "  observer_cli gen-server-state|supervision-tree [OPTIONS]\n"
-        "  observer_cli trace call MFA|trace stop --all [OPTIONS]\n"
-        "Common remote options: --node NODE and exactly one of --cookie-env NAME or --cookie-file PATH\n"
-        "Formats: --format text|term|json (JSON requires OTP 27+)\n"
+        "  observer_cli tui NODE [COOKIE REFRESH_MS]\n"
+        "  observer_cli NODE [COOKIE REFRESH_MS]\n"
+        "  observer_cli connect --node NODE (--cookie-env NAME | --cookie-file PATH)\n"
+        "  observer_cli COMMAND [ARGUMENTS] [OPTIONS]\n"
+        "\n"
+        "Context:\n"
+        "  connect             Verify and save a target context\n"
+        "  status              Check the saved target context\n"
+        "  disconnect          Remove the saved target context\n"
+        "\n"
+        "Diagnostics:\n"
+        "  diagnose            Detect likely VM problems and report evidence\n"
+        "  snapshot            Collect a point-in-time VM fact bundle\n"
+        "\n"
+        "Inspection:\n"
+        "  memory              Show VM memory usage\n"
+        "  schedulers          Measure scheduler utilization and run queues\n"
+        "  distribution        Show connected Erlang nodes\n"
+        "  processes           List top processes\n"
+        "  process TARGET      Inspect one process\n"
+        "  applications        Group process resources by application\n"
+        "  ets                 List ETS tables\n"
+        "  mnesia              List local Mnesia tables\n"
+        "  network             Show VM network I/O\n"
+        "  ports               List Erlang ports\n"
+        "  sockets             List OTP sockets\n"
+        "  gen-server-state TARGET\n"
+        "                      Inspect a bounded gen_server state shape\n"
+        "  supervision-tree --app APP\n"
+        "                      Show an application supervision tree\n"
+        "\n"
+        "Tracing:\n"
+        "  trace call MFA      Run a bounded function trace\n"
+        "  trace stop --all    Stop observer_cli traces\n"
+        "\n"
+        "Target options:\n"
+        "  --node NODE         Use an explicit target instead of saved context\n"
+        "  --cookie-env NAME   Read the target cookie from an environment variable\n"
+        "  --cookie-file PATH  Read the target cookie from a file\n"
+        "  --name-mode MODE    short or long; inferred from NODE by default\n"
+        "\n"
+        "Output options:\n"
+        "  --format FORMAT     text, term, or json; text by default\n"
+        "  --json              Alias for --format json (OTP 27+ controller)\n"
+        "  --redact            Hide target identifiers\n"
+        "  --include-identifiers\n"
+        "                      Include identifiers in snapshot or diagnose output\n"
+        "  --timeout DURATION  Set the command deadline, up to 120s\n"
+        "\n"
+        "DURATION accepts milliseconds (1500 or 1500ms) or seconds (2s).\n"
+        "\n"
+        "Run 'observer_cli COMMAND --help' for command options and examples.\n"
     ).
+
+command_help("connect") ->
+    io:put_chars(
+        "Usage:\n"
+        "  observer_cli connect --node NODE (--cookie-env NAME | --cookie-file PATH) [OPTIONS]\n"
+        "\n"
+        "Verify the target and save its node and cookie-source metadata. No cookie or\n"
+        "persistent connection is stored. Later commands use this context by default.\n"
+        "\n"
+        "Options:\n"
+        "  --name-mode short|long\n"
+        "  --timeout DURATION      Command deadline, up to 120s\n"
+        "  --format text|term|json\n"
+        "  --json\n"
+        "\n"
+        "DURATION accepts milliseconds (1500 or 1500ms) or seconds (2s).\n"
+        "\n"
+        "Example:\n"
+        "  observer_cli connect --node app@host --cookie-env ERL_COOKIE\n"
+    );
+command_help("status") ->
+    io:put_chars(
+        "Usage:\n"
+        "  observer_cli status [--timeout DURATION] [--format text|term|json] [--json]\n"
+        "\n"
+        "Probe the target saved by connect. This starts a fresh connection; connect\n"
+        "does not run a daemon.\n"
+        "\n"
+        "Example:\n"
+        "  observer_cli status\n"
+    );
+command_help("disconnect") ->
+    io:put_chars(
+        "Usage:\n"
+        "  observer_cli disconnect [--format text|term|json] [--json]\n"
+        "\n"
+        "Remove the saved target context. This is not a network disconnect operation.\n"
+        "\n"
+        "Example:\n"
+        "  observer_cli disconnect\n"
+    );
+command_help("snapshot") ->
+    remote_help(
+        "snapshot [--deep] [--include-identifiers]",
+        "Collect bounded runtime facts. The default avoids resource inventories; --deep adds admitted Top-N scans.",
+        "  --deep                 Add process, table, network, port, and socket inventories\n"
+        "  --include-identifiers  Include real node, PID, name, and MFA identifiers\n",
+        "  observer_cli snapshot --deep --format term\n"
+    );
+command_help("diagnose") ->
+    remote_help(
+        "diagnose [--observe DURATION [--deep | --app APP]] [--include-identifiers]",
+        "Run evidence-backed diagnostics. With no mode option, perform a quick point-in-time diagnosis.",
+        "  --observe DURATION     Sample for 5s..60s\n"
+        "  --deep                 Add deep resource observation; requires --observe\n"
+        "  --app APP              Observe one application; requires --observe\n"
+        "  --include-identifiers  Include real node, PID, name, and MFA identifiers\n",
+        "  observer_cli diagnose\n"
+        "  observer_cli diagnose --observe 30s --deep --json\n"
+    );
+command_help("memory") ->
+    remote_help(
+        "memory",
+        "Show point-in-time BEAM memory and runtime facts. This is not host RSS.",
+        "",
+        "  observer_cli memory\n"
+    );
+command_help("schedulers") ->
+    remote_help(
+        "schedulers [--duration DURATION]",
+        "Measure normal and dirty scheduler utilization and run queues.",
+        "  --duration DURATION  250ms..10s; 1500ms by default\n",
+        "  observer_cli schedulers --duration 2s\n"
+    );
+command_help("distribution") ->
+    remote_help(
+        "distribution [--limit N]",
+        "Show connected visible and hidden Erlang nodes and available distribution context.",
+        limit_help(),
+        "  observer_cli distribution --limit 50\n"
+    );
+command_help("processes") ->
+    remote_help(
+        "processes [--sort KEY] [--limit N] [--duration DURATION]",
+        "List top processes using bounded explicit-key inspection.",
+        "  --sort KEY           memory (default), message_queue_len, reductions,\n"
+        "                       binary_memory, or total_heap_size\n"
+        "  --limit N            1..200; 20 by default\n"
+        "  --duration DURATION  250ms..10s; only with --sort reductions\n",
+        "  observer_cli processes --sort memory --limit 20\n"
+        "  observer_cli processes --sort reductions --duration 1500ms\n"
+    );
+command_help("process") ->
+    remote_help(
+        "process PID_OR_NAME [--info]",
+        "Inspect safe metadata for one local PID or registered process name. --info is the default mode.",
+        "  --info  Show explicit-key process metadata without messages, dictionary, or state\n",
+        "  observer_cli process \"<0.123.0>\"\n"
+    );
+command_help("applications") ->
+    list_help(
+        "applications",
+        "Group process count, memory, reductions, and message queues by application.",
+        "memory (default), process_count, reductions, message_queue_len"
+    );
+command_help("ets") ->
+    list_help(
+        "ets",
+        "List ETS table metadata without reading table contents.",
+        "memory (default), size"
+    );
+command_help("mnesia") ->
+    list_help(
+        "mnesia",
+        "List local Mnesia table metadata. A stopped Mnesia application is reported as not_running.",
+        "memory (default), size"
+    );
+command_help("network") ->
+    counter_help(
+        "network",
+        "Show VM port-driver and legacy inet counters, not all host network traffic.",
+        "oct (default), recv_oct, send_oct"
+    );
+command_help("ports") ->
+    list_help(
+        "ports",
+        "List non-inet Erlang Port metadata and counters, not TCP or UDP port numbers.",
+        "queue_size (default), memory, input, output, io"
+    );
+command_help("sockets") ->
+    counter_help(
+        "sockets",
+        "List sockets visible through the OTP socket registry.",
+        "io (default), read_bytes, write_bytes, packets, waits, fails"
+    );
+command_help("gen-server-state") ->
+    remote_help(
+        "gen-server-state PID_OR_NAME [--redact]",
+        "Inspect the bounded shape of one gen_server state. Full state values are never returned.",
+        "  --redact  Hide identifiers found in the state shape\n",
+        "  observer_cli gen-server-state my_server --redact\n"
+    );
+command_help("supervision-tree") ->
+    remote_help(
+        "supervision-tree --app APP",
+        "Show the bounded supervision tree rooted in one running application.",
+        "  --app APP  Application name; required\n",
+        "  observer_cli supervision-tree --app my_app\n"
+    );
+command_help("trace") ->
+    remote_help(
+        "trace (call MFA --pid PID --replace-existing-trace [OPTIONS] | stop --all)",
+        "Run or stop observer_cli's bounded node-global call trace. Trace operations can clear unrelated static traces.",
+        "  --pid PID                 Local tracee PID; required for trace call\n"
+        "  --duration DURATION       100ms..60s; 10s by default\n"
+        "  --limit N                 Maximum 1..1000 events; 100 by default\n"
+        "  --rate N/s                Maximum 1..200 events per second; conflicts with --limit\n"
+        "  --replace-existing-trace  Acknowledge node-global trace replacement; required\n"
+        "  --all                     Required for trace stop\n",
+        "  observer_cli trace call my_mod:my_fun/2 --pid \"<0.123.0>\" \\\n"
+        "    --duration 30s --limit 200 --replace-existing-trace\n"
+        "  observer_cli trace stop --all\n"
+    );
+command_help(_Command) ->
+    usage().
+
+remote_help(Usage, Description, Options, Examples) ->
+    io:put_chars([
+        "Usage:\n  observer_cli ",
+        Usage,
+        " [TARGET OPTIONS] [OUTPUT OPTIONS]\n\n",
+        Description,
+        "\n\nCommand options:\n",
+        case Options of
+            "" -> "  None\n";
+            _ -> Options
+        end,
+        "\nTarget options:\n",
+        "  Use the context saved by connect, or pass --node NODE and exactly one of\n",
+        "  --cookie-env NAME or --cookie-file PATH. --name-mode accepts short or long.\n",
+        "\nOutput options:\n",
+        "  --format text|term|json, --json, --redact\n",
+        "  --timeout DURATION sets the command deadline, up to 120s.\n",
+        "  DURATION accepts milliseconds (1500 or 1500ms) or seconds (2s).\n",
+        "\nExamples:\n",
+        Examples
+    ]).
+
+list_help(Command, Description, Sorts) ->
+    remote_help(
+        Command ++ " [--sort KEY] [--limit N]",
+        Description,
+        "  --sort KEY  " ++ Sorts ++ "\n" ++ limit_help(),
+        "  observer_cli " ++ Command ++ " --sort " ++ hd(string:split(Sorts, " ")) ++
+            " --limit 20\n"
+    ).
+
+counter_help(Command, Description, Sorts) ->
+    remote_help(
+        Command ++ " [--sort KEY] [--limit N] [--duration DURATION]",
+        Description,
+        "  --sort KEY           " ++ Sorts ++ "\n" ++
+            "  --limit N            1..200; 20 by default\n" ++
+            "  --duration DURATION  250ms..10s; show interval deltas instead of totals\n",
+        "  observer_cli " ++ Command ++ " --duration 1500ms --limit 20\n"
+    ).
+
+limit_help() ->
+    "  --limit N  1..200; 20 by default\n".
 
 parse_args(Options) ->
     observer_cli_cli:parse(Options).

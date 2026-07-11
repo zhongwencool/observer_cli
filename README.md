@@ -26,8 +26,25 @@ The 2.0 command-first interface adds bounded machine-readable diagnostics while
 preserving the positional TUI path. The target must already have a protocol-compatible
 `observer_cli` build for its OTP major; these commands never inject BEAM files.
 
-Build the escript with `rebar3 escriptize`, then use an explicit target and cookie
-source:
+Build the escript with `rebar3 escriptize`. The CLI provides an overview plus
+command-specific options and examples:
+
+```sh
+observer_cli --help
+observer_cli processes --help
+```
+
+Save a target context for repeated commands:
+
+```sh
+export OBSERVER_CLI_COOKIE='replace-me'
+observer_cli connect --node app@host --cookie-env OBSERVER_CLI_COOKIE
+observer_cli status
+observer_cli diagnose --format json
+observer_cli disconnect
+```
+
+Alternatively, pass an explicit target and cookie source to each command:
 
 ```sh
 export OBSERVER_CLI_COOKIE='replace-me'
