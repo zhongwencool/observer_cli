@@ -2929,7 +2929,7 @@ network_resource(Port, Source) ->
                 undefined ->
                     skip;
                 Protocol ->
-                    case (maps:get(stat_fun, Source))(Port) of
+                    try (maps:get(stat_fun, Source))(Port) of
                         {ok, Stats} when is_list(Stats) ->
                             Counters = maps:from_list(Stats),
                             #{
@@ -2941,6 +2941,8 @@ network_resource(Port, Source) ->
                             };
                         _ ->
                             disappeared
+                    catch
+                        _:_ -> disappeared
                     end
             end;
         missing ->
