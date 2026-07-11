@@ -197,6 +197,11 @@ validate_runtime_options(process, Options) ->
         true -> validate_target_options(Options);
         false -> {error, unsupported_command_option}
     end;
+validate_runtime_options(gen_server_state, Options) ->
+    case only_options(Options, []) of
+        true -> validate_target_options(Options);
+        false -> {error, unsupported_command_option}
+    end;
 validate_runtime_options(_Command, #{deep := true}) ->
     {error, unsupported_command_option};
 validate_runtime_options(_Command, Options) ->
@@ -292,6 +297,10 @@ validate_arguments(process, [_Target]) ->
     ok;
 validate_arguments(process, _Arguments) ->
     {error, process_target_required};
+validate_arguments(gen_server_state, [_Target]) ->
+    ok;
+validate_arguments(gen_server_state, _Arguments) ->
+    {error, gen_server_target_required};
 validate_arguments(Command, []) when
     Command =:= snapshot;
     Command =:= processes;

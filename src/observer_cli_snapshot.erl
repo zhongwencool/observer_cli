@@ -22,6 +22,11 @@
 -define(MAX_RESULT_BYTES, ?MAX_RESPONSE_BYTES - 1024).
 -define(MAX_FIELD_BYTES, 64 * 1024).
 -define(MAX_DEPTH, 32).
+-define(STATE_SHAPE_MAX_BYTES, 64 * 1024).
+-define(STATE_SHAPE_MAX_DEPTH, 6).
+-define(STATE_SHAPE_MAX_NODES, 10000).
+-define(STATE_SHAPE_PREFIX, 2).
+-define(STATE_TIMEOUT_MS, 1000).
 -define(PROCESS_SCAN_BUDGET, 100000).
 -define(BINARY_PROCESS_SCAN_BUDGET, 20000).
 -define(APPLICATION_SCAN_BUDGET, 5000).
@@ -253,6 +258,8 @@ probe(ports, Request, Context) ->
     capture_ports(Request, Context);
 probe(sockets, Request, Context) ->
     capture_sockets(Request, Context);
+probe(gen_server_state, Request, Context) ->
+    capture_gen_server_state(Request, Context);
 probe(_Command, _Request, _Context) ->
     {probe_error, capability_unavailable}.
 -else.
@@ -280,6 +287,8 @@ probe(ports, Request, Context) ->
     capture_ports(Request, Context);
 probe(sockets, Request, Context) ->
     capture_sockets(Request, Context);
+probe(gen_server_state, Request, Context) ->
+    capture_gen_server_state(Request, Context);
 probe(_Command, _Request, _Context) ->
     {probe_error, capability_unavailable}.
 -endif.
@@ -578,6 +587,193 @@ capture_process(#{target := Target} = Request, Context) ->
     );
 capture_process(_Request, _Context) ->
     {probe_error, invalid_request}.
+
+capture_gen_server_state(#{target := Target} = Request, Context) ->
+    Source = state_source(Request),
+    Response = capture_scan_inspection(
+        gen_server_state,
+        gen_server_state,
+        1,
+        Context,
+        fun() -> collect_gen_server_state(Target, Source) end
+    ),
+    Data = maps:get(data, Response),
+    Errors =
+        case maps:get(status, Data) of
+            error ->
+                [
+                    #{
+                        class => required_probe,
+                        probe => gen_server_state,
+                        reason_code => maps:get(reason_code, Data)
+                    }
+                ];
+            _ ->
+                []
+        end,
+    Response#{warnings := state_risk_warnings(), errors := Errors};
+capture_gen_server_state(_Request, _Context) ->
+    {probe_error, invalid_request}.
+
+collect_gen_server_state(Target, Source) ->
+    Risk = state_risk_data(),
+    case resolve_process_target(Target, maps:get(process_source, Source)) of
+        not_found ->
+            {ok, Risk#{status => not_found}, [target_side_resolution, no_atom_creation]};
+        {ok, Pid} ->
+            try (maps:get(get_state_fun, Source))(Pid, ?STATE_TIMEOUT_MS) of
+                State ->
+                    case state_shape(State) of
+                        {ok, Shape, Nodes} ->
+                            {ok,
+                                Risk#{
+                                    status => ok, state_shape => Shape, visited_node_count => Nodes
+                                },
+                                [
+                                    target_side_resolution,
+                                    target_side_value_free_shape,
+                                    bounded_state_shape
+                                ]};
+                        {error, Reason} ->
+                            {error, Reason, Risk#{status => error, reason_code => Reason}}
+                    end
+            catch
+                exit:{timeout, _} ->
+                    {error, state_timeout, Risk#{status => error, reason_code => state_timeout}};
+                _Class:_Reason:_Stacktrace ->
+                    {error, state_probe_failed, Risk#{
+                        status => error, reason_code => state_probe_failed
+                    }}
+            end
+    end.
+
+state_risk_data() ->
+    #{
+        risk_level => high,
+        acquisition => #{
+            full_state_copy_risk => true,
+            timeout_ms => ?STATE_TIMEOUT_MS,
+            timeout_retracts_delivered_request => false
+        },
+        limits => #{
+            output_bytes => ?STATE_SHAPE_MAX_BYTES,
+            depth => ?STATE_SHAPE_MAX_DEPTH,
+            nodes => ?STATE_SHAPE_MAX_NODES,
+            container_prefix => ?STATE_SHAPE_PREFIX
+        }
+    }.
+
+state_risk_warnings() ->
+    [
+        #{reason_code => sys_get_state_copies_full_state},
+        #{reason_code => timeout_does_not_retract_delivered_request}
+    ].
+
+state_shape(State) ->
+    {Shape, #{nodes := Nodes}} = shape_term(State, 0, #{nodes => 0}),
+    case normalize(Shape, include) of
+        {ok, Normalized} ->
+            case erlang:external_size(Normalized) =< ?STATE_SHAPE_MAX_BYTES of
+                true -> {ok, Shape, Nodes};
+                false -> {error, state_shape_too_large}
+            end;
+        {error, _Reason} ->
+            {error, state_shape_failed}
+    end.
+
+shape_term(_Term, _Depth, #{nodes := Nodes} = Acc) when Nodes >= ?STATE_SHAPE_MAX_NODES ->
+    {#{type => truncated, truncation_reason => node_cap}, Acc};
+shape_term(Term, Depth, Acc0) ->
+    Acc = Acc0#{nodes := maps:get(nodes, Acc0) + 1},
+    case Depth >= ?STATE_SHAPE_MAX_DEPTH of
+        true ->
+            {#{type => shape_type(Term), truncated => true, truncation_reason => depth_cap}, Acc};
+        false ->
+            shape_value(Term, Depth, Acc)
+    end.
+
+shape_value(Term, _Depth, Acc) when is_atom(Term) -> {#{type => atom}, Acc};
+shape_value(Term, _Depth, Acc) when is_integer(Term); is_float(Term) ->
+    {#{type => number}, Acc};
+shape_value(Term, _Depth, Acc) when is_binary(Term) ->
+    {#{type => binary, size_bytes => byte_size(Term)}, Acc};
+shape_value(Term, _Depth, Acc) when is_bitstring(Term) ->
+    {#{type => bitstring, size_bits => bit_size(Term)}, Acc};
+shape_value(Term, Depth, Acc) when is_map(Term) ->
+    {Children, Acc1} = shape_children(
+        map_prefix_values(maps:iterator(Term), ?STATE_SHAPE_PREFIX, []),
+        Depth + 1,
+        Acc,
+        []
+    ),
+    Size = map_size(Term),
+    {container_shape(map, Size, Children, Size > length(Children), Acc1), Acc1};
+shape_value(Term, Depth, Acc) when is_tuple(Term) ->
+    Size = tuple_size(Term),
+    Values = [element(Index, Term) || Index <- lists:seq(1, min(Size, ?STATE_SHAPE_PREFIX))],
+    {Children, Acc1} = shape_children(Values, Depth + 1, Acc, []),
+    {container_shape(tuple, Size, Children, Size > length(Children), Acc1), Acc1};
+shape_value(Term, Depth, Acc) when is_list(Term) ->
+    {Children, Size, Complete, Acc1} = shape_list(Term, Depth + 1, Acc, [], 0),
+    {container_shape(list, Size, Children, not Complete, Acc1), Acc1};
+shape_value(_Term, _Depth, Acc) ->
+    {#{type => other}, Acc}.
+
+map_prefix_values(_Iterator, 0, Values) ->
+    lists:reverse(Values);
+map_prefix_values(Iterator, Remaining, Values) ->
+    case maps:next(Iterator) of
+        {_Key, Value, Next} -> map_prefix_values(Next, Remaining - 1, [Value | Values]);
+        none -> lists:reverse(Values)
+    end.
+
+shape_children([], _Depth, Acc, Children) ->
+    {lists:reverse(Children), Acc};
+shape_children(_Values, _Depth, #{nodes := Nodes} = Acc, Children) when
+    Nodes >= ?STATE_SHAPE_MAX_NODES
+->
+    {lists:reverse(Children), Acc};
+shape_children([Value | Rest], Depth, Acc, Children) ->
+    {Shape, Acc1} = shape_term(Value, Depth, Acc),
+    shape_children(Rest, Depth, Acc1, [Shape | Children]).
+
+shape_list([], _Depth, Acc, Children, Size) ->
+    {lists:reverse(Children), Size, true, Acc};
+shape_list(_List, _Depth, #{nodes := Nodes} = Acc, Children, _Size) when
+    Nodes >= ?STATE_SHAPE_MAX_NODES
+->
+    {lists:reverse(Children), null, false, Acc};
+shape_list([Value | Rest], Depth, Acc, Children, Size) when Size < ?STATE_SHAPE_PREFIX ->
+    {Shape, Acc1} = shape_term(Value, Depth, Acc),
+    shape_list(Rest, Depth, Acc1, [Shape | Children], Size + 1);
+shape_list([_Value | Rest], Depth, Acc0, Children, Size) ->
+    Acc = Acc0#{nodes := maps:get(nodes, Acc0) + 1},
+    shape_list(Rest, Depth, Acc, Children, Size + 1);
+shape_list(_Improper, _Depth, Acc, Children, _Size) ->
+    {lists:reverse(Children), null, false, Acc}.
+
+container_shape(Type, Size, Children, Truncated0, #{nodes := Nodes}) ->
+    Truncated = Truncated0 orelse Nodes >= ?STATE_SHAPE_MAX_NODES,
+    Base = #{
+        type => Type,
+        size => Size,
+        children => Children,
+        returned_count => length(Children),
+        truncated => Truncated
+    },
+    case Nodes >= ?STATE_SHAPE_MAX_NODES of
+        true -> Base#{truncation_reason => node_cap};
+        false -> Base
+    end.
+
+shape_type(Term) when is_atom(Term) -> atom;
+shape_type(Term) when is_integer(Term); is_float(Term) -> number;
+shape_type(Term) when is_binary(Term) -> binary;
+shape_type(Term) when is_bitstring(Term) -> bitstring;
+shape_type(Term) when is_map(Term) -> map;
+shape_type(Term) when is_tuple(Term) -> tuple;
+shape_type(Term) when is_list(Term) -> list;
+shape_type(_Term) -> other.
 
 capture_applications(Request, Context) when is_map(Request) ->
     Sort = maps:get(sort, Request, memory),
@@ -1619,11 +1815,20 @@ fold_processes(Source, Fun, Acc) ->
 process_source(Request) ->
     process_source_test(Request, default_process_source()).
 
+state_source(Request) ->
+    state_source_test(Request, #{
+        process_source => default_process_source(),
+        get_state_fun => fun sys:get_state/2
+    }).
+
 -ifdef(TEST).
 process_source_test(#{test_process_source := Source}, _Default) -> Source;
 process_source_test(_Request, Default) -> Default.
+state_source_test(#{test_state_source := Source}, _Default) -> Source;
+state_source_test(_Request, Default) -> Default.
 -else.
 process_source_test(_Request, Default) -> Default.
+state_source_test(_Request, Default) -> Default.
 -endif.
 
 default_process_source() ->

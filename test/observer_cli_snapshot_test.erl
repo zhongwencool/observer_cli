@@ -4,6 +4,8 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
+-export([init/1, handle_call/3, handle_cast/2]).
+
 capabilities_test() ->
     ?assertEqual(#{protocol_version => 1}, observer_cli_snapshot:capabilities()).
 
@@ -97,6 +99,168 @@ default_snapshot_does_not_call_full_enumerators_test() ->
         lists:foreach(fun(MFA) -> erlang:trace_pattern(MFA, false, [local]) end, Enumerators),
         exit(Tracer, kill)
     end.
+
+default_snapshot_and_diagnose_never_get_gen_server_state_test() ->
+    Parent = self(),
+    Tracer = spawn(fun() -> state_trace_forwarder(Parent) end),
+    erlang:trace_pattern({sys, get_state, 2}, true, [local]),
+    erlang:trace(new, true, [call, {tracer, Tracer}]),
+    try
+        _ = snapshot(#{}),
+        _ = observer_cli_snapshot:dispatch(self(), diagnose, #{}, options(2000, redact)),
+        receive
+            state_requested -> ?assert(false)
+        after 100 ->
+            ok
+        end
+    after
+        erlang:trace(new, false, [call]),
+        erlang:trace_pattern({sys, get_state, 2}, false, [local]),
+        exit(Tracer, kill)
+    end.
+
+gen_server_state_shape_is_value_free_and_bounded_test_() ->
+    {timeout, 10, fun gen_server_state_shape_is_value_free_and_bounded/0}.
+
+gen_server_state_shape_is_value_free_and_bounded() ->
+    Secret = <<"goal12-fixture-secret">>,
+    State = #{
+        Secret => {secret_tag, [Secret, 42, #{nested_secret => Secret}]},
+        public_key => binary:copy(Secret, 100),
+        types => [self(), make_ref(), fun() -> Secret end, <<1:3>>]
+    },
+    {ok, Server} = gen_server:start_link(?MODULE, State, []),
+    unlink(Server),
+    register(goal12_state_server, Server),
+    try
+        Response = inspection(gen_server_state, #{target => <<"goal12_state_server">>}),
+        Data = maps:get(<<"data">>, Response),
+        ?assertEqual(<<"high">>, maps:get(<<"risk_level">>, Data)),
+        ?assertEqual(<<"ok">>, maps:get(<<"status">>, Data)),
+        Acquisition = maps:get(<<"acquisition">>, Data),
+        ?assertEqual(true, maps:get(<<"full_state_copy_risk">>, Acquisition)),
+        ?assertEqual(false, maps:get(<<"timeout_retracts_delivered_request">>, Acquisition)),
+        Shape = maps:get(<<"state_shape">>, Data),
+        ?assertEqual(<<"map">>, maps:get(<<"type">>, Shape)),
+        ?assert(erlang:external_size(Shape) =< 64 * 1024),
+        ?assertEqual(nomatch, binary:match(term_to_binary(Response), Secret)),
+        ?assertEqual(nomatch, binary:match(term_to_binary(Response), <<"secret_tag">>)),
+        ?assertMatch(
+            [
+                #{<<"reason_code">> := <<"sys_get_state_copies_full_state">>},
+                #{<<"reason_code">> := <<"timeout_does_not_retract_delivered_request">>}
+            ],
+            maps:get(<<"warnings">>, Response)
+        )
+    after
+        unregister(goal12_state_server),
+        exit(Server, kill)
+    end.
+
+gen_server_state_target_resolution_is_uniform_test() ->
+    Targets = [
+        <<"goal12-unknown-name">>,
+        <<"goal12_existing_unregistered">>,
+        binary:copy(<<"x">>, 256)
+    ],
+    Dead = spawn(fun() -> ok end),
+    timer:sleep(10),
+    DeadTarget = list_to_binary(pid_to_list(Dead)),
+    lists:foreach(
+        fun(Target) -> _ = inspection(gen_server_state, #{target => Target}) end, Targets
+    ),
+    _ = inspection(gen_server_state, #{target => DeadTarget}),
+    AtomCount = erlang:system_info(atom_count),
+    lists:foreach(
+        fun(Target) ->
+            Response = inspection(gen_server_state, #{target => Target}),
+            ?assertEqual(<<"not_found">>, maps:get(<<"status">>, maps:get(<<"data">>, Response)))
+        end,
+        Targets
+    ),
+    DeadResponse = inspection(gen_server_state, #{target => DeadTarget}),
+    ?assertEqual(<<"not_found">>, maps:get(<<"status">>, maps:get(<<"data">>, DeadResponse))),
+    ?assertEqual(AtomCount, erlang:system_info(atom_count)).
+
+gen_server_state_depth_and_node_caps_test() ->
+    lists:foreach(
+        fun({State, Type}) ->
+            Data = maps:get(<<"data">>, state_fixture_response(State)),
+            ?assertEqual(Type, maps:get(<<"type">>, maps:get(<<"state_shape">>, Data)))
+        end,
+        [
+            {an_atom, <<"atom">>},
+            {42, <<"number">>},
+            {<<"binary-secret">>, <<"binary">>},
+            {<<1:3>>, <<"bitstring">>},
+            {#{key_secret => value_secret}, <<"map">>},
+            {{tuple_secret}, <<"tuple">>},
+            {[list_secret], <<"list">>},
+            {self(), <<"other">>}
+        ]
+    ),
+    Deep = lists:foldl(fun(_, Acc) -> {Acc} end, leaf_secret, lists:seq(1, 10)),
+    DeepResponse = state_fixture_response(Deep),
+    ?assertNotEqual(
+        nomatch, binary:match(term_to_binary(DeepResponse), <<"depth_cap">>)
+    ),
+    WideResponse = state_fixture_response(lists:seq(1, 20000)),
+    WideData = maps:get(<<"data">>, WideResponse),
+    ?assertEqual(10000, maps:get(<<"visited_node_count">>, WideData)),
+    ?assertEqual(
+        <<"node_cap">>,
+        maps:get(<<"truncation_reason">>, maps:get(<<"state_shape">>, WideData))
+    ),
+    ?assert(erlang:external_size(maps:get(<<"state_shape">>, WideData)) =< 64 * 1024).
+
+gen_server_state_timeout_crash_and_heap_are_redacted_test_() ->
+    {timeout, 15, fun gen_server_state_timeout_crash_and_heap_are_redacted/0}.
+
+gen_server_state_timeout_crash_and_heap_are_redacted() ->
+    Secret = <<"goal12-error-secret">>,
+    {ok, Server} = gen_server:start_link(?MODULE, Secret, []),
+    unlink(Server),
+    Parent = self(),
+    Caller = spawn(fun() -> gen_server:call(Server, {block, Parent}, infinity) end),
+    receive
+        {server_blocked, Server} -> ok
+    after 1000 -> erlang:error(block_fixture_timeout)
+    end,
+    Timeout = observer_cli_snapshot:dispatch(
+        self(),
+        gen_server_state,
+        #{target => list_to_binary(pid_to_list(Server))},
+        options(3000, redact)
+    ),
+    ?assertEqual(nomatch, binary:match(term_to_binary(Timeout), Secret)),
+    #{<<"status">> := <<"ok">>, <<"result">> := TimeoutResponse} = Timeout,
+    ?assertEqual(<<"partial">>, maps:get(<<"status">>, maps:get(<<"capture">>, TimeoutResponse))),
+    {messages, PendingSystemRequests} = process_info(Server, messages),
+    ?assertNotEqual([], PendingSystemRequests),
+    Server ! release,
+    timer:sleep(20),
+    ?assert(is_process_alive(Server)),
+    ?assertEqual({messages, []}, process_info(Server, messages)),
+    CrashSource = state_source(fun(_Pid, _Timeout) -> erlang:error({Secret, crash}) end),
+    Crash = inspection(gen_server_state, #{
+        target => list_to_binary(pid_to_list(Server)), test_state_source => CrashSource
+    }),
+    ?assertEqual(
+        <<"state_probe_failed">>, maps:get(<<"reason_code">>, maps:get(<<"data">>, Crash))
+    ),
+    ?assertEqual(nomatch, binary:match(term_to_binary(Crash), Secret)),
+    exit(Server, kill),
+    exit(Caller, kill),
+    HeapServer = start_state_server(lists:duplicate(100000, Secret)),
+    Heap = observer_cli_snapshot:dispatch(
+        self(),
+        gen_server_state,
+        #{target => list_to_binary(pid_to_list(HeapServer))},
+        (options(3000, redact))#{max_heap_words => 4096}
+    ),
+    assert_error(<<"worker_heap_limit_exceeded">>, Heap),
+    ?assertEqual(nomatch, binary:match(term_to_binary(Heap), Secret)),
+    exit(HeapServer, kill).
 
 snapshot_probe_failure_semantics_test() ->
     Unavailable = snapshot(#{
@@ -953,6 +1117,48 @@ trace_forwarder(Parent) ->
         _Other ->
             trace_forwarder(Parent)
     end.
+
+state_trace_forwarder(Parent) ->
+    receive
+        {trace, _Pid, call, {sys, get_state, _Arguments}} ->
+            Parent ! state_requested,
+            state_trace_forwarder(Parent);
+        _Other ->
+            state_trace_forwarder(Parent)
+    end.
+
+state_fixture_response(State) ->
+    Server = start_state_server(State),
+    try
+        inspection(gen_server_state, #{target => list_to_binary(pid_to_list(Server))})
+    after
+        exit(Server, kill)
+    end.
+
+start_state_server(State) ->
+    {ok, Server} = gen_server:start_link(?MODULE, State, []),
+    unlink(Server),
+    Server.
+
+state_source(GetStateFun) ->
+    #{
+        process_source => process_source([], fun(_Pid, _Keys) -> undefined end),
+        get_state_fun => GetStateFun
+    }.
+
+init(State) ->
+    {ok, State}.
+
+handle_call({block, Parent}, _From, State) ->
+    Parent ! {server_blocked, self()},
+    receive
+        release -> {reply, ok, State}
+    end;
+handle_call(_Request, _From, State) ->
+    {reply, ok, State}.
+
+handle_cast(_Request, State) ->
+    {noreply, State}.
 
 receive_worker() ->
     receive

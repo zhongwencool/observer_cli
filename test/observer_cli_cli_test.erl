@@ -32,6 +32,7 @@ reserved_command_words_test() ->
             Arguments =
                 case Command of
                     process -> [Word, "<0.1.0>"];
+                    gen_server_state -> [Word, "<0.1.0>"];
                     _ -> [Word]
                 end,
             ?assertMatch(
@@ -138,6 +139,23 @@ process_inspection_option_contract_test() ->
     ),
     assert_argument_error(process_target_required, observer_cli_cli:parse(["process"])),
     assert_argument_error(invalid_arguments, observer_cli_cli:parse(["applications", "extra"])).
+
+gen_server_state_is_explicit_high_risk_command_test() ->
+    ?assertMatch(
+        {ok, #{command := gen_server_state, arguments := ["server"], options := #{redact := true}}},
+        observer_cli_cli:parse(["gen-server-state", "server", "--redact"])
+    ),
+    assert_argument_error(
+        gen_server_target_required, observer_cli_cli:parse(["gen-server-state"])
+    ),
+    assert_argument_error(
+        gen_server_target_required,
+        observer_cli_cli:parse(["gen-server-state", "one", "two"])
+    ),
+    assert_argument_error(
+        unsupported_command_option,
+        observer_cli_cli:parse(["gen-server-state", "server", "--info"])
+    ).
 
 table_inspection_option_contract_test() ->
     ?assertMatch(
