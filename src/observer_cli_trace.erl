@@ -80,7 +80,7 @@ validate_mfa(#{mfa := Text} = Request) ->
     case parse_mfa(Text) of
         {ok, {Module, Function, Arity} = MFA} ->
             case
-                code:is_loaded(Module) =/= false andalso
+                is_tuple(code:is_loaded(Module)) andalso
                     erlang:function_exported(Module, Function, Arity)
             of
                 true -> validate_pid(Request, MFA);
@@ -687,8 +687,10 @@ response(Status, Category, Reason, Capture, Warnings) ->
 global_warning() ->
     #{
         code => global_trace_replacement,
-        message =>
-            <<"This command clears all node-static tracing and recon 2.5.6 may kill processes occupying its fixed tracer or formatter names.">>
+        message => <<
+            "This command clears all node-static tracing and recon 2.5.6 may kill processes ",
+            "occupying its fixed tracer or formatter names."
+        >>
     }.
 
 -ifdef(TEST).

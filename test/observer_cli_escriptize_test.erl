@@ -5,6 +5,34 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
 
+command_request_converts_validated_cli_values_test() ->
+    ?assertEqual(
+        #{sort => reductions, limit => 5, duration_ms => 250},
+        observer_cli_escriptize:command_request(
+            processes, [], #{sort => "reductions", limit => "5", duration => "250ms"}
+        )
+    ),
+    ?assertEqual(
+        #{
+            action => call,
+            mfa => "erlang:node/0",
+            pid => "<0.1.0>",
+            duration_ms => 1000,
+            max => 2,
+            replace_existing_trace => true
+        },
+        observer_cli_escriptize:command_request(
+            trace,
+            ["call", "erlang:node/0"],
+            #{
+                pid => "<0.1.0>",
+                duration => "1s",
+                limit => "2",
+                replace_existing_trace => true
+            }
+        )
+    ).
+
 required_modules_test_() ->
     [
         {"simple application without deps", fun simple_app/0},

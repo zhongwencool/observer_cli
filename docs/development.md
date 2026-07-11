@@ -15,7 +15,8 @@ do not add a generic TUI framework.
 | Pagination | `observer_cli_lib`, `observer_cli_store`, page records | Own page math, selected-row positions, and per-page `cur_page` / `pages` state. |
 | Plugin | `observer_cli_plugin`, `observer_cli_plugin_compat` | Own plugin registration, 2.0 callback shapes, compatibility migration, sheet rendering, sorting, shortcuts, and row drill-down. |
 | Formatter | `observer_cli_formatter`, `observer_cli_formatter_default`, `observer_cli_process` | Own process State formatting; default behavior must remain compatible and custom formatter failures fall back to the default formatter. |
-| Snapshot seam | Collection functions in page modules | Future JSON / Erlang-term output must read collected terms, not parse rendered TUI text. |
+| Diagnostics CLI | `observer_cli_cli`, `observer_cli_escriptize` | Parse command-first arguments, manage bounded context metadata, start the outbound-only controller, encode envelopes, and preserve the positional TUI route. |
+| Diagnostics target | `observer_cli_snapshot`, `observer_cli_diagnostic`, `observer_cli_trace` | Dispatch bounded target workers, normalize/cap results, compose snapshots and findings, and own the recon 2.5.6 trace lifecycle. |
 
 ## Current page boundaries
 
@@ -42,5 +43,12 @@ do not add a generic TUI framework.
 - Keep plugin 2.0 changes in `observer_cli_plugin` and
   `observer_cli_plugin_compat`, with docs and tests for accepted, migrated, and
   rejected shapes.
-- Do not expose a public snapshot API here; preserve the collection/render seam
-  so a later issue can add JSON / term output without parsing ANSI text.
+- Keep TUI page collection/rendering unchanged. Diagnostics commands use the four
+  diagnostics modules and must not parse ANSI-rendered page output.
+- Add no per-command modules or provider abstractions. New target probes must stay
+  deadline-, heap-, schema-, and response-cap bounded and must normalize sensitive
+  values before they cross distribution.
+- Never reuse the legacy `remote_load/1` path for command-first diagnostics. Cross-OTP
+  operation requires a compatible target-side installation built for that OTP major.
+- Run real disposable-node cleanup tests for distribution, scheduler flags, target
+  workers, and recon tracing; a controller timeout alone does not cancel target work.

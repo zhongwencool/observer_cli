@@ -9,6 +9,39 @@
 capabilities_test() ->
     ?assertEqual(#{protocol_version => 1}, observer_cli_snapshot:capabilities()).
 
+tui_resource_counts_match_snapshot_window_test() ->
+    Tui = maps:get(
+        sys_info,
+        observer_cli_system:collect_system_info("printf 'header\\n 0 0 0 0\\n'")
+    ),
+    Resources = maps:get(<<"resources">>, maps:get(<<"data">>, snapshot(#{}))),
+    assert_count_within(
+        proplists:get_value(process_count, Tui),
+        maps:get(<<"observed_count_including_observer">>, maps:get(<<"process">>, Resources)),
+        5
+    ),
+    assert_count_within(
+        proplists:get_value(port_count, Tui),
+        maps:get(<<"observed_count_including_observer">>, maps:get(<<"port">>, Resources)),
+        5
+    ),
+    assert_count_within(
+        proplists:get_value(atom_count, Tui),
+        maps:get(<<"observed_count_including_observer">>, maps:get(<<"atom">>, Resources)),
+        1000
+    ).
+
+trace_dispatch_uses_cli_envelope_test() ->
+    #{<<"status">> := <<"ok">>, <<"result">> := Response} =
+        observer_cli_snapshot:dispatch(
+            self(), trace, #{action => call}, options(2000, include)
+        ),
+    ?assertEqual(<<"observer_cli.cli/v1">>, maps:get(<<"schema">>, Response)),
+    ?assertEqual(null, maps:get(<<"capture">>, Response)),
+    [Error] = maps:get(<<"errors">>, Response),
+    ?assertEqual(<<"argument">>, maps:get(<<"class">>, Error)),
+    ?assertEqual(<<"replace_existing_trace_required">>, maps:get(<<"reason_code">>, Error)).
+
 default_snapshot_is_scan_free_fact_package_test() ->
     Response = snapshot(#{}),
     ?assertEqual(<<"snapshot">>, maps:get(<<"command">>, Response)),
@@ -1053,6 +1086,9 @@ snapshot(Request) ->
             options(3000, redact)
         ),
     Response.
+
+assert_count_within(First, Second, Tolerance) ->
+    ?assert(abs(First - Second) =< Tolerance).
 
 inspection(Command, Request) ->
     #{<<"status">> := <<"ok">>, <<"result">> := Response} =

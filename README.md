@@ -20,19 +20,51 @@ Observer CLI is a library to be dropped into any BEAM nodes, to be used to help 
 
 ---
 
-## 2.0 draft note
+## 2.0 diagnostics
 
-The 2.0 work preserves normal user-visible CLI behavior: pages, navigation,
-sorting, pagination, refresh interval, process/port drill-down, remote
-monitoring, and escript startup should stay compatible.
+The 2.0 command-first interface adds bounded machine-readable diagnostics while
+preserving the positional TUI path. The target must already have a protocol-compatible
+`observer_cli` build for its OTP major; these commands never inject BEAM files.
 
-Custom plugin authors should plan for 2.0 breaking API changes; the migration
-path is documented in [the plugin guide](docs/plugin.md). Users without custom
-plugins should not see built-in page behavior change.
+Build the escript with `rebar3 escriptize`, then use an explicit target and cookie
+source:
 
-Future AI-friendly machine-readable snapshots should read collected Erlang
-terms/maps before terminal rendering. This draft keeps that seam clean; it does
-not add a JSON or Erlang-term CLI mode.
+```sh
+export OBSERVER_CLI_COOKIE='replace-me'
+observer_cli snapshot --node app@host --cookie-env OBSERVER_CLI_COOKIE --format term
+observer_cli diagnose --node app@host --cookie-env OBSERVER_CLI_COOKIE --format json
+observer_cli processes --node app@host --cookie-env OBSERVER_CLI_COOKIE --sort reductions --limit 20
+```
+
+`connect` stores only the node name and cookie-source metadata in a `0600` context
+file; it never stores the cookie or keeps a daemon connection. `status` probes the
+target afresh and `disconnect` removes the context. Explicit `--node` always requires
+exactly one of `--cookie-env` or `--cookie-file`.
+
+Commands are `snapshot`, `diagnose`, `memory`, `schedulers`, `distribution`,
+`processes`, `process`, `applications`, `ets`, `mnesia`, `network`, `ports`,
+`sockets`, `gen-server-state`, `supervision-tree`, and `trace`. Text and consultable
+Erlang-term envelopes work on OTP 26-29; JSON uses OTP's `json` module and therefore
+requires an OTP 27+ controller. See the exact schema, exit codes, command flags, and
+measured release evidence in
+`docs/observer-cli-2.0-diagnostics-validation.md`.
+
+### Safety boundaries
+
+- **Low:** scan-free runtime and memory facts.
+- **Medium:** inventories, sampling windows, deep snapshots, and diagnostics may scan
+  admitted resources and perturb counters.
+- **High:** `gen-server-state`, application supervision inspection, and call tracing
+  can copy large replies or affect node-global state.
+
+Use only trusted targets and trusted networks. Erlang distribution is bidirectional
+and is not encrypted by default. `trace call` requires one exact exported MFA, one
+local PID, a duration, a count or rate, and `--replace-existing-trace`; both trace
+setup and `trace stop --all` use recon's node-global clear and can disrupt unrelated
+static tracing. Snapshot and diagnose do not collect messages, dictionaries, table
+contents, application env, cookies, trace arguments, returns, exceptions, or stacks.
+There is no provider upload, daemon, cluster fan-out, arbitrary eval, remote loader,
+automatic repair, or trace session registry.
 
 ## Installation
 

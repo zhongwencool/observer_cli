@@ -1,8 +1,10 @@
 # Changelog
-- 2.0.0 (draft)
-  - Preserve normal user-visible CLI behavior while the internals are reorganized for 2.0.
+- 2.0.0 (release candidate)
+  - Preserve the positional TUI while adding command-first snapshot, inspection, diagnostic, active-context, and bounded recon call-trace commands.
+  - Add capped text, consultable Erlang-term, and OTP 27+ JSON envelopes with explicit exit classes and target-side normalization.
+  - Support OTP 26 through 29 and validated cross-version controller/target pairs without remote BEAM injection; targets require a compatible diagnostics installation.
+  - Document scan admission, ordinary Erlang distribution trust, High-risk state/supervision inspection, and node-global recon cleanup.
   - Introduce plugin API breaking changes for custom plugin authors; use the explicit 2.0 callback shapes in `docs/plugin.md`.
-  - Keep the future AI-friendly snapshot direction internal for now: collected Erlang terms/maps feed TUI rendering, and no public JSON/term CLI is shipped in this draft.
 
 - 1.8.8
   - Automatically adapt terminal layout width across Home, Application, ETS, Mnesia, Network, Process, Port, System, and less footers.

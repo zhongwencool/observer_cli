@@ -1,5 +1,7 @@
 -module(observer_cli_snapshot).
 
+-dialyzer({nowarn_function, [diagnostic_memory/1, call_snapshot_probe/1, probe_result/4]}).
+
 -export([
     capabilities/0,
     diagnostic_binary_holders/2,
@@ -136,19 +138,21 @@ run_worker(Controller, Command, Request, Policy, TargetTimeout, MaxHeapWords) ->
                 {max_heap_size, #{size => MaxHeapWords, kill => true, error_logger => false}}
             ]
         ),
-        try
-            coordinate(ControllerRef, Worker, WorkerRef, RunRef, Deadline)
-        catch
-            _InnerClass:_InnerReason:_InnerStacktrace ->
-                stop_worker(Worker, WorkerRef, internal_error)
-        after
-            drain_exit(Worker)
-        end
+        coordinate_worker(ControllerRef, Worker, WorkerRef, RunRef, Deadline)
     catch
         _OuterClass:_OuterReason:_OuterStacktrace -> error_result(internal_error)
     after
         erlang:demonitor(ControllerRef, [flush]),
         process_flag(trap_exit, OldTrapExit)
+    end.
+
+coordinate_worker(ControllerRef, Worker, WorkerRef, RunRef, Deadline) ->
+    try
+        coordinate(ControllerRef, Worker, WorkerRef, RunRef, Deadline)
+    catch
+        _Class:_Reason:_Stacktrace -> stop_worker(Worker, WorkerRef, internal_error)
+    after
+        drain_exit(Worker)
     end.
 
 coordinate(ControllerRef, Worker, WorkerRef, RunRef, Deadline) ->
@@ -320,19 +324,86 @@ probe(_Command, _Request, _Context) ->
     {probe_error, capability_unavailable}.
 -endif.
 
-capture_trace(#{action := call} = Request, #{controller := Controller}) ->
-    observer_cli_trace:call(Controller, maps:remove(action, Request));
-capture_trace(#{action := stop_all}, _Context) ->
-    observer_cli_trace:stop_all();
+capture_trace(#{action := call} = Request, #{controller := Controller} = Context) ->
+    trace_response(
+        trace_call,
+        fun() -> observer_cli_trace:call(Controller, maps:remove(action, Request)) end,
+        Context
+    );
+capture_trace(#{action := stop_all}, Context) ->
+    trace_response(trace_stop_all, fun observer_cli_trace:stop_all/0, Context);
 capture_trace(_Request, _Context) ->
     {probe_error, invalid_request}.
+
+trace_response(Command, Fun, #{controller := Controller}) ->
+    StartedAt = erlang:system_time(millisecond),
+    Started = erlang:monotonic_time(millisecond),
+    Result = Fun(),
+    Finished = erlang:monotonic_time(millisecond),
+    {ok, Runtime, _} = runtime_probe(),
+    Status = maps:get(status, Result),
+    Category = maps:get(category, Result),
+    Reason = maps:get(reason, Result),
+    TraceCapture = maps:get(capture, Result),
+    Capture =
+        case TraceCapture of
+            null ->
+                null;
+            _ ->
+                #{
+                    status =>
+                        case Status of
+                            ok -> complete;
+                            _ -> partial
+                        end,
+                    started_at => rfc3339(StartedAt),
+                    finished_at => rfc3339(erlang:system_time(millisecond)),
+                    duration_ms => Finished - Started,
+                    probes => [
+                        probe_report(
+                            trace,
+                            true,
+                            case Status of
+                                ok -> ok;
+                                _ -> error
+                            end,
+                            case Status of
+                                ok -> null;
+                                _ -> Reason
+                            end,
+                            Finished - Started,
+                            1,
+                            [recon_2_5_6, external_global_calls_only]
+                        )
+                    ],
+                    observer_effects => [
+                        #{
+                            id => global_trace_replacement,
+                            controller => {identifier, pid, Controller}
+                        }
+                    ]
+                }
+        end,
+    #{
+        schema => <<"observer_cli.cli/v1">>,
+        command => Command,
+        target => target_from_runtime(Runtime),
+        capture => Capture,
+        data => #{reason => Reason, trace => TraceCapture},
+        warnings => maps:get(warnings, Result),
+        errors =>
+            case Status of
+                ok -> [];
+                _ -> [#{class => Category, reason_code => Reason}]
+            end
+    }.
 
 capture_snapshot(Request, #{deadline := Deadline, controller := Controller} = Context) when
     is_map(Request)
 ->
     StartedAt = erlang:system_time(millisecond),
     StartedMonotonic = erlang:monotonic_time(millisecond),
-    ModuleLoaded = code:is_loaded(?MODULE) =/= false,
+    ModuleLoaded = module_loaded(),
     CoreProbes = [
         run_snapshot_probe(runtime, true, fun runtime_probe/0, Request, Deadline),
         run_snapshot_probe(resources, true, fun resources_probe/0, Request, Deadline),
@@ -1009,7 +1080,7 @@ collect_admitted_root_children(App, Root, Source, Risk, Counts) ->
                     Unavailable = length([
                         unavailable
                      || {Id, _Child, _Type, _Modules} <- Children,
-                        child_identity_available(Id, ChildCounts) =:= false
+                        not child_identity_available(Id, ChildCounts)
                     ]),
                     {ok,
                         Risk#{
@@ -1501,7 +1572,7 @@ capture_counter_resources(Command, ProbeId, Request, Context, Source) ->
 capture_scan_inspection(Command, ProbeId, Samples, #{controller := Controller}, OutcomeFun) ->
     StartedAt = erlang:system_time(millisecond),
     StartedMonotonic = erlang:monotonic_time(millisecond),
-    ModuleLoaded = code:is_loaded(?MODULE) =/= false,
+    ModuleLoaded = module_loaded(),
     Outcome = OutcomeFun(),
     {Status, Reason, Data, Coverage} =
         case Outcome of
@@ -2330,9 +2401,9 @@ mnesia_info(Source, Table, Key) ->
         _:_ -> undefined
     end.
 
-mnesia_storage_units(Storage, Value, WordSize) when
-    (Storage =:= ram_copies orelse Storage =:= disc_copies), is_integer(Value), Value >= 0
-->
+mnesia_storage_units(ram_copies, Value, WordSize) when is_integer(Value), Value >= 0 ->
+    #{memory => Value * WordSize, memory_bytes => Value * WordSize, disk_bytes => null};
+mnesia_storage_units(disc_copies, Value, WordSize) when is_integer(Value), Value >= 0 ->
     #{memory => Value * WordSize, memory_bytes => Value * WordSize, disk_bytes => null};
 mnesia_storage_units(disc_only_copies, Value, _WordSize) when is_integer(Value), Value >= 0 ->
     #{memory => null, memory_bytes => null, disk_bytes => Value};
@@ -2518,9 +2589,9 @@ default_mnesia_source() ->
                     false
             end
         end,
-        running_fun => fun() -> mnesia:system_info(is_running) end,
-        local_tables_fun => fun() -> mnesia:system_info(local_tables) end,
-        info_fun => fun mnesia:table_info/2,
+        running_fun => fun() -> erlang:apply(mnesia, system_info, [is_running]) end,
+        local_tables_fun => fun() -> erlang:apply(mnesia, system_info, [local_tables]) end,
+        info_fun => fun(Table, Item) -> erlang:apply(mnesia, table_info, [Table, Item]) end,
         whereis_fun => fun ets:whereis/1,
         ets_info_fun => fun ets:info/2,
         word_size_fun => fun() -> erlang:system_info(wordsize) end
@@ -2580,7 +2651,7 @@ default_socket_source() ->
         count_fun => fun socket:number_of/0,
         global_fun => fun socket:info/0,
         all_fun => fun safe_sockets/0,
-        info_fun => fun(Socket) -> socket:info(Socket) end,
+        info_fun => fun socket:info/1,
         sleep_fun => fun timer:sleep/1,
         monotonic_fun => fun() -> erlang:monotonic_time(millisecond) end
     }.
@@ -2730,11 +2801,7 @@ network_sample(Source, Context) ->
                         {ok, Reason} ->
                             {Acc, Gone, [port_exclusion(Port, Reason) | Removed]};
                         error ->
-                            case network_resource(Port, Source) of
-                                skip -> {Acc, Gone, Removed};
-                                disappeared -> {Acc, Gone + 1, Removed};
-                                Item -> {Acc#{Port => Item}, Gone, Removed}
-                            end
+                            network_resource_acc(Port, Source, Acc, Gone, Removed)
                     end
                 end,
                 {#{}, 0, []},
@@ -2750,6 +2817,13 @@ network_sample(Source, Context) ->
             {error, Reason};
         _ ->
             {error, invalid_enumeration_shape}
+    end.
+
+network_resource_acc(Port, Source, Acc, Gone, Removed) ->
+    case network_resource(Port, Source) of
+        skip -> {Acc, Gone, Removed};
+        disappeared -> {Acc, Gone + 1, Removed};
+        Item -> {Acc#{Port => Item}, Gone, Removed}
     end.
 
 network_resource(Port, Source) ->
@@ -3256,7 +3330,7 @@ enumeration_error(Command, Reason) ->
 capture_inspection(Command, ProbeId, Samples, #{controller := Controller}, Fun) ->
     StartedAt = erlang:system_time(millisecond),
     StartedMonotonic = erlang:monotonic_time(millisecond),
-    ModuleLoaded = code:is_loaded(?MODULE) =/= false,
+    ModuleLoaded = module_loaded(),
     {Runtime, Data, Coverage, ExtraEffects} = Fun(),
     FinishedMonotonic = erlang:monotonic_time(millisecond),
     FinishedAt = erlang:system_time(millisecond),
@@ -3821,7 +3895,7 @@ probe_errors(ProbeReports) ->
             reason_code := Reason
         } <- ProbeReports,
         Status =:= timeout orelse Status =:= error orelse
-            (Required =:= true andalso Status =:= unavailable)
+            (Required andalso Status =:= unavailable)
     ].
 
 probe_error_class(true) -> required_probe;
@@ -3848,6 +3922,9 @@ observer_effects(ModuleLoaded, Controller) ->
                     }
                 ]
     end.
+
+module_loaded() ->
+    is_tuple(code:is_loaded(?MODULE)).
 
 rfc3339(SystemTime) ->
     unicode:characters_to_binary(
@@ -4218,7 +4295,11 @@ json_safe(List) when is_list(List) ->
     lists:all(fun json_safe/1, List);
 json_safe(Value) when is_binary(Value); is_integer(Value); is_float(Value) ->
     true;
-json_safe(Value) when Value =:= true; Value =:= false; Value =:= null ->
+json_safe(true) ->
+    true;
+json_safe(false) ->
+    true;
+json_safe(null) ->
     true;
 json_safe(_Value) ->
     false.

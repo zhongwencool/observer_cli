@@ -30,7 +30,7 @@ capture(_Request, _Context) ->
 capture_quick(Request, Context, Controller) ->
     StartedAt = erlang:system_time(millisecond),
     Started = erlang:monotonic_time(millisecond),
-    ModuleLoaded = code:is_loaded(?MODULE) =/= false,
+    ModuleLoaded = is_tuple(code:is_loaded(?MODULE)),
     Interval = maps:get(interval_ms, Request, ?DEFAULT_INTERVAL_MS),
     Plan = [Started, Started + Interval],
     Samples = capture_samples(Request, Context, Plan),
@@ -60,7 +60,7 @@ capture_observation(Request, Context, Controller, Observe) ->
             StartedAt = erlang:system_time(millisecond),
             Started = erlang:monotonic_time(millisecond),
             Plan = observation_plan(Started, Duration, Count),
-            ModuleLoaded = code:is_loaded(?MODULE) =/= false,
+            ModuleLoaded = is_tuple(code:is_loaded(?MODULE)),
             _ = observer_cli_snapshot:diagnostic_scheduler_flag(true),
             try
                 Samples = capture_observation_samples(Request, Context, Plan),
@@ -575,11 +575,12 @@ metric_deltas(First, Last, Metrics) ->
 
 metric_delta(Key, First, Last, Acc) ->
     case {maps:get(Key, First, undefined), maps:get(Key, Last, undefined)} of
+        {Before, After} when Key =:= input, is_integer(Before), is_integer(After), After < Before ->
+            Acc#{
+                Key => null, iolist_to_binary([atom_to_binary(Key), <<"_state">>]) => counter_reset
+            };
         {Before, After} when
-            is_integer(Before),
-            is_integer(After),
-            (Key =:= input orelse Key =:= output),
-            After < Before
+            Key =:= output, is_integer(Before), is_integer(After), After < Before
         ->
             Acc#{
                 Key => null, iolist_to_binary([atom_to_binary(Key), <<"_state">>]) => counter_reset
@@ -753,8 +754,10 @@ observation_errors(_Mode, _Samples, _Holder, true, Statuses) ->
      || lists:member(error, Statuses)
     ].
 
-required_complete(Samples) ->
-    length(Samples) =:= 2 andalso lists:all(fun valid_required_sample/1, Samples).
+required_complete([_, _] = Samples) ->
+    lists:all(fun valid_required_sample/1, Samples);
+required_complete(_Samples) ->
+    false.
 
 valid_required_sample(#{status := ok, resources := Resources}) ->
     lists:all(

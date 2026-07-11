@@ -291,24 +291,23 @@ validate_trace_timeout(Options, _Duration) ->
 
 validate_counter_list_options(Options, Sorts) ->
     case only_options(Options, [sort, limit, duration]) of
-        true ->
-            case validate_list_values(Options, Sorts) of
-                ok ->
-                    case maps:find(duration, Options) of
-                        {ok, _} ->
-                            case duration(Options) of
-                                {ok, Duration} -> validate_scheduler_timeout(Options, Duration);
-                                {error, Reason} -> {error, Reason}
-                            end;
-                        error ->
-                            validate_target_options(Options)
-                    end;
-                Error ->
-                    Error
-            end;
-        false ->
-            {error, unsupported_command_option}
+        true -> validate_counter_list_values(Options, Sorts);
+        false -> {error, unsupported_command_option}
     end.
+
+validate_counter_list_values(Options, Sorts) ->
+    case validate_list_values(Options, Sorts) of
+        ok -> validate_optional_duration(Options);
+        Error -> Error
+    end.
+
+validate_optional_duration(#{duration := _} = Options) ->
+    case duration(Options) of
+        {ok, Duration} -> validate_scheduler_timeout(Options, Duration);
+        {error, Reason} -> {error, Reason}
+    end;
+validate_optional_duration(Options) ->
+    validate_target_options(Options).
 
 only_options(Options, CommandOptions) ->
     Global = [
@@ -341,17 +340,18 @@ validate_diagnose_options(Options) ->
             case duration_ms(Text) of
                 Duration when is_integer(Duration), Duration >= 5000, Duration =< 60000 ->
                     case App of
-                        {ok, Name} ->
-                            case valid_application_name(Name) of
-                                true -> validate_observation_timeout(Options, Duration);
-                                false -> {error, invalid_application}
-                            end;
-                        error ->
-                            validate_observation_timeout(Options, Duration)
+                        {ok, Name} -> validate_observation_app(Name, Options, Duration);
+                        error -> validate_observation_timeout(Options, Duration)
                     end;
                 _ ->
                     {error, invalid_observation_duration}
             end
+    end.
+
+validate_observation_app(Name, Options, Duration) ->
+    case valid_application_name(Name) of
+        true -> validate_observation_timeout(Options, Duration);
+        false -> {error, invalid_application}
     end.
 
 validate_observation_timeout(#{timeout := _} = Options, Duration) ->
@@ -498,7 +498,7 @@ validate_target_without_timeout(_Options) ->
 target(#{node := Text} = Options) ->
     case node_parts(Text) of
         {ok, [Name]} ->
-            case inet:gethostname() of
+            case erlang:apply(inet, gethostname, []) of
                 {ok, Host} -> finish_target(Name, Host, Options);
                 {error, _Reason} -> {error, invalid_node}
             end;

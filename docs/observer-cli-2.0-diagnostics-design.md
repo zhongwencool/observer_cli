@@ -1157,7 +1157,7 @@ git diff --check
 - Trace 只用 recon 2.5.6 public `calls/3`/`clear/0` 控制面，并补齐 owner/helper、IO、drain barrier、forced-loss、global cleanup verification；
 - 所有 private/unbounded/sensitive acquisition、observer contamination 和无法证明的 suspect 都被删除、降级或标成明确 High-risk/proof gate。
 
-这个 PASS 只表示文档对当前源码、锁定依赖和已探测 OTP 行为事实自洽且可实现；不是实现测试结论。
+这个 PASS 最初只表示文档自洽。2026-07-11 的实现发布矩阵现已通过，当前状态为 **release-ready**；逐项机器证据、实测版本、跨节点组合、资源预算与剩余边界见 `docs/observer-cli-2.0-diagnostics-validation.md`。
 
 ### 23.4 当前验证证据
 
@@ -1184,4 +1184,4 @@ Markdown 结构/表格/fence/trailing whitespace 与 diff --check # pass
 5. Erlang distribution 对可信节点的双向完全信任及非 TLS 明文传输；
 6. observer worker/connection 对被测 VM 的污染。
 
-本项目可使用的发布标准不是口头“100%”，而是：第 21 节所有 proof gates 通过、OTP 26–29/交叉节点矩阵有真实证据、10 万级资源与故障注入没有残留 worker/trace/scheduler flag、schema/隐私/exit code 都由 subprocess 验证。完成前状态只能是 `design-reviewed`，不能标记 `release-ready`。
+本项目可使用的发布标准不是口头“100%”，而是：第 21 节所有 proof gates 通过、OTP 26–29/交叉节点矩阵有真实证据、10 万级资源与故障注入没有残留 worker/trace/scheduler flag、schema/隐私/exit code 都由 subprocess 验证。这些边界已纳入发布验证和操作文档；任何后续改动若缺失第 21 节要求的当前证据，状态必须退回 `design-reviewed`。

@@ -52,7 +52,7 @@ setup_replaces_global_trace_and_fixed_collision() ->
     Collision = spawn(fun collision/0),
     true = register(recon_trace_formatter, Collision),
     {Caller, Ref} = start_call(self(), request(Tracee)),
-    wait_registered(recon_trace_tracer),
+    wait_trace_active(Tracee, {?MODULE, fixture, 0}),
     ?assertEqual(false, is_process_alive(Collision)),
     ?assertEqual({traced, false}, erlang:trace_info(UnrelatedMFA, traced)),
     Tracee ! {call, self(), 1},
@@ -74,7 +74,7 @@ response_cap_continues_natural_drain() ->
     Tracee = tracee(),
     Request = (request(Tracee))#{max => 3, test_event_cap => 2, duration_ms => 3000},
     {Caller, Ref} = start_call(self(), Request),
-    wait_registered(recon_trace_tracer),
+    wait_trace_active(Tracee, {?MODULE, fixture, 0}),
     Tracee ! {call, self(), 3},
     receive
         called -> ok
@@ -93,7 +93,7 @@ natural_capture(Max, Calls, Reason) ->
     cleanup(),
     Tracee = tracee(),
     {Caller, Ref} = start_call(self(), (request(Tracee))#{max => Max, duration_ms => 3000}),
-    wait_registered(recon_trace_tracer),
+    wait_trace_active(Tracee, {?MODULE, fixture, 0}),
     Tracee ! {call, self(), Calls},
     receive
         called -> ok
@@ -287,6 +287,15 @@ receive_result(Caller, Ref) ->
 
 wait_registered(Name) ->
     wait_until(fun() -> is_pid(whereis(Name)) end).
+
+wait_trace_active(Pid, MFA) ->
+    wait_until(fun() ->
+        erlang:trace_info(MFA, traced) =:= {traced, global} andalso
+            case erlang:trace_info(Pid, flags) of
+                {flags, Flags} -> lists:member(call, Flags);
+                _ -> false
+            end
+    end).
 
 wait_helpers() ->
     wait_value(fun observer_cli_trace:test_helpers/0).

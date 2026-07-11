@@ -23,6 +23,7 @@
     run_remote/4,
     remote_load/1,
     run_command/2,
+    command_request/3,
     with_target/2,
     connect_target/7,
     probe_target/7
@@ -36,8 +37,13 @@ main(Options) ->
     case parse_args(Options) of
         {ok, #{route := tui, target := TargetNode, cookie := Cookie, interval := Interval}} ->
             run(TargetNode, cookie_atom(Cookie), Interval);
-        {ok, #{route := command, command := Command, options := CommandOptions}} ->
-            case run_command(Command, CommandOptions) of
+        {ok, #{
+            route := command,
+            command := Command,
+            arguments := Arguments,
+            options := CommandOptions
+        }} ->
+            case run_command(Command, CommandOptions#{arguments => Arguments}) of
                 {ok, Response, ExitCode} ->
                     command_output(CommandOptions, Response, ExitCode);
                 {error, Category, Reason} ->
@@ -46,7 +52,7 @@ main(Options) ->
         {error, Error} ->
             case command_from_args(Options) of
                 undefined ->
-                    io:format("Usage: observer_cli TARGETNODE [TARGETCOOKIE REFRESHMS]~n");
+                    usage();
                 Command ->
                     command_error(
                         Command,
@@ -65,20 +71,30 @@ run_args(Options, RunFun) ->
         {ok, #{route := command} = Command} ->
             {ok, Command};
         {error, _Reason} ->
-            io:format("Usage: observer_cli TARGETNODE [TARGETCOOKIE REFRESHMS]~n")
+            usage()
     end.
 -endif.
+
+usage() ->
+    io:put_chars(
+        "Usage:\n"
+        "  observer_cli TARGETNODE [TARGETCOOKIE REFRESHMS]\n"
+        "  observer_cli tui TARGETNODE [TARGETCOOKIE REFRESHMS]\n"
+        "  observer_cli connect|status|disconnect [OPTIONS]\n"
+        "  observer_cli snapshot|diagnose|memory|schedulers|distribution [OPTIONS]\n"
+        "  observer_cli processes|process|applications|ets|mnesia|network|ports|sockets [OPTIONS]\n"
+        "  observer_cli gen-server-state|supervision-tree [OPTIONS]\n"
+        "  observer_cli trace call MFA|trace stop --all [OPTIONS]\n"
+        "Common remote options: --node NODE and exactly one of --cookie-env NAME or --cookie-file PATH\n"
+        "Formats: --format text|term|json (JSON requires OTP 27+)\n"
+    ).
 
 parse_args(Options) ->
     observer_cli_cli:parse(Options).
 
-run_command(snapshot, #{deep := true} = Options) ->
-    with_target(Options, fun(_Target, _Capabilities) ->
-        {error, capability, command_unavailable}
-    end);
 run_command(snapshot, Options) ->
     with_target(Options, fun(Target, _Capabilities) ->
-        run_snapshot(Target, Options)
+        run_snapshot(Target, Options, command_request(snapshot, arguments(Options), Options))
     end);
 run_command(diagnose, Options) ->
     with_target(Options, fun(Target, _Capabilities) ->
@@ -90,10 +106,56 @@ run_command(status, Options) ->
     run_status(Options);
 run_command(disconnect, _Options) ->
     run_disconnect();
-run_command(_Command, Options) ->
-    with_target(Options, fun(_Target, _Capabilities) ->
-        {error, capability, command_unavailable}
+run_command(Command, Options) ->
+    with_target(Options, fun(Target, _Capabilities) ->
+        run_dispatch(
+            Target, Command, command_request(Command, arguments(Options), Options), Options
+        )
     end).
+
+arguments(Options) -> maps:get(arguments, Options, []).
+
+command_request(trace, ["call", MFA], Options) ->
+    (trace_request(call, Options))#{mfa => MFA, pid => maps:get(pid, Options)};
+command_request(trace, ["stop"], _Options) ->
+    #{action => stop_all};
+command_request(process, [Target], Options) ->
+    (request_options(Options))#{target => Target};
+command_request(gen_server_state, [Target], Options) ->
+    (request_options(Options))#{target => Target};
+command_request(supervision_tree, [], Options) ->
+    (request_options(Options))#{app => maps:get(app, Options)};
+command_request(Command, _Arguments, Options) when Command =:= snapshot; Command =:= diagnose ->
+    maps:with([deep, observe, app], Options);
+command_request(_Command, _Arguments, Options) ->
+    request_options(Options).
+
+request_options(Options) ->
+    lists:foldl(
+        fun
+            ({sort, Value}, Acc) ->
+                Acc#{sort => list_to_existing_atom(Value)};
+            ({limit, Value}, Acc) ->
+                Acc#{limit => list_to_integer(Value)};
+            ({duration, _Value}, Acc) ->
+                {ok, Duration} = observer_cli_cli:duration(Options),
+                Acc#{duration_ms => Duration};
+            (_, Acc) ->
+                Acc
+        end,
+        #{},
+        maps:to_list(maps:with([sort, limit, duration], Options))
+    ).
+
+trace_request(Action, Options) ->
+    {ok, Duration} = observer_cli_cli:trace_duration(Options),
+    {ok, Max} = observer_cli_cli:trace_limit(Options),
+    #{
+        action => Action,
+        duration_ms => Duration,
+        max => Max,
+        replace_existing_trace => maps:get(replace_existing_trace, Options, false)
+    }.
 
 run_connect(Options) ->
     case observer_cli_cli:context_options(Options) of
@@ -169,7 +231,7 @@ disconnect_response(Node) ->
     ),
     {ok, Response, observer_cli_cli:exit_code(success)}.
 
-run_snapshot(Target, Options) ->
+run_snapshot(Target, Options, Request) ->
     {ok, Timeout} = observer_cli_cli:timeout(Options),
     Policy =
         case maps:is_key(include_identifiers, Options) of
@@ -182,7 +244,7 @@ run_snapshot(Target, Options) ->
             Target,
             observer_cli_snapshot,
             dispatch,
-            [self(), snapshot, #{}, DispatchOptions],
+            [self(), snapshot, Request, DispatchOptions],
             Timeout
         )
     of
@@ -202,6 +264,49 @@ snapshot_response(#{<<"capture">> := #{<<"status">> := <<"partial">>}} = Respons
     {ok, Response, observer_cli_cli:exit_code(partial)};
 snapshot_response(_Invalid) ->
     {error, schema, invalid_snapshot_response}.
+
+run_dispatch(Target, Command, Request, Options) ->
+    {ok, Timeout} = observer_cli_cli:timeout(Options),
+    Policy =
+        case maps:is_key(redact, Options) of
+            true -> redact;
+            false -> include
+        end,
+    try
+        erpc:call(
+            Target,
+            observer_cli_snapshot,
+            dispatch,
+            [self(), Command, Request, #{timeout_ms => Timeout, identifier_policy => Policy}],
+            Timeout
+        )
+    of
+        #{<<"status">> := <<"ok">>, <<"result">> := Response} ->
+            dispatch_response(Response);
+        #{<<"status">> := <<"error">>, <<"reason_code">> := Reason} ->
+            {error, required_probe, Reason};
+        _Invalid ->
+            {error, schema, invalid_command_response}
+    catch
+        _Class:_Reason:_Stacktrace -> {error, required_probe, target_dispatch_failed}
+    end.
+
+dispatch_response(
+    #{<<"capture">> := null, <<"errors">> := [#{<<"class">> := Class} | _]} = Response
+) ->
+    {ok, Response, observer_cli_cli:exit_code(binary_to_existing_atom(Class))};
+dispatch_response(#{<<"capture">> := #{<<"status">> := <<"partial">>}} = Response) ->
+    {ok, Response, observer_cli_cli:exit_code(partial)};
+dispatch_response(#{<<"capture">> := #{<<"probes">> := Probes}} = Response) ->
+    case lists:any(fun is_unavailable_probe/1, Probes) of
+        true -> {ok, Response, observer_cli_cli:exit_code(scan_budget_exceeded)};
+        false -> {ok, Response, observer_cli_cli:exit_code(success)}
+    end;
+dispatch_response(_Invalid) ->
+    {error, schema, invalid_command_response}.
+
+is_unavailable_probe(#{<<"status">> := <<"unavailable">>}) -> true;
+is_unavailable_probe(_Probe) -> false.
 
 run_diagnose(Target, Options) ->
     {ok, Timeout} = observer_cli_cli:timeout(Options),
@@ -453,6 +558,7 @@ wait_not_alive(Attempts) ->
             wait_not_alive(Attempts - 1)
     end.
 
+-spec command_output(map(), map(), non_neg_integer()) -> no_return().
 command_output(Options, Response, ExitCode) ->
     Format = command_format(Options),
     case observer_cli_cli:encode(Format, Response) of
@@ -463,6 +569,7 @@ command_output(Options, Response, ExitCode) ->
             output_encode_error(EncodeError)
     end.
 
+-spec command_error(atom(), map() | atom(), atom(), term()) -> no_return().
 command_error(Command, Options, Category, Reason) when is_map(Options) ->
     Format = command_format(Options),
     command_error(Command, Format, Category, Reason);
@@ -559,7 +666,7 @@ run_remote(TargetNode, ProbeFun, RemoteLoadFun, StartFun) ->
     io:format("~p~n", [StartFun()]).
 
 remote_module_available(Node) ->
-    net_kernel:hidden_connect_node(Node) =:= true andalso
+    net_kernel:hidden_connect_node(Node) andalso
         rpc:call(Node, code, ensure_loaded, [observer_cli]) =:= {module, observer_cli}.
 
 maybe_set_target_cookie(_Node, undefined) ->
