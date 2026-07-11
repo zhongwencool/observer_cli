@@ -1568,7 +1568,7 @@ capture_ets(Request, Context) when is_map(Request) ->
         true ->
             Source = ets_source(Request),
             Count = (maps:get(count_fun, Source))(),
-            Estimate = working_set_estimate(min(Count, Limit), 8, 1),
+            Estimate = working_set_estimate(min(Count, Limit), 10, 1),
             Outcome =
                 case Count =< ?ETS_SCAN_BUDGET andalso Estimate =< ?MAX_WORKING_SET_BYTES of
                     true ->
@@ -2509,7 +2509,7 @@ collect_ets(Source, Sort, Limit, Context, Estimate) ->
         truncated => false,
         sort => Sort,
         sort_semantics => current,
-        tracked_field_count => 8,
+        tracked_field_count => 10,
         retained_sample_count => 1,
         working_set_estimated_bytes => Estimate
     },
@@ -2537,7 +2537,17 @@ scan_ets_table(Table, Source, Sort, Limit, Acc0) ->
 ets_table_item(Table, Source) ->
     Info = maps:get(info_fun, Source),
     FirstId = Info(Table, id),
-    Fields = [name, size, memory, owner, type, protection, keypos],
+    Fields = [
+        name,
+        size,
+        memory,
+        owner,
+        type,
+        protection,
+        keypos,
+        write_concurrency,
+        read_concurrency
+    ],
     Values = [{Key, Info(Table, Key)} || Key <- Fields],
     LastId = Info(Table, id),
     case

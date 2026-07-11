@@ -46,7 +46,7 @@ store 和 collector 进程，因此 process、port、atom、memory、reductions�
 | Ports | `ports`、`port TARGET` | 已覆盖 | 列表字段及有界详情均覆盖；`locking` 为实现相关信息 |
 | Sockets | `sockets` | 部分覆盖 | general counters、endpoint/state/owner/fd、accept/max packet、详情 counters/options |
 | System | `snapshot`、`memory`、`schedulers`、`distribution`、`network` | 部分覆盖 | 主机 RSS/VSZ、CPU 拓扑细项、allocator 全页、distribution 连接细节 |
-| ETS | `ets` | 部分覆盖 | write/read concurrency |
+| ETS | `ets` | 已覆盖 | 包含 write/read concurrency |
 | Mnesia | `mnesia` | 部分覆盖 | type、owner、index、registered name |
 | App | `applications` | 部分覆盖 | version；`no_group` 只有数量，没有完整资源聚合行 |
 | Doc | 无 | 不属于指标 | TUI 内置帮助，不需要做成指标命令 |
@@ -321,8 +321,8 @@ CLI `memory` 只返回 `erlang:memory()` 视角，不能替代 TUI 的 `recon_al
 | TUI 字段 | `ets` | 状态 |
 |---|---|---|
 | name、size、memory、type、protection、keypos、owner | 同名结构化字段 | 已覆盖 |
-| write_concurrency | 无 | 未实现 |
-| read_concurrency | 无 | 未实现 |
+| write_concurrency | 同名字段 | 已覆盖 |
+| read_concurrency | 同名字段 | 已覆盖 |
 
 CLI 另有 `table_id`、`management`、扫描/消失/截断审计字段；TUI 没有对应列。
 
@@ -365,8 +365,7 @@ CLI 只列 local tables，并明确区分 RAM/disc memory bytes 与 disc-only di
 1. Network 每连接的 `recv_cnt/send_cnt/cnt`、peer、queue size、memory、port input/output。
 2. Ports：controls、slot、parallelism、locking、monitors、monitored_by。
 3. Distribution：address、in/out、type、state。
-4. ETS：write/read concurrency。
-5. Applications：version 和 `no_group` 的 memory/reductions/msgq 聚合。
+4. Applications：version 和 `no_group` 的 memory/reductions/msgq 聚合。
 
 ### P1：有诊断价值，但可按需增加
 

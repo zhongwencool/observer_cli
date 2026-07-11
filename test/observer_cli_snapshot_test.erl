@@ -425,7 +425,9 @@ deep_snapshot_shares_report_identifier_dictionary_test() ->
         owner => Pid,
         type => set,
         protection => public,
-        keypos => 1
+        keypos => 1,
+        write_concurrency => true,
+        read_concurrency => false
     },
     EtsSource = #{
         count_fun => fun() -> 1 end,
@@ -448,7 +450,9 @@ deep_snapshot_shares_report_identifier_dictionary_test() ->
         Data = maps:get(<<"data">>, Response),
         [Process] = maps:get(<<"items">>, maps:get(<<"processes">>, Data)),
         [TableItem] = maps:get(<<"items">>, maps:get(<<"ets">>, Data)),
-        ?assertEqual(maps:get(<<"pid">>, Process), maps:get(<<"owner">>, TableItem))
+        ?assertEqual(maps:get(<<"pid">>, Process), maps:get(<<"owner">>, TableItem)),
+        ?assertEqual(true, maps:get(<<"write_concurrency">>, TableItem)),
+        ?assertEqual(false, maps:get(<<"read_concurrency">>, TableItem))
     after
         exit(Pid, kill)
     end.
