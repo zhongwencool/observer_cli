@@ -41,7 +41,7 @@ store 和 collector 进程，因此 process、port、atom、memory、reductions�
 |---|---|---|---|
 | Home 系统概要 | `snapshot`、`memory`、`schedulers` | 部分覆盖 | 主机 CPU/内存占比、active tasks、context switches、总 reductions/增量、逐 scheduler 利用率 |
 | Home 进程 Top N | `processes` | 部分覆盖 | CLI 每行不总是返回 TUI 全部列；只有 reductions 支持窗口排序 |
-| Process Info | `process TARGET`、`gen-server-state TARGET` | 部分覆盖 | signals、GC tuning、binary refs、messages、dictionary、stack；state 只返回有界 shape |
+| Process Info | `process TARGET`、`gen-server-state TARGET` | 已覆盖（但保留 `messages`、`dictionary` 有意排除） | signals、GC tuning、binary refs、stack；state 只返回有界 shape |
 | Network | `network` | 部分覆盖 | packet count、peer、queue/memory、port input/output |
 | Ports | `ports` | 部分覆盖 | controls、slot、parallelism、locking、monitor 信息及 port 详情页 |
 | Sockets | `sockets` | 部分覆盖 | general counters、endpoint/state/owner/fd、accept/max packet、详情 counters/options |
@@ -180,28 +180,28 @@ CLI 深度快照还实测得到：
 | current function | `current_function` | CLI 补充；TUI 在 Home 行显示，详情 meta 不显示 |
 | memory、reductions、message queue len | 同名/bytes 字段 | 已覆盖 |
 | heap size、total heap size、stack size | `*_bytes` | 已覆盖 |
-| priority | 无 | 未实现 |
-| binary refs count/bytes | 无 | 未实现 |
-| catchlevel | 无 | 未实现 |
-| suspending | 无 | 未实现 |
-| error_handler | 无 | 未实现 |
-| trap_exit | 无 | 未实现 |
+| priority | 无 | 已覆盖 |
+| binary refs count/bytes | 无 | 已覆盖 |
+| catchlevel | 无 | 已覆盖 |
+| suspending | 无 | 已覆盖 |
+| error_handler | 无 | 已覆盖 |
+| trap_exit | 无 | 已覆盖 |
 
 ### 5.2 GC、signals 与子视图
 
 | TUI 字段/子视图 | CLI | 状态 | 说明 |
 |---|---|---|---|
-| GC min_bin_vheap_size | 无 | 未实现 | CLI `garbage_collection_info` 返回另一组固定 heap/vheap shape 字段 |
-| GC min_heap_size | 无 | 未实现 | |
-| GC fullsweep_after | 无 | 未实现 | |
-| GC minor_gcs | 无 | 未实现 | |
-| links | 无 | 未实现 | |
-| monitors | 无 | 未实现 | |
-| monitored_by | 无 | 未实现 | |
+| GC min_bin_vheap_size | 无 | 已覆盖 | TUI 与 `garbage_collection_info` 同步 |
+| GC min_heap_size | 无 | 已覆盖 | TUI 与 `garbage_collection_info` 同步 |
+| GC fullsweep_after | 无 | 已覆盖 | TUI 与 `garbage_collection_info` 同步 |
+| GC minor_gcs | 无 | 已覆盖 | TUI 与 `garbage_collection_info` 同步 |
+| links | 无 | 已覆盖 | |
+| monitors | 无 | 已覆盖 | |
+| monitored_by | 无 | 已覆盖 | |
 | reductions/memory 趋势图 | 无 | 未实现 | CLI 是单次事实或显式 bounded window，不返回历史图 |
 | messages | 无 | 未实现 | 有意避免复制消息内容 |
 | dictionary | 无 | 未实现 | 有意避免复制进程字典 |
-| current stack | 无 | 未实现 | 有意避免 snapshot/diagnose 栈采集 |
+| current stacktrace | 无 | 已覆盖 | 与 `current_stacktrace` 同步字段 |
 | raw state | `gen-server-state TARGET` | 部分覆盖 | CLI 在目标端复制后只返回有界、去值的 shape，不返回 TUI `recon:get_state/2` 原值 |
 
 因此，`process TARGET` 目前是安全的 metadata 详情，不是 TUI Process Info 的完整导出。
@@ -363,34 +363,31 @@ CLI 只列 local tables，并明确区分 RAM/disc memory bytes 与 disc-only di
 ### P0：直接影响常见排障
 
 1. Network 每连接的 `recv_cnt/send_cnt/cnt`、peer、queue size、memory、port input/output。
-2. Process signals：links、monitors、monitored_by、trap_exit。
-3. Process GC tuning：min heap/bin vheap、fullsweep_after、minor_gcs。
-4. Ports：controls、slot、parallelism、locking、monitors、monitored_by。
-5. Distribution：address、in/out、type、state。
-6. ETS：write/read concurrency。
-7. Applications：version 和 `no_group` 的 memory/reductions/msgq 聚合。
+2. Ports：controls、slot、parallelism、locking、monitors、monitored_by。
+3. Distribution：address、in/out、type、state。
+4. ETS：write/read concurrency。
+5. Applications：version 和 `no_group` 的 memory/reductions/msgq 聚合。
 
 ### P1：有诊断价值，但可按需增加
 
 1. Home 全局 active tasks、context switches、reductions total/delta、GC interval delta、
    logger queue、port parallelism。
 2. 逐 scheduler 利用率，而不是只有 normal/dirty aggregate。
-3. Process priority、binary refs、catchlevel、suspending、error_handler。
-4. 非 reductions 的 process window Top N。
-5. Socket owner/fd/endpoint/state、accepts、max packet 和 identity/metadata sorts。
-6. Mnesia type、owner、index、registered name。
-7. System module count、logical CPU 细项、thread/async 信息。
+3. 非 reductions 的 process window Top N。
+4. Socket owner/fd/endpoint/state、accepts、max packet 和 identity/metadata sorts。
+5. Mnesia type、owner、index、registered name。
+6. System module count、logical CPU 细项、thread/async 信息。
 
 ### P2：成本或暴露面较高
 
 1. System allocator block size、SBCS/MBCS、cache hit 全页。
 2. Port 与 socket 的完整详情、完整 counters/options。
-3. Process messages、dictionary、current stack。
+3. Process messages、dictionary（保留有意不返回）。
 4. TUI plugin sheet 的通用 CLI 执行协议。
 
-不建议为了“字段完全相等”直接把 raw process state、messages、dictionary、stack 或完整
+不建议为了“字段完全相等”直接把 process state、messages、dictionary、完整 stacktrace 或完整
 socket options 塞进 `snapshot`。这些数据复制成本和敏感信息风险高；若要补，应保持独立、
-显式、有界命令。
+显式、有界的独立命令。
 
 ## 14. CLI 独有能力
 

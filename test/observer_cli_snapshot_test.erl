@@ -721,6 +721,66 @@ binary_memory_is_explicit_and_refs_do_not_escape_test() ->
         exit(Pid, kill)
     end.
 
+process_detail_collects_tui_field_gap_items_test() ->
+    Parent = self(),
+    Pid = spawn(fun process_fixture/0),
+    Port = open_port({spawn, "cat"}, [binary]),
+    Ref = make_ref(),
+    try
+        Source = process_source([Pid], fun(_Pid, Keys) ->
+            Parent ! {process_detail_keys, Keys},
+            process_detail_info(Keys, Port, Ref)
+        end),
+        Response = inspection(process, #{
+            target => list_to_binary(pid_to_list(Pid)), test_process_source => Source
+        }),
+        Data = maps:get(<<"data">>, Response),
+        ?assertEqual(<<"running">>, maps:get(<<"status">>, Data)),
+        assert_json_safe(Response),
+        ?assertEqual(3, maps:get(<<"binary_refs_count">>, Data)),
+        ?assertEqual(128, maps:get(<<"binary_refs_bytes">>, Data)),
+        ?assertEqual(128, maps:get(<<"binary_memory_bytes">>, Data)),
+        ?assertEqual(5, maps:get(<<"priority">>, Data)),
+        ?assertEqual(1, maps:get(<<"catchlevel">>, Data)),
+        ?assertEqual(true, maps:get(<<"trap_exit">>, Data)),
+        ErrorHandler = maps:get(<<"error_handler">>, Data),
+        ?assertMatch(#{<<"arity">> := 2, <<"module">> := _, <<"function">> := _}, ErrorHandler),
+        ?assert(is_binary(maps:get(<<"module">>, ErrorHandler))),
+        ?assert(is_binary(maps:get(<<"function">>, ErrorHandler))),
+        ?assertMatch(
+            #{
+                <<"min_bin_vheap_size">> := 2,
+                <<"min_heap_size">> := 3,
+                <<"fullsweep_after">> := 11,
+                <<"minor_gcs">> := 17,
+                <<"old_heap_size">> := 5
+            },
+            maps:get(<<"garbage_collection_info">>, Data)
+        ),
+        ?assert(type_key_present(maps:get(<<"links">>, Data))),
+        ?assert(type_key_present(maps:get(<<"monitors">>, Data))),
+        ?assert(type_key_present(maps:get(<<"monitored_by">>, Data))),
+        ?assert(is_list(maps:get(<<"suspending">>, Data))),
+        FirstStackFrame = hd(maps:get(<<"current_stacktrace">>, Data)),
+        ?assertMatch(#{<<"arity">> := 2, <<"module">> := _, <<"function">> := _}, FirstStackFrame),
+        ?assert(is_binary(maps:get(<<"module">>, FirstStackFrame))),
+        ?assert(is_binary(maps:get(<<"function">>, FirstStackFrame))),
+        ?assertNot(is_map_key(<<"messages">>, Data)),
+        ?assertNot(is_map_key(<<"dictionary">>, Data)),
+        receive
+            {process_detail_keys, Keys} ->
+                ?assert(not lists:member(messages, Keys)),
+                ?assert(not lists:member(dictionary, Keys)),
+                ?assert(not lists:member(state, Keys)),
+                ?assert(lists:member(current_stacktrace, Keys))
+        after 1000 ->
+            ?assert(false)
+        end
+    after
+        port_close(Port),
+        exit(Pid, kill)
+    end.
+
 processes_duration_supports_all_window_sorts_test() ->
     WordSize = erlang:system_info(wordsize),
     lists:foreach(
@@ -1322,6 +1382,60 @@ process_info_fixture(_Pid, Keys, Metric) ->
         total_heap_size => Metric
     },
     [{Key, maps:get(Key, Values)} || Key <- Keys].
+
+process_detail_info(Keys, Port, Ref) ->
+    Values = #{
+        registered_name => [],
+        current_function =>
+            {observer_cli_snapshot_test, process_detail_collects_tui_field_gap_items_test, 0},
+        initial_call =>
+            {observer_cli_snapshot_test, process_detail_collects_tui_field_gap_items_test, 0},
+        status => running,
+        memory => 6,
+        message_queue_len => 1,
+        reductions => 2,
+        heap_size => 16,
+        total_heap_size => 32,
+        stack_size => 8,
+        group_leader => self(),
+        binary => [
+            {Ref, 64, 1},
+            {make_ref(), 64, 2}
+        ],
+        garbage_collection_info => [
+            {min_bin_vheap_size, 2},
+            {min_heap_size, 3},
+            {fullsweep_after, 11},
+            {minor_gcs, 17},
+            {old_heap_size, 5}
+        ],
+        priority => 5,
+        links => [self(), {process, self()}, {process, {a, node()}}, {port, Port}],
+        monitors => [{process, self()}, self(), {port, Port}],
+        monitored_by => [{process, {b, node()}}, self()],
+        catchlevel => 1,
+        suspending => [self(), {process, self()}],
+        error_handler => {goal12_error_handler, handle_error, 2},
+        trap_exit => true,
+        current_stacktrace => [
+            {observer_cli_snapshot_test, process_detail_info, 2, [{file, "test.erl"}, {line, 1}]},
+            {erlang, apply, 3, []}
+        ]
+    },
+    [{Key, maps:get(Key, Values)} || Key <- Keys].
+
+type_key_present(List) when is_list(List) ->
+    lists:all(
+        fun
+            (Item) when is_map(Item) ->
+                maps:is_key(<<"type">>, Item);
+            (_) ->
+                false
+        end,
+        List
+    );
+type_key_present(_List) ->
+    false.
 
 process_fixture() ->
     receive

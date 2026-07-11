@@ -913,7 +913,17 @@ safe_diagnostics_process_info_and_name_resolution_test() ->
                         total_heap_size,
                         stack_size,
                         group_leader,
-                        garbage_collection_info
+                        binary,
+                        garbage_collection_info,
+                        priority,
+                        links,
+                        monitors,
+                        monitored_by,
+                        catchlevel,
+                        suspending,
+                        error_handler,
+                        trap_exit,
+                        current_stacktrace
                     ],
                     Keys
                 )
@@ -922,11 +932,7 @@ safe_diagnostics_process_info_and_name_resolution_test() ->
         Forbidden = [
             <<"messages">>,
             <<"dictionary">>,
-            <<"state">>,
-            <<"current_stacktrace">>,
-            <<"links">>,
-            <<"monitors">>,
-            <<"binary">>
+            <<"state">>
         ],
         ?assertEqual([], [Key || Key <- Forbidden, maps:is_key(Key, Data)]),
         ?assertEqual(80, maps:get(<<"heap_size_bytes">>, Data)),
@@ -970,6 +976,6 @@ detail_info(Keys) ->
         group_leader => self(),
         garbage_collection_info => [{heap_size, 10}, {minor_gcs, 99}, {secret, true}]
     },
-    [{Key, maps:get(Key, Values)} || Key <- Keys].
+    [{Key, maps:get(Key, Values, undefined)} || Key <- Keys].
 
 -endif.

@@ -1757,7 +1757,17 @@ process_detail_keys() ->
         total_heap_size,
         stack_size,
         group_leader,
-        garbage_collection_info
+        binary,
+        garbage_collection_info,
+        priority,
+        links,
+        monitors,
+        monitored_by,
+        catchlevel,
+        suspending,
+        error_handler,
+        trap_exit,
+        current_stacktrace
     ].
 
 admit_process_scan(Source, Sort, TrackedFields, Samples, Retained) ->
@@ -1952,13 +1962,170 @@ process_field(status, Value, _WordSize, Acc) ->
 process_field(garbage_collection_info, Value, _WordSize, Acc) ->
     Acc#{garbage_collection_info => allowed_gc_info(Value)};
 process_field(binary, Binaries, _WordSize, Acc) ->
-    Acc#{binary_memory => binary_memory(Binaries)}.
+    {BinaryRefsCount, BinaryRefsBytes} = binary_ref_stats(Binaries),
+    BinaryMemory = binary_memory(Binaries),
+    Acc#{
+        binary_memory => BinaryMemory,
+        binary_refs_count => BinaryRefsCount,
+        binary_refs_bytes => BinaryRefsBytes
+    };
+process_field(priority, Value, _WordSize, Acc) ->
+    Acc#{priority => Value};
+process_field(links, Values, _WordSize, Acc) ->
+    Acc#{links => sanitize_signal_list(Values)};
+process_field(monitors, Values, _WordSize, Acc) ->
+    Acc#{monitors => sanitize_signal_list(Values)};
+process_field(monitored_by, Values, _WordSize, Acc) ->
+    Acc#{monitored_by => sanitize_signal_list(Values)};
+process_field(catchlevel, Value, _WordSize, Acc) ->
+    Acc#{catchlevel => Value};
+process_field(suspending, Values, _WordSize, Acc) ->
+    Acc#{suspending => sanitize_suspending_list(Values)};
+process_field(error_handler, Value, _WordSize, Acc) ->
+    Acc#{error_handler => sanitize_error_handler(Value)};
+process_field(trap_exit, Value, _WordSize, Acc) ->
+    Acc#{trap_exit => Value};
+process_field(current_stacktrace, Stack, _WordSize, Acc) ->
+    Acc#{current_stacktrace => sanitize_stacktrace(Stack)}.
 
 binary_memory(Binaries) ->
-    lists:sum([Size || {_Ref, Size, _RefCount} <- Binaries, is_integer(Size), Size >= 0]).
+    {_Refs, Bytes} = binary_ref_stats(Binaries),
+    Bytes.
+
+binary_ref_stats(Binaries) when is_list(Binaries) ->
+    lists:foldl(
+        fun
+            ({_Ref, Bytes, Count}, {Refs, TotalBytes}) when
+                is_integer(Bytes), Bytes >= 0, is_integer(Count), Count >= 0
+            ->
+                {Refs + max(Count, 0), TotalBytes + Bytes};
+            ({_Ref, Bytes}, {Refs, TotalBytes}) when is_integer(Bytes), Bytes >= 0 ->
+                {Refs + 1, TotalBytes + Bytes};
+            (_Ref, Acc) ->
+                Acc
+        end,
+        {0, 0},
+        Binaries
+    );
+binary_ref_stats(_Binaries) ->
+    {0, 0}.
+
+sanitize_signal_list(Signals) when is_list(Signals) ->
+    [sanitize_signal_item(Signal) || Signal <- Signals];
+sanitize_signal_list(_Signals) ->
+    [].
+
+sanitize_signal_item({process, Pid}) when is_pid(Pid) ->
+    #{
+        <<"type">> => <<"process">>,
+        <<"target">> => {identifier, pid, Pid}
+    };
+sanitize_signal_item({port, Port}) when is_port(Port) ->
+    #{
+        <<"type">> => <<"port">>,
+        <<"target">> => {identifier, port, Port}
+    };
+sanitize_signal_item({process, {Name, Node}}) when is_atom(Name), is_atom(Node) ->
+    #{
+        <<"type">> => <<"process">>,
+        <<"registered_name">> => Name,
+        <<"node">> => Node
+    };
+sanitize_signal_item({port, {Name, Node}}) when is_atom(Name), is_atom(Node) ->
+    #{
+        <<"type">> => <<"port">>,
+        <<"registered_name">> => Name,
+        <<"node">> => Node
+    };
+sanitize_signal_item(Pid) when is_pid(Pid) ->
+    #{
+        <<"type">> => <<"process">>,
+        <<"target">> => {identifier, pid, Pid}
+    };
+sanitize_signal_item(Port) when is_port(Port) ->
+    #{
+        <<"type">> => <<"port">>,
+        <<"target">> => {identifier, port, Port}
+    };
+sanitize_signal_item(Other) ->
+    #{
+        <<"type">> => <<"other">>,
+        <<"value">> => list_to_binary(io_lib:format("~tp", [Other]))
+    }.
+
+sanitize_suspending_list(Suspending) when is_list(Suspending) ->
+    [sanitize_signal_item(Item) || Item <- Suspending];
+sanitize_suspending_list(_Suspending) ->
+    [].
+
+sanitize_error_handler({Mod, Fun, Arity}) when
+    is_atom(Mod), is_atom(Fun), is_integer(Arity), Arity >= 0
+->
+    {mfa, Mod, Fun, Arity};
+sanitize_error_handler(Value) when is_atom(Value); is_boolean(Value); is_integer(Value) ->
+    Value;
+sanitize_error_handler(Value) ->
+    #{
+        <<"raw">> => list_to_binary(io_lib:format("~tp", [Value]))
+    }.
+
+sanitize_stacktrace(Stack) when is_list(Stack) ->
+    [sanitize_stacktrace_frame(Frame) || Frame <- Stack];
+sanitize_stacktrace(_Stack) ->
+    [].
+
+sanitize_stacktrace_frame({Mod, Fun, Arity, Location}) when
+    is_atom(Mod), is_atom(Fun), is_integer(Arity), is_list(Location)
+->
+    #{
+        module => Mod,
+        function => Fun,
+        arity => Arity,
+        location => sanitize_stacktrace_location(Location)
+    };
+sanitize_stacktrace_frame(Frame) ->
+    #{
+        raw => list_to_binary(io_lib:format("~tp", [Frame]))
+    }.
+
+sanitize_stacktrace_location(Location) when is_list(Location) ->
+    File = proplists:get_value(file, Location),
+    Line = proplists:get_value(line, Location),
+    case {File, Line} of
+        {undefined, undefined} ->
+            null;
+        _ ->
+            maps:from_list(
+                lists:filter(
+                    fun
+                        ({_K, undefined}) -> false;
+                        ({_K, _}) -> true
+                    end,
+                    [
+                        {<<"file">>, file_binary(File)},
+                        {<<"line">>, Line}
+                    ]
+                )
+            )
+    end;
+sanitize_stacktrace_location(_Location) ->
+    null.
+
+file_binary(Value) when is_binary(Value) ->
+    Value;
+file_binary(Value) when is_list(Value) ->
+    list_to_binary(Value);
+file_binary(Value) when is_atom(Value) ->
+    atom_to_binary(Value);
+file_binary(_Value) ->
+    null.
 
 allowed_gc_info(Info) ->
     Allowed = [
+        min_bin_vheap_size,
+        min_heap_size,
+        fullsweep_after,
+        minor_gcs,
         old_heap_block_size,
         heap_block_size,
         mbuf_size,
