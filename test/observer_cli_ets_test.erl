@@ -126,6 +126,122 @@ render_ets_info_wide_layout_test() ->
         ets:delete(TabName)
     end.
 
+diagnostic_ets_metadata_generation_and_stable_tie_test() ->
+    Parent = self(),
+    FirstId = make_ref(),
+    SecondId = make_ref(),
+    Values = #{
+        table_a => ets_metadata(FirstId, table_a, 10, 2),
+        table_b => ets_metadata(SecondId, table_b, 10, 2)
+    },
+    Source = #{
+        count_fun => fun() -> 2 end,
+        all_fun => fun() -> [table_b, table_a] end,
+        info_fun => fun(Table, Key) ->
+            Parent ! {ets_info_key, Key},
+            maps:get(Key, maps:get(Table, Values))
+        end,
+        word_size_fun => fun() -> 8 end
+    },
+    Response = diagnostic_ets(#{sort => memory, limit => 2, test_ets_source => Source}),
+    Data = maps:get(<<"data">>, Response),
+    Items = maps:get(<<"items">>, Data),
+    ExpectedIds = [list_to_binary(ref_to_list(Id)) || Id <- lists:sort([FirstId, SecondId])],
+    ?assertEqual(ExpectedIds, [maps:get(<<"table_id">>, Item) || Item <- Items]),
+    ?assertEqual([80, 80], [maps:get(<<"memory_bytes">>, Item) || Item <- Items]),
+    Keys = receive_ets_info_keys(18, []),
+    ?assertEqual(
+        [id, keypos, memory, name, owner, protection, size, type],
+        lists:usort(Keys)
+    ),
+    ?assertEqual(<<"metadata_only">>, hd(maps:get(<<"coverage">>, table_probe(Response)))).
+
+diagnostic_named_ets_recreate_is_not_correlated_test() ->
+    Name = observer_cli_goal09_recreated,
+    Source = #{
+        count_fun => fun() -> 1 end,
+        all_fun => fun() ->
+            _ = ets:new(Name, [named_table, public]),
+            put(goal09_recreated, false),
+            [Name]
+        end,
+        info_fun => fun(Table, Key) ->
+            case {Key, get(goal09_recreated)} of
+                {size, false} ->
+                    OldSize = ets:info(Table, size),
+                    ets:delete(Table),
+                    _ = ets:new(Name, [named_table, public]),
+                    put(goal09_recreated, true),
+                    OldSize;
+                _ ->
+                    ets:info(Table, Key)
+            end
+        end,
+        word_size_fun => fun() -> erlang:system_info(wordsize) end
+    },
+    Data = maps:get(<<"data">>, diagnostic_ets(#{test_ets_source => Source})),
+    ?assertEqual([], maps:get(<<"items">>, Data)),
+    ?assertEqual(1, maps:get(<<"disappeared_count">>, Data)).
+
+diagnostic_ets_admission_refuses_before_enumeration_test() ->
+    Parent = self(),
+    Source = #{
+        count_fun => fun() -> 100001 end,
+        all_fun => fun() ->
+            Parent ! ets_enumerated,
+            []
+        end,
+        info_fun => fun(_Table, _Key) ->
+            Parent ! ets_info_called,
+            undefined
+        end,
+        word_size_fun => fun() -> 8 end
+    },
+    Response = diagnostic_ets(#{test_ets_source => Source}),
+    Data = maps:get(<<"data">>, Response),
+    ?assertEqual(<<"scan_budget_exceeded">>, maps:get(<<"reason_code">>, Data)),
+    ?assertEqual(<<"pre_enumeration">>, maps:get(<<"admission_stage">>, Data)),
+    receive
+        ets_enumerated -> ?assert(false)
+    after 25 -> ok
+    end,
+    receive
+        ets_info_called -> ?assert(false)
+    after 25 -> ok
+    end.
+
+ets_metadata(Id, Name, Memory, Size) ->
+    #{
+        id => Id,
+        name => Name,
+        size => Size,
+        memory => Memory,
+        owner => self(),
+        type => set,
+        protection => public,
+        keypos => 1
+    }.
+
+diagnostic_ets(Request) ->
+    #{<<"status">> := <<"ok">>, <<"result">> := Response} =
+        observer_cli_snapshot:dispatch(
+            self(), ets, Request, #{timeout_ms => 3000, identifier_policy => include}
+        ),
+    Response.
+
+table_probe(Response) ->
+    [Probe] = maps:get(<<"probes">>, maps:get(<<"capture">>, Response)),
+    Probe.
+
+receive_ets_info_keys(0, Acc) ->
+    Acc;
+receive_ets_info_keys(Count, Acc) ->
+    receive
+        {ets_info_key, Key} -> receive_ets_info_keys(Count - 1, [Key | Acc])
+    after 1000 ->
+        erlang:error({missing_ets_info_calls, Count})
+    end.
+
 ets_row_widths(Columns) ->
     observer_cli_test_io:with_geometry(
         24,

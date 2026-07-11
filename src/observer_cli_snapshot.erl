@@ -22,6 +22,8 @@
 -define(PROCESS_SCAN_BUDGET, 100000).
 -define(BINARY_PROCESS_SCAN_BUDGET, 20000).
 -define(APPLICATION_SCAN_BUDGET, 5000).
+-define(ETS_SCAN_BUDGET, 100000).
+-define(MNESIA_SCAN_BUDGET, 10000).
 -define(WORKING_SET_BYTES_PER_FIELD, 64).
 -define(MAX_WORKING_SET_BYTES, 64 * 1024 * 1024).
 
@@ -224,6 +226,10 @@ probe(process, Request, Context) ->
     capture_process(Request, Context);
 probe(applications, Request, Context) ->
     capture_applications(Request, Context);
+probe(ets, Request, Context) ->
+    capture_ets(Request, Context);
+probe(mnesia, Request, Context) ->
+    capture_mnesia(Request, Context);
 probe(_Command, _Request, _Context) ->
     {probe_error, capability_unavailable}.
 -else.
@@ -241,6 +247,10 @@ probe(process, Request, Context) ->
     capture_process(Request, Context);
 probe(applications, Request, Context) ->
     capture_applications(Request, Context);
+probe(ets, Request, Context) ->
+    capture_ets(Request, Context);
+probe(mnesia, Request, Context) ->
+    capture_mnesia(Request, Context);
 probe(_Command, _Request, _Context) ->
     {probe_error, capability_unavailable}.
 -endif.
@@ -403,6 +413,57 @@ capture_applications(Request, Context) when is_map(Request) ->
 capture_applications(_Request, _Context) ->
     {probe_error, invalid_request}.
 
+capture_ets(Request, Context) when is_map(Request) ->
+    Sort = maps:get(sort, Request, memory),
+    Limit = maps:get(limit, Request, 20),
+    case valid_table_request(Sort, Limit) of
+        true ->
+            Source = ets_source(Request),
+            Count = (maps:get(count_fun, Source))(),
+            Estimate = working_set_estimate(min(Count, Limit), 8, 1),
+            Outcome =
+                case Count =< ?ETS_SCAN_BUDGET andalso Estimate =< ?MAX_WORKING_SET_BYTES of
+                    true ->
+                        fun() -> collect_ets(Source, Sort, Limit, Context, Estimate) end;
+                    false ->
+                        fun() ->
+                            {unavailable, scan_budget_exceeded, #{
+                                status => unavailable,
+                                reason_code => scan_budget_exceeded,
+                                admission_stage => pre_enumeration,
+                                observed_table_count => Count,
+                                scan_budget_count => ?ETS_SCAN_BUDGET,
+                                working_set_estimated_bytes => Estimate,
+                                working_set_budget_bytes => ?MAX_WORKING_SET_BYTES
+                            }}
+                        end
+                end,
+            capture_scan_inspection(ets, ets_inventory, 1, Context, Outcome);
+        false ->
+            {probe_error, invalid_request}
+    end;
+capture_ets(_Request, _Context) ->
+    {probe_error, invalid_request}.
+
+capture_mnesia(Request, Context) when is_map(Request) ->
+    Sort = maps:get(sort, Request, memory),
+    Limit = maps:get(limit, Request, 20),
+    case valid_table_request(Sort, Limit) of
+        true ->
+            Source = mnesia_source(Request),
+            capture_scan_inspection(
+                mnesia,
+                mnesia_inventory,
+                1,
+                Context,
+                fun() -> collect_mnesia(Source, Sort, Limit, Context) end
+            );
+        false ->
+            {probe_error, invalid_request}
+    end;
+capture_mnesia(_Request, _Context) ->
+    {probe_error, invalid_request}.
+
 capture_scan_inspection(Command, ProbeId, Samples, #{controller := Controller}, OutcomeFun) ->
     StartedAt = erlang:system_time(millisecond),
     StartedMonotonic = erlang:monotonic_time(millisecond),
@@ -452,6 +513,10 @@ valid_process_request(Sort, Limit, Duration) ->
 
 valid_application_request(Sort, Limit) ->
     lists:member(Sort, [memory, process_count, reductions, message_queue_len]) andalso
+        is_integer(Limit) andalso Limit >= 1 andalso Limit =< 200.
+
+valid_table_request(Sort, Limit) ->
+    lists:member(Sort, [memory, size]) andalso
         is_integer(Limit) andalso Limit >= 1 andalso Limit =< 200.
 
 process_inventory_keys(binary_memory) ->
@@ -617,14 +682,17 @@ scan_process(Pid, Keys, Source, Acc0) ->
     end.
 
 insert_top(Item, Sort, Limit, Items) ->
-    lists:sublist(insert_ranked(Item, Sort, Items), Limit).
+    insert_top(Item, Sort, Limit, Items, fun process_precedes/3).
 
-insert_ranked(Item, _Sort, []) ->
+insert_top(Item, Sort, Limit, Items, Precedes) ->
+    lists:sublist(insert_ranked(Item, Sort, Items, Precedes), Limit).
+
+insert_ranked(Item, _Sort, [], _Precedes) ->
     [Item];
-insert_ranked(Item, Sort, [Head | Rest] = Items) ->
-    case process_precedes(Item, Head, Sort) of
+insert_ranked(Item, Sort, [Head | Rest] = Items, Precedes) ->
+    case Precedes(Item, Head, Sort) of
         true -> [Item | Items];
-        false -> [Head | insert_ranked(Item, Sort, Rest)]
+        false -> [Head | insert_ranked(Item, Sort, Rest, Precedes)]
     end.
 
 process_precedes(Left, Right, Sort) ->
@@ -987,6 +1055,280 @@ application_precedes(A, B, Sort) ->
     AValue > BValue orelse
         (AValue =:= BValue andalso maps:get(application, A) < maps:get(application, B)).
 
+collect_ets(Source, Sort, Limit, Context, Estimate) ->
+    Started = erlang:monotonic_time(millisecond),
+    Tables = (maps:get(all_fun, Source))(),
+    Acc0 = table_inventory_acc(Context),
+    Acc = lists:foldl(
+        fun(Table, State) -> scan_ets_table(Table, Source, Sort, Limit, State) end,
+        Acc0,
+        Tables
+    ),
+    Finished = erlang:monotonic_time(millisecond),
+    Items = [public_ets_item(Item) || Item <- maps:get(top, Acc)],
+    Eligible = maps:get(eligible, Acc),
+    Data = (audit_table_inventory(Acc, length(Items), Started, Finished))#{
+        status => table_status(Eligible),
+        items => Items,
+        dropped_count => Eligible - length(Items),
+        sort => Sort,
+        sort_semantics => current,
+        tracked_field_count => 8,
+        retained_sample_count => 1,
+        working_set_estimated_bytes => Estimate
+    },
+    {ok, Data, [
+        metadata_only,
+        explicit_ets_info_keys,
+        raw_table_generation,
+        exact_top_n,
+        stable_raw_table_tie_break,
+        ets_scan_admitted
+    ]}.
+
+scan_ets_table(Table, Source, Sort, Limit, Acc0) ->
+    Acc1 = Acc0#{scanned := maps:get(scanned, Acc0) + 1},
+    case ets_table_item(Table, Source) of
+        {ok, Item} ->
+            Acc1#{
+                eligible := maps:get(eligible, Acc1) + 1,
+                top := insert_table_top(Item, Sort, Limit, maps:get(top, Acc1))
+            };
+        disappeared ->
+            Acc1#{disappeared := maps:get(disappeared, Acc1) + 1}
+    end.
+
+ets_table_item(Table, Source) ->
+    Info = maps:get(info_fun, Source),
+    FirstId = Info(Table, id),
+    Fields = [name, size, memory, owner, type, protection, keypos],
+    Values = [{Key, Info(Table, Key)} || Key <- Fields],
+    LastId = Info(Table, id),
+    case
+        valid_raw_table_id(FirstId) andalso FirstId =:= LastId andalso
+            lists:all(fun({_Key, Value}) -> Value =/= undefined end, Values)
+    of
+        true ->
+            WordSize = (maps:get(word_size_fun, Source))(),
+            Map = maps:from_list(Values),
+            {ok, Map#{
+                raw_id => FirstId,
+                table_id => {identifier, table, FirstId},
+                name => {identifier, table, maps:get(name, Map)},
+                memory => maps:get(memory, Map) * WordSize,
+                memory_bytes => maps:get(memory, Map) * WordSize,
+                owner => {identifier, pid, maps:get(owner, Map)},
+                management => management_unknown
+            }};
+        false ->
+            disappeared
+    end.
+
+valid_raw_table_id(Id) -> is_reference(Id) orelse is_integer(Id).
+
+public_ets_item(Item) -> maps:without([raw_id, memory], Item).
+
+insert_table_top(Item, Sort, Limit, Items) ->
+    insert_top(Item, Sort, Limit, Items, fun table_precedes/3).
+
+table_precedes(A, B, Sort) ->
+    AValue = maps:get(Sort, A),
+    BValue = maps:get(Sort, B),
+    AValue > BValue orelse
+        (AValue =:= BValue andalso maps:get(raw_id, A) < maps:get(raw_id, B)).
+
+collect_mnesia(Source, Sort, Limit, Context) ->
+    case (maps:get(available_fun, Source))() of
+        false ->
+            {unavailable, capability_unavailable, #{
+                status => unavailable, reason_code => capability_unavailable
+            }};
+        true ->
+            collect_available_mnesia(Source, Sort, Limit, Context)
+    end.
+
+collect_available_mnesia(Source, Sort, Limit, Context) ->
+    case (maps:get(running_fun, Source))() of
+        no ->
+            {ok, empty_mnesia_data(not_running, Sort), [mnesia_not_running]};
+        yes ->
+            Tables = (maps:get(local_tables_fun, Source))(),
+            Estimate = working_set_estimate(min(length(Tables), Limit), 4, 1),
+            case
+                length(Tables) =< ?MNESIA_SCAN_BUDGET andalso
+                    Estimate =< ?MAX_WORKING_SET_BYTES
+            of
+                true ->
+                    collect_admitted_mnesia(Tables, Source, Sort, Limit, Context, Estimate);
+                false ->
+                    {unavailable, scan_budget_exceeded, #{
+                        status => unavailable,
+                        reason_code => scan_budget_exceeded,
+                        admission_stage => post_enumeration,
+                        observed_local_table_count => length(Tables),
+                        scan_budget_count => ?MNESIA_SCAN_BUDGET,
+                        working_set_estimated_bytes => Estimate,
+                        working_set_budget_bytes => ?MAX_WORKING_SET_BYTES
+                    }}
+            end;
+        _Other ->
+            {unavailable, capability_unavailable, #{
+                status => unavailable, reason_code => capability_unavailable
+            }}
+    end.
+
+empty_mnesia_data(Status, Sort) ->
+    #{
+        status => Status,
+        items => [],
+        scanned_count => 0,
+        eligible_count => 0,
+        returned_count => 0,
+        dropped_count => 0,
+        disappeared_count => 0,
+        complete => true,
+        admission_stage => post_enumeration,
+        sort => Sort,
+        sort_semantics => current
+    }.
+
+collect_admitted_mnesia([], _Source, Sort, _Limit, _Context, _Estimate) ->
+    {ok, empty_mnesia_data(empty, Sort), [local_tables_only, metadata_only]};
+collect_admitted_mnesia(Tables, Source, Sort, Limit, Context, Estimate) ->
+    Started = erlang:monotonic_time(millisecond),
+    Acc0 = table_inventory_acc(Context),
+    Acc = lists:foldl(
+        fun(Table, State) -> scan_mnesia_table(Table, Source, Sort, Limit, State) end,
+        Acc0,
+        Tables
+    ),
+    Finished = erlang:monotonic_time(millisecond),
+    Items = [public_mnesia_item(Item) || Item <- maps:get(top, Acc)],
+    Eligible = maps:get(eligible, Acc),
+    Data = (audit_table_inventory(Acc, length(Items), Started, Finished))#{
+        status => ok,
+        items => Items,
+        dropped_count => Eligible - length(Items),
+        admission_stage => post_enumeration,
+        sort => Sort,
+        sort_semantics => current,
+        tracked_field_count => 4,
+        retained_sample_count => 1,
+        working_set_estimated_bytes => Estimate
+    },
+    {ok, Data, [
+        local_tables_only,
+        metadata_only,
+        staged_admission,
+        storage_type_units,
+        exact_main_ets_correlation,
+        stable_raw_table_tie_break
+    ]}.
+
+scan_mnesia_table(Table, Source, Sort, Limit, Acc0) ->
+    Acc1 = Acc0#{scanned := maps:get(scanned, Acc0) + 1},
+    case mnesia_table_item(Table, Source) of
+        disappeared ->
+            Acc1#{disappeared := maps:get(disappeared, Acc1) + 1};
+        {ok, Item} ->
+            case maps:get(Sort, Item, null) of
+                Value when is_integer(Value), Value >= 0 ->
+                    Acc1#{
+                        eligible := maps:get(eligible, Acc1) + 1,
+                        top := insert_table_top(Item, Sort, Limit, maps:get(top, Acc1))
+                    };
+                _ ->
+                    Acc1
+            end
+    end.
+
+mnesia_table_item(Table, Source) ->
+    Storage = mnesia_info(Source, Table, storage_type),
+    Size = mnesia_info(Source, Table, size),
+    Memory = mnesia_info(Source, Table, memory),
+    case Storage =/= undefined andalso is_integer(Size) andalso Size >= 0 of
+        true ->
+            WordSize = (maps:get(word_size_fun, Source))(),
+            Units = mnesia_storage_units(Storage, Memory, WordSize),
+            {Management, RawId} = mnesia_correlation(Table, Storage, Source),
+            {ok, Units#{
+                raw_id => RawId,
+                table => {identifier, table, Table},
+                storage_type => public_storage_type(Storage),
+                size => Size,
+                management => Management
+            }};
+        false ->
+            disappeared
+    end.
+
+mnesia_info(Source, Table, Key) ->
+    try (maps:get(info_fun, Source))(Table, Key) of
+        Value -> Value
+    catch
+        _:_ -> undefined
+    end.
+
+mnesia_storage_units(Storage, Value, WordSize) when
+    (Storage =:= ram_copies orelse Storage =:= disc_copies), is_integer(Value), Value >= 0
+->
+    #{memory => Value * WordSize, memory_bytes => Value * WordSize, disk_bytes => null};
+mnesia_storage_units(disc_only_copies, Value, _WordSize) when is_integer(Value), Value >= 0 ->
+    #{memory => null, memory_bytes => null, disk_bytes => Value};
+mnesia_storage_units(_Storage, _Value, _WordSize) ->
+    #{
+        memory => null,
+        memory_bytes => null,
+        disk_bytes => null,
+        storage_semantics_unavailable => true
+    }.
+
+public_storage_type(ram_copies) -> ram_copies;
+public_storage_type(disc_copies) -> disc_copies;
+public_storage_type(disc_only_copies) -> disc_only_copies;
+public_storage_type(_ExternalOrUnknown) -> external_or_unknown.
+
+mnesia_correlation(Table, Storage, Source) when
+    Storage =:= ram_copies; Storage =:= disc_copies
+->
+    case (maps:get(whereis_fun, Source))(Table) of
+        Tid when is_reference(Tid); is_integer(Tid) ->
+            case (maps:get(ets_info_fun, Source))(Tid, id) of
+                Tid -> {mnesia_main_table, Tid};
+                _ -> {management_unknown, Table}
+            end;
+        _ ->
+            {management_unknown, Table}
+    end;
+mnesia_correlation(Table, _Storage, _Source) ->
+    {management_unknown, Table}.
+
+public_mnesia_item(Item) ->
+    Public = maps:without([raw_id, memory], Item),
+    case maps:get(management, Item) of
+        mnesia_main_table ->
+            Public#{ets_table_id => {identifier, table, maps:get(raw_id, Item)}};
+        management_unknown ->
+            Public
+    end.
+
+table_inventory_acc(_Context) ->
+    #{scanned => 0, eligible => 0, disappeared => 0, top => []}.
+
+audit_table_inventory(Acc, Returned, Started, Finished) ->
+    #{
+        scanned_count => maps:get(scanned, Acc),
+        eligible_count => maps:get(eligible, Acc),
+        returned_count => Returned,
+        disappeared_count => maps:get(disappeared, Acc),
+        complete => true,
+        scan_started_monotonic_ms => Started,
+        scan_finished_monotonic_ms => Finished
+    }.
+
+table_status(0) -> empty;
+table_status(_Count) -> ok.
+
 excluded_processes(Context) ->
     Base = #{self() => diagnostics_worker},
     WithCoordinator = maybe_exclude_pid(
@@ -1059,6 +1401,53 @@ default_application_source() ->
         running_fun => fun application:which_applications/1,
         supervisor_fun => fun application:get_supervisor/1,
         root_info_fun => fun erlang:process_info/2
+    }.
+
+ets_source(Request) ->
+    ets_source_test(Request, default_ets_source()).
+
+-ifdef(TEST).
+ets_source_test(#{test_ets_source := Source}, _Default) -> Source;
+ets_source_test(_Request, Default) -> Default.
+-else.
+ets_source_test(_Request, Default) -> Default.
+-endif.
+
+default_ets_source() ->
+    #{
+        count_fun => fun() -> erlang:system_info(ets_count) end,
+        all_fun => fun ets:all/0,
+        info_fun => fun ets:info/2,
+        word_size_fun => fun() -> erlang:system_info(wordsize) end
+    }.
+
+mnesia_source(Request) ->
+    mnesia_source_test(Request, default_mnesia_source()).
+
+-ifdef(TEST).
+mnesia_source_test(#{test_mnesia_source := Source}, _Default) -> Source;
+mnesia_source_test(_Request, Default) -> Default.
+-else.
+mnesia_source_test(_Request, Default) -> Default.
+-endif.
+
+default_mnesia_source() ->
+    #{
+        available_fun => fun() ->
+            case code:ensure_loaded(mnesia) of
+                {module, mnesia} ->
+                    erlang:function_exported(mnesia, system_info, 1) andalso
+                        erlang:function_exported(mnesia, table_info, 2);
+                _ ->
+                    false
+            end
+        end,
+        running_fun => fun() -> mnesia:system_info(is_running) end,
+        local_tables_fun => fun() -> mnesia:system_info(local_tables) end,
+        info_fun => fun mnesia:table_info/2,
+        whereis_fun => fun ets:whereis/1,
+        ets_info_fun => fun ets:info/2,
+        word_size_fun => fun() -> erlang:system_info(wordsize) end
     }.
 
 capture_inspection(Command, ProbeId, Samples, #{controller := Controller}, Fun) ->

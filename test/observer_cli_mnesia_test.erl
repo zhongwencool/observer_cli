@@ -156,6 +156,131 @@ render_mnesia_preserves_sorted_page_test() ->
     ?assert(string:find(Text, "big_mnesia_table") =/= nomatch),
     ?assertEqual(nomatch, string:find(Text, "small_mnesia_table")).
 
+diagnostic_mnesia_storage_units_and_lifecycle_test() ->
+    RamId = make_ref(),
+    DiscId = make_ref(),
+    WrongDiscId = make_ref(),
+    Values = #{
+        ram_table => #{storage_type => ram_copies, size => 4, memory => 10},
+        disc_table => #{storage_type => disc_copies, size => 3, memory => 20},
+        only_table => #{storage_type => disc_only_copies, size => 2, memory => 77},
+        external_table => #{storage_type => {ext, alias, module}, size => 1, memory => 999},
+        vanished_table => #{}
+    },
+    Source = mnesia_source(
+        [ram_table, disc_table, only_table, external_table, vanished_table],
+        Values,
+        #{ram_table => RamId, disc_table => DiscId},
+        #{RamId => RamId, DiscId => WrongDiscId}
+    ),
+    Response = diagnostic_mnesia(#{sort => size, limit => 10, test_mnesia_source => Source}),
+    Data = maps:get(<<"data">>, Response),
+    ?assertEqual(1, maps:get(<<"disappeared_count">>, Data)),
+    Items = maps:get(<<"items">>, Data),
+    ByName = maps:from_list([{maps:get(<<"table">>, Item), Item} || Item <- Items]),
+    Ram = maps:get(<<"ram_table">>, ByName),
+    Disc = maps:get(<<"disc_table">>, ByName),
+    Only = maps:get(<<"only_table">>, ByName),
+    External = maps:get(<<"external_table">>, ByName),
+    ?assertEqual(80, maps:get(<<"memory_bytes">>, Ram)),
+    ?assertEqual(null, maps:get(<<"disk_bytes">>, Ram)),
+    ?assertEqual(160, maps:get(<<"memory_bytes">>, Disc)),
+    ?assertEqual(<<"mnesia_main_table">>, maps:get(<<"management">>, Ram)),
+    ?assertEqual(<<"management_unknown">>, maps:get(<<"management">>, Disc)),
+    ?assertEqual(null, maps:get(<<"memory_bytes">>, Only)),
+    ?assertEqual(77, maps:get(<<"disk_bytes">>, Only)),
+    ?assertEqual(null, maps:get(<<"memory_bytes">>, External)),
+    ?assertEqual(null, maps:get(<<"disk_bytes">>, External)),
+    ?assertEqual(<<"external_or_unknown">>, maps:get(<<"storage_type">>, External)),
+    ?assertEqual(true, maps:get(<<"storage_semantics_unavailable">>, External)).
+
+diagnostic_mnesia_stable_raw_id_tie_test() ->
+    FirstId = make_ref(),
+    SecondId = make_ref(),
+    Values = #{
+        first_table => #{storage_type => ram_copies, size => 1, memory => 10},
+        second_table => #{storage_type => ram_copies, size => 1, memory => 10}
+    },
+    Source = mnesia_source(
+        [second_table, first_table],
+        Values,
+        #{first_table => FirstId, second_table => SecondId},
+        #{FirstId => FirstId, SecondId => SecondId}
+    ),
+    Data = maps:get(
+        <<"data">>,
+        diagnostic_mnesia(#{sort => memory, limit => 2, test_mnesia_source => Source})
+    ),
+    Expected = [list_to_binary(ref_to_list(Id)) || Id <- lists:sort([FirstId, SecondId])],
+    ?assertEqual(Expected, [
+        maps:get(<<"ets_table_id">>, Item)
+     || Item <- maps:get(<<"items">>, Data)
+    ]).
+
+diagnostic_mnesia_post_enumeration_admission_test() ->
+    Parent = self(),
+    Base = mnesia_source(lists:seq(1, 10001), #{}, #{}, #{}),
+    Source = Base#{
+        info_fun => fun(_Table, _Key) ->
+            Parent ! mnesia_info_called,
+            undefined
+        end
+    },
+    Response = diagnostic_mnesia(#{test_mnesia_source => Source}),
+    Data = maps:get(<<"data">>, Response),
+    ?assertEqual(<<"scan_budget_exceeded">>, maps:get(<<"reason_code">>, Data)),
+    ?assertEqual(<<"post_enumeration">>, maps:get(<<"admission_stage">>, Data)),
+    receive
+        mnesia_info_called -> ?assert(false)
+    after 25 -> ok
+    end.
+
+diagnostic_mnesia_distinct_states_test() ->
+    NotRunning = (mnesia_source([], #{}, #{}, #{}))#{running_fun := fun() -> no end},
+    NotRunningData = maps:get(
+        <<"data">>, diagnostic_mnesia(#{test_mnesia_source => NotRunning})
+    ),
+    ?assertEqual(<<"not_running">>, maps:get(<<"status">>, NotRunningData)),
+    EmptyData = maps:get(
+        <<"data">>, diagnostic_mnesia(#{test_mnesia_source => mnesia_source([], #{}, #{}, #{})})
+    ),
+    ?assertEqual(<<"empty">>, maps:get(<<"status">>, EmptyData)),
+    Unavailable = (mnesia_source([], #{}, #{}, #{}))#{available_fun := fun() -> false end},
+    UnavailableData = maps:get(
+        <<"data">>, diagnostic_mnesia(#{test_mnesia_source => Unavailable})
+    ),
+    ?assertEqual(<<"unavailable">>, maps:get(<<"status">>, UnavailableData)),
+    Error = (mnesia_source([], #{}, #{}, #{}))#{
+        running_fun := fun() -> erlang:error(mnesia_fixture_error) end
+    },
+    ?assertEqual(
+        <<"probe_failed">>,
+        maps:get(<<"reason_code">>, diagnostic_mnesia_error(#{test_mnesia_source => Error}))
+    ).
+
+mnesia_source(Tables, Values, Whereis, EtsIds) ->
+    #{
+        available_fun => fun() -> true end,
+        running_fun => fun() -> yes end,
+        local_tables_fun => fun() -> Tables end,
+        info_fun => fun(Table, Key) -> maps:get(Key, maps:get(Table, Values, #{}), undefined) end,
+        whereis_fun => fun(Table) -> maps:get(Table, Whereis, undefined) end,
+        ets_info_fun => fun(Tid, id) -> maps:get(Tid, EtsIds, undefined) end,
+        word_size_fun => fun() -> 8 end
+    }.
+
+diagnostic_mnesia(Request) ->
+    #{<<"status">> := <<"ok">>, <<"result">> := Response} =
+        observer_cli_snapshot:dispatch(
+            self(), mnesia, Request, #{timeout_ms => 3000, identifier_policy => include}
+        ),
+    Response.
+
+diagnostic_mnesia_error(Request) ->
+    observer_cli_snapshot:dispatch(
+        self(), mnesia, Request, #{timeout_ms => 3000, identifier_policy => include}
+    ).
+
 mnesia_row_widths(Columns) ->
     observer_cli_test_io:with_geometry(
         24,

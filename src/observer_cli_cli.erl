@@ -171,6 +171,11 @@ validate_runtime_options(applications, Options) ->
         false ->
             {error, unsupported_command_option}
     end;
+validate_runtime_options(Command, Options) when Command =:= ets; Command =:= mnesia ->
+    case only_options(Options, [sort, limit]) of
+        true -> validate_list_options(Options, ["memory", "size"]);
+        false -> {error, unsupported_command_option}
+    end;
 validate_runtime_options(process, Options) ->
     case only_options(Options, [info]) of
         true -> validate_target_options(Options);
@@ -248,8 +253,13 @@ validate_arguments(process, [_Target]) ->
     ok;
 validate_arguments(process, _Arguments) ->
     {error, process_target_required};
-validate_arguments(Command, []) when Command =:= processes; Command =:= applications -> ok;
-validate_arguments(Command, _Arguments) when Command =:= processes; Command =:= applications ->
+validate_arguments(Command, []) when
+    Command =:= processes; Command =:= applications; Command =:= ets; Command =:= mnesia
+->
+    ok;
+validate_arguments(Command, _Arguments) when
+    Command =:= processes; Command =:= applications; Command =:= ets; Command =:= mnesia
+->
     {error, invalid_arguments};
 validate_arguments(_Command, _Arguments) ->
     ok.

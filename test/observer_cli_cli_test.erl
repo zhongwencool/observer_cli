@@ -129,6 +129,19 @@ process_inspection_option_contract_test() ->
     assert_argument_error(process_target_required, observer_cli_cli:parse(["process"])),
     assert_argument_error(invalid_arguments, observer_cli_cli:parse(["applications", "extra"])).
 
+table_inspection_option_contract_test() ->
+    ?assertMatch(
+        {ok, #{command := ets, options := #{sort := "size", limit := "200"}}},
+        observer_cli_cli:parse(["ets", "--sort", "size", "--limit", "200"])
+    ),
+    ?assertMatch(
+        {ok, #{command := mnesia, options := #{sort := "memory"}}},
+        observer_cli_cli:parse(["mnesia", "--sort", "memory"])
+    ),
+    assert_argument_error(invalid_sort, observer_cli_cli:parse(["ets", "--sort", "owner"])),
+    assert_argument_error(invalid_limit, observer_cli_cli:parse(["mnesia", "--limit", "201"])),
+    assert_argument_error(invalid_arguments, observer_cli_cli:parse(["ets", "extra"])).
+
 global_option_before_command_test() ->
     assert_argument_error(
         global_option_before_command,
