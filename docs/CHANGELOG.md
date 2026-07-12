@@ -6,6 +6,10 @@ Release and maintenance changes, newest first.
 
 - Added command-first snapshot, inspection, diagnostics, saved-target context,
   and bounded `recon` call-trace commands.
+- Added behavior-aware `otp-state` inspection for `gen_server`, `gen_statem`,
+  and `gen_event`; the pre-release `gen-server-state` command was removed.
+- Limited child-list enumeration to applications with at most 300 preflight
+  children and capped returned entries at 100; the preflight remains O(children).
 - Made `tui` the only interactive escript command and removed the positional
   TUI shorthand. Automatic remote module loading remains TUI-only.
 - Added local help and version routes, command-specific usage errors, fixed exit

@@ -167,8 +167,19 @@ capture_observation_samples(Request, Context, [Target | Rest], Index, PreviousFi
                 scheduler_baseline => SchedulerBaseline
             },
             Finish = maps:get(monotonic_finish_ms, Sample, erlang:monotonic_time(millisecond)),
-            capture_observation_samples(Request, Context, Rest, Index + 1, Finish, [Sample | Acc])
+            NextRequest = retain_application_refusal(Request, Sample),
+            capture_observation_samples(NextRequest, Context, Rest, Index + 1, Finish, [
+                Sample | Acc
+            ])
     end.
+
+retain_application_refusal(
+    #{app := _} = Request,
+    #{application := #{status := unavailable, reason_code := scan_budget_exceeded} = Application}
+) ->
+    Request#{application_refusal => Application};
+retain_application_refusal(Request, _Sample) ->
+    Request.
 
 safe_scheduler_sample() ->
     try
@@ -195,11 +206,17 @@ capture_samples(Request, Context, [First, Second]) ->
 
 capture_sample(Request, Context, Index, Target) ->
     sleep_until(Target),
-    try sample(Request, Context, Index) of
+    try sample_request(Request, Context, Index) of
         Sample -> Sample
     catch
         _Class:_Reason:_Stacktrace -> #{status => error, reason_code => required_probe_failed}
     end.
+
+sample_request(#{app := _, application_refusal := Application} = Request, Context, Index) ->
+    Sample = sample(maps:remove(app, maps:remove(application_refusal, Request)), Context, Index),
+    Sample#{application => Application};
+sample_request(Request, Context, Index) ->
+    sample(Request, Context, Index).
 
 distribution(Controller) ->
     try observer_cli_snapshot:diagnostic_distribution(Controller) of
@@ -848,17 +865,24 @@ metric_series_delta(Key, Values, Acc) ->
 application_trend(Samples) ->
     AppSamples = [maps:get(application, Sample, #{}) || Sample <- Samples],
     Statuses = [maps:get(status, App, unavailable) || App <- AppSamples],
+    ScanRefused = lists:any(
+        fun(App) -> maps:get(reason_code, App, undefined) =:= scan_budget_exceeded end,
+        AppSamples
+    ),
     case
         {
+            ScanRefused,
             lists:all(fun(Status) -> Status =:= ok orelse Status =:= not_running end, Statuses),
             lists:all(fun(Status) -> Status =:= unavailable end, Statuses)
         }
     of
-        {false, true} ->
+        {true, _Complete, _Unavailable} ->
+            #{status => unavailable, reason_code => scan_budget_exceeded, items => []};
+        {false, false, true} ->
             #{status => unavailable, items => []};
-        {false, false} ->
+        {false, false, false} ->
             #{status => invalid, reason_code => sampling_gap, items => []};
-        {true, _} ->
+        {false, true, _} ->
             ChildSamples = [application_children(App) || App <- AppSamples],
             First = application_children(hd(AppSamples)),
             Last = application_children(lists:last(AppSamples)),
@@ -1059,7 +1083,23 @@ observation_skipped(Mode, Samples, Holder) ->
                 _ ->
                     []
             end,
-    [#{id => Id, reason_code => ruleset_not_calibrated} || Id <- Growth] ++ Binary ++ Refusals.
+    ApplicationRefusals =
+        case Mode of
+            application ->
+                lists:usort([
+                    #{
+                        id => application,
+                        reason_code => maps:get(reason_code, Application, application_unavailable)
+                    }
+                 || Sample <- Samples,
+                    Application <- [maps:get(application, Sample, #{})],
+                    maps:get(status, Application, ok) =:= unavailable
+                ]);
+            _ ->
+                []
+        end,
+    [#{id => Id, reason_code => ruleset_not_calibrated} || Id <- Growth] ++
+        Binary ++ Refusals ++ ApplicationRefusals.
 
 observation_summary(Mode, partial, _Findings) ->
     iolist_to_binary(

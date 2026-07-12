@@ -23,7 +23,7 @@ reserved_command_words_test() ->
         {"ports", ports},
         {"port", port},
         {"sockets", sockets},
-        {"gen-server-state", gen_server_state},
+        {"otp-state", otp_state},
         {"supervision-tree", supervision_tree},
         {"trace", trace},
         {"diagnose", diagnose}
@@ -34,7 +34,7 @@ reserved_command_words_test() ->
                 case Command of
                     process -> [Word, "<0.1.0>"];
                     port -> [Word, "#Port<0.1>"];
-                    gen_server_state -> [Word, "<0.1.0>"];
+                    otp_state -> [Word, "<0.1.0>", "--behavior", "gen_server"];
                     supervision_tree -> [Word, "--app", "kernel"];
                     trace -> [Word, "stop", "--all"];
                     _ -> [Word]
@@ -309,21 +309,79 @@ process_inspection_option_contract_test() ->
     assert_argument_error(process_target_required, observer_cli_cli:parse(["process"])),
     assert_argument_error(invalid_arguments, observer_cli_cli:parse(["applications", "extra"])).
 
-gen_server_state_is_explicit_high_risk_command_test() ->
+otp_state_is_explicit_high_risk_command_test() ->
     ?assertMatch(
-        {ok, #{command := gen_server_state, arguments := ["server"], options := #{redact := true}}},
-        observer_cli_cli:parse(["gen-server-state", "server", "--redact"])
+        {ok, #{
+            command := otp_state,
+            arguments := ["server"],
+            options := #{behavior := "gen_server", redact := true}
+        }},
+        observer_cli_cli:parse([
+            "otp-state", "server", "--behavior", "gen_server", "--redact"
+        ])
     ),
     assert_argument_error(
-        gen_server_target_required, observer_cli_cli:parse(["gen-server-state"])
+        otp_state_target_required,
+        observer_cli_cli:parse(["otp-state", "--behavior", "gen_server"])
     ),
     assert_argument_error(
-        gen_server_target_required,
-        observer_cli_cli:parse(["gen-server-state", "one", "two"])
+        otp_state_target_required,
+        observer_cli_cli:parse(["otp-state", "one", "two", "--behavior", "gen_server"])
+    ),
+    assert_argument_error(behavior_required, observer_cli_cli:parse(["otp-state", "server"])),
+    lists:foreach(
+        fun(Behavior) ->
+            assert_argument_error(
+                invalid_behavior,
+                observer_cli_cli:parse(["otp-state", "server", "--behavior", Behavior])
+            )
+        end,
+        ["gen-server", "GEN_SERVER", "supervisor"]
     ),
     assert_argument_error(
         unsupported_command_option,
-        observer_cli_cli:parse(["gen-server-state", "server", "--info"])
+        observer_cli_cli:parse([
+            "otp-state", "server", "--behavior", "gen_server", "--limit", "1"
+        ])
+    ),
+    assert_argument_error(
+        unsupported_command_option,
+        observer_cli_cli:parse([
+            "otp-state", "server", "--behavior", "gen_statem", "--limit", "1"
+        ])
+    ),
+    lists:foreach(
+        fun(Limit) ->
+            assert_argument_error(
+                invalid_limit,
+                observer_cli_cli:parse([
+                    "otp-state", "server", "--behavior", "gen_event", "--limit", Limit
+                ])
+            )
+        end,
+        ["0", "201", "many"]
+    ),
+    ?assertMatch(
+        {ok, #{command := otp_state, options := #{behavior := "gen_event", limit := "200"}}},
+        observer_cli_cli:parse([
+            "otp-state", "server", "--behavior", "gen_event", "--limit", "200"
+        ])
+    ),
+    assert_argument_error(
+        otp_state_timeout_too_short,
+        observer_cli_cli:parse([
+            "otp-state", "server", "--behavior", "gen_server", "--timeout", "9999ms"
+        ])
+    ),
+    ?assertMatch(
+        {ok, #{command := otp_state, options := #{timeout := "10s"}}},
+        observer_cli_cli:parse([
+            "otp-state", "server", "--behavior", "gen_statem", "--timeout", "10s"
+        ])
+    ),
+    assert_argument_error(
+        {unknown_command, "gen-server-state"},
+        observer_cli_cli:parse(["gen-server-state", "server"])
     ).
 
 supervision_tree_is_one_level_application_command_test() ->
@@ -485,7 +543,7 @@ command_specific_arguments_and_options_test() ->
         ["ports", "extra"],
         ["port", "one", "two"],
         ["sockets", "extra"],
-        ["gen-server-state", "one", "two"],
+        ["otp-state", "one", "two", "--behavior", "gen_server"],
         ["supervision-tree", "extra", "--app", "kernel"],
         ["trace", "stop", "extra", "--all"],
         ["diagnose", "extra"]
@@ -512,7 +570,7 @@ command_specific_arguments_and_options_test() ->
         ["ports", "--duration", "250ms"],
         ["port", "#Port<0.1>", "--sort", "memory"],
         ["sockets", "--app", "kernel"],
-        ["gen-server-state", "server", "--info"],
+        ["otp-state", "server", "--behavior", "gen_server", "--info"],
         ["supervision-tree", "--app", "kernel", "--sort", "memory"],
         ["trace", "stop", "--all", "--sort", "memory"]
     ],
@@ -1107,7 +1165,7 @@ health_command_text_reports_test() ->
             ports,
             port,
             sockets,
-            gen_server_state,
+            otp_state,
             supervision_tree,
             trace_call
         ]

@@ -4,7 +4,18 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--export([init/1, handle_call/3, handle_cast/2]).
+-export([
+    init/1,
+    callback_mode/0,
+    handle_event/4,
+    handle_event/2,
+    handle_call/3,
+    handle_call/2,
+    handle_cast/2,
+    handle_info/2,
+    terminate/2,
+    code_change/3
+]).
 
 capabilities_test() ->
     Capabilities = observer_cli_snapshot:capabilities(),
@@ -1208,17 +1219,20 @@ snapshot_capture_boundary_contract_test() ->
     Target = list_to_binary(pid_to_list(self())),
     ?assertMatch(
         {error, state_timeout, _},
-        observer_cli_snapshot:collect_gen_server_state(
-            Target, #{
+        observer_cli_snapshot:collect_otp_state(
+            Target, gen_server, undefined, #{
                 process_source => ProcessSource,
-                get_state_fun => fun(_, _) -> exit({timeout, state}) end
+                get_state_fun => fun(_, Timeout) ->
+                    ?assertEqual(5000, Timeout),
+                    exit({timeout, state})
+                end
             }
         )
     ),
     ?assertMatch(
         {error, state_probe_failed, _},
-        observer_cli_snapshot:collect_gen_server_state(
-            Target, #{
+        observer_cli_snapshot:collect_otp_state(
+            Target, gen_server, undefined, #{
                 process_source => ProcessSource,
                 get_state_fun => fun(_, _) -> erlang:error(failed) end
             }
@@ -1742,7 +1756,7 @@ snapshot_rare_branch_contract_test() ->
         test_application_source => AppBase#{
             count_children_fun => fun(_) ->
                 [
-                    {specs, 5001}, {active, 5001}, {supervisors, 0}, {workers, 5001}
+                    {specs, 301}, {active, 301}, {supervisors, 0}, {workers, 301}
                 ]
             end
         }
@@ -2033,7 +2047,7 @@ default_snapshot_does_not_call_full_enumerators_test() ->
         exit(Tracer, kill)
     end.
 
-default_snapshot_and_diagnose_never_get_gen_server_state_test() ->
+default_snapshot_and_diagnose_never_get_otp_state_test() ->
     Parent = self(),
     Tracer = spawn(fun() -> state_trace_forwarder(Parent) end),
     erlang:trace_pattern({sys, get_state, 2}, true, [local]),
@@ -2079,70 +2093,251 @@ deep_binary_holder_scan_is_independently_admitted_and_does_not_force_gc_test() -
         Pid ! stop
     end.
 
-gen_server_state_shape_is_value_free_and_bounded_test_() ->
-    {timeout, 10, fun gen_server_state_shape_is_value_free_and_bounded/0}.
+otp_state_real_behaviors_are_value_free_and_behavior_aware_test_() ->
+    {timeout, 15, fun otp_state_real_behaviors_are_value_free_and_behavior_aware/0}.
 
-gen_server_state_shape_is_value_free_and_bounded() ->
-    Secret = <<"goal12-fixture-secret">>,
-    State = #{
-        Secret => {secret_tag, [Secret, 42, #{nested_secret => Secret}]},
-        public_key => binary:copy(Secret, 100),
-        types => [self(), make_ref(), fun() -> Secret end, <<1:3>>]
-    },
-    {ok, Server} = gen_server:start_link(?MODULE, State, []),
-    unlink(Server),
-    register(goal12_state_server, Server),
+otp_state_real_behaviors_are_value_free_and_behavior_aware() ->
+    StateSecret = <<"otp-state-value-secret">>,
+    ServerState = #{StateSecret => {secret_tag, [StateSecret, #{nested_secret => StateSecret}]}},
+    Server = start_state_server(ServerState),
     try
-        Response = inspection(gen_server_state, #{target => <<"goal12_state_server">>}),
-        Data = maps:get(<<"data">>, Response),
-        ?assertEqual(<<"high">>, maps:get(<<"risk_level">>, Data)),
-        ?assertEqual(<<"ok">>, maps:get(<<"status">>, Data)),
-        Acquisition = maps:get(<<"acquisition">>, Data),
-        ?assertEqual(true, maps:get(<<"full_state_copy_risk">>, Acquisition)),
-        ?assertEqual(false, maps:get(<<"timeout_retracts_delivered_request">>, Acquisition)),
-        Shape = maps:get(<<"state_shape">>, Data),
-        ?assertEqual(<<"map">>, maps:get(<<"type">>, Shape)),
-        ?assert(erlang:external_size(Shape) =< 64 * 1024),
-        ?assertEqual(nomatch, binary:match(term_to_binary(Response), Secret)),
-        ?assertEqual(nomatch, binary:match(term_to_binary(Response), <<"secret_tag">>)),
-        ?assertMatch(
-            [
-                #{<<"reason_code">> := <<"sys_get_state_copies_full_state">>},
-                #{<<"reason_code">> := <<"timeout_does_not_retract_delivered_request">>}
-            ],
-            maps:get(<<"warnings">>, Response)
-        )
+        true = register(otp_state_server, Server),
+        try
+            CurrentState = statem_phase_secret,
+            {ok, Statem} = gen_statem:start_link(
+                ?MODULE, {gen_statem_fixture, CurrentState, #{StateSecret => StateSecret}}, []
+            ),
+            unlink(Statem),
+            try
+                {ok, EventManager} = gen_event:start_link(),
+                unlink(EventManager),
+                try
+                    ok = gen_event:add_handler(
+                        EventManager,
+                        {?MODULE, event_handler_one},
+                        #{StateSecret => StateSecret}
+                    ),
+                    ok = gen_event:add_handler(
+                        EventManager, {?MODULE, event_handler_two}, {StateSecret, secret_tag}
+                    ),
+                    ServerResponse = inspection_include(otp_state, #{
+                        target => <<"otp_state_server">>, behavior => gen_server
+                    }),
+                    ServerData = maps:get(<<"data">>, ServerResponse),
+                    assert_otp_state_common(ServerData, <<"gen_server">>, <<"not_applicable">>),
+                    ?assertEqual(
+                        <<"map">>, maps:get(<<"type">>, maps:get(<<"state_shape">>, ServerData))
+                    ),
+                    ?assertEqual(
+                        5000,
+                        maps:get(<<"timeout_ms">>, maps:get(<<"acquisition">>, ServerData))
+                    ),
+                    ?assertEqual(
+                        nomatch, binary:match(term_to_binary(ServerResponse), StateSecret)
+                    ),
+                    ?assertEqual(
+                        nomatch, binary:match(term_to_binary(ServerResponse), <<"secret_tag">>)
+                    ),
+
+                    StatemTarget = list_to_binary(pid_to_list(Statem)),
+                    StatemResponse = inspection_include(otp_state, #{
+                        target => StatemTarget, behavior => gen_statem
+                    }),
+                    StatemData = maps:get(<<"data">>, StatemResponse),
+                    assert_otp_state_common(StatemData, <<"gen_statem">>, <<"passed">>),
+                    ?assertEqual(
+                        <<"available">>, maps:get(<<"current_state_identity">>, StatemData)
+                    ),
+                    ?assertEqual(
+                        <<"atom:statem_phase_secret">>, maps:get(<<"current_state">>, StatemData)
+                    ),
+                    ?assertEqual(
+                        <<"atom">>,
+                        maps:get(<<"type">>, maps:get(<<"current_state_shape">>, StatemData))
+                    ),
+                    ?assertEqual(
+                        <<"map">>, maps:get(<<"type">>, maps:get(<<"data_shape">>, StatemData))
+                    ),
+                    ?assertEqual(
+                        nomatch, binary:match(term_to_binary(StatemResponse), StateSecret)
+                    ),
+                    RedactedStatem = inspection(otp_state, #{
+                        target => StatemTarget, behavior => gen_statem
+                    }),
+                    RedactedStatemData = maps:get(<<"data">>, RedactedStatem),
+                    ?assertEqual(
+                        <<"label-1">>, maps:get(<<"current_state">>, RedactedStatemData)
+                    ),
+                    ?assertEqual(
+                        nomatch,
+                        binary:match(term_to_binary(RedactedStatem), <<"statem_phase_secret">>)
+                    ),
+
+                    RawHandlers = sys:get_state(EventManager),
+                    EventTarget = list_to_binary(pid_to_list(EventManager)),
+                    EventResponse = inspection_include(otp_state, #{
+                        target => EventTarget, behavior => gen_event
+                    }),
+                    EventData = maps:get(<<"data">>, EventResponse),
+                    assert_otp_state_common(EventData, <<"gen_event">>, <<"passed">>),
+                    EventItems = maps:get(<<"handlers">>, EventData),
+                    ?assertEqual(
+                        length(RawHandlers), maps:get(<<"observed_handler_count">>, EventData)
+                    ),
+                    ?assertEqual(
+                        [event_identity(Id) || {_Module, Id, _State} <- RawHandlers],
+                        [maps:get(<<"id">>, Item) || Item <- EventItems]
+                    ),
+                    ?assertEqual(lists:seq(1, length(EventItems)), [
+                        maps:get(<<"index">>, Item)
+                     || Item <- EventItems
+                    ]),
+                    ?assertEqual(
+                        [<<"observer_cli_snapshot_test">> || _ <- EventItems],
+                        [maps:get(<<"module">>, Item) || Item <- EventItems]
+                    ),
+                    ?assertEqual(
+                        nomatch, binary:match(term_to_binary(EventResponse), StateSecret)
+                    ),
+                    RedactedEvent = inspection(otp_state, #{
+                        target => EventTarget, behavior => gen_event
+                    }),
+                    ?assertEqual(
+                        nomatch,
+                        binary:match(
+                            term_to_binary(RedactedEvent), <<"observer_cli_snapshot_test">>
+                        )
+                    ),
+                    ?assertEqual(
+                        nomatch,
+                        binary:match(term_to_binary(RedactedEvent), <<"event_handler_one">>)
+                    )
+                after
+                    kill_and_wait(EventManager)
+                end
+            after
+                kill_and_wait(Statem)
+            end
+        after
+            unregister_fixture(otp_state_server, Server)
+        end
     after
-        unregister(goal12_state_server),
-        exit(Server, kill)
+        kill_and_wait(Server)
     end.
 
-gen_server_state_target_resolution_is_uniform_test() ->
+otp_state_target_resolution_is_uniform_test() ->
     Targets = [
-        <<"goal12-unknown-name">>,
-        <<"goal12_existing_unregistered">>,
+        <<"otp-state-unknown-name">>,
+        <<"otp_state_existing_unregistered">>,
         binary:copy(<<"x">>, 256)
     ],
     Dead = spawn(fun() -> ok end),
     timer:sleep(10),
     DeadTarget = list_to_binary(pid_to_list(Dead)),
     lists:foreach(
-        fun(Target) -> _ = inspection(gen_server_state, #{target => Target}) end, Targets
+        fun(Target) ->
+            lists:foreach(
+                fun(Behavior) ->
+                    _ = inspection(otp_state, #{target => Target, behavior => Behavior})
+                end,
+                [gen_server, gen_statem, gen_event]
+            )
+        end,
+        Targets ++ [DeadTarget]
     ),
-    _ = inspection(gen_server_state, #{target => DeadTarget}),
     AtomCount = erlang:system_info(atom_count),
     lists:foreach(
         fun(Target) ->
-            Response = inspection(gen_server_state, #{target => Target}),
-            ?assertEqual(<<"not_found">>, maps:get(<<"status">>, maps:get(<<"data">>, Response)))
+            lists:foreach(
+                fun(Behavior) ->
+                    Response = inspection(otp_state, #{target => Target, behavior => Behavior}),
+                    Data = maps:get(<<"data">>, Response),
+                    ?assertEqual(<<"not_found">>, maps:get(<<"status">>, Data)),
+                    ?assertEqual(<<"not_performed">>, maps:get(<<"structural_validation">>, Data))
+                end,
+                [gen_statem, gen_event]
+            )
         end,
-        Targets
+        Targets ++ [DeadTarget]
     ),
-    DeadResponse = inspection(gen_server_state, #{target => DeadTarget}),
-    ?assertEqual(<<"not_found">>, maps:get(<<"status">>, maps:get(<<"data">>, DeadResponse))),
     ?assertEqual(AtomCount, erlang:system_info(atom_count)).
 
-gen_server_state_depth_and_node_caps_test() ->
+otp_state_behavior_mismatch_fails_closed_test() ->
+    lists:foreach(
+        fun({Behavior, State}) ->
+            Response = otp_state_fixture_response(Behavior, State, #{}),
+            Data = maps:get(<<"data">>, Response),
+            ?assertEqual(<<"error">>, maps:get(<<"status">>, Data)),
+            ?assertEqual(<<"failed">>, maps:get(<<"structural_validation">>, Data)),
+            ?assertEqual(<<"behavior_shape_mismatch">>, maps:get(<<"reason_code">>, Data)),
+            ?assertEqual(<<"partial">>, maps:get(<<"status">>, maps:get(<<"capture">>, Response)))
+        end,
+        [
+            {gen_statem, not_a_state_pair},
+            {gen_event, [{?MODULE, id, state} | improper]},
+            {gen_event, [{not_a_module_binary, id}]},
+            {gen_event, [{<<"not-an-atom-module">>, id, state}]}
+        ]
+    ),
+    GenServer = maps:get(<<"data">>, otp_state_fixture_response(gen_server, any_term, #{})),
+    ?assertEqual(<<"ok">>, maps:get(<<"status">>, GenServer)),
+    ?assertEqual(<<"not_applicable">>, maps:get(<<"structural_validation">>, GenServer)).
+
+otp_state_limits_are_global_and_truncation_is_success_test_() ->
+    {timeout, 15, fun otp_state_limits_are_global_and_truncation_is_success/0}.
+
+otp_state_limits_are_global_and_truncation_is_success() ->
+    Handlers = [
+        {?MODULE, first, #{one => one}},
+        {?MODULE, second, #{two => two}},
+        {?MODULE, third, #{three => three}}
+    ],
+    LimitedResponse = otp_state_fixture_response(gen_event, Handlers, #{limit => 2}),
+    Limited = maps:get(<<"data">>, LimitedResponse),
+    ?assertEqual(3, maps:get(<<"observed_handler_count">>, Limited)),
+    ?assertEqual(2, maps:get(<<"returned_count">>, Limited)),
+    ?assertEqual(1, maps:get(<<"dropped_count">>, Limited)),
+    ?assertEqual(0, maps:get(<<"shape_budget_exhausted_count">>, Limited)),
+    ?assertEqual(true, maps:get(<<"truncated">>, Limited)),
+    ?assertEqual(<<"output_cap">>, maps:get(<<"truncation_reason">>, Limited)),
+    ?assertEqual(<<"complete">>, maps:get(<<"status">>, maps:get(<<"capture">>, LimitedResponse))),
+    ?assertEqual([], maps:get(<<"errors">>, LimitedResponse)),
+
+    TwentyOne = [{?MODULE, Id, Id} || Id <- lists:seq(1, 21)],
+    DefaultLimit = maps:get(
+        <<"data">>, otp_state_fixture_response(gen_event, TwentyOne, #{})
+    ),
+    ?assertEqual(20, maps:get(<<"returned_count">>, DefaultLimit)),
+    ?assertEqual(20, maps:get(<<"handler_output_count">>, maps:get(<<"limits">>, DefaultLimit))),
+
+    Wide = lists:seq(1, 20000),
+    NodeResponse = otp_state_fixture_response(
+        gen_event,
+        [{?MODULE, one, Wide}, {?MODULE, two, Wide}, {?MODULE, three, Wide}],
+        #{}
+    ),
+    NodeData = maps:get(<<"data">>, NodeResponse),
+    ?assertEqual(10000, maps:get(<<"visited_node_count">>, NodeData)),
+    ?assertEqual(1, maps:get(<<"returned_count">>, NodeData)),
+    ?assertEqual(3, maps:get(<<"shape_budget_exhausted_count">>, NodeData)),
+    ?assertEqual(<<"node_cap">>, maps:get(<<"truncation_reason">>, NodeData)),
+    ?assertEqual(<<"complete">>, maps:get(<<"status">>, maps:get(<<"capture">>, NodeResponse))),
+
+    Tree = lists:foldl(fun(_, Acc) -> {Acc, Acc} end, leaf, lists:seq(1, 6)),
+    ByteHandlers = [{?MODULE, Id, Tree} || Id <- lists:seq(1, 50)],
+    ByteResponse = otp_state_fixture_response(gen_event, ByteHandlers, #{limit => 50}),
+    ByteData = maps:get(<<"data">>, ByteResponse),
+    ?assert(maps:get(<<"returned_count">>, ByteData) < 50),
+    ?assert(maps:get(<<"shape_budget_exhausted_count">>, ByteData) > 0),
+    ?assertEqual(<<"output_cap">>, maps:get(<<"truncation_reason">>, ByteData)),
+    ShapeBytes = lists:sum([
+        erlang:external_size(maps:get(<<"state_shape">>, Handler))
+     || Handler <- maps:get(<<"handlers">>, ByteData)
+    ]),
+    ?assert(ShapeBytes =< 64 * 1024),
+    ?assertEqual(<<"complete">>, maps:get(<<"status">>, maps:get(<<"capture">>, ByteResponse))).
+
+otp_state_depth_and_node_caps_test() ->
     lists:foreach(
         fun({State, Type}) ->
             Data = maps:get(<<"data">>, state_fixture_response(State)),
@@ -2160,67 +2355,78 @@ gen_server_state_depth_and_node_caps_test() ->
         ]
     ),
     Deep = lists:foldl(fun(_, Acc) -> {Acc} end, leaf_secret, lists:seq(1, 10)),
-    DeepResponse = state_fixture_response(Deep),
-    ?assertNotEqual(
-        nomatch, binary:match(term_to_binary(DeepResponse), <<"depth_cap">>)
-    ),
-    WideResponse = state_fixture_response(lists:seq(1, 20000)),
-    WideData = maps:get(<<"data">>, WideResponse),
+    DeepData = maps:get(<<"data">>, state_fixture_response(Deep)),
+    ?assertEqual(true, maps:get(<<"truncated">>, DeepData)),
+    ?assertEqual(<<"depth_cap">>, maps:get(<<"truncation_reason">>, DeepData)),
+    WideData = maps:get(<<"data">>, state_fixture_response(lists:seq(1, 20000))),
     ?assertEqual(10000, maps:get(<<"visited_node_count">>, WideData)),
-    ?assertEqual(
-        <<"node_cap">>,
-        maps:get(<<"truncation_reason">>, maps:get(<<"state_shape">>, WideData))
-    ),
+    ?assertEqual(true, maps:get(<<"truncated">>, WideData)),
+    ?assertEqual(<<"node_cap">>, maps:get(<<"truncation_reason">>, WideData)),
     ?assert(erlang:external_size(maps:get(<<"state_shape">>, WideData)) =< 64 * 1024).
 
-gen_server_state_timeout_crash_and_heap_are_redacted_test_() ->
-    {timeout, 15, fun gen_server_state_timeout_crash_and_heap_are_redacted/0}.
+otp_state_timeout_crash_and_heap_are_redacted_test_() ->
+    {timeout, 20, fun otp_state_timeout_crash_and_heap_are_redacted/0}.
 
-gen_server_state_timeout_crash_and_heap_are_redacted() ->
-    Secret = <<"goal12-error-secret">>,
-    {ok, Server} = gen_server:start_link(?MODULE, Secret, []),
-    unlink(Server),
-    Parent = self(),
-    Caller = spawn(fun() -> gen_server:call(Server, {block, Parent}, infinity) end),
-    receive
-        {server_blocked, Server} -> ok
-    after 1000 -> erlang:error(block_fixture_timeout)
-    end,
-    Timeout = observer_cli_snapshot:dispatch(
-        self(),
-        gen_server_state,
-        #{target => list_to_binary(pid_to_list(Server))},
-        options(3000, redact)
-    ),
-    ?assertEqual(nomatch, binary:match(term_to_binary(Timeout), Secret)),
-    #{<<"status">> := <<"ok">>, <<"result">> := TimeoutResponse} = Timeout,
-    ?assertEqual(<<"partial">>, maps:get(<<"status">>, maps:get(<<"capture">>, TimeoutResponse))),
-    {messages, PendingSystemRequests} = process_info(Server, messages),
-    ?assertNotEqual([], PendingSystemRequests),
-    Server ! release,
-    timer:sleep(20),
-    ?assert(is_process_alive(Server)),
-    ?assertEqual({messages, []}, process_info(Server, messages)),
-    CrashSource = state_source(fun(_Pid, _Timeout) -> erlang:error({Secret, crash}) end),
-    Crash = inspection(gen_server_state, #{
-        target => list_to_binary(pid_to_list(Server)), test_state_source => CrashSource
-    }),
-    ?assertEqual(
-        <<"state_probe_failed">>, maps:get(<<"reason_code">>, maps:get(<<"data">>, Crash))
-    ),
-    ?assertEqual(nomatch, binary:match(term_to_binary(Crash), Secret)),
-    exit(Server, kill),
-    exit(Caller, kill),
-    HeapServer = start_state_server(lists:duplicate(100000, Secret)),
-    Heap = observer_cli_snapshot:dispatch(
-        self(),
-        gen_server_state,
-        #{target => list_to_binary(pid_to_list(HeapServer))},
-        (options(3000, redact))#{max_heap_words => 4096}
-    ),
-    assert_error(<<"worker_heap_limit_exceeded">>, Heap),
-    ?assertEqual(nomatch, binary:match(term_to_binary(Heap), Secret)),
-    exit(HeapServer, kill).
+otp_state_timeout_crash_and_heap_are_redacted() ->
+    Secret = <<"otp-state-error-secret">>,
+    Server = start_state_server(Secret),
+    try
+        Parent = self(),
+        Caller = spawn(fun() -> gen_server:call(Server, {block, Parent}, infinity) end),
+        try
+            receive
+                {server_blocked, Server} -> ok
+            after 1000 -> erlang:error(block_fixture_timeout)
+            end,
+            Timeout = observer_cli_snapshot:dispatch(
+                self(),
+                otp_state,
+                #{target => list_to_binary(pid_to_list(Server)), behavior => gen_server},
+                options(11000, redact)
+            ),
+            ?assertEqual(nomatch, binary:match(term_to_binary(Timeout), Secret)),
+            #{<<"status">> := <<"ok">>, <<"result">> := TimeoutResponse} = Timeout,
+            TimeoutData = maps:get(<<"data">>, TimeoutResponse),
+            ?assertEqual(<<"state_timeout">>, maps:get(<<"reason_code">>, TimeoutData)),
+            ?assertEqual(
+                <<"partial">>, maps:get(<<"status">>, maps:get(<<"capture">>, TimeoutResponse))
+            ),
+            {messages, PendingSystemRequests} = process_info(Server, messages),
+            ?assertNotEqual([], PendingSystemRequests),
+            Server ! release,
+            ?assertEqual(ok, gen_server:call(Server, fixture_sync, 1000)),
+            ?assert(is_process_alive(Server)),
+            ?assertEqual({messages, []}, process_info(Server, messages)),
+            CrashSource = state_source(fun(_Pid, _Timeout) -> erlang:error({Secret, crash}) end),
+            Crash = inspection(otp_state, #{
+                target => list_to_binary(pid_to_list(Server)),
+                behavior => gen_server,
+                test_state_source => CrashSource
+            }),
+            ?assertEqual(
+                <<"state_probe_failed">>,
+                maps:get(<<"reason_code">>, maps:get(<<"data">>, Crash))
+            ),
+            ?assertEqual(nomatch, binary:match(term_to_binary(Crash), Secret)),
+            HeapServer = start_state_server(lists:duplicate(100000, Secret)),
+            try
+                Heap = observer_cli_snapshot:dispatch(
+                    self(),
+                    otp_state,
+                    #{target => list_to_binary(pid_to_list(HeapServer)), behavior => gen_server},
+                    (options(8000, redact))#{max_heap_words => 4096}
+                ),
+                assert_error(<<"worker_heap_limit_exceeded">>, Heap),
+                ?assertEqual(nomatch, binary:match(term_to_binary(Heap), Secret))
+            after
+                kill_and_wait(HeapServer)
+            end
+        after
+            kill_and_wait(Caller)
+        end
+    after
+        kill_and_wait(Server)
+    end.
 
 snapshot_probe_failure_semantics_test() ->
     Unavailable = snapshot(#{
@@ -2543,7 +2749,14 @@ invalid_runtime_inspection_requests_are_rejected_test() ->
         {network, invalid, invalid_request},
         {ports, invalid, invalid_request},
         {sockets, invalid, invalid_request},
-        {gen_server_state, invalid, invalid_request},
+        {otp_state, invalid, invalid_request},
+        {otp_state, #{target => <<"server">>}, invalid_request},
+        {otp_state, #{target => <<"server">>, behavior => invalid}, invalid_request},
+        {otp_state, #{target => <<"server">>, behavior => gen_server, limit => 1}, invalid_request},
+        {otp_state, #{target => <<"server">>, behavior => gen_statem, limit => 1}, invalid_request},
+        {otp_state, #{target => <<"server">>, behavior => gen_event, limit => 0}, invalid_request},
+        {otp_state, #{target => <<"server">>, behavior => gen_event, limit => 201},
+            invalid_request},
         {supervision_tree, invalid, invalid_request},
         {trace, invalid, invalid_request},
         {unknown_command, #{}, capability_unavailable}
@@ -3820,17 +4033,67 @@ state_trace_forwarder(Parent) ->
     end.
 
 state_fixture_response(State) ->
-    Server = start_state_server(State),
-    try
-        inspection(gen_server_state, #{target => list_to_binary(pid_to_list(Server))})
-    after
-        exit(Server, kill)
-    end.
+    otp_state_fixture_response(gen_server, State, #{}).
+
+otp_state_fixture_response(Behavior, State, Extra) ->
+    Source = state_source(fun(_Pid, Timeout) ->
+        ?assertEqual(5000, Timeout),
+        State
+    end),
+    inspection(
+        otp_state,
+        maps:merge(
+            #{
+                target => list_to_binary(pid_to_list(self())),
+                behavior => Behavior,
+                test_state_source => Source
+            },
+            Extra
+        )
+    ).
+
+assert_otp_state_common(Data, Behavior, Validation) ->
+    ?assertEqual(<<"ok">>, maps:get(<<"status">>, Data)),
+    ?assertEqual(<<"high">>, maps:get(<<"risk_level">>, Data)),
+    ?assertEqual(Behavior, maps:get(<<"behavior">>, Data)),
+    ?assertEqual(<<"operator_asserted">>, maps:get(<<"behavior_source">>, Data)),
+    ?assertEqual(Validation, maps:get(<<"structural_validation">>, Data)),
+    ?assert(is_map(maps:get(<<"acquisition">>, Data))),
+    ?assert(is_map(maps:get(<<"limits">>, Data))).
+
+event_identity(Id) when is_atom(Id) ->
+    <<"atom:", (atom_to_binary(Id))/binary>>;
+event_identity(Id) when is_binary(Id) ->
+    <<"binary:", Id/binary>>;
+event_identity(Id) when is_integer(Id) ->
+    <<"integer:", (integer_to_binary(Id))/binary>>.
 
 start_state_server(State) ->
     {ok, Server} = gen_server:start_link(?MODULE, State, []),
     unlink(Server),
     Server.
+
+unregister_fixture(Name, Pid) ->
+    case whereis(Name) of
+        Pid ->
+            try unregister(Name) of
+                true -> ok
+            catch
+                error:badarg -> ok
+            end;
+        _ ->
+            ok
+    end.
+
+kill_and_wait(Pid) ->
+    Ref = erlang:monitor(process, Pid),
+    exit(Pid, kill),
+    receive
+        {'DOWN', Ref, process, Pid, _Reason} -> ok
+    after 1000 ->
+        erlang:demonitor(Ref, [flush]),
+        erlang:error({fixture_cleanup_timeout, Pid})
+    end.
 
 state_source(GetStateFun) ->
     #{
@@ -3838,7 +4101,18 @@ state_source(GetStateFun) ->
         get_state_fun => GetStateFun
     }.
 
+init({gen_statem_fixture, CurrentState, Data}) ->
+    {ok, CurrentState, Data};
 init(State) ->
+    {ok, State}.
+
+callback_mode() ->
+    handle_event_function.
+
+handle_event(_Type, _Event, _State, _Data) ->
+    keep_state_and_data.
+
+handle_event(_Event, State) ->
     {ok, State}.
 
 handle_call({block, Parent}, _From, State) ->
@@ -3849,8 +4123,20 @@ handle_call({block, Parent}, _From, State) ->
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
+handle_call(_Request, State) ->
+    {ok, ok, State}.
+
 handle_cast(_Request, State) ->
     {noreply, State}.
+
+handle_info(_Info, State) ->
+    {ok, State}.
+
+terminate(_Reason, _State) ->
+    ok.
+
+code_change(_OldVsn, State, _Extra) ->
+    {ok, State}.
 
 receive_worker() ->
     receive

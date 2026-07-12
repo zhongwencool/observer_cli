@@ -147,6 +147,10 @@ seconds. A completed diagnosis with warning or critical findings exits `1`.
 | `--app APP` | No application scope | Requires `--observe`; conflicts with `--deep` |
 | `--include-identifiers` | Off | Include node, PID, name, application, and MFA identifiers |
 
+Application observation uses the same preflight admission limit of 300 and
+100-child output bound as `supervision-tree`. A scan-budget refusal is retained
+instead of repeating child enumeration in later samples.
+
 ### `snapshot`
 
 ```text
@@ -318,15 +322,34 @@ Lists sockets exposed by the OTP `socket` registry. Without `--duration`, counte
 
 ## OTP-structure commands
 
-### `gen-server-state`
+### `otp-state`
 
 ```text
-observer_cli gen-server-state PID_OR_NAME [TARGET OPTIONS] [OUTPUT OPTIONS]
+observer_cli otp-state PID_OR_NAME --behavior BEHAVIOR [--limit N] \
+  [TARGET OPTIONS] [OUTPUT OPTIONS]
 ```
 
-Resolves one local PID or registered name and returns only a bounded structural
-shape of its `gen_server` state, never the full values. The response records
-its risk level; `--redact` hides identifiers in the shape.
+Resolves one target-local PID or existing registered name, copies its OTP state,
+and returns behavior-aware bounded shapes instead of arbitrary state values.
+`--behavior` is a required operator assertion; the command does not perform a
+second, more invasive behavior-detection call.
+
+| Option | Default | Constraint |
+| --- | --- | --- |
+| `--behavior` | Required | `gen_server`, `gen_statem`, or `gen_event` |
+| `--limit` | `20` for `gen_event` | `1` to `200`; rejected for other behaviors |
+| `--timeout` | `10s` | At least `10s` for this command |
+
+For `gen_server`, the result contains `state_shape`. For `gen_statem`, it
+contains a bounded `current_state` identity plus `current_state_shape` and
+`data_shape`. For `gen_event`, it contains ordered handler entries with module,
+bounded ID, and state shape. One command shares a 64 KiB state-shape budget,
+10,000 visited nodes, and depth 6; reaching a bound returns a successful,
+explicitly truncated result. The handler limit is an output soft cap: state
+acquisition still copies the complete handler state list. The inner
+`sys:get_state/2` timeout is fixed at five seconds and cannot retract a system
+request already delivered to the process. Use `--redact` before sharing a
+report.
 
 ### `supervision-tree`
 
@@ -335,7 +358,11 @@ observer_cli supervision-tree --app APP \
   [TARGET OPTIONS] [OUTPUT OPTIONS]
 ```
 
-Returns a bounded supervision tree rooted in one running application. `--app` is required.
+Returns one running application's public supervisor root and direct children;
+it does not recurse. `--app` is required. The command refuses `which_children`
+when the preflight observes more than 300 direct children and returns at most
+100 children in OTP order. These limits do not make the preceding
+`count_children` call constant-time or cancellable.
 
 ## Trace commands
 

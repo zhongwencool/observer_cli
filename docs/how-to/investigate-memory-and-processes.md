@@ -91,15 +91,18 @@ The result contains bounded metadata and a normalized current stacktrace, but
 not messages, the process dictionary, or arbitrary state. A process can exit
 between commands; rerun the ranking if needed.
 
-For a `gen_server`, request the bounded state shape only when needed:
+Request behavior-aware state shapes only when they answer a specific question:
 
 ```sh
-observer_cli gen-server-state my_registered_server --redact
+observer_cli otp-state my_registered_server --behavior gen_server --redact
+observer_cli otp-state my_state_machine --behavior gen_statem --redact
+observer_cli otp-state alarm_handler --behavior gen_event --limit 20 --redact
 ```
 
-The command never returns full state values, but it copies the state before
-reducing it to a shape and therefore reports `risk_level=high`. Avoid it for a
-potentially large state. See
+`--behavior` is your assertion; the command does not auto-detect it. The command
+never returns arbitrary state values, but it copies the full state before
+reducing it to bounded shapes and therefore reports `risk_level=high`. Avoid it
+for a potentially large state. See
 [Safety and observer effect](../explanation/safety-and-observer-effect.md#state-and-supervision-inspection).
 
 ## 5. Attribute the process to an application
@@ -118,7 +121,8 @@ observer_cli supervision-tree --app my_app
 ```
 
 Supervision inspection reports `risk_level=high`: supervisor calls can block,
-and the result is not an atomic tree snapshot.
+and the result is not an atomic tree snapshot. It calls `which_children` only
+when the preflight count is at most 300, then returns at most 100 children.
 
 Attribution follows process group-leader chains. Unattributed processes remain
 separate rather than being assigned speculatively.

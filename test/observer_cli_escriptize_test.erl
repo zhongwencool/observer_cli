@@ -49,8 +49,28 @@ command_request_converts_validated_cli_values_test() ->
         observer_cli_escriptize:command_request(trace, ["stop"], #{})
     ),
     ?assertEqual(
-        #{target => "server"},
-        observer_cli_escriptize:command_request(gen_server_state, ["server"], #{})
+        #{target => <<"server">>, behavior => gen_server},
+        observer_cli_escriptize:command_request(
+            otp_state, ["server"], #{behavior => "gen_server"}
+        )
+    ),
+    ?assertEqual(
+        #{target => <<"machine">>, behavior => gen_statem},
+        observer_cli_escriptize:command_request(
+            otp_state, ["machine"], #{behavior => "gen_statem"}
+        )
+    ),
+    ?assertEqual(
+        #{target => <<"events">>, behavior => gen_event, limit => 20},
+        observer_cli_escriptize:command_request(
+            otp_state, ["events"], #{behavior => "gen_event"}
+        )
+    ),
+    ?assertEqual(
+        #{target => <<"events">>, behavior => gen_event, limit => 5},
+        observer_cli_escriptize:command_request(
+            otp_state, ["events"], #{behavior => "gen_event", limit => "5"}
+        )
     ),
     ?assertEqual(
         #{app => "kernel"},
@@ -100,7 +120,7 @@ controller_boundary_helpers_test() ->
             {network, <<"network_inventory">>},
             {ports, <<"port_inventory">>},
             {sockets, <<"socket_inventory">>},
-            {gen_server_state, <<"gen_server_state">>},
+            {otp_state, <<"otp_state">>},
             {supervision_tree, <<"supervision_tree">>},
             {trace_call, <<"trace">>},
             {trace_stop_all, <<"trace">>},
@@ -162,6 +182,11 @@ controller_boundary_helpers_test() ->
         trace_stop_all, observer_cli_escriptize:command_identity(trace, ["stop"])
     ),
     ?assertEqual(memory, observer_cli_escriptize:command_identity(memory, [])),
+    ?assertEqual(<<"otp-state">>, observer_cli_escriptize:command_display(otp_state)),
+    ?assertEqual(
+        <<"observer_cli otp-state --help">>,
+        observer_cli_escriptize:command_help_command(otp_state)
+    ),
     ?assertEqual(memory, observer_cli_escriptize:command_from_args(["memory"])),
     ?assertEqual(memory, observer_cli_escriptize:command_from_args(["--json", "memory"])),
     ?assertEqual(trace_call, observer_cli_escriptize:command_from_args(["trace", "call"])),
@@ -233,7 +258,7 @@ command_output_and_error_paths_test() ->
         [
             ["process", "--bogus"],
             ["port"],
-            ["gen-server-state"],
+            ["otp-state"],
             ["supervision-tree"],
             ["trace", "call", "erlang:node/0", "--pid", "<0.1.0>"],
             ["trace", "stop"]
@@ -599,6 +624,7 @@ command_help_test() ->
     observer_cli_test_io:assert_stable_fragments(TopHelp, [
         "observer_cli connect --node NODE",
         "Diagnostics:",
+        "otp-state PID_OR_NAME",
         "--help, -h",
         "help COMMAND",
         "--version",
@@ -627,7 +653,7 @@ command_help_test() ->
         "ports",
         "port",
         "sockets",
-        "gen-server-state",
+        "otp-state",
         "supervision-tree",
         "trace"
     ],
@@ -658,6 +684,17 @@ command_help_test() ->
     ),
     observer_cli_test_io:assert_stable_fragments(ProcessHelp, [
         "bounded, normalized current stacktrace", "Messages", "dictionary"
+    ]),
+    {ok, OtpStateHelp} = observer_cli_test_io:capture_with_geometry(
+        24, 80, [], fun() -> observer_cli_escriptize:main(["otp-state", "--help"]) end
+    ),
+    observer_cli_test_io:assert_stable_fragments(OtpStateHelp, [
+        "full OTP behavior state copy",
+        "full-copy",
+        "up to 5s",
+        "gen_statem",
+        "output soft cap",
+        "minimum 10s"
     ]),
     {ok, NetworkHelp} = observer_cli_test_io:capture_with_geometry(
         24, 80, [], fun() -> observer_cli_escriptize:main(["network", "--help"]) end
@@ -880,6 +917,113 @@ controller_response_validation_test() ->
     Response = valid_controller_response(memory, <<"node@host">>),
     Target = 'node@host',
     ?assertEqual(ok, observer_cli_escriptize:validate_response(memory, include, Target, Response)),
+    OtpState = valid_controller_response(otp_state, <<"node@host">>),
+    ?assertEqual(
+        ok, observer_cli_escriptize:validate_response(otp_state, include, Target, OtpState)
+    ),
+    [OtpProbe] = maps:get(<<"probes">>, maps:get(<<"capture">>, OtpState)),
+    MismatchReason = <<"behavior_shape_mismatch">>,
+    Mismatch = OtpState#{
+        <<"capture">> := (maps:get(<<"capture">>, OtpState))#{
+            <<"status">> := <<"partial">>,
+            <<"probes">> := [
+                OtpProbe#{<<"status">> := <<"error">>, <<"reason_code">> := MismatchReason}
+            ]
+        },
+        <<"data">> := (maps:get(<<"data">>, OtpState))#{
+            <<"status">> := <<"error">>,
+            <<"reason_code">> => MismatchReason,
+            <<"structural_validation">> := <<"failed">>,
+            <<"current_state_shape">> := null,
+            <<"data_shape">> := null,
+            <<"visited_node_count">> := 0
+        },
+        <<"errors">> := [
+            #{
+                <<"class">> => <<"required_probe">>,
+                <<"probe">> => <<"otp_state">>,
+                <<"reason_code">> => MismatchReason
+            }
+        ]
+    },
+    ?assertEqual(
+        ok, observer_cli_escriptize:validate_response(otp_state, include, Target, Mismatch)
+    ),
+    ?assertEqual({ok, Mismatch, 3}, observer_cli_escriptize:dispatch_response(Mismatch)),
+    BadOutcome = OtpState#{<<"data">> := maps:get(<<"data">>, Mismatch)},
+    ?assertEqual(
+        {error, invalid_command_response},
+        observer_cli_escriptize:validate_response(otp_state, include, Target, BadOutcome)
+    ),
+    ?assertEqual(
+        {error, schema, invalid_command_response},
+        observer_cli_escriptize:validated_response(
+            otp_state,
+            include,
+            Target,
+            BadOutcome,
+            fun observer_cli_escriptize:dispatch_response/1
+        )
+    ),
+    ?assertEqual(
+        {error, invalid_command_response},
+        observer_cli_escriptize:validate_response(
+            otp_state, include, Target, Mismatch#{<<"errors">> := []}
+        )
+    ),
+    RedactedOtp = valid_controller_response(otp_state, <<"node-1">>),
+    RedactedStateData = (maps:get(<<"data">>, RedactedOtp))#{
+        <<"current_state">> := <<"label-1">>, <<"current_state_identity">> := <<"available">>
+    },
+    ?assertEqual(
+        ok,
+        observer_cli_escriptize:validate_response(
+            otp_state, redact, Target, RedactedOtp#{<<"data">> := RedactedStateData}
+        )
+    ),
+    ?assertEqual(
+        {error, invalid_command_response},
+        observer_cli_escriptize:validate_response(
+            otp_state,
+            redact,
+            Target,
+            RedactedOtp#{
+                <<"data">> := RedactedStateData#{<<"current_state">> := <<"atom:idle">>}
+            }
+        )
+    ),
+    [Handler] = maps:get(<<"handlers">>, otp_state_data(gen_event)),
+    RedactedHandler = Handler#{
+        <<"module">> := <<"module-1">>,
+        <<"id">> := <<"label-1">>,
+        <<"id_identity">> := <<"available">>
+    },
+    RedactedEventData = (otp_state_data(gen_event))#{<<"handlers">> := [RedactedHandler]},
+    ?assertEqual(
+        ok,
+        observer_cli_escriptize:validate_response(
+            otp_state, redact, Target, RedactedOtp#{<<"data">> := RedactedEventData}
+        )
+    ),
+    lists:foreach(
+        fun(RawHandler) ->
+            ?assertEqual(
+                {error, invalid_command_response},
+                observer_cli_escriptize:validate_response(
+                    otp_state,
+                    redact,
+                    Target,
+                    RedactedOtp#{
+                        <<"data">> := RedactedEventData#{<<"handlers">> := [RawHandler]}
+                    }
+                )
+            )
+        end,
+        [
+            RedactedHandler#{<<"id">> := <<"atom:handler">>},
+            RedactedHandler#{<<"module">> := <<"handler">>}
+        ]
+    ),
     lists:foreach(
         fun(Malformed) ->
             ?assertMatch(
@@ -1303,6 +1447,8 @@ fixture_probe(Id) ->
 
 fixture_data(memory) ->
     #{<<"runtime">> => #{}, <<"memory">> => #{<<"allocator">> => #{}}};
+fixture_data(otp_state) ->
+    otp_state_data(gen_statem);
 fixture_data(trace_call) ->
     #{<<"reason">> => <<"completed">>, <<"trace">> => #{}};
 fixture_data(_Command) ->
@@ -1995,7 +2141,9 @@ direct_remote_command_suite() ->
                 {ports, #{arguments => [], sort => "io", limit => "5"}},
                 {port, #{arguments => ["#Port<0.0>"]}},
                 {sockets, #{arguments => [], sort => "io", limit => "5", duration => "250ms"}},
-                {gen_server_state, #{arguments => ["init"]}},
+                {otp_state, #{
+                    arguments => ["alarm_handler"], behavior => "gen_event", limit => "5"
+                }},
                 {supervision_tree, #{arguments => [], app => "kernel"}},
                 {trace, #{arguments => ["stop"]}}
             ]
@@ -2422,6 +2570,11 @@ response_validation_boundaries_test() ->
             node(), test_crash, self(), #{}, include, 3000
         )
     ),
+    receive
+        {test_worker, CrashWorker} -> ?assertNot(is_process_alive(CrashWorker))
+    after 1000 ->
+        ?assert(false)
+    end,
     ?assertEqual(
         {error, capability, no_active_context},
         observer_cli_escriptize:probe_options(#{}, fun(_, _, _) -> ok end)
@@ -2654,13 +2807,270 @@ validation_payload_contract(Probe) ->
             }},
             {process, #{<<"status">> => <<"ok">>}},
             {port, #{<<"status">> => <<"ok">>}},
-            {gen_server_state, #{<<"status">> => <<"ok">>, <<"risk_level">> => <<"low">>}},
             {supervision_tree, #{
                 <<"status">> => <<"ok">>, <<"risk_level">> => <<"low">>
             }},
             {trace_call, #{<<"reason">> => null, <<"trace">> => #{}}},
             {trace_stop_all, #{<<"reason">> => null, <<"trace">> => #{}}}
         ]
+    ),
+    OtpProbe = Probe#{<<"id">> := <<"otp_state">>},
+    lists:foreach(
+        fun(Data) ->
+            ?assert(
+                observer_cli_escriptize:valid_command_payload(
+                    otp_state, otp_state_success_payload(Data), [OtpProbe]
+                )
+            )
+        end,
+        [otp_state_data(gen_server), otp_state_data(gen_statem), otp_state_data(gen_event)]
+    ),
+    NotFound = (otp_state_data(gen_server))#{
+        <<"status">> := <<"not_found">>,
+        <<"state_shape">> := null,
+        <<"visited_node_count">> := 0
+    },
+    ?assert(
+        observer_cli_escriptize:valid_command_payload(
+            otp_state, otp_state_success_payload(NotFound), [OtpProbe]
+        )
+    ),
+    MismatchReason = <<"behavior_shape_mismatch">>,
+    Mismatch = (otp_state_data(gen_statem))#{
+        <<"status">> := <<"error">>,
+        <<"reason_code">> => MismatchReason,
+        <<"structural_validation">> := <<"failed">>,
+        <<"current_state">> := null,
+        <<"current_state_identity">> := <<"unavailable">>,
+        <<"current_state_shape">> := null,
+        <<"data_shape">> := null,
+        <<"visited_node_count">> := 0
+    },
+    {MismatchPayload, ErrorProbe} = otp_state_error_payload(Mismatch, MismatchReason, OtpProbe),
+    ?assert(
+        observer_cli_escriptize:valid_command_payload(
+            otp_state, MismatchPayload, [ErrorProbe]
+        )
+    ),
+    ?assertNot(
+        observer_cli_escriptize:valid_command_payload(
+            otp_state,
+            MismatchPayload#{<<"data">> := maps:remove(<<"reason_code">>, Mismatch)},
+            [ErrorProbe]
+        )
+    ),
+    ?assertNot(
+        observer_cli_escriptize:valid_command_payload(
+            otp_state,
+            otp_state_success_payload(
+                (otp_state_data(gen_statem))#{<<"structural_validation">> := <<"matched">>}
+            ),
+            [OtpProbe]
+        )
+    ),
+    ?assertNot(
+        observer_cli_escriptize:valid_command_payload(
+            otp_state,
+            otp_state_success_payload(
+                maps:remove(<<"state_shape">>, otp_state_data(gen_server))
+            ),
+            [OtpProbe]
+        )
+    ),
+    EventData = otp_state_data(gen_event),
+    ServerData = otp_state_data(gen_server),
+    StatemData = otp_state_data(gen_statem),
+    ServerLimits = maps:get(<<"limits">>, ServerData),
+    ServerAcquisition = maps:get(<<"acquisition">>, ServerData),
+    EventLimits = maps:get(<<"limits">>, EventData),
+    [Handler] = maps:get(<<"handlers">>, EventData),
+    Shape = maps:get(<<"state_shape">>, Handler),
+    ValidOtpState = fun(Data) ->
+        observer_cli_escriptize:valid_command_payload(
+            otp_state, otp_state_success_payload(Data), [OtpProbe]
+        )
+    end,
+    PartiallyReturnedEvent = EventData#{
+        <<"observed_handler_count">> := 3,
+        <<"dropped_count">> := 2,
+        <<"shape_budget_exhausted_count">> := 3,
+        <<"truncated">> := true,
+        <<"truncation_reason">> := <<"node_cap">>
+    },
+    ?assert(ValidOtpState(PartiallyReturnedEvent)),
+    ?assert(
+        ValidOtpState(EventData#{
+            <<"observed_handler_count">> := 3,
+            <<"dropped_count">> := 2,
+            <<"shape_budget_exhausted_count">> := 2,
+            <<"truncated">> := true,
+            <<"truncation_reason">> := <<"output_cap">>
+        })
+    ),
+    ?assert(
+        ValidOtpState(EventData#{
+            <<"limits">> := EventLimits#{<<"handler_output_count">> := 1},
+            <<"observed_handler_count">> := 2,
+            <<"dropped_count">> := 1,
+            <<"truncated">> := true,
+            <<"truncation_reason">> := <<"output_cap">>
+        })
+    ),
+    EmptyEvent = EventData#{
+        <<"observed_handler_count">> := 0,
+        <<"returned_count">> := 0,
+        <<"handlers">> := [],
+        <<"visited_node_count">> := 0
+    },
+    ?assert(ValidOtpState(EmptyEvent)),
+    ?assert(
+        ValidOtpState(ServerData#{
+            <<"state_shape">> := null,
+            <<"truncated">> := true,
+            <<"truncation_reason">> := <<"output_cap">>
+        })
+    ),
+    ?assert(
+        ValidOtpState(StatemData#{
+            <<"data_shape">> := null,
+            <<"truncated">> := true,
+            <<"truncation_reason">> := <<"output_cap">>
+        })
+    ),
+    ContainerShape = #{
+        <<"type">> => <<"list">>,
+        <<"size">> => 3,
+        <<"children">> => [Shape, Shape],
+        <<"returned_count">> => 2,
+        <<"truncated">> => true
+    },
+    ?assert(
+        ValidOtpState(ServerData#{
+            <<"state_shape">> := ContainerShape, <<"visited_node_count">> := 3
+        })
+    ),
+    ImproperListShape = ContainerShape#{<<"size">> := null},
+    ?assert(
+        ValidOtpState(ServerData#{
+            <<"state_shape">> := ImproperListShape, <<"visited_node_count">> := 3
+        })
+    ),
+    TooDeepShape = lists:foldl(
+        fun(_, Child) ->
+            #{
+                <<"type">> => <<"tuple">>,
+                <<"size">> => 1,
+                <<"children">> => [Child],
+                <<"returned_count">> => 1,
+                <<"truncated">> => false
+            }
+        end,
+        Shape,
+        lists:seq(1, 6)
+    ),
+    SecondHandler = Handler#{<<"index">> := 2},
+    FullShape = full_state_shape(0),
+    OversizedCount = (65536 div erlang:external_size(FullShape)) + 1,
+    ?assert(OversizedCount =< 200),
+    ?assert(OversizedCount * 127 =< 10000),
+    OversizedHandlers = [
+        Handler#{<<"index">> := Index, <<"state_shape">> := FullShape}
+     || Index <- lists:seq(1, OversizedCount)
+    ],
+    OversizedShapes = EventData#{
+        <<"limits">> := EventLimits#{<<"handler_output_count">> := OversizedCount},
+        <<"observed_handler_count">> := OversizedCount,
+        <<"returned_count">> := OversizedCount,
+        <<"handlers">> := OversizedHandlers,
+        <<"truncated">> := true,
+        <<"truncation_reason">> := <<"depth_cap">>,
+        <<"visited_node_count">> := OversizedCount * 127
+    },
+    lists:foreach(
+        fun(InvalidData) ->
+            ?assertNot(ValidOtpState(InvalidData))
+        end,
+        [
+            ServerData#{<<"acquisition">> := []},
+            ServerData#{<<"acquisition">> := ServerAcquisition#{<<"extra">> => true}},
+            ServerData#{<<"limits">> := []},
+            ServerData#{<<"limits">> := ServerLimits#{<<"output_bytes">> := 1}},
+            ServerData#{<<"limits">> := ServerLimits#{<<"depth">> := 1}},
+            ServerData#{<<"limits">> := ServerLimits#{<<"nodes">> := 1}},
+            ServerData#{<<"limits">> := ServerLimits#{<<"container_prefix">> := 1}},
+            ServerData#{<<"limits">> := ServerLimits#{<<"semantic_identifier_bytes">> := 1}},
+            ServerData#{<<"limits">> := ServerLimits#{<<"extra">> => true}},
+            ServerData#{<<"extra">> => true},
+            ServerData#{<<"visited_node_count">> := 10001},
+            ServerData#{<<"state_shape">> := #{<<"secret">> => <<"value">>}},
+            ServerData#{<<"state_shape">> := Shape#{<<"extra">> => true}},
+            ServerData#{<<"state_shape">> := null},
+            ServerData#{<<"state_shape">> := TooDeepShape, <<"visited_node_count">> := 7},
+            ServerData#{
+                <<"state_shape">> := ImproperListShape#{
+                    <<"type">> := <<"map">>
+                },
+                <<"visited_node_count">> := 3
+            },
+            ServerData#{
+                <<"state_shape">> := ImproperListShape#{
+                    <<"truncation_reason">> => <<"depth_cap">>
+                },
+                <<"visited_node_count">> := 3
+            },
+            ServerData#{
+                <<"truncated">> := false, <<"truncation_reason">> := <<"output_cap">>
+            },
+            StatemData#{
+                <<"current_state">> := binary:copy(<<"x">>, 129),
+                <<"current_state_identity">> := <<"available">>
+            },
+            StatemData#{
+                <<"truncated">> := true, <<"truncation_reason">> := <<"output_cap">>
+            },
+            EventData#{<<"returned_count">> := 0},
+            EventData#{<<"dropped_count">> := 1},
+            EventData#{<<"visited_node_count">> := 0},
+            EmptyEvent#{<<"visited_node_count">> := 1},
+            EventData#{<<"shape_budget_exhausted_count">> := -1},
+            EventData#{<<"shape_budget_exhausted_count">> := 1},
+            EventData#{
+                <<"truncated">> := true, <<"truncation_reason">> := <<"node_cap">>
+            },
+            EventData#{
+                <<"truncated">> := true, <<"truncation_reason">> := <<"output_cap">>
+            },
+            PartiallyReturnedEvent#{<<"shape_budget_exhausted_count">> := 1},
+            PartiallyReturnedEvent#{<<"truncation_reason">> := <<"output_cap">>},
+            EventData#{
+                <<"observed_handler_count">> := 2,
+                <<"dropped_count">> := 1,
+                <<"truncated">> := true,
+                <<"truncation_reason">> := <<"depth_cap">>
+            },
+            EventData#{
+                <<"limits">> := EventLimits#{<<"handler_output_count">> := 1},
+                <<"observed_handler_count">> := 2,
+                <<"returned_count">> := 2,
+                <<"handlers">> := [Handler, SecondHandler]
+            },
+            EventData#{<<"handlers">> := [Handler#{<<"index">> := 2}]},
+            EventData#{<<"handlers">> := [Handler#{<<"state_shape">> := null}]},
+            EventData#{<<"handlers">> := [Handler#{<<"extra">> => true}]},
+            OversizedShapes
+        ]
+    ),
+    InvalidHandler = maps:remove(
+        <<"state_shape">>, hd(maps:get(<<"handlers">>, otp_state_data(gen_event)))
+    ),
+    ?assertNot(
+        observer_cli_escriptize:valid_command_payload(
+            otp_state,
+            otp_state_success_payload(
+                (otp_state_data(gen_event))#{<<"handlers">> := [InvalidHandler]}
+            ),
+            [OtpProbe]
+        )
     ),
     ?assert(observer_cli_escriptize:valid_map_fields(#{<<"x">> => 1}, [<<"x">>])),
     ?assertNot(observer_cli_escriptize:valid_map_fields(invalid, [<<"x">>])),
@@ -2699,6 +3109,104 @@ validation_payload_contract(Probe) ->
             ]
         )
     ).
+
+otp_state_data(Behavior) ->
+    Shape = #{<<"type">> => <<"atom">>},
+    Limits = #{
+        <<"output_bytes">> => 65536,
+        <<"depth">> => 6,
+        <<"nodes">> => 10000,
+        <<"container_prefix">> => 2,
+        <<"semantic_identifier_bytes">> => 128
+    },
+    Common = #{
+        <<"status">> => <<"ok">>,
+        <<"risk_level">> => <<"high">>,
+        <<"behavior">> => atom_to_binary(Behavior),
+        <<"behavior_source">> => <<"operator_asserted">>,
+        <<"structural_validation">> => <<"passed">>,
+        <<"acquisition">> => #{
+            <<"full_state_copy_risk">> => true,
+            <<"timeout_ms">> => 5000,
+            <<"timeout_retracts_delivered_request">> => false
+        },
+        <<"limits">> => Limits,
+        <<"truncated">> => false,
+        <<"truncation_reason">> => null,
+        <<"visited_node_count">> => 1
+    },
+    case Behavior of
+        gen_server ->
+            Common#{
+                <<"structural_validation">> := <<"not_applicable">>, <<"state_shape">> => Shape
+            };
+        gen_statem ->
+            Common#{
+                <<"current_state">> => null,
+                <<"current_state_identity">> => <<"unavailable">>,
+                <<"current_state_shape">> => Shape,
+                <<"data_shape">> => Shape
+            };
+        gen_event ->
+            Common#{
+                <<"limits">> := Limits#{
+                    <<"handler_output_count">> => 20,
+                    <<"max_handler_output_count">> => 200
+                },
+                <<"observed_handler_count">> => 1,
+                <<"returned_count">> => 1,
+                <<"dropped_count">> => 0,
+                <<"shape_budget_exhausted_count">> => 0,
+                <<"handlers">> => [
+                    #{
+                        <<"index">> => 1,
+                        <<"module">> => <<"handler">>,
+                        <<"id">> => null,
+                        <<"id_identity">> => <<"unavailable">>,
+                        <<"state_shape">> => Shape
+                    }
+                ]
+            }
+    end.
+
+full_state_shape(6) ->
+    #{
+        <<"type">> => <<"atom">>,
+        <<"truncated">> => true,
+        <<"truncation_reason">> => <<"depth_cap">>
+    };
+full_state_shape(Depth) ->
+    Child = full_state_shape(Depth + 1),
+    #{
+        <<"type">> => <<"tuple">>,
+        <<"size">> => 2,
+        <<"children">> => [Child, Child],
+        <<"returned_count">> => 2,
+        <<"truncated">> => false
+    }.
+
+otp_state_success_payload(Data) ->
+    #{
+        <<"data">> => Data,
+        <<"capture">> => #{<<"status">> => <<"complete">>},
+        <<"errors">> => []
+    }.
+
+otp_state_error_payload(Data, Reason, Probe) ->
+    {
+        #{
+            <<"data">> => Data,
+            <<"capture">> => #{<<"status">> => <<"partial">>},
+            <<"errors">> => [
+                #{
+                    <<"class">> => <<"required_probe">>,
+                    <<"probe">> => <<"otp_state">>,
+                    <<"reason_code">> => Reason
+                }
+            ]
+        },
+        Probe#{<<"status">> := <<"error">>, <<"reason_code">> := Reason}
+    }.
 
 validation_redaction_contract() ->
     lists:foreach(

@@ -517,7 +517,7 @@ supervision_tree_preflight_and_soft_output_cap_test() ->
     RefusedSource = (supervision_source(Root, [], Parent))#{
         count_children_fun => fun(RequestedRoot) ->
             Parent ! {count_children, RequestedRoot},
-            [{specs, 5001}, {active, 1}, {supervisors, 0}, {workers, 1}]
+            [{specs, 301}, {active, 1}, {supervisors, 0}, {workers, 1}]
         end
     },
     try
@@ -528,15 +528,23 @@ supervision_tree_preflight_and_soft_output_cap_test() ->
             {which_children, Root} -> ?assert(false)
         after 50 -> ok
         end,
-        Children = [{N, Root, worker, []} || N <- lists:seq(1, 501)],
+        Children = [{N, Root, worker, []} || N <- lists:seq(1, 101)],
         CappedResponse = supervision_tree_response(
             observer_cli_goal13_fixture, supervision_source(Root, Children, Parent)
         ),
         Capped = maps:get(<<"data">>, CappedResponse),
-        ?assertEqual(501, maps:get(<<"observed_child_count">>, Capped)),
-        ?assertEqual(500, maps:get(<<"returned_count">>, Capped)),
+        ?assertEqual(101, maps:get(<<"observed_child_count">>, Capped)),
+        ?assertEqual(100, maps:get(<<"returned_count">>, Capped)),
         ?assertEqual(1, maps:get(<<"dropped_count">>, Capped)),
-        ?assertEqual(500, length(maps:get(<<"children">>, Capped))),
+        ?assertEqual(100, length(maps:get(<<"children">>, Capped))),
+        ?assertEqual(
+            #{
+                <<"child_id_canonical_bytes">> => 128,
+                <<"output_child_count">> => 100,
+                <<"scan_budget_count">> => 300
+            },
+            maps:get(<<"limits">>, Capped)
+        ),
         Acquisition = maps:get(<<"acquisition">>, Capped),
         ?assertEqual(<<"o_children">>, maps:get(<<"count_children_complexity">>, Acquisition)),
         ?assertEqual(false, maps:get(<<"snapshot_atomic">>, Acquisition)),
@@ -554,6 +562,109 @@ supervision_tree_preflight_and_soft_output_cap_test() ->
         flush_supervision_messages(),
         exit(Root, kill)
     end.
+
+supervision_tree_post_preflight_growth_is_refused_test() ->
+    Parent = self(),
+    Root = spawn(fun application_fixture/0),
+    Child = spawn(fun application_fixture/0),
+    AliveFun = fun(Pid) ->
+        Parent ! {alive, Pid},
+        true
+    end,
+    Children = [{N, Child, worker, []} || N <- lists:seq(1, 301)],
+    Source = (supervision_source(Root, Children, Parent))#{
+        alive_fun := AliveFun,
+        count_children_fun := fun(RequestedRoot) ->
+            Parent ! {count_children, RequestedRoot},
+            [{specs, 300}, {active, 300}, {supervisors, 0}, {workers, 300}]
+        end
+    },
+    try
+        Refused = supervision_tree(observer_cli_goal13_fixture, Source),
+        ?assertEqual(<<"unavailable">>, maps:get(<<"status">>, Refused)),
+        ?assertEqual(<<"scan_budget_exceeded">>, maps:get(<<"reason_code">>, Refused)),
+        ?assertEqual(301, maps:get(<<"observed_child_count">>, Refused)),
+        ?assertEqual([], maps:get(<<"children">>, Refused)),
+        receive
+            {alive, Root} -> ok
+        end,
+        receive
+            {count_children, Root} -> ok
+        end,
+        receive
+            {which_children, Root} -> ok
+        end,
+        receive
+            {alive, Child} -> ?assert(false)
+        after 50 -> ok
+        end,
+
+        ImproperSource = (supervision_source(Root, [], Parent))#{
+            alive_fun := AliveFun,
+            count_children_fun := fun(RequestedRoot) ->
+                Parent ! {count_children, RequestedRoot},
+                [{specs, 1}, {active, 1}, {supervisors, 0}, {workers, 1}]
+            end,
+            which_children_fun := fun(RequestedRoot) ->
+                Parent ! {which_children, RequestedRoot},
+                [{malformed, Child, worker, []} | improper]
+            end
+        },
+        Malformed = supervision_tree(observer_cli_goal13_fixture, ImproperSource),
+        ?assertEqual(<<"error">>, maps:get(<<"status">>, Malformed)),
+        ?assertEqual(<<"supervisor_children_failed">>, maps:get(<<"reason_code">>, Malformed)),
+        receive
+            {alive, Root} -> ok
+        end,
+        receive
+            {count_children, Root} -> ok
+        end,
+        receive
+            {which_children, Root} -> ok
+        end,
+        receive
+            {alive, Child} -> ?assert(false)
+        after 50 -> ok
+        end
+    after
+        flush_supervision_messages(),
+        exit(Child, kill),
+        exit(Root, kill)
+    end.
+
+supervision_tree_real_child_boundaries_test_() ->
+    {timeout, 30, fun supervision_tree_real_child_boundaries/0}.
+
+supervision_tree_real_child_boundaries() ->
+    Fixtures = [
+        {observer_cli_goal13_100, 100, <<"ok">>, 100, 0},
+        {observer_cli_goal13_101, 101, <<"ok">>, 100, 1},
+        {observer_cli_goal13_300, 300, <<"ok">>, 100, 200},
+        {observer_cli_goal13_301, 301, <<"unavailable">>, 0, 301}
+    ],
+    lists:foreach(
+        fun({App, Count, Status, Returned, Dropped}) ->
+            try
+                ok = load_fixture_application(App, {bounded, Count}),
+                ok = application:start(App),
+                Data = supervision_tree(App, #{}),
+                ?assertEqual(Status, maps:get(<<"status">>, Data)),
+                ?assertEqual(Count, maps:get(<<"observed_child_count">>, Data)),
+                ?assertEqual(Returned, length(maps:get(<<"children">>, Data))),
+                case Status of
+                    <<"ok">> ->
+                        ?assertEqual(Dropped, maps:get(<<"dropped_count">>, Data));
+                    <<"unavailable">> ->
+                        ?assertEqual(
+                            <<"scan_budget_exceeded">>, maps:get(<<"reason_code">>, Data)
+                        )
+                end
+            after
+                stop_fixture_application(App)
+            end
+        end,
+        Fixtures
+    ).
 
 supervision_tree_public_outcome_normalization_test() ->
     Root = spawn(fun application_fixture/0),
@@ -630,7 +741,13 @@ init(dynamic) ->
     {ok,
         {{simple_one_for_one, 1, 5}, [
             {dynamic_child, {?MODULE, start_fixture_child, []}, temporary, 5000, worker, [?MODULE]}
-        ]}}.
+        ]}};
+init({bounded, Count}) ->
+    Children = [
+        {N, {?MODULE, start_fixture_child, []}, temporary, 5000, worker, [?MODULE]}
+     || N <- lists:seq(1, Count)
+    ],
+    {ok, {{one_for_one, 1, 5}, Children}}.
 
 start_fixture_child() ->
     {ok, spawn_link(fun application_fixture/0)}.

@@ -45,6 +45,8 @@
     response_class_priority/1,
     command_format/1,
     command_identity/2,
+    command_display/1,
+    command_help_command/1,
     command_from_args/1,
     requested_format/1,
     command_error/4,
@@ -263,8 +265,8 @@ usage() ->
         "  sockets             List OTP sockets\n"
         "\n"
         "OTP structures:\n"
-        "  gen-server-state PID_OR_NAME\n"
-        "                      Inspect a bounded gen_server state shape\n"
+        "  otp-state PID_OR_NAME\n"
+        "                      Inspect an asserted OTP behavior state shape\n"
         "  supervision-tree --app APP\n"
         "                      Show an application supervision tree\n"
         "\n"
@@ -465,13 +467,19 @@ command_help("sockets") ->
         "io (default), read_bytes, write_bytes, packets,\n"
         "                       waits, fails"
     );
-command_help("gen-server-state") ->
+command_help("otp-state") ->
     remote_help(
-        "gen-server-state PID_OR_NAME [--redact]",
-        "Inspect the bounded shape of one gen_server state. Full state values\n"
-        "are never returned.",
-        "  --redact  Hide identifiers found in the state shape\n",
-        "  observer_cli gen-server-state my_server --redact\n"
+        "otp-state PID_OR_NAME --behavior BEHAVIOR [--limit N] [--redact]",
+        "Inspect bounded, value-free shapes after a full OTP behavior state copy\n"
+        "on the target. The full-copy acquisition can wait up to 5s.",
+        "  --behavior BEHAVIOR  Required operator assertion: gen_server,\n"
+        "                       gen_statem, or gen_event\n"
+        "  --limit N            gen_event handlers only; 1..200, 20 by default\n"
+        "                       This is an output soft cap, not an acquisition cap\n"
+        "  --timeout DURATION   Overall command deadline; minimum 10s\n"
+        "  --redact             Hide identifiers found in returned shapes\n",
+        "  observer_cli otp-state my_server --behavior gen_server --redact\n"
+        "  observer_cli otp-state alarm_handler --behavior gen_event --limit 50\n"
     );
 command_help("supervision-tree") ->
     remote_help(
@@ -625,8 +633,13 @@ command_request(process, [Target], Options) ->
     (request_options(Options))#{target => Target};
 command_request(port, [Target], Options) ->
     (request_options(Options))#{target => Target};
-command_request(gen_server_state, [Target], Options) ->
-    (request_options(Options))#{target => Target};
+command_request(otp_state, [Target], Options) ->
+    Behavior = list_to_existing_atom(maps:get(behavior, Options)),
+    Request = #{target => unicode:characters_to_binary(Target), behavior => Behavior},
+    case Behavior of
+        gen_event -> Request#{limit => list_to_integer(maps:get(limit, Options, "20"))};
+        _ -> Request
+    end;
 command_request(supervision_tree, [], Options) ->
     (request_options(Options))#{app => maps:get(app, Options)};
 command_request(schedulers, _Arguments, Options) ->
@@ -1332,15 +1345,19 @@ validate_response_map(Command, Policy, Target, Response) ->
         erlang:external_size(Response) =< ?MAX_RESPONSE_BYTES,
         valid_envelope(Response, Policy, atom_to_binary(Target)),
         valid_command_data(Command, Response),
-        valid_policy_response(Policy, Response)
+        valid_policy_response(Command, Policy, Response)
     ],
     case lists:all(fun(Check) -> Check end, Checks) of
         true -> ok;
         false -> {error, invalid_command_response}
     end.
 
-valid_policy_response(include, _Response) -> true;
-valid_policy_response(redact, Response) -> valid_redaction(Response).
+valid_policy_response(_Command, include, _Response) ->
+    true;
+valid_policy_response(otp_state, redact, #{<<"data">> := Data} = Response) ->
+    valid_redaction(Response) andalso valid_otp_state_redaction(Data);
+valid_policy_response(_Command, redact, Response) ->
+    valid_redaction(Response).
 
 valid_envelope(
     #{
@@ -1557,8 +1574,8 @@ valid_command_payload(Command, #{<<"data">> := Data} = Response, Probes) ->
             valid_map_fields(Data, [<<"status">>]);
         port ->
             valid_map_fields(Data, [<<"status">>]);
-        gen_server_state ->
-            valid_map_fields(Data, [<<"status">>, <<"risk_level">>]);
+        otp_state ->
+            valid_otp_state_payload(Response, Probes);
         supervision_tree ->
             valid_map_fields(Data, [<<"status">>, <<"risk_level">>]);
         trace_call ->
@@ -1572,6 +1589,499 @@ valid_command_payload(Command, #{<<"data">> := Data} = Response, Probes) ->
 valid_map_fields(Data, Fields) when is_map(Data) ->
     lists:all(fun(Field) -> maps:is_key(Field, Data) end, Fields);
 valid_map_fields(_Data, _Fields) ->
+    false.
+
+valid_otp_state_payload(#{<<"data">> := Data} = Response, Probes) ->
+    valid_otp_state_data(Data) andalso valid_otp_state_outcome(Data, Response, Probes).
+
+valid_otp_state_outcome(
+    #{<<"status">> := Status},
+    #{<<"capture">> := #{<<"status">> := <<"complete">>}, <<"errors">> := []},
+    [
+        #{
+            <<"id">> := <<"otp_state">>,
+            <<"required">> := true,
+            <<"status">> := <<"ok">>,
+            <<"reason_code">> := null
+        }
+    ]
+) when Status =:= <<"ok">>; Status =:= <<"not_found">> ->
+    true;
+valid_otp_state_outcome(
+    #{<<"status">> := <<"error">>, <<"reason_code">> := Reason},
+    #{
+        <<"capture">> := #{<<"status">> := <<"partial">>},
+        <<"errors">> := [
+            #{
+                <<"class">> := <<"required_probe">>,
+                <<"probe">> := <<"otp_state">>,
+                <<"reason_code">> := Reason
+            }
+        ]
+    },
+    [
+        #{
+            <<"id">> := <<"otp_state">>,
+            <<"required">> := true,
+            <<"status">> := <<"error">>,
+            <<"reason_code">> := Reason
+        }
+    ]
+) ->
+    true;
+valid_otp_state_outcome(_Data, _Response, _Probes) ->
+    false.
+
+valid_otp_state_data(
+    #{
+        <<"status">> := Status,
+        <<"risk_level">> := <<"high">>,
+        <<"behavior">> := Behavior,
+        <<"behavior_source">> := <<"operator_asserted">>,
+        <<"structural_validation">> := Validation,
+        <<"acquisition">> := Acquisition,
+        <<"limits">> := Limits,
+        <<"truncated">> := Truncated,
+        <<"truncation_reason">> := TruncationReason,
+        <<"visited_node_count">> := Visited
+    } = Data
+) ->
+    valid_otp_state_data_size(Behavior, Status, Data) andalso
+        valid_otp_state_acquisition(Acquisition) andalso
+        valid_otp_state_limits(Behavior, Limits) andalso
+        valid_otp_state_truncation(Truncated, TruncationReason) andalso
+        nonnegative_integer(Visited) andalso Visited =< 10000 andalso
+        valid_otp_state_behavior(Behavior, Data) andalso
+        valid_otp_state_shape_budget(Behavior, Data) andalso
+        valid_otp_state_status(Status, Behavior, Validation, Data);
+valid_otp_state_data(_Data) ->
+    false.
+
+valid_otp_state_data_size(Behavior, Status, Data) ->
+    BehaviorFields =
+        case Behavior of
+            <<"gen_server">> -> 1;
+            <<"gen_statem">> -> 4;
+            <<"gen_event">> -> 5;
+            _ -> invalid
+        end,
+    ReasonFields =
+        case Status of
+            <<"ok">> -> 0;
+            <<"not_found">> -> 0;
+            <<"error">> -> 1;
+            _ -> invalid
+        end,
+    is_integer(BehaviorFields) andalso is_integer(ReasonFields) andalso
+        map_size(Data) =:= 10 + BehaviorFields + ReasonFields.
+
+valid_otp_state_status(<<"ok">>, <<"gen_server">>, <<"not_applicable">>, Data) ->
+    not maps:is_key(<<"reason_code">>, Data);
+valid_otp_state_status(<<"not_found">>, <<"gen_server">>, <<"not_applicable">>, Data) ->
+    not maps:is_key(<<"reason_code">>, Data);
+valid_otp_state_status(<<"error">>, <<"gen_server">>, <<"not_applicable">>, Data) ->
+    lists:member(maps:get(<<"reason_code">>, Data, undefined), [
+        <<"state_timeout">>, <<"state_probe_failed">>, <<"state_shape_failed">>
+    ]);
+valid_otp_state_status(<<"ok">>, Behavior, <<"passed">>, Data) when
+    Behavior =:= <<"gen_statem">>; Behavior =:= <<"gen_event">>
+->
+    not maps:is_key(<<"reason_code">>, Data);
+valid_otp_state_status(<<"not_found">>, Behavior, <<"not_performed">>, Data) when
+    Behavior =:= <<"gen_statem">>; Behavior =:= <<"gen_event">>
+->
+    not maps:is_key(<<"reason_code">>, Data);
+valid_otp_state_status(<<"error">>, Behavior, Validation, Data) when
+    Behavior =:= <<"gen_statem">>; Behavior =:= <<"gen_event">>
+->
+    case maps:get(<<"reason_code">>, Data, undefined) of
+        <<"behavior_shape_mismatch">> ->
+            Validation =:= <<"failed">>;
+        Reason when Reason =:= <<"state_timeout">>; Reason =:= <<"state_probe_failed">> ->
+            Validation =:= <<"not_performed">>;
+        <<"state_shape_failed">> ->
+            Validation =:= <<"passed">>;
+        _ ->
+            false
+    end;
+valid_otp_state_status(_Status, _Behavior, _Validation, _Data) ->
+    false.
+
+valid_otp_state_acquisition(
+    #{
+        <<"full_state_copy_risk">> := true,
+        <<"timeout_ms">> := 5000,
+        <<"timeout_retracts_delivered_request">> := false
+    } = Acquisition
+) ->
+    map_size(Acquisition) =:= 3;
+valid_otp_state_acquisition(_Acquisition) ->
+    false.
+
+valid_otp_state_limits(
+    Behavior,
+    #{
+        <<"output_bytes">> := 65536,
+        <<"depth">> := 6,
+        <<"nodes">> := 10000,
+        <<"container_prefix">> := 2,
+        <<"semantic_identifier_bytes">> := 128
+    } = Limits
+) ->
+    valid_otp_state_event_limits(Behavior, Limits);
+valid_otp_state_limits(_Behavior, _Limits) ->
+    false.
+
+valid_otp_state_event_limits(
+    <<"gen_event">>,
+    #{
+        <<"handler_output_count">> := Count, <<"max_handler_output_count">> := Max
+    } = Limits
+) ->
+    map_size(Limits) =:= 7 andalso positive_integer(Count) andalso Max =:= 200 andalso
+        Count =< Max;
+valid_otp_state_event_limits(Behavior, Limits) when
+    Behavior =:= <<"gen_server">>; Behavior =:= <<"gen_statem">>
+->
+    map_size(Limits) =:= 5;
+valid_otp_state_event_limits(_Behavior, _Limits) ->
+    false.
+
+valid_otp_state_truncation(false, null) ->
+    true;
+valid_otp_state_truncation(true, Reason) ->
+    lists:member(Reason, [<<"depth_cap">>, <<"node_cap">>, <<"output_cap">>]);
+valid_otp_state_truncation(_Truncated, _Reason) ->
+    false.
+
+valid_otp_state_behavior(<<"gen_server">>, #{
+    <<"status">> := Status,
+    <<"truncated">> := Truncated,
+    <<"truncation_reason">> := TruncationReason,
+    <<"visited_node_count">> := Visited,
+    <<"state_shape">> := Shape
+}) ->
+    valid_gen_server_shape(Status, Shape, Truncated, TruncationReason, Visited);
+valid_otp_state_behavior(<<"gen_statem">>, #{
+    <<"status">> := Status,
+    <<"truncated">> := Truncated,
+    <<"truncation_reason">> := TruncationReason,
+    <<"visited_node_count">> := Visited,
+    <<"current_state">> := CurrentState,
+    <<"current_state_identity">> := Identity,
+    <<"current_state_shape">> := CurrentShape,
+    <<"data_shape">> := DataShape
+}) ->
+    valid_gen_statem_state(
+        Status,
+        CurrentState,
+        Identity,
+        CurrentShape,
+        DataShape,
+        Truncated,
+        TruncationReason,
+        Visited
+    );
+valid_otp_state_behavior(<<"gen_event">>, #{
+    <<"status">> := Status,
+    <<"limits">> := #{<<"handler_output_count">> := Limit},
+    <<"visited_node_count">> := Visited,
+    <<"observed_handler_count">> := Observed,
+    <<"returned_count">> := Returned,
+    <<"dropped_count">> := Dropped,
+    <<"shape_budget_exhausted_count">> := Exhausted,
+    <<"handlers">> := Handlers,
+    <<"truncated">> := Truncated,
+    <<"truncation_reason">> := TruncationReason
+}) ->
+    valid_gen_event_state(
+        Status,
+        Observed,
+        Returned,
+        Dropped,
+        Exhausted,
+        Handlers,
+        Limit,
+        Truncated,
+        TruncationReason,
+        Visited
+    );
+valid_otp_state_behavior(_Behavior, _Data) ->
+    false.
+
+valid_otp_state_shape_budget(<<"gen_server">>, #{<<"state_shape">> := Shape}) ->
+    state_shape_bytes(Shape) =< 65536;
+valid_otp_state_shape_budget(<<"gen_statem">>, #{
+    <<"current_state_shape">> := CurrentShape, <<"data_shape">> := DataShape
+}) ->
+    state_shape_bytes(CurrentShape) + state_shape_bytes(DataShape) =< 65536;
+valid_otp_state_shape_budget(<<"gen_event">>, #{<<"handlers">> := Handlers}) ->
+    lists:sum([
+        state_shape_bytes(maps:get(<<"state_shape">>, Handler))
+     || Handler <- Handlers
+    ]) =< 65536.
+
+state_shape_bytes(null) -> 0;
+state_shape_bytes(Shape) -> erlang:external_size(Shape).
+
+valid_gen_server_shape(<<"ok">>, null, true, Reason, Visited) ->
+    positive_integer(Visited) andalso lists:member(Reason, [<<"node_cap">>, <<"output_cap">>]);
+valid_gen_server_shape(<<"ok">>, Shape, _Truncated, Reason, Visited) when is_map(Shape) ->
+    positive_integer(Visited) andalso Reason =/= <<"output_cap">> andalso
+        valid_state_shape(Shape);
+valid_gen_server_shape(Status, null, false, null, 0) ->
+    Status =:= <<"not_found">> orelse Status =:= <<"error">>;
+valid_gen_server_shape(_Status, _Shape, _Truncated, _Reason, _Visited) ->
+    false.
+
+valid_gen_statem_state(
+    <<"ok">>,
+    CurrentState,
+    Identity,
+    CurrentShape,
+    DataShape,
+    Truncated,
+    Reason,
+    Visited
+) ->
+    positive_integer(Visited) andalso valid_semantic_identity(Identity, CurrentState) andalso
+        valid_gen_statem_shapes(CurrentShape, DataShape, Truncated, Reason);
+valid_gen_statem_state(
+    Status, null, <<"unavailable">>, null, null, false, null, 0
+) ->
+    Status =:= <<"not_found">> orelse Status =:= <<"error">>;
+valid_gen_statem_state(
+    _Status,
+    _CurrentState,
+    _Identity,
+    _CurrentShape,
+    _DataShape,
+    _Truncated,
+    _Reason,
+    _Visited
+) ->
+    false.
+
+valid_gen_statem_shapes(CurrentShape, DataShape, false, null) ->
+    valid_state_shape(CurrentShape) andalso valid_state_shape(DataShape);
+valid_gen_statem_shapes(CurrentShape, DataShape, true, <<"depth_cap">>) ->
+    valid_state_shape(CurrentShape) andalso valid_state_shape(DataShape);
+valid_gen_statem_shapes(CurrentShape, null, true, <<"output_cap">>) ->
+    CurrentShape =:= null orelse valid_state_shape(CurrentShape);
+valid_gen_statem_shapes(null, null, true, <<"node_cap">>) ->
+    true;
+valid_gen_statem_shapes(CurrentShape, DataShape, true, <<"node_cap">>) ->
+    valid_state_shape(CurrentShape) andalso
+        (DataShape =:= null orelse valid_state_shape(DataShape));
+valid_gen_statem_shapes(_CurrentShape, _DataShape, _Truncated, _Reason) ->
+    false.
+
+valid_gen_event_state(
+    <<"ok">>,
+    Observed,
+    Returned,
+    Dropped,
+    Exhausted,
+    Handlers,
+    Limit,
+    Truncated,
+    TruncationReason,
+    Visited
+) ->
+    nonnegative_integer(Observed) andalso nonnegative_integer(Returned) andalso
+        nonnegative_integer(Dropped) andalso nonnegative_integer(Exhausted) andalso
+        valid_otp_state_event_visited(Observed, Returned, Visited) andalso Returned =< Limit andalso
+        valid_otp_state_handlers(Handlers) andalso
+        Returned =:= length(Handlers) andalso Observed =:= Returned + Dropped andalso
+        valid_otp_state_event_exhaustion(
+            Observed, Returned, Limit, Exhausted, Truncated, TruncationReason
+        );
+valid_gen_event_state(
+    Status, 0, 0, 0, 0, [], _Limit, false, null, 0
+) ->
+    Status =:= <<"not_found">> orelse Status =:= <<"error">>;
+valid_gen_event_state(
+    _Status,
+    _Observed,
+    _Returned,
+    _Dropped,
+    _Exhausted,
+    _Handlers,
+    _Limit,
+    _Truncated,
+    _TruncationReason,
+    _Visited
+) ->
+    false.
+
+valid_otp_state_event_visited(0, 0, 0) ->
+    true;
+valid_otp_state_event_visited(Observed, Returned, Visited) ->
+    positive_integer(Observed) andalso positive_integer(Visited) andalso Visited >= Returned.
+
+valid_otp_state_handler(
+    #{
+        <<"index">> := Index,
+        <<"module">> := Module,
+        <<"id">> := Id,
+        <<"id_identity">> := Identity,
+        <<"state_shape">> := Shape
+    } = Handler
+) ->
+    map_size(Handler) =:= 5 andalso positive_integer(Index) andalso is_binary(Module) andalso
+        valid_semantic_identity(Identity, Id) andalso valid_state_shape(Shape);
+valid_otp_state_handler(_Handler) ->
+    false.
+
+valid_otp_state_handlers(Handlers) ->
+    valid_otp_state_handlers(Handlers, 1).
+
+valid_otp_state_handlers([], _Index) ->
+    true;
+valid_otp_state_handlers([#{<<"index">> := Index} = Handler | Rest], Index) ->
+    valid_otp_state_handler(Handler) andalso valid_otp_state_handlers(Rest, Index + 1);
+valid_otp_state_handlers(_Handlers, _Index) ->
+    false.
+
+valid_otp_state_event_exhaustion(Observed, Returned, _Limit, 0, false, null) ->
+    Observed =:= Returned;
+valid_otp_state_event_exhaustion(Observed, Returned, _Limit, 0, true, <<"depth_cap">>) ->
+    Returned > 0 andalso Observed =:= Returned;
+valid_otp_state_event_exhaustion(Observed, Returned, Limit, 0, true, <<"output_cap">>) ->
+    Returned =:= Limit andalso Observed > Returned;
+valid_otp_state_event_exhaustion(
+    Observed, Returned, Limit, Exhausted, true, <<"output_cap">>
+) when Exhausted > 0 ->
+    Exhausted =:= min(Observed, Limit) - Returned;
+valid_otp_state_event_exhaustion(
+    Observed, Returned, Limit, Exhausted, true, <<"node_cap">>
+) when Exhausted > 0 ->
+    Remaining = min(Observed, Limit) - Returned,
+    Exhausted =:= Remaining orelse Exhausted =:= Remaining + 1;
+valid_otp_state_event_exhaustion(
+    _Observed, _Returned, _Limit, _Exhausted, _Truncated, _Reason
+) ->
+    false.
+
+valid_semantic_identity(<<"available">>, Value) ->
+    is_binary(Value) andalso byte_size(Value) =< 128;
+valid_semantic_identity(<<"unavailable">>, null) ->
+    true;
+valid_semantic_identity(_Identity, _Value) ->
+    false.
+
+valid_state_shape(Shape) ->
+    valid_state_shape(Shape, 0).
+
+valid_state_shape(#{<<"type">> := Type} = Shape, Depth) when
+    Depth < 6, Type =:= <<"atom">>;
+    Depth < 6, Type =:= <<"number">>;
+    Depth < 6, Type =:= <<"other">>
+->
+    map_size(Shape) =:= 1;
+valid_state_shape(
+    #{<<"type">> := <<"binary">>, <<"size_bytes">> := Size} = Shape, Depth
+) ->
+    Depth < 6 andalso map_size(Shape) =:= 2 andalso nonnegative_integer(Size);
+valid_state_shape(
+    #{<<"type">> := <<"bitstring">>, <<"size_bits">> := Size} = Shape, Depth
+) ->
+    Depth < 6 andalso map_size(Shape) =:= 2 andalso nonnegative_integer(Size);
+valid_state_shape(
+    #{<<"type">> := <<"truncated">>, <<"truncation_reason">> := <<"node_cap">>} = Shape,
+    Depth
+) ->
+    Depth =< 6 andalso map_size(Shape) =:= 2;
+valid_state_shape(
+    #{
+        <<"type">> := Type,
+        <<"truncated">> := true,
+        <<"truncation_reason">> := <<"depth_cap">>
+    } = Shape,
+    6
+) ->
+    map_size(Shape) =:= 3 andalso valid_state_shape_type(Type);
+valid_state_shape(
+    #{
+        <<"type">> := Type,
+        <<"size">> := Size,
+        <<"children">> := Children,
+        <<"returned_count">> := Returned,
+        <<"truncated">> := Truncated
+    } = Shape,
+    Depth
+) ->
+    Depth < 6 andalso
+        valid_state_container(
+            Type, Size, Children, Returned, Truncated, Shape, Depth
+        );
+valid_state_shape(_Shape, _Depth) ->
+    false.
+
+valid_state_shape_type(Type) ->
+    lists:member(Type, [
+        <<"atom">>,
+        <<"number">>,
+        <<"binary">>,
+        <<"bitstring">>,
+        <<"map">>,
+        <<"tuple">>,
+        <<"list">>,
+        <<"other">>
+    ]).
+
+valid_state_container(Type, Size, Children, Returned, Truncated, Shape, Depth) ->
+    lists:member(Type, [<<"map">>, <<"tuple">>, <<"list">>]) andalso
+        is_list(Children) andalso nonnegative_integer(Returned) andalso
+        Returned =:= length(Children) andalso Returned =< 2 andalso is_boolean(Truncated) andalso
+        lists:all(fun(Child) -> valid_state_shape(Child, Depth + 1) end, Children) andalso
+        valid_state_container_size(Type, Size, Returned, Truncated, Shape).
+
+valid_state_container_size(_Type, Size, Returned, Truncated, Shape) when
+    is_integer(Size), Size >= 0, Returned =< Size
+->
+    case maps:find(<<"truncation_reason">>, Shape) of
+        error -> map_size(Shape) =:= 5 andalso Truncated =:= (Size > Returned);
+        {ok, <<"node_cap">>} -> map_size(Shape) =:= 6 andalso Truncated;
+        _ -> false
+    end;
+valid_state_container_size(<<"list">>, null, _Returned, true, Shape) ->
+    case maps:find(<<"truncation_reason">>, Shape) of
+        error -> map_size(Shape) =:= 5;
+        {ok, <<"node_cap">>} -> map_size(Shape) =:= 6;
+        _ -> false
+    end;
+valid_state_container_size(_Type, _Size, _Returned, _Truncated, _Shape) ->
+    false.
+
+nonnegative_integer(Value) -> is_integer(Value) andalso Value >= 0.
+
+positive_integer(Value) -> is_integer(Value) andalso Value > 0.
+
+valid_otp_state_redaction(#{
+    <<"behavior">> := <<"gen_statem">>, <<"current_state">> := CurrentState
+}) ->
+    valid_redacted_label(CurrentState);
+valid_otp_state_redaction(#{<<"behavior">> := <<"gen_event">>, <<"handlers">> := Handlers}) when
+    is_list(Handlers)
+->
+    lists:all(fun valid_otp_state_handler_redaction/1, Handlers);
+valid_otp_state_redaction(#{<<"behavior">> := <<"gen_server">>}) ->
+    true;
+valid_otp_state_redaction(_Data) ->
+    false.
+
+valid_otp_state_handler_redaction(#{<<"module">> := Module, <<"id">> := Id}) ->
+    is_binary(Module) andalso valid_stable_identifier(<<"module-">>, Module) andalso
+        valid_redacted_label(Id);
+valid_otp_state_handler_redaction(_Handler) ->
+    false.
+
+valid_redacted_label(null) ->
+    true;
+valid_redacted_label(Value) when is_binary(Value) ->
+    valid_stable_identifier(<<"label-">>, Value);
+valid_redacted_label(_Value) ->
     false.
 
 valid_memory_data(#{<<"runtime">> := Runtime, <<"memory">> := Memory}) ->
@@ -1666,7 +2176,7 @@ required_probe_id(mnesia) -> <<"mnesia_inventory">>;
 required_probe_id(network) -> <<"network_inventory">>;
 required_probe_id(ports) -> <<"port_inventory">>;
 required_probe_id(sockets) -> <<"socket_inventory">>;
-required_probe_id(gen_server_state) -> <<"gen_server_state">>;
+required_probe_id(otp_state) -> <<"otp_state">>;
 required_probe_id(supervision_tree) -> <<"supervision_tree">>;
 required_probe_id(trace_call) -> <<"trace">>;
 required_probe_id(trace_stop_all) -> <<"trace">>;
@@ -2064,12 +2574,14 @@ command_error(Command, Format, Category, Reason) ->
 
 command_display(trace_call) -> <<"trace call">>;
 command_display(trace_stop_all) -> <<"trace stop">>;
+command_display(otp_state) -> <<"otp-state">>;
 command_display(Command) -> atom_to_binary(Command).
 
 command_help_command(unknown) -> <<"observer_cli --help">>;
 command_help_command(tui) -> <<"observer_cli tui --help">>;
 command_help_command(trace_call) -> <<"observer_cli trace call --help">>;
 command_help_command(trace_stop_all) -> <<"observer_cli trace stop --help">>;
+command_help_command(otp_state) -> <<"observer_cli otp-state --help">>;
 command_help_command(Command) -> <<"observer_cli ", (atom_to_binary(Command))/binary, " --help">>.
 
 command_format(#{json := true}) -> json;

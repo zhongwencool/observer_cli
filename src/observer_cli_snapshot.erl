@@ -130,7 +130,7 @@
     trace_response/3,
     collect_root_children/4,
     collect_admitted_root_children/5,
-    collect_gen_server_state/2,
+    collect_otp_state/4,
     capture_applications/2,
     capture_ets/2,
     capture_mnesia/2,
@@ -165,12 +165,12 @@
 -define(STATE_SHAPE_MAX_DEPTH, 6).
 -define(STATE_SHAPE_MAX_NODES, 10000).
 -define(STATE_SHAPE_PREFIX, 2).
--define(STATE_TIMEOUT_MS, 1000).
+-define(STATE_TIMEOUT_MS, 5000).
 -define(PROCESS_SCAN_BUDGET, 100000).
 -define(BINARY_PROCESS_SCAN_BUDGET, 20000).
 -define(APPLICATION_SCAN_BUDGET, 5000).
--define(SUPERVISOR_SCAN_BUDGET, 5000).
--define(SUPERVISOR_OUTPUT_CAP, 500).
+-define(SUPERVISOR_SCAN_BUDGET, 300).
+-define(SUPERVISOR_OUTPUT_CAP, 100).
 -define(CHILD_ID_MAX_BYTES, 128).
 -define(CHILD_ID_MAX_BITS, 1024).
 -define(ETS_SCAN_BUDGET, 100000).
@@ -408,8 +408,8 @@ probe(ports, Request, Context) ->
     capture_ports(Request, Context);
 probe(sockets, Request, Context) ->
     capture_sockets(Request, Context);
-probe(gen_server_state, Request, Context) ->
-    capture_gen_server_state(Request, Context);
+probe(otp_state, Request, Context) ->
+    capture_otp_state(Request, Context);
 probe(supervision_tree, Request, Context) ->
     capture_supervision_tree(Request, Context);
 probe(trace, Request, Context) ->
@@ -445,8 +445,8 @@ probe(ports, Request, Context) ->
     capture_ports(Request, Context);
 probe(sockets, Request, Context) ->
     capture_sockets(Request, Context);
-probe(gen_server_state, Request, Context) ->
-    capture_gen_server_state(Request, Context);
+probe(otp_state, Request, Context) ->
+    capture_otp_state(Request, Context);
 probe(supervision_tree, Request, Context) ->
     capture_supervision_tree(Request, Context);
 probe(trace, Request, Context) ->
@@ -1238,32 +1238,51 @@ capture_port(#{target := Target} = Request, Context) ->
 capture_port(_Request, _Context) ->
     {probe_error, invalid_request}.
 
-capture_gen_server_state(#{target := Target} = Request, Context) ->
-    Source = state_source(Request),
-    Response = capture_scan_inspection(
-        gen_server_state,
-        gen_server_state,
-        1,
-        Context,
-        fun() -> collect_gen_server_state(Target, Source) end
-    ),
-    Data = maps:get(data, Response),
-    Errors =
-        case maps:get(status, Data) of
-            error ->
-                [
-                    #{
-                        class => required_probe,
-                        probe => gen_server_state,
-                        reason_code => maps:get(reason_code, Data)
-                    }
-                ];
-            _ ->
-                []
-        end,
-    Response#{warnings := state_risk_warnings(), errors := Errors};
-capture_gen_server_state(_Request, _Context) ->
+capture_otp_state(#{target := Target, behavior := Behavior} = Request, Context) ->
+    case otp_state_limit(Behavior, Request) of
+        {ok, Limit} ->
+            Source = state_source(Request),
+            Response = capture_scan_inspection(
+                otp_state,
+                otp_state,
+                1,
+                Context,
+                fun() -> collect_otp_state(Target, Behavior, Limit, Source) end
+            ),
+            Data = maps:get(data, Response),
+            Errors =
+                case maps:get(status, Data) of
+                    error ->
+                        [
+                            #{
+                                class => required_probe,
+                                probe => otp_state,
+                                reason_code => maps:get(reason_code, Data)
+                            }
+                        ];
+                    _ ->
+                        []
+                end,
+            Response#{warnings := state_risk_warnings(), errors := Errors};
+        error ->
+            {probe_error, invalid_request}
+    end;
+capture_otp_state(_Request, _Context) ->
     {probe_error, invalid_request}.
+
+otp_state_limit(gen_event, Request) ->
+    Limit = maps:get(limit, Request, 20),
+    case valid_list_limit(Limit) of
+        true -> {ok, Limit};
+        false -> error
+    end;
+otp_state_limit(Behavior, Request) when Behavior =:= gen_server; Behavior =:= gen_statem ->
+    case maps:is_key(limit, Request) of
+        true -> error;
+        false -> {ok, undefined}
+    end;
+otp_state_limit(_Behavior, _Request) ->
+    error.
 
 capture_supervision_tree(#{app := App} = Request, Context) ->
     Source = application_source(Request),
@@ -1373,67 +1392,90 @@ preflight_root_children(App, Root, Source, Risk, Counts) ->
     Observed = max(maps:get(active, Counts), maps:get(specs, Counts)),
     case Observed =< ?SUPERVISOR_SCAN_BUDGET of
         false ->
-            {unavailable, scan_budget_exceeded, Risk#{
-                status => unavailable,
-                reason_code => scan_budget_exceeded,
-                application => {identifier, application, App},
-                root => {identifier, pid, Root},
-                preflight => Counts,
-                observed_child_count => Observed,
-                scan_budget_count => ?SUPERVISOR_SCAN_BUDGET,
-                children => []
-            }};
+            supervisor_scan_refusal(App, Root, Risk, Counts, Observed);
         true ->
             collect_admitted_root_children(App, Root, Source, Risk, Counts)
     end.
 
 collect_admitted_root_children(App, Root, Source, Risk, Counts) ->
     try (maps:get(which_children_fun, Source))(Root) of
-        Children when is_list(Children) ->
-            case valid_supervisor_children(Children) of
-                true ->
-                    ChildCounts = child_identity_counts(Children),
-                    Returned = lists:sublist(Children, ?SUPERVISOR_OUTPUT_CAP),
-                    Items = [supervision_child(Child, ChildCounts, Source) || Child <- Returned],
-                    Unavailable = length([
-                        unavailable
-                     || {Id, _Child, _Type, _Modules} <- Children,
-                        not child_identity_available(Id, ChildCounts)
-                    ]),
-                    {ok,
-                        Risk#{
-                            status => ok,
-                            application => {identifier, application, App},
-                            root => {identifier, pid, Root},
-                            preflight => Counts,
-                            observed_child_count => length(Children),
-                            returned_count => length(Items),
-                            dropped_count => length(Children) - length(Items),
-                            identity_unavailable_count => Unavailable,
-                            children => Items
-                        },
-                        [
-                            public_application_supervisor,
-                            local_live_root,
-                            count_children_preflight,
-                            direct_children_only,
-                            soft_output_cap
-                        ]};
-                false ->
-                    {error, supervisor_children_failed, Risk#{
-                        status => error, reason_code => supervisor_children_failed
-                    }}
-            end;
-        _Other ->
-            {error, supervisor_children_failed, Risk#{
-                status => error, reason_code => supervisor_children_failed
-            }}
+        Children ->
+            case bounded_supervisor_child_count(Children, 0) of
+                {ok, Observed} ->
+                    collect_bounded_root_children(
+                        App, Root, Source, Risk, Counts, Children, Observed
+                    );
+                exceeded ->
+                    supervisor_scan_refusal(
+                        App, Root, Risk, Counts, ?SUPERVISOR_SCAN_BUDGET + 1
+                    );
+                error ->
+                    supervisor_children_error(Risk)
+            end
     catch
         _Class:_Reason:_Stacktrace ->
-            {error, supervisor_children_failed, Risk#{
-                status => error, reason_code => supervisor_children_failed
-            }}
+            supervisor_children_error(Risk)
     end.
+
+bounded_supervisor_child_count([_Child | _Rest], ?SUPERVISOR_SCAN_BUDGET) ->
+    exceeded;
+bounded_supervisor_child_count([_Child | Rest], Count) ->
+    bounded_supervisor_child_count(Rest, Count + 1);
+bounded_supervisor_child_count([], Count) ->
+    {ok, Count};
+bounded_supervisor_child_count(_Improper, _Count) ->
+    error.
+
+collect_bounded_root_children(App, Root, Source, Risk, Counts, Children, Observed) ->
+    case valid_supervisor_children(Children) of
+        true ->
+            ChildCounts = child_identity_counts(Children),
+            Returned = lists:sublist(Children, ?SUPERVISOR_OUTPUT_CAP),
+            Items = [supervision_child(Child, ChildCounts, Source) || Child <- Returned],
+            Unavailable = length([
+                unavailable
+             || {Id, _Child, _Type, _Modules} <- Children,
+                not child_identity_available(Id, ChildCounts)
+            ]),
+            {ok,
+                Risk#{
+                    status => ok,
+                    application => {identifier, application, App},
+                    root => {identifier, pid, Root},
+                    preflight => Counts,
+                    observed_child_count => Observed,
+                    returned_count => length(Items),
+                    dropped_count => Observed - length(Items),
+                    identity_unavailable_count => Unavailable,
+                    children => Items
+                },
+                [
+                    public_application_supervisor,
+                    local_live_root,
+                    count_children_preflight,
+                    direct_children_only,
+                    soft_output_cap
+                ]};
+        false ->
+            supervisor_children_error(Risk)
+    end.
+
+supervisor_scan_refusal(App, Root, Risk, Counts, Observed) ->
+    {unavailable, scan_budget_exceeded, Risk#{
+        status => unavailable,
+        reason_code => scan_budget_exceeded,
+        application => {identifier, application, App},
+        root => {identifier, pid, Root},
+        preflight => Counts,
+        observed_child_count => Observed,
+        scan_budget_count => ?SUPERVISOR_SCAN_BUDGET,
+        children => []
+    }}.
+
+supervisor_children_error(Risk) ->
+    {error, supervisor_children_failed, Risk#{
+        status => error, reason_code => supervisor_children_failed
+    }}.
 
 supervisor_counts(Counts) when is_list(Counts) ->
     Values = maps:from_list(Counts),
@@ -1601,36 +1643,245 @@ supervision_tree_warnings() ->
         #{reason_code => direct_child_limit_is_output_soft_cap}
     ].
 
-collect_gen_server_state(Target, Source) ->
-    Risk = state_risk_data(),
-    case resolve_process_target(Target, maps:get(process_source, Source)) of
+collect_otp_state(Target, Behavior, Limit, Source) ->
+    Base = otp_state_base(Behavior, Limit),
+    ProcessSource = maps:get(process_source, Source),
+    case resolve_process_target(Target, ProcessSource) of
         not_found ->
-            {ok, Risk#{status => not_found}, [target_side_resolution, no_atom_creation]};
+            {ok, Base#{status => not_found}, [target_side_resolution, no_atom_creation]};
         {ok, Pid} ->
             try (maps:get(get_state_fun, Source))(Pid, ?STATE_TIMEOUT_MS) of
                 State ->
-                    case state_shape(State) of
-                        {ok, Shape, Nodes} ->
-                            {ok,
-                                Risk#{
-                                    status => ok, state_shape => Shape, visited_node_count => Nodes
-                                },
-                                [
-                                    target_side_resolution,
-                                    target_side_value_free_shape,
-                                    bounded_state_shape
-                                ]};
-                        {error, Reason} ->
-                            {error, Reason, Risk#{status => error, reason_code => Reason}}
-                    end
+                    collect_otp_state_value(Behavior, State, Base)
             catch
-                exit:{timeout, _} ->
-                    {error, state_timeout, Risk#{status => error, reason_code => state_timeout}};
-                _Class:_Reason:_Stacktrace ->
-                    {error, state_probe_failed, Risk#{
-                        status => error, reason_code => state_probe_failed
-                    }}
+                Class:Reason:_Stacktrace ->
+                    otp_state_acquisition_failure(Pid, ProcessSource, Class, Reason, Base)
             end
+    end.
+
+otp_state_base(gen_server, _Limit) ->
+    (state_risk_data())#{
+        behavior => gen_server,
+        behavior_source => operator_asserted,
+        structural_validation => not_applicable,
+        truncated => false,
+        truncation_reason => null,
+        visited_node_count => 0,
+        state_shape => null
+    };
+otp_state_base(gen_statem, _Limit) ->
+    (state_risk_data())#{
+        behavior => gen_statem,
+        behavior_source => operator_asserted,
+        structural_validation => not_performed,
+        truncated => false,
+        truncation_reason => null,
+        visited_node_count => 0,
+        current_state => null,
+        current_state_identity => unavailable,
+        current_state_shape => null,
+        data_shape => null
+    };
+otp_state_base(gen_event, Limit) ->
+    Risk = state_risk_data(),
+    Limits = (maps:get(limits, Risk))#{
+        handler_output_count => Limit, max_handler_output_count => 200
+    },
+    Risk#{
+        behavior => gen_event,
+        behavior_source => operator_asserted,
+        structural_validation => not_performed,
+        limits := Limits,
+        truncated => false,
+        truncation_reason => null,
+        visited_node_count => 0,
+        observed_handler_count => 0,
+        returned_count => 0,
+        dropped_count => 0,
+        shape_budget_exhausted_count => 0,
+        handlers => []
+    }.
+
+collect_otp_state_value(gen_server, State, Base) ->
+    case budgeted_state_shape(State, state_shape_acc()) of
+        {Tag, Shape, Acc} when Tag =:= ok; Tag =:= exhausted ->
+            otp_state_success(Base, Acc, #{state_shape => Shape});
+        {error, Reason} ->
+            otp_state_error(Base, Reason)
+    end;
+collect_otp_state_value(gen_statem, {CurrentState, Data}, Base) ->
+    Acc0 = state_shape_acc(),
+    case budgeted_state_shape(CurrentState, Acc0) of
+        {Tag, CurrentShape, Acc1} when Tag =:= ok; Tag =:= exhausted ->
+            case remaining_state_shape(Data, Acc1) of
+                {ok, DataShape, Acc2} ->
+                    {Identity, PublicState} = state_identity(CurrentState),
+                    otp_state_success(
+                        Base#{structural_validation := passed},
+                        Acc2,
+                        #{
+                            current_state => PublicState,
+                            current_state_identity => Identity,
+                            current_state_shape => CurrentShape,
+                            data_shape => DataShape
+                        }
+                    );
+                {error, Reason} ->
+                    otp_state_error(Base#{structural_validation := passed}, Reason)
+            end;
+        {error, Reason} ->
+            otp_state_error(Base#{structural_validation := passed}, Reason)
+    end;
+collect_otp_state_value(gen_statem, _State, Base) ->
+    otp_state_mismatch(Base);
+collect_otp_state_value(gen_event, Handlers, Base) ->
+    case event_handler_count(Handlers, 0) of
+        {ok, Count} ->
+            collect_event_state(Handlers, Count, Base#{structural_validation := passed});
+        error ->
+            otp_state_mismatch(Base)
+    end.
+
+collect_event_state(Handlers, Observed, Base) ->
+    Limit = maps:get(handler_output_count, maps:get(limits, Base)),
+    Planned = lists:sublist(Handlers, Limit),
+    PlannedCount = length(Planned),
+    case collect_event_handlers(Planned, 1, state_shape_acc(), []) of
+        {ok, Items, Acc0, Exhaustion} ->
+            Returned = length(Items),
+            BudgetExhausted = Exhaustion =/= none,
+            Acc =
+                case Observed > Returned andalso not BudgetExhausted of
+                    true -> mark_shape_truncation(Acc0, output_cap);
+                    false -> Acc0
+                end,
+            ExhaustedCount =
+                case Exhaustion of
+                    included -> PlannedCount - Returned + 1;
+                    excluded -> PlannedCount - Returned;
+                    none -> 0
+                end,
+            otp_state_success(Base, Acc, #{
+                observed_handler_count => Observed,
+                returned_count => Returned,
+                dropped_count => Observed - Returned,
+                shape_budget_exhausted_count => ExhaustedCount,
+                handlers => Items
+            });
+        {error, Reason} ->
+            otp_state_error(Base, Reason)
+    end.
+
+collect_event_handlers([], _Index, Acc, Items) ->
+    {ok, lists:reverse(Items), Acc, none};
+collect_event_handlers([{Module, Id, State} | Rest], Index, Acc0, Items) ->
+    case budgeted_state_shape(State, Acc0) of
+        {ok, Shape, Acc} ->
+            collect_event_handlers(
+                Rest, Index + 1, Acc, [event_handler(Index, Module, Id, Shape) | Items]
+            );
+        {exhausted, null, Acc} ->
+            {ok, lists:reverse(Items), Acc, excluded};
+        {exhausted, Shape, Acc} ->
+            {ok, lists:reverse([event_handler(Index, Module, Id, Shape) | Items]), Acc, included};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+event_handler(Index, Module, Id, Shape) ->
+    {Identity, PublicId} = state_identity(Id),
+    #{
+        index => Index,
+        module => {identifier, module, Module},
+        id => PublicId,
+        id_identity => Identity,
+        state_shape => Shape
+    }.
+
+event_handler_count([], Count) ->
+    {ok, Count};
+event_handler_count([{Module, _Id, _State} | Rest], Count) when is_atom(Module) ->
+    event_handler_count(Rest, Count + 1);
+event_handler_count(_Handlers, _Count) ->
+    error.
+
+remaining_state_shape(_State, Acc) when
+    map_get(truncation_reason, Acc) =:= node_cap;
+    map_get(truncation_reason, Acc) =:= output_cap
+->
+    {ok, null, Acc};
+remaining_state_shape(State, Acc) ->
+    case budgeted_state_shape(State, Acc) of
+        {Tag, Shape, Next} when Tag =:= ok; Tag =:= exhausted -> {ok, Shape, Next};
+        {error, Reason} -> {error, Reason}
+    end.
+
+otp_state_success(Base, Acc, Fields) ->
+    Reason = maps:get(truncation_reason, Acc),
+    {ok,
+        maps:merge(
+            Base#{
+                status => ok,
+                truncated => Reason =/= null,
+                truncation_reason => Reason,
+                visited_node_count => maps:get(nodes, Acc)
+            },
+            Fields
+        ),
+        [
+            target_side_resolution,
+            operator_asserted_behavior,
+            target_side_value_free_shape,
+            bounded_state_shape
+        ]}.
+
+otp_state_mismatch(Base) ->
+    otp_state_error(Base#{structural_validation := failed}, behavior_shape_mismatch).
+
+otp_state_error(Base, Reason) ->
+    {error, Reason, Base#{status => error, reason_code => Reason}}.
+
+otp_state_acquisition_failure(Pid, Source, Class, Reason, Base) ->
+    case target_alive(Pid, Source) of
+        false ->
+            {ok, Base#{status => not_found}, [target_side_resolution, no_atom_creation]};
+        true when Class =:= exit, element(1, Reason) =:= timeout ->
+            otp_state_error(Base, state_timeout);
+        true when Class =:= exit, Reason =:= timeout ->
+            otp_state_error(Base, state_timeout);
+        true ->
+            otp_state_error(Base, state_probe_failed)
+    end.
+
+target_alive(Pid, Source) ->
+    try (maps:get(alive_fun, Source))(Pid) of
+        false -> false;
+        _ -> true
+    catch
+        _:_ -> true
+    end.
+
+state_identity(Value) when is_atom(Value) ->
+    bounded_state_identity(atom, atom_to_binary(Value));
+state_identity(Value) when is_binary(Value), byte_size(Value) =< ?CHILD_ID_MAX_BYTES ->
+    case unicode:characters_to_binary(Value) of
+        Value -> bounded_state_identity(binary, Value);
+        _ -> {unavailable, null}
+    end;
+state_identity(Value) when
+    is_integer(Value),
+    Value >= -(1 bsl ?CHILD_ID_MAX_BITS),
+    Value =< (1 bsl ?CHILD_ID_MAX_BITS)
+->
+    bounded_state_identity(integer, integer_to_binary(Value));
+state_identity(_Value) ->
+    {unavailable, null}.
+
+bounded_state_identity(Type, Value) ->
+    Encoded = <<(atom_to_binary(Type))/binary, $:, Value/binary>>,
+    case byte_size(Encoded) =< ?CHILD_ID_MAX_BYTES of
+        true -> {available, {identifier, label, Encoded}};
+        false -> {unavailable, null}
     end.
 
 state_risk_data() ->
@@ -1645,7 +1896,8 @@ state_risk_data() ->
             output_bytes => ?STATE_SHAPE_MAX_BYTES,
             depth => ?STATE_SHAPE_MAX_DEPTH,
             nodes => ?STATE_SHAPE_MAX_NODES,
-            container_prefix => ?STATE_SHAPE_PREFIX
+            container_prefix => ?STATE_SHAPE_PREFIX,
+            semantic_identifier_bytes => ?CHILD_ID_MAX_BYTES
         }
     }.
 
@@ -1655,25 +1907,64 @@ state_risk_warnings() ->
         #{reason_code => timeout_does_not_retract_delivered_request}
     ].
 
+-ifdef(TEST).
 state_shape(State) ->
-    {Shape, #{nodes := Nodes}} = shape_term(State, 0, #{nodes => 0}),
+    case budgeted_state_shape(State, state_shape_acc()) of
+        {Tag, Shape, Acc} when Tag =:= ok; Tag =:= exhausted ->
+            {ok, Shape, maps:get(nodes, Acc)};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+-endif.
+
+state_shape_acc() ->
+    #{nodes => 0, bytes => 0, truncation_reason => null}.
+
+budgeted_state_shape(State, Acc0) ->
+    {Shape, Acc1} = shape_term(State, 0, Acc0),
     case normalize(Shape, include) of
         {ok, Normalized} ->
-            case erlang:external_size(Normalized) =< ?STATE_SHAPE_MAX_BYTES of
-                true -> {ok, Shape, Nodes};
-                false -> {error, state_shape_too_large}
+            Bytes = erlang:external_size(Normalized),
+            case maps:get(bytes, Acc1) + Bytes =< ?STATE_SHAPE_MAX_BYTES of
+                true ->
+                    Acc = Acc1#{bytes := maps:get(bytes, Acc1) + Bytes},
+                    case shape_budget_exhausted(Acc) of
+                        true -> {exhausted, Shape, Acc};
+                        false -> {ok, Shape, Acc}
+                    end;
+                false ->
+                    Acc = Acc1#{bytes := maps:get(bytes, Acc0)},
+                    {exhausted, null, mark_shape_truncation(Acc, output_cap)}
             end;
         {error, _Reason} ->
             {error, state_shape_failed}
     end.
 
+shape_budget_exhausted(Acc) ->
+    Reason = maps:get(truncation_reason, Acc),
+    Reason =:= node_cap orelse Reason =:= output_cap.
+
+mark_shape_truncation(Acc, node_cap) ->
+    Acc#{truncation_reason => node_cap};
+mark_shape_truncation(#{truncation_reason := node_cap} = Acc, _Reason) ->
+    Acc;
+mark_shape_truncation(Acc, output_cap) ->
+    Acc#{truncation_reason => output_cap};
+mark_shape_truncation(#{truncation_reason := null} = Acc, depth_cap) ->
+    Acc#{truncation_reason := depth_cap};
+mark_shape_truncation(Acc, depth_cap) ->
+    Acc.
+
 shape_term(_Term, _Depth, #{nodes := Nodes} = Acc) when Nodes >= ?STATE_SHAPE_MAX_NODES ->
-    {#{type => truncated, truncation_reason => node_cap}, Acc};
+    {#{type => truncated, truncation_reason => node_cap}, mark_shape_truncation(Acc, node_cap)};
 shape_term(Term, Depth, Acc0) ->
     Acc = Acc0#{nodes := maps:get(nodes, Acc0) + 1},
     case Depth >= ?STATE_SHAPE_MAX_DEPTH of
         true ->
-            {#{type => shape_type(Term), truncated => true, truncation_reason => depth_cap}, Acc};
+            {
+                #{type => shape_type(Term), truncated => true, truncation_reason => depth_cap},
+                mark_shape_truncation(Acc, depth_cap)
+            };
         false ->
             shape_value(Term, Depth, Acc)
     end.
@@ -1718,7 +2009,7 @@ shape_children([], _Depth, Acc, Children) ->
 shape_children(_Values, _Depth, #{nodes := Nodes} = Acc, Children) when
     Nodes >= ?STATE_SHAPE_MAX_NODES
 ->
-    {lists:reverse(Children), Acc};
+    {lists:reverse(Children), mark_shape_truncation(Acc, node_cap)};
 shape_children([Value | Rest], Depth, Acc, Children) ->
     {Shape, Acc1} = shape_term(Value, Depth, Acc),
     shape_children(Rest, Depth, Acc1, [Shape | Children]).
@@ -1728,7 +2019,7 @@ shape_list([], _Depth, Acc, Children, Size) ->
 shape_list(_List, _Depth, #{nodes := Nodes} = Acc, Children, _Size) when
     Nodes >= ?STATE_SHAPE_MAX_NODES
 ->
-    {lists:reverse(Children), null, false, Acc};
+    {lists:reverse(Children), null, false, mark_shape_truncation(Acc, node_cap)};
 shape_list([Value | Rest], Depth, Acc, Children, Size) when Size < ?STATE_SHAPE_PREFIX ->
     {Shape, Acc1} = shape_term(Value, Depth, Acc),
     shape_list(Rest, Depth, Acc1, [Shape | Children], Size + 1);

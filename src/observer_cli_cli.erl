@@ -312,8 +312,27 @@ validate_runtime_options(process, Options) ->
     validate_target_options(process, Options, [info]);
 validate_runtime_options(port, Options) ->
     validate_target_options(port, Options, []);
-validate_runtime_options(gen_server_state, Options) ->
-    validate_target_options(gen_server_state, Options, []);
+validate_runtime_options(otp_state, #{behavior := "gen_event"} = Options) ->
+    case only_options(otp_state, Options, [behavior, limit]) of
+        true ->
+            case validate_limit_value(Options) of
+                ok -> validate_otp_state_timeout(Options);
+                Error -> Error
+            end;
+        false ->
+            {error, unsupported_command_option}
+    end;
+validate_runtime_options(otp_state, #{behavior := Behavior} = Options) when
+    Behavior =:= "gen_server"; Behavior =:= "gen_statem"
+->
+    case only_options(otp_state, Options, [behavior]) of
+        true -> validate_otp_state_timeout(Options);
+        false -> {error, unsupported_command_option}
+    end;
+validate_runtime_options(otp_state, #{behavior := _Behavior}) ->
+    {error, invalid_behavior};
+validate_runtime_options(otp_state, _Options) ->
+    {error, behavior_required};
 validate_runtime_options(supervision_tree, #{app := App} = Options) ->
     case valid_application_name(App) of
         true -> validate_target_options(supervision_tree, Options, [app]);
@@ -491,6 +510,15 @@ validate_limit_value(#{limit := Text}) ->
 validate_limit_value(_Options) ->
     ok.
 
+validate_otp_state_timeout(#{timeout := _} = Options) ->
+    case timeout_value(Options) of
+        {ok, Timeout} when Timeout >= 10000 -> validate_target_options(Options);
+        {ok, _} -> {error, otp_state_timeout_too_short};
+        Error -> Error
+    end;
+validate_otp_state_timeout(Options) ->
+    validate_target_options(Options).
+
 validate_arguments(process, [_Target]) ->
     ok;
 validate_arguments(process, _Arguments) ->
@@ -499,10 +527,10 @@ validate_arguments(port, [_Target]) ->
     ok;
 validate_arguments(port, _Arguments) ->
     {error, port_target_required};
-validate_arguments(gen_server_state, [_Target]) ->
+validate_arguments(otp_state, [_Target]) ->
     ok;
-validate_arguments(gen_server_state, _Arguments) ->
-    {error, gen_server_target_required};
+validate_arguments(otp_state, _Arguments) ->
+    {error, otp_state_target_required};
 validate_arguments(supervision_tree, []) ->
     ok;
 validate_arguments(supervision_tree, _Arguments) ->
@@ -1139,6 +1167,7 @@ option("--pid") -> {value, pid};
 option("--rate") -> {value, rate};
 option("--replace-existing-trace") -> {flag, replace_existing_trace};
 option("--all") -> {flag, all};
+option("--behavior") -> {value, behavior};
 option([$-, $- | _]) -> unknown;
 option(_Argument) -> positional.
 
@@ -1159,7 +1188,7 @@ command("network") -> network;
 command("ports") -> ports;
 command("port") -> port;
 command("sockets") -> sockets;
-command("gen-server-state") -> gen_server_state;
+command("otp-state") -> otp_state;
 command("supervision-tree") -> supervision_tree;
 command("trace") -> trace;
 command("diagnose") -> diagnose;
@@ -1502,8 +1531,12 @@ reason_message(process_target_required) ->
     <<"process requires one PID_OR_NAME">>;
 reason_message(port_target_required) ->
     <<"port requires one PORT_ID">>;
-reason_message(gen_server_target_required) ->
-    <<"gen-server-state requires one PID_OR_NAME">>;
+reason_message(otp_state_target_required) ->
+    <<"otp-state requires one PID_OR_NAME">>;
+reason_message(behavior_required) ->
+    <<"otp-state requires --behavior gen_server|gen_statem|gen_event">>;
+reason_message(invalid_behavior) ->
+    <<"--behavior must be gen_server, gen_statem, or gen_event">>;
 reason_message(application_required) ->
     <<"supervision-tree requires --app APP">>;
 reason_message(observe_required) ->
@@ -1516,6 +1549,8 @@ reason_message(trace_all_required) ->
     <<"trace stop requires --all">>;
 reason_message(timeout_too_short) ->
     <<"--timeout must cover the sampling duration plus five seconds">>;
+reason_message(otp_state_timeout_too_short) ->
+    <<"--timeout must be at least 10s for otp-state">>;
 reason_message(invalid_refresh_interval) ->
     <<"REFRESH_MS must be an integer of at least 1000">>;
 reason_message(connection_failed) ->

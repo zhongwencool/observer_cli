@@ -198,8 +198,8 @@ diagnostic_error_boundary_test() ->
     ?assertEqual(
         #{status => unavailable, items => []},
         observer_cli_diagnostic:application_trend([
-            #{application => #{status => unavailable}},
-            #{application => #{status => unavailable}}
+            #{application => #{status => unavailable, reason_code => application_not_requested}},
+            #{application => #{status => unavailable, reason_code => application_not_requested}}
         ])
     ),
     ?assertEqual(
@@ -207,6 +207,13 @@ diagnostic_error_boundary_test() ->
         observer_cli_diagnostic:application_trend([
             #{application => #{status => ok}},
             #{application => #{status => error}}
+        ])
+    ),
+    ?assertEqual(
+        #{status => unavailable, reason_code => scan_budget_exceeded, items => []},
+        observer_cli_diagnostic:application_trend([
+            #{application => #{status => ok, children => []}},
+            #{application => #{status => unavailable, reason_code => scan_budget_exceeded}}
         ])
     ),
     ?assertEqual([], observer_cli_diagnostic:limit_findings([])),
@@ -526,6 +533,72 @@ application_trend_correlates_only_available_direct_child_ids_test() ->
     after
         exit(FirstPid, kill),
         exit(SecondPid, kill)
+    end.
+
+application_scan_budget_refusal_is_retained_test_() ->
+    {timeout, 10, fun application_scan_budget_refusal_is_retained/0}.
+
+application_scan_budget_refusal_is_retained() ->
+    Parent = self(),
+    Source = #{
+        loaded_fun => fun() -> [{kernel, "Kernel", "1"}] end,
+        supervisor_fun => fun(_) -> {ok, self()} end,
+        alive_fun => fun(_) -> true end,
+        count_children_fun => fun(_) ->
+            Parent ! count_children,
+            [{specs, 301}, {active, 301}, {supervisors, 0}, {workers, 301}]
+        end,
+        which_children_fun => fun(_) ->
+            Parent ! which_children,
+            []
+        end
+    },
+    Started = erlang:monotonic_time(millisecond),
+    Plan = [Started + Index * 500 || Index <- lists:seq(0, 4)],
+    Samples = observer_cli_diagnostic:capture_observation_samples(
+        #{observe => <<"5000">>, app => "kernel", test_application_source => Source},
+        #{controller => self()},
+        Plan,
+        0,
+        undefined,
+        []
+    ),
+    ?assertEqual(5, length(Samples)),
+    ?assertEqual(
+        [scan_budget_exceeded],
+        lists:usort([
+            maps:get(reason_code, maps:get(application, Sample))
+         || Sample <- Samples
+        ])
+    ),
+    ?assertEqual(
+        scan_budget_exceeded,
+        maps:get(reason_code, observer_cli_diagnostic:application_trend(Samples))
+    ),
+    Report = observer_cli_diagnostic:observation_report(
+        application, Samples, Plan, unavailable_holder(), timing(), #{}
+    ),
+    ?assertEqual(partial, maps:get(status, maps:get(capture, Report))),
+    Data = maps:get(data, Report),
+    ?assertEqual(
+        scan_budget_exceeded,
+        maps:get(reason_code, maps:get(application, maps:get(context, Data)))
+    ),
+    ?assert(
+        lists:member(
+            #{id => application, reason_code => scan_budget_exceeded}, maps:get(skipped, Data)
+        )
+    ),
+    receive
+        count_children -> ok
+    after 1000 ->
+        ?assert(false)
+    end,
+    receive
+        count_children -> ?assert(false);
+        which_children -> ?assert(false)
+    after 50 ->
+        ok
     end.
 
 observation_required_sets_optional_outcomes_and_exit_precedence_test() ->

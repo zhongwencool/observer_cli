@@ -45,14 +45,20 @@ rather than repeatedly forcing it.
 
 ### State and supervision inspection
 
-`gen-server-state` and `supervision-tree` report `risk_level=high`.
+`otp-state` and `supervision-tree` report `risk_level=high`.
 
-`gen-server-state` must copy process state before reducing it to a bounded shape.
-The returned document omits full values, but acquisition can still copy a large
-term, and a timeout cannot retract a request already delivered to the process.
+`otp-state` must copy process state before reducing it to behavior-aware bounded
+shapes. The returned document omits arbitrary values, but acquisition can still
+copy a large term. Its five-second `sys:get_state/2` timeout cannot retract a
+request already delivered to the process. The declared behavior is supplied by
+the operator; observer_cli does not call `sys:get_status/2`, because that would
+also copy the process dictionary and invoke status formatting.
 
 `supervision-tree` is intentionally bounded to one application root and its direct
-children. Its supervisor calls can still block and its snapshot is not atomic.
+children. It refuses the child-list call above 300 preflight children and returns
+at most 100, but the preflight itself remains O(children). Its supervisor calls
+can still block and its snapshot is not atomic. Application observation retains
+a scan-budget refusal rather than repeating the preflight in later samples.
 
 ### Active tracing
 
@@ -124,8 +130,8 @@ not arbitrary application payloads. They do not read:
 - arbitrary expressions supplied by the operator.
 
 The `process` inspection includes a bounded, normalized current stacktrace.
-`gen-server-state` is the deliberate high-risk exception that acquires state and
-returns only its bounded shape.
+`otp-state` is the deliberate high-risk exception that acquires full state and
+returns only bounded behavior-aware shapes.
 
 The interactive TUI has explicit process subviews for messages, the process
 dictionary, the current stack, and process state. Opening those views reads and
