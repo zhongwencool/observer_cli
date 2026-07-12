@@ -1,10 +1,11 @@
 # Configuration reference
 
-`observer_cli` configuration affects the interactive TUI. The command-oriented diagnostics interface is configured with command-line options instead.
+`observer_cli` application configuration affects only the interactive TUI.
+Inspection and diagnostic commands use command-line options.
 
 ## TUI start API
 
-The `observer_cli` module exports these start functions.
+The `observer_cli` module provides the following start functions.
 
 ### `observer_cli:start/0`
 
@@ -57,7 +58,7 @@ Ensures the `observer_cli` application is started and opens the configured plugi
 
 ## Application environment
 
-The production code reads four `observer_cli` application environment keys.
+The TUI reads four `observer_cli` application environment keys.
 
 | Key | Accepted value | Default | Used by |
 | --- | --- | --- | --- |
@@ -88,7 +89,8 @@ Example `sys.config` fragment:
 ].
 ```
 
-The generated TUI escript copies the local `observer_cli` application environment to a target only when it loads the TUI bundle remotely.
+The TUI escript copies the local `observer_cli` application environment when it
+loads the TUI bundle remotely.
 
 ## Formatter contract
 
@@ -101,7 +103,9 @@ The configured formatter map has two required keys:
 }
 ```
 
-- `application` identifies the OTP application whose modules and non-core dependencies must be available. The generated TUI escript uses this key when remotely loading formatter code.
+- `application` identifies the OTP application whose modules and non-core
+  dependencies must be available. The TUI escript uses it when loading remote
+  formatter code.
 - `mod` implements `observer_cli_formatter` and exports `format/2`.
 
 The callback is:
@@ -110,7 +114,9 @@ The callback is:
 -callback format(Pid :: pid(), Term :: term()) -> string().
 ```
 
-It must return a Unicode character list suitable for the built-in pager. The formatter receives the inspected process PID and the term from a message list, process dictionary, or `gen_server` state.
+It must return a Unicode character list for the built-in pager. Its arguments
+are the inspected process PID and a term from the message list, process
+dictionary, or `gen_server` state.
 
 The default is:
 
@@ -121,7 +127,9 @@ The default is:
 }
 ```
 
-It renders a `Process:` heading followed by Erlang term syntax. If a custom formatter raises, exits, or throws, observer_cli falls back to `observer_cli_formatter_default` for that value.
+It renders a `Process:` heading followed by Erlang term syntax. If a custom
+formatter raises, exits, or throws, observer_cli falls back to
+`observer_cli_formatter_default` for that value.
 
 ## Plugin configuration
 
@@ -141,7 +149,7 @@ Optional keys are:
 | `sort` | Column ID atom | `default_sort` from `sheet_header/0` |
 | `handler` | Module atom | Process detail for PID handles; otherwise no custom handler |
 
-Page, selected-row, and computed sheet-width values are maintained by observer_cli and do not need configuration.
+observer_cli maintains the page, selected row, and computed sheet width.
 
 ### Callback behavior
 
@@ -170,7 +178,8 @@ The first `PreviousState` is `undefined`; later calls receive the preceding `sta
 }
 ```
 
-`content` may be a string, integer, `{byte, Bytes}`, or `{percent, Fraction}`. Attribute rows are optional in practice: an undefined `attributes/1` callback renders no attributes.
+`content` may be a string, integer, `{byte, Bytes}`, or `{percent, Fraction}`.
+If `attributes/1` is undefined, the view renders no attributes.
 
 #### `sheet_header/0`
 
@@ -206,11 +215,14 @@ sheet_body(PreviousState) -> #{
 
 Missing cells render as empty strings. Rows are ordered by the active column using Erlang term ordering before pagination.
 
-If a selected row has `handle`:
+For a selected row with a `handle`:
 
-- with configured `handler => Module`, observer_cli calls `Module:start(plugin, Selection, ViewOpts)`;
-- without a configured handler, a PID handle opens the built-in process detail view;
-- without `handle`, selecting the row has no effect.
+- with `handler => Module`, observer_cli calls
+  `Module:start(plugin, Selection, ViewOpts)`;
+- a PID handle without a configured handler opens the built-in process detail
+  view;
+
+A row without `handle` has no selection action.
 
 ### Plugin-view input
 

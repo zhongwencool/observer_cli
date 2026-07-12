@@ -1,9 +1,7 @@
 # Open your first TUI session
 
-This tutorial starts a disposable BEAM node on your machine and uses Observer
-CLI's interactive terminal interface to explore it. You will navigate the Home,
-Process detail, System, and Doc views without placing a cookie in the command
-line.
+Start a disposable BEAM node and inspect its Home, Process, System, and Doc views
+without placing a cookie on the command line.
 
 ## Before you begin
 
@@ -68,32 +66,31 @@ table. Commands are line-oriented: type a command, then press **Enter**.
 
 ## 4. Change the process ranking
 
-Type `r`, then press **Enter**. The Home table switches from process memory to
-total reductions. Type `m`, then press **Enter**, to return to memory.
+Enter `r` to switch the Home table from process memory to total reductions.
+Enter `m` to return to memory.
 
 These commands select current totals. The doubled forms, such as `rr` and
 `mm`, use an interval window instead.
 
 ## 5. Inspect one process
 
-Type `1`, then press **Enter**, to open the first process in the current Top-N
-table. The Process Info view shows identity, status, memory, reductions, links,
-and other live metadata.
+Enter `1` to open the first process in the current Top-N table. The Process Info
+view shows identity, status, memory, reductions, links, and other live metadata.
 
-Type `H`, then press **Enter**, to return to Home.
+Enter `H` to return to Home.
 
 ## 6. Visit System and Doc
 
-Type `S`, then press **Enter**, to open the System view. It shows VM, CPU,
-memory, allocator, OS, and distribution information.
+Enter `S` to open the System view. It shows VM, CPU, memory, allocator, OS, and
+distribution information.
 
 Return with `H`, then open the built-in shortcut guide with `D`. Return to Home
 with `H` again.
 
 ## 7. Quit and clean up
 
-Type `q`, then press **Enter**, to leave the TUI. Stop the background node and
-remove its temporary Erlang home:
+Enter `q` to leave the TUI. Stop the background node and remove its temporary
+Erlang home:
 
 ```sh
 kill "$OBSERVER_CLI_DEMO_PID"

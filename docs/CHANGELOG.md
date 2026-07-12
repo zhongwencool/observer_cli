@@ -1,7 +1,6 @@
 # Changelog
 
-This page records release and maintenance changes to `observer_cli`, newest
-first.
+Release and maintenance changes, newest first.
 
 ## 2.0.0 (release candidate)
 

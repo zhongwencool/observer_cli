@@ -1,12 +1,8 @@
 # Install and build Observer CLI
 
-Observer CLI has two deployable parts:
-
-- the `observer_cli` application in the target release; and
-- the standalone `observer_cli` escript on the operator machine.
-
-Install the target application for command-first diagnostics. Build the
-escript when you want the command interface or the remote TUI.
+Install the `observer_cli` application in the target release for diagnostics.
+Build the standalone escript on the operator machine for the CLI and remote
+TUI.
 
 ## CI-tested OTP releases
 
@@ -23,14 +19,14 @@ Add the dependency to `rebar.config`:
 ]}.
 ```
 
-Then fetch and compile it:
+Fetch and compile:
 
 ```sh
 rebar3 compile
 ```
 
-Ensure the built release contains the `observer_cli` and `recon` applications.
-The command interface does not upload missing code to a target.
+The release must contain the `observer_cli` and `recon` applications. The CLI
+does not upload missing code to a target.
 
 ## Add Observer CLI to an Elixir target
 
@@ -44,7 +40,7 @@ defp deps do
 end
 ```
 
-Then fetch and compile it:
+Fetch and compile:
 
 ```sh
 mix deps.get
@@ -56,7 +52,7 @@ When assembling a release, verify that its application set includes
 
 ## Build the standalone command from source
 
-From an Observer CLI repository checkout, run:
+From an Observer CLI repository checkout:
 
 ```sh
 rebar3 escriptize
@@ -64,11 +60,10 @@ rebar3 escriptize
 ./_build/default/bin/observer_cli --help
 ```
 
-`rebar3 escriptize` writes the executable to
-`_build/default/bin/observer_cli`. Re-run it after changing Observer CLI or its
-dependencies because the escript embeds their BEAM files.
+`rebar3 escriptize` writes `_build/default/bin/observer_cli`. The escript embeds
+its BEAM files, so rebuild it after changing Observer CLI or its dependencies.
 
-To install that build for your user:
+To install it for the current user:
 
 ```sh
 mkdir -p "$HOME/.local/bin"
@@ -80,18 +75,17 @@ Add `$HOME/.local/bin` to `PATH` if it is not already present.
 
 ## Verify both sides
 
-First verify the local command:
+Verify the local command:
 
 ```sh
 observer_cli --version
 ```
 
-For this documentation version, the output should report bundle `2.0.0`,
-schema `observer_cli.cli/v1`, and protocol `1`.
+Version 2.0.0 reports bundle `2.0.0`, schema `observer_cli.cli/v1`, and protocol
+`1`.
 
-Then connect to the target. A successful probe reports
-`diagnostics_module=compatible` and matching expected and observed
-capabilities:
+Probe the target. Success reports `diagnostics_module=compatible` and matching
+expected and observed capabilities:
 
 ```sh
 observer_cli connect --node 'app@host.example' \
@@ -109,7 +103,7 @@ Use the explicit 2.0 entry point:
 observer_cli tui 'app@host.example'
 ```
 
-This form uses the Erlang cookie already available to the controller. Avoid
-the positional cookie form because it exposes the cookie in process arguments
-and shell history. See [Open your first TUI session](../tutorials/first-tui-session.md)
+This form uses the Erlang cookie available to the controller. Avoid the
+positional cookie form: it exposes the cookie in process arguments and shell
+history. See [Open your first TUI session](../tutorials/first-tui-session.md)
 for a protected cookie-file setup.

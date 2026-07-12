@@ -1,12 +1,9 @@
 # Diagnostic model
 
-`observer_cli diagnose` separates collection from interpretation. The target
-records what it sampled, which probes succeeded, and what it could not establish.
-Versioned rules then produce findings only when their required evidence is
-complete.
-
-This distinction matters because a failed or refused probe is not evidence that a
-node is healthy.
+`observer_cli diagnose` records sampled evidence before versioned rules interpret
+it. The report says which probes succeeded and what they could not establish.
+Rules produce findings only when required evidence is complete; a failed or
+refused probe is not evidence that a node is healthy.
 
 ## A report has evidence layers
 
@@ -21,34 +18,30 @@ Every diagnostic report uses the `observer_cli.cli/v1` envelope. Inside it:
   not calibrated; and
 - `warnings` and `errors` describe degraded collection.
 
-Evidence in a finding points back to a path in the same response. This lets a
-human or program inspect the measurement behind the conclusion instead of
-accepting an unexplained label.
+Finding evidence points to a path in the same response, so a human or program can
+inspect the measurement behind the conclusion.
 
 ## Quick diagnostics use two samples
 
-Running `observer_cli diagnose` without mode options takes two samples roughly
-1.5 seconds apart. The required rule checks process, port, atom, and ETS counts
-against their VM limits. It emits:
+Without mode options, `observer_cli diagnose` takes two samples roughly 1.5
+seconds apart. Required rules compare process, port, atom, and ETS counts with
+their VM limits and emit:
 
 - a warning above 85 percent; and
 - a critical finding at or above 95 percent.
 
 The quick report also carries bounded current context for processes, ETS tables,
-ports, distribution, and scheduler activity when those probes are available.
-Current context is not automatically promoted to a finding.
+ports, distribution, and scheduler activity when probes are available. Context
+does not itself become a finding.
 
-Growth checks such as mailbox backlog, memory growth, ETS growth, and port-queue
-growth remain listed as skipped when the ruleset is not calibrated for a sound
-conclusion. The report states that boundary instead of inventing a diagnosis from
-two points.
+Checks for mailbox backlog and memory, ETS, or port-queue growth remain skipped
+because those growth rules are not calibrated from two points.
 
 ## Observation modes use planned samples
 
 `--observe DURATION` accepts 5 to 60 seconds and collects five planned samples.
-It enables scheduler wall-time measurement for the capture and turns it off in
-an `after` path. The current implementation does not restore a setting that was
-already enabled by another tool.
+It enables scheduler wall-time measurement for the capture, turns it off in an
+`after` path, and does not restore a setting already enabled by another tool.
 
 Observation adds global memory and stable-resource trends. Resource identity is
 tracked across samples so that newly created, terminated, or replaced resources
@@ -65,17 +58,14 @@ unavailable rather than guessed.
 ## Required and optional coverage differ
 
 A probe entry records whether it is required, how many samples succeeded, and the
-facts it covers. If required coverage is incomplete:
-
-- the capture is `partial`;
-- findings are suppressed; and
-- the command exits with status `3`.
+facts it covers. With incomplete required coverage, the capture is `partial`,
+findings are suppressed, and the command exits with status `3`.
 
 Optional failures can also make a result partial, but a missing optional probe is
 not rewritten as a healthy measurement. Scan admission refusals, sampling gaps,
 capability limits, and target errors remain visible through reason codes.
 
-This is why the following outcomes mean different things:
+The report distinguishes these outcomes:
 
 | Outcome | Meaning |
 | --- | --- |
@@ -89,13 +79,12 @@ rules and coverage named in that report.
 
 ## Findings affect exit status
 
-A complete diagnosis with no findings exits `0`. A complete diagnosis with one or
-more findings exits `1`. Argument or direct capability failures exit `2`, partial
-or refused runtime outcomes exit `3`, and internal/schema/cleanup failures exit
-`4`.
+A complete diagnosis exits `0` without findings and `1` with findings. Argument
+or direct capability failures exit `2`, partial or refused runtime outcomes exit
+`3`, and internal/schema/cleanup failures exit `4`.
 
-Automation should read both the exit status and a machine-readable envelope. It
-should not infer health by searching human text.
+Automation should read both the exit status and a machine-readable envelope, not
+infer health from human text.
 
 ## Redaction is stable within one response
 

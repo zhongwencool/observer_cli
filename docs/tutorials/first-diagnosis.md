@@ -1,18 +1,12 @@
 # Run your first diagnosis
 
-This tutorial builds the standalone command, starts an isolated BEAM node, and
-walks through a complete diagnostic session. By the end, you will know how to
-select a target, read a quick diagnosis, and inspect a process in more detail.
+Build the standalone command, start a disposable BEAM node, then diagnose it and
+inspect one process.
 
 ## Before you begin
 
-You need:
-
-- Erlang/OTP and `rebar3` installed;
-- a shell on a Unix-like system; and
-- a checkout of this repository.
-
-Run every command from the repository root.
+You need Erlang/OTP, `rebar3`, a Unix-like shell, and a checkout of this
+repository. Run every command from the repository root.
 
 ## 1. Build the command
 
@@ -24,7 +18,7 @@ export PATH="$PWD/_build/default/bin:$PATH"
 observer_cli --version
 ```
 
-The version output should identify `observer_cli 2.0.0`, schema
+The version output identifies `observer_cli 2.0.0`, schema
 `observer_cli.cli/v1`, protocol `1`, and the OTP release used to build the
 controller.
 
@@ -68,7 +62,7 @@ HOME="$OBSERVER_CLI_DEMO_HOME" \
     --cookie-file "$OBSERVER_CLI_DEMO_HOME/.erlang.cookie"
 ```
 
-Look for these results:
+Look for:
 
 ```text
 probe succeeded
@@ -123,9 +117,6 @@ registered process from the demo node:
 HOME="$OBSERVER_CLI_DEMO_HOME" \
   observer_cli process application_controller
 ```
-
-You now have the basic diagnostic loop: diagnose, choose a suspicious
-resource, then inspect it directly.
 
 ## 6. Clean up
 

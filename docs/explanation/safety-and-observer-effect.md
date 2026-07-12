@@ -1,9 +1,8 @@
 # Safety and observer effect
 
-`observer_cli` is designed to bound diagnostic work and make its side effects
-visible. It cannot make a production inspection free: connecting a distribution
-peer, enumerating resources, copying state, and tracing calls all consume target
-resources.
+`observer_cli` bounds diagnostic work and reports known side effects, but every
+distribution connection, resource enumeration, state copy, and trace consumes
+target resources.
 
 Use the least invasive command that can answer the question.
 
@@ -30,9 +29,9 @@ The command set has four practical levels:
 
 ### Point-in-time facts
 
-`snapshot`, `memory`, `distribution`, and similar single-point commands read
-bounded runtime facts. A default snapshot avoids process, table, port, and socket
-inventories. These commands still create a distribution peer and target worker.
+`snapshot`, `memory`, `distribution`, and similar commands read bounded runtime
+facts. A default snapshot avoids process, table, port, and socket inventories,
+but still creates a distribution peer and target worker.
 
 ### Inventories and sampling windows
 
@@ -41,18 +40,16 @@ Commands such as `processes`, `applications`, `ets`, `mnesia`, `ports`, and
 repeat work or retain samples across a window. The dispatcher can refuse a scan
 when its admission budget or working-set estimate is exceeded.
 
-Refusal is a safety result, not missing polish. Narrow the command or inspect the
-node through another operational path rather than repeatedly forcing the same
-scan.
+When a scan is refused, narrow the command or use another operational path
+rather than repeatedly forcing it.
 
 ### State and supervision inspection
 
 `gen-server-state` and `supervision-tree` report `risk_level=high`.
 
-`gen-server-state` must first copy the process state in order to reduce it to a
-bounded shape. The returned document omits the full values, but the acquisition
-can still copy a large term and a timeout cannot retract a request already
-delivered to the process.
+`gen-server-state` must copy process state before reducing it to a bounded shape.
+The returned document omits full values, but acquisition can still copy a large
+term, and a timeout cannot retract a request already delivered to the process.
 
 `supervision-tree` is intentionally bounded to one application root and its direct
 children. Its supervisor calls can still block and its snapshot is not atomic.
@@ -74,13 +71,13 @@ node-global scope.
 
 The trace output records only the tracee identifier, MFA module/function/arity,
 and a session-relative offset. It does not collect call arguments, return values,
-exceptions, or stacks. This data minimization does not remove the global tracing
-side effect.
+exceptions, or stacks. The trace remains node-global despite this limited output.
 
 ## Bounded does not mean constant cost
 
 The target dispatcher applies deadlines, heap limits, response caps, maximum
-depth, and scan budgets. These cap a request, but cost still depends on the target:
+depth, and scan budgets. They bound each request; cost still depends on the
+target:
 
 - an inventory grows with the number of resources it must consider;
 - process and application attribution reads metadata from many processes;
@@ -104,14 +101,14 @@ preexisting enabled setting. The TUI can also toggle that VM flag and
 continuously refresh data. Measurements from either interface should be read as
 evidence from a window, not as an atomic and untouched VM state.
 
-Two additional effects matter when interpreting deltas:
+Deltas can also be distorted when:
 
 - a process or resource can be born, die, or be replaced between samples; and
 - a heavy probe can overlap the interval whose scheduler or counter change is
   being measured.
 
-The diagnostic report records lifecycle and sampling-gap context rather than
-silently treating every pair of values as one stable resource.
+The report records lifecycle and sampling-gap context instead of treating every
+pair of values as one stable resource.
 
 ## Data collection boundaries
 
@@ -151,6 +148,3 @@ For an unfamiliar production incident:
 6. use high-risk inspection only with a specific target; and
 7. trace only after checking for existing tracing and accepting node-global
    replacement.
-
-This sequence is intentionally conservative. The fastest useful diagnosis is the
-one that gathers enough evidence without becoming a second incident.

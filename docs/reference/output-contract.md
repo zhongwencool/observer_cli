@@ -1,10 +1,10 @@
 # Output and storage contract
 
-The command-oriented interface returns a versioned response envelope, a process exit status, and a defined stdout/stderr split. This contract does not apply to the interactive TUI screen.
+The command interface defines a versioned response envelope, process exit
+statuses, and a stdout/stderr split. The interactive TUI is outside this
+contract.
 
 ## Contract identities
-
-The current identities are:
 
 | Identity | Value |
 | --- | --- |
@@ -14,7 +14,11 @@ The current identities are:
 
 `observer_cli --version` reports all three local identities and the controller OTP release.
 
-A target is command-compatible only when `observer_cli_snapshot:capabilities/0` reports both the exact bundle and protocol values. Extra capability-map fields do not change that comparison. `connect` and `status` can report a missing or incompatible bundle, but diagnostic and inspection commands reject it as a capability error.
+A target is command-compatible only when
+`observer_cli_snapshot:capabilities/0` reports the exact bundle and protocol
+values. Extra capability fields do not affect the comparison. `connect` and
+`status` report missing or incompatible bundles; diagnostic and inspection
+commands reject them as capability errors.
 
 ## Response envelope
 
@@ -32,11 +36,15 @@ A normal structured response has exactly these top-level keys:
 }
 ```
 
-Maps use binary keys after normalization. Public values are JSON-safe: maps, lists, UTF-8 binaries, integers, floats, booleans, and `null`. Non-UTF-8 binary data is represented by an object with `encoding: base64` and `data` fields when admitted by the schema.
+Normalized maps use binary keys. Public values are JSON-safe: maps, lists,
+UTF-8 binaries, integers, floats, booleans, and `null`. When the schema admits
+non-UTF-8 binary data, it uses an object with `encoding: base64` and `data`
+fields.
 
 ### `command`
 
-The value is the stable binary command identity. Most identities match the command name. Trace responses use `trace_call` and `trace_stop_all`.
+`command` is the stable binary command identity. It usually matches the command
+name; trace responses use `trace_call` and `trace_stop_all`.
 
 ### `target`
 
@@ -86,7 +94,9 @@ Context-only responses and failures without a capture may use `null` for `captur
 
 ### `data`
 
-`data` is a command-specific map. List commands include explicit status, returned-count, truncation, sort, and resource fields rather than returning a bare list. Failures before collection use `null`.
+`data` is command-specific. List commands return a map with status, returned
+count, truncation, sort, and resource fields rather than a bare list. Failures
+before collection use `null`.
 
 The envelope contract intentionally does not define one universal shape below
 `data`. Consumers must branch on `command`, require the command-specific fields
@@ -96,21 +106,24 @@ coverage in the response states what the current capture actually established.
 
 ### `warnings` and `errors`
 
-Both are lists. Error maps have `class` and `reason_code`; target-probe errors may also have `probe`, while controller-created errors include a human-readable `message`.
+Both are lists. Error maps contain `class` and `reason_code`. Target-probe
+errors may also contain `probe`; controller-created errors contain a readable
+`message`.
 
 `reason_code` is an extensible machine-readable code, not a closed enumeration.
 Automation should handle known codes and preserve unknown codes for reporting;
 the numeric exit class remains the stable coarse-grained action boundary.
 
-Callers must not infer success from a nonempty `data` map alone. Inspect the process exit status, `capture.status`, probe status, and `errors`.
+Nonempty `data` does not imply success. Check the process exit status,
+`capture.status`, probe status, and `errors`.
 
 ## Encodings
 
 ### Text
 
-Text is the default. Context commands use concise summaries. Other commands render the shared envelope as indented, line-oriented text with stable field labels and escaped control bytes.
-
-Text is intended for terminal reading. Use term or JSON when a parser needs types and nesting.
+Text is the default. Context commands use concise summaries; other commands
+render the envelope as indented lines with stable labels and escaped control
+bytes. Use term or JSON when a parser needs types and nesting.
 
 ### Erlang term
 
@@ -131,13 +144,18 @@ The output is one JSON object followed by a newline. JSON encoding uses the OTP 
 
 ### Size limit
 
-An encoded response is capped at 1 MiB. The target response is also schema-checked and size-checked before the controller accepts it. Bounded list payloads may be trimmed while preserving required evidence references; a response that still exceeds the cap fails with a schema error.
+Encoded responses are capped at 1 MiB. The controller schema-checks and
+size-checks the target response before accepting it. Bounded lists may be
+trimmed while retaining required evidence references; a response still over
+the cap fails with a schema error.
 
 ## Identifier policy
 
-`snapshot` and `diagnose` use redaction by default. `--include-identifiers` changes their policy to include.
+`snapshot` and `diagnose` redact by default; `--include-identifiers` reveals
+identifiers.
 
-Inspection and trace commands include identifiers by default. `--redact` changes their policy to redact.
+Inspection and trace commands include identifiers by default; `--redact` hides
+them.
 
 Redaction replaces admitted node, peer, PID, Port, reference, socket, table, name, application, label, endpoint, interface, network-namespace, module, and function identifiers with typed aliases such as:
 
@@ -148,7 +166,8 @@ module-1
 function-1
 ```
 
-An alias is consistent for repeated occurrences of the same typed identifier within one response. Alias numbering is generated per response and is not a persistent cross-run identity.
+Repeated occurrences of one typed identifier share an alias within a response.
+Alias numbering resets for each response and is not a cross-run identity.
 
 Redaction does not remove numeric metrics, statuses, timestamps, reason codes, or coverage metadata. Context commands report the selected node and cookie-source name or path and do not accept identifier-policy options; they never report the cookie value.
 
@@ -191,7 +210,8 @@ For example, on macOS it resolves to:
 ~/Library/Application Support/observer_cli/context.etf
 ```
 
-The platform's standard user-configuration base directory determines the location. Evaluate the Erlang expression above to obtain the exact path on a controller.
+The platform's user-configuration base directory determines the location.
+Evaluate the Erlang expression above for the controller's exact path.
 
 The context is a version-1 Erlang external-term map containing only:
 
@@ -209,7 +229,9 @@ The cookie value and a live connection are never stored.
 - Writes use a mode-`0600` temporary file followed by rename.
 - Unsafe file type or permissions are rejected rather than followed or repaired during read.
 
-`connect` writes a new context only after output-format preflight, target probing, and temporary controller cleanup succeed. A failed connection or unconfirmed cleanup leaves the previous context unchanged.
+`connect` writes a context only after output preflight, target probing, and
+temporary controller cleanup succeed. A failed connection or unconfirmed
+cleanup leaves the previous context unchanged.
 
 `disconnect` can remove a malformed or oversized context only when the directory and file destination still satisfy the path and permission checks. Repeating `disconnect` with no context succeeds.
 
@@ -221,4 +243,7 @@ On Unix, `--cookie-file` accepts only a regular file with no group or other perm
 
 The repository's current CI builds and tests controllers on OTP 26, 27, 28, and 29. JSON is the only output encoding with a stricter controller requirement: OTP 27 or newer.
 
-Command diagnostics also require the exact target bundle/protocol handshake above. Individual target probes can report unavailable capabilities when an OTP API or subsystem is absent. The CI controller matrix does not by itself guarantee every controller/target OTP cross-version pair; treat an untested pair as unverified rather than inferred compatible.
+Command diagnostics also require the exact target bundle/protocol handshake.
+Individual probes may report unavailable capabilities when an OTP API or
+subsystem is absent. The CI controller matrix does not cover every
+controller/target OTP pair; untested pairs remain unverified.

@@ -1,12 +1,9 @@
 # Contribute a change
 
-Use this workflow to make a small, reviewable change and run the same core
-checks used by the repository.
-
 ## 1. Prepare the checkout
 
-The project uses `rebar3`. The current local tool declaration is Erlang/OTP
-29.0, while CI covers OTP 26, 27, 28, and 29.
+Use `rebar3`. The local tool declaration is Erlang/OTP 29.0; CI covers OTP 26,
+27, 28, and 29.
 
 Fetch dependencies and compile:
 
@@ -18,9 +15,8 @@ Do not use `mix test` for normal repository validation.
 
 ## 2. Keep the change page-scoped
 
-Before editing, find the existing page module, collector, renderer, parser, or
-test helper that owns the behavior. Reuse shared layout and pagination helpers
-instead of introducing a second path.
+Find the page module, collector, renderer, parser, or test helper that owns the
+behavior. Reuse existing shared layout and pagination helpers.
 
 Preserve existing CLI behavior unless the change explicitly alters it. In
 particular:
@@ -39,15 +35,14 @@ Run one or more EUnit modules while iterating:
 rebar3 as test eunit --module=observer_cli_core_test,observer_cli_lib_test
 ```
 
-Choose modules that exercise the changed behavior. Then run the full suite:
+Choose modules that exercise the change, then run the full suite:
 
 ```sh
 rebar3 eunit
 ```
 
-Tests that use Erlang distribution need `epmd` and permission to open local
-distribution sockets. A sandbox that blocks those operations can produce false
-connection failures.
+Distribution tests need `epmd` and local distribution sockets. A restrictive
+sandbox can cause false connection failures.
 
 ## 4. Format and compile strictly
 
@@ -81,16 +76,14 @@ _build/default/bin/observer_cli --help
 _build/default/bin/observer_cli --version
 ```
 
-Run the repository smoke test after command routing, help, output, or escript
-startup changes:
+After command routing, help, output, or startup changes, run:
 
 ```sh
 scripts/escript-smoke.sh
 ```
 
-For raw terminal input or redraw work, run the generated escript in a real
-terminal against a disposable node. `rebar3 shell` does not prove the
-`-noshell` raw-input path.
+Test raw input and redraw changes with the escript in a real terminal against a
+disposable node. `rebar3 shell` does not exercise the `-noshell` raw-input path.
 
 ## 6. Build the documentation
 
@@ -100,9 +93,9 @@ Generate the ExDoc site:
 rebar3 docs
 ```
 
-Open `doc/index.html` and check navigation, code blocks, relative links, and any
-changed terminal images. Also check `doc/llms.txt` and a changed page's
-copy-ready `.md` file. ExDoc warnings are errors in this repository.
+In `doc/index.html`, check navigation, code blocks, relative links, and changed
+terminal images. Also check `doc/llms.txt` and the changed page's copy-ready
+`.md` file. ExDoc warnings are errors.
 
 ## 7. Generate coverage when needed
 
@@ -113,12 +106,9 @@ epmd -daemon
 rebar3 as test do eunit, covertool generate
 ```
 
-The machine-readable report is written under
-`_build/test/covertool/*.covertool.xml`.
+Reports are written under `_build/test/covertool/` as `*.covertool.xml`.
 
 ## 8. Review the final diff
-
-Before handing off the change:
 
 ```sh
 git status --short
@@ -127,12 +117,12 @@ git diff --stat
 git diff
 ```
 
-Confirm that the diff contains only the intended files and report every command
-you actually ran. If a relevant check was skipped, state why.
+Confirm only intended files changed. Report every command run and why any
+relevant check was skipped.
 
 ## 9. Capture the current TUI Home screenshot
 
-Use this runbook only when replacing the documentation Home image.
+Use this runbook only to replace the Home image.
 
 1. On macOS or Linux, create the destination and use an OTP 29 terminal at
    least 150 columns wide and 30 rows high:
@@ -199,15 +189,14 @@ sleep 1
 SH
 ```
 
-3. Wait for two refreshes. Capture the full TUI from the selected Home tab
-   through the footer. The process table must include `docs_memory_hog`,
-   `docs_busy_mailbox` with a nonzero message queue, and `docs_cpu_hotspot`.
+3. Wait for two refreshes. Capture the selected Home tab through the footer.
+   The process table must include `docs_memory_hog`, `docs_busy_mailbox` with a
+   nonzero message queue, and `docs_cpu_hotspot`.
 
 4. Save the image as `docs/images/tui-home.png`.
 
-5. Type `q` and press **Enter**. The script exits and removes the disposable
-   target. The cookie in the block is documentation data, not a production
-   secret.
+5. Type `q` and press **Enter**. The script removes the disposable target. Its
+   cookie is documentation data, not a production secret.
 
 6. Replace the screenshot TODO blocks in `README.md` and
    `docs/tutorials/first-tui-session.md` with the image where it helps the

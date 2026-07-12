@@ -87,7 +87,7 @@ The command interface covers:
 - VM memory, allocators, schedulers, distribution, and network counters;
 - top processes and bounded per-process metadata;
 - applications, ETS tables, Mnesia tables, Erlang ports, and OTP sockets;
-- bounded supervision trees and `gen_server` state shapes;
+- bounded supervision trees and behavior-aware OTP state shapes;
 - quick, sampled, deep, and application-scoped diagnostics;
 - one exact, bounded function trace with explicit node-global acknowledgement.
 

@@ -1,21 +1,21 @@
 # Automate diagnostic capture
 
-Use structured Observer CLI output and exit statuses to collect bounded reports
-from scripts, schedulers, or incident tooling.
+Collect bounded reports from scripts, schedulers, or incident tooling with
+structured output and exit statuses.
 
 ## Choose an output format
 
 - `text` is for people and is the default.
 - `term` is an Erlang term containing the complete command envelope.
-- `json` contains the same envelope and requires an OTP 27 or newer controller.
-- `--json` is an alias for `--format json`.
+- `json` contains the same envelope, requires an OTP 27 or newer controller,
+  and can also be selected with `--json`.
 
-Use `term` or `json` for automation. Do not scrape the human text format.
+For automation, use `term` or `json`; do not scrape `text`.
 
 ## Run without user-specific saved context
 
-Pass the target and cookie source explicitly when a job must not depend on a
-login user's context file:
+Pass the target and cookie source explicitly to avoid a login user's context
+file:
 
 ```sh
 export OBSERVER_NODE='app@host'
@@ -30,10 +30,8 @@ The cookie value is read at execution time and is not written into the output.
 
 ## Preserve non-zero diagnostic reports
 
-`diagnose` uses exit status `1` when a complete report contains warning or
-critical findings. Treat that as a report outcome, not a command crash.
-
-This POSIX shell script preserves stdout, stderr, and the exit status:
+`diagnose` exits `1` when a complete report contains warning or critical
+findings. Preserve that report outcome, stdout, stderr, and the exit status:
 
 ```sh
 #!/bin/sh
@@ -70,9 +68,8 @@ esac
 exit "$status"
 ```
 
-The explicit `40s` deadline covers the `30s` observation plus the required
-five-second cleanup margin. Command deadlines accept milliseconds or seconds
-and cannot exceed `120s`.
+The `40s` deadline covers the `30s` observation and required five-second
+cleanup margin. Deadlines accept milliseconds or seconds, up to `120s`.
 
 ## Interpret the streams and status
 
@@ -84,10 +81,9 @@ and cannot exceed `120s`.
 | `3` | Safety refusal, scan-budget refusal, connection failure, required-probe failure, or ordinary partial capture | Keep the report and retry or escalate deliberately. |
 | `4` | Internal, schema, or cleanup failure | Keep all output and investigate before another invasive action. |
 
-Successful structured output is written to stdout. With `term` or `json`,
-command errors are also returned as an envelope on stdout when the selected
-encoder is available. Human-text command errors are written to stderr. Capture
-both streams regardless of format.
+Successful structured output goes to stdout. With `term` or `json`, command
+errors also use a stdout envelope when the encoder is available. Human-text
+errors go to stderr. Always capture both streams.
 
 A trace can report a partial trace and still exit `0` when its bounded probe
 completed without errors. For every command, inspect `capture.status`,
@@ -96,15 +92,15 @@ completed without errors. For every command, inspect `capture.status`,
 ## Control identifier exposure
 
 `snapshot` and `diagnose` redact node, PID, name, and MFA identifiers by
-default. Use that default for reports sent to external systems:
+default. Keep this default for reports sent to external systems:
 
 ```sh
 observer_cli diagnose --observe 10s --deep --format json > diagnosis.json
 ```
 
-Add `--include-identifiers` only for a protected incident store where real
-identifiers are required. Inspection and trace commands use the opposite
-default and include identifiers; add `--redact` when automating their export:
+Use `--include-identifiers` only when a protected incident store needs real
+identifiers. Inspection and trace commands include identifiers by default; add
+`--redact` when automating their export:
 
 ```sh
 observer_cli processes --sort memory --limit 20 --redact --format term > processes.term
@@ -122,5 +118,5 @@ observer_cli diagnose --observe 5s --format term
 printf 'exit=%s\n' "$?"
 ```
 
-Confirm that the target has the matching diagnostics bundle, the job can read
-its cookie source, and the report destination protects unredacted output.
+Confirm the target has the matching diagnostics bundle, the job can read its
+cookie source, and the destination protects unredacted output.

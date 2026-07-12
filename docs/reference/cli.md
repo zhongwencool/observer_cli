@@ -1,6 +1,9 @@
 # Command-line reference
 
-`observer_cli` 2.0 provides a command-oriented interface for bounded inspection and an interactive TUI. This page describes accepted command syntax, defaults, limits, and exit behavior. Run `observer_cli --help` or `observer_cli COMMAND --help` to inspect the same contract from the built escript.
+`observer_cli` 2.0 combines bounded inspection commands with an interactive
+TUI. This reference covers syntax, defaults, limits, and exit behavior. The
+built escript exposes the same contract through `observer_cli --help` and
+`observer_cli COMMAND --help`.
 
 ## Invocation
 
@@ -26,7 +29,8 @@ Local informational forms are:
 
 ## Target selection
 
-Commands other than `connect`, `status`, `disconnect`, and `tui` accept either a saved target or an explicit target.
+Every command except `connect`, `status`, `disconnect`, and `tui` accepts a
+saved or explicit target.
 
 ### Saved target
 
@@ -49,7 +53,10 @@ Pass all of the following together:
 --node NODE (--cookie-env NAME | --cookie-file PATH)
 ```
 
-`--cookie-env` and `--cookie-file` are mutually exclusive. `--name-mode` accepts `short` or `long`. When omitted, short names are selected for a host without `.` or `:`, and long names otherwise. A node without `@HOST` uses the controller hostname and infers the mode from that hostname.
+`--cookie-env` and `--cookie-file` are mutually exclusive. `--name-mode`
+accepts `short` or `long`. Without it, a host containing neither `.` nor `:`
+selects short names; other hosts select long names. A node without `@HOST`
+uses the controller hostname for this inference.
 
 | Option | Meaning |
 | --- | --- |
@@ -72,7 +79,10 @@ Cookie-source and saved-context security rules are defined in [Output and storag
 
 `--json` conflicts with a non-JSON `--format`. `--redact` and `--include-identifiers` are mutually exclusive.
 
-`snapshot` and `diagnose` redact identifiers by default. `--include-identifiers` changes them to included identifiers. Other remote inspection and trace commands include identifiers by default; `--redact` changes them to redacted identifiers. Context commands do not accept either identifier option.
+`snapshot` and `diagnose` redact identifiers by default; use
+`--include-identifiers` to reveal them. Other remote inspection and trace
+commands include identifiers by default; use `--redact` to hide them. Context
+commands accept neither option.
 
 A duration is a positive integer in milliseconds (`1500` or `1500ms`) or seconds (`2s`). Fractional durations are not accepted.
 
@@ -127,9 +137,8 @@ observer_cli diagnose [--observe DURATION] [--deep | --app APP] \
   [--include-identifiers] [TARGET OPTIONS] [OUTPUT OPTIONS]
 ```
 
-With no diagnostic option, performs a quick two-sample diagnosis over roughly
-1.5 seconds. A completed diagnosis with one or more warning or critical
-findings exits `1`.
+With no diagnostic option, performs a two-sample diagnosis over roughly 1.5
+seconds. A completed diagnosis with warning or critical findings exits `1`.
 
 | Option | Default | Constraint |
 | --- | --- | --- |
@@ -223,7 +232,10 @@ Lists top local processes using bounded, explicit-key inspection. `--duration` r
 observer_cli process PID_OR_NAME [TARGET OPTIONS] [OUTPUT OPTIONS]
 ```
 
-Inspects one target-local PID, such as `"<0.123.0>"`, or one existing registered name. The response contains bounded process metadata and a normalized current stacktrace. It excludes messages, the process dictionary, and arbitrary process state.
+Inspects one target-local PID, such as `"<0.123.0>"`, or one registered name.
+The bounded response includes process metadata and a normalized current
+stacktrace, but excludes messages, the process dictionary, and arbitrary
+process state.
 
 ### `applications`
 
@@ -312,7 +324,9 @@ Lists sockets exposed by the OTP `socket` registry. Without `--duration`, counte
 observer_cli gen-server-state PID_OR_NAME [TARGET OPTIONS] [OUTPUT OPTIONS]
 ```
 
-Resolves one local PID or registered name and returns a bounded structural shape of its `gen_server` state. Full state values are never returned. The response records its risk level; `--redact` hides identifiers found in the shape.
+Resolves one local PID or registered name and returns only a bounded structural
+shape of its `gen_server` state, never the full values. The response records
+its risk level; `--redact` hides identifiers in the shape.
 
 ### `supervision-tree`
 
@@ -364,7 +378,10 @@ observer_cli tui NODE [COOKIE REFRESH_MS]
 
 Starts the terminal UI. `REFRESH_MS` defaults to `1500` and must be at least `1000`. The three-argument positional form requires both `COOKIE` and `REFRESH_MS`; there is no form with `NODE COOKIE` only.
 
-When `COOKIE` is omitted, the controller's current cookie is used. A positional cookie is visible in process arguments and shell history. The escript loads a missing or incompatible TUI module bundle into the target before starting the UI. See [TUI reference](tui.md) for pages and keys.
+When `COOKIE` is omitted, the controller's current cookie is used. A positional
+cookie is visible in process arguments and shell history. Before starting the
+UI, the escript loads its TUI module bundle when the target copy is missing or
+incompatible. See [TUI reference](tui.md) for pages and keys.
 
 ## Exit statuses
 
@@ -376,9 +393,9 @@ When `COOKIE` is omitted, the controller's current cookie is used. A positional 
 | `3` | Runtime failure, safety refusal, scan-budget failure, required-probe failure, or ordinary partial capture |
 | `4` | Internal, schema-validation, or cleanup failure |
 
-A command can return structured data and a nonzero status. A bounded trace is
-the exception to the ordinary partial-capture mapping: it can report a partial
-trace and still exit `0` when the trace probe completed without errors.
-Automation must inspect both the exit status and the envelope's `capture`,
-`warnings`, and `errors` fields. See
+A command may return structured data with a nonzero status. A bounded trace is
+the exception to the ordinary partial-capture mapping: it may be partial and
+still exit `0` when its probe completed without errors. Automation must inspect
+both the exit status and the envelope's `capture`, `warnings`, and `errors`
+fields. See
 [Output and storage contract](output-contract.md).

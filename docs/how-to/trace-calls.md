@@ -1,7 +1,7 @@
 # Trace calls safely
 
-Use call tracing only after snapshots and process inspection have narrowed the
-problem to one target-local PID and one exact MFA.
+Trace only after snapshots and process inspection identify one target-local PID
+and one exact MFA.
 
 Observer CLI tracing is bounded, but it is node-global infrastructure. Starting
 a trace clears existing node-static traces, and emergency cleanup can clear
@@ -9,16 +9,15 @@ traces created by other tools.
 
 ## 1. Coordinate trace ownership
 
-Before running the command, confirm that no operator or tool depends on an
-existing static trace on the target. There is no isolated Observer CLI trace
-namespace.
+Confirm that no operator or tool depends on an existing static trace on the
+target. Observer CLI has no isolated trace namespace.
 
 The target must have the matching Observer CLI bundle and `recon` 2.5.6
 available.
 
 ## 2. Select one process
 
-Find a candidate and verify that it is still alive:
+Find a candidate and verify it is still alive:
 
 ```sh
 observer_cli processes --sort reductions --duration 2s --limit 20
@@ -40,17 +39,17 @@ observer_cli trace call my_worker:handle_call/3 \
   --format term > trace.term
 ```
 
-The acknowledgement flag is mandatory. Wildcard module or function names are
-rejected. The capture covers external global calls only; it does not promise
-local-call, return-value, message, or process-state tracing.
+The acknowledgement flag is mandatory, and wildcard module or function names
+are rejected. The capture covers external global calls only, not local calls,
+return values, messages, or process state.
 
-Bounds are:
+Bounds:
 
 - duration: `100ms` to `60s`, default `10s`;
 - event limit: `1` to `1000`, default `100`;
 - rate: `1/s` to `200/s`.
 
-Use `--rate` instead of `--limit` when a sustained rate cap is more useful:
+Use `--rate` instead of `--limit` for a sustained rate cap:
 
 ```sh
 observer_cli trace call my_worker:handle_call/3 \
@@ -82,15 +81,13 @@ a report that will leave the incident boundary.
 
 ## 5. Run emergency cleanup only when needed
 
-A normally completed `trace call` performs and verifies its own cleanup. If the
-capture was interrupted or reports unconfirmed cleanup, coordinate again and
-run:
+`trace call` normally verifies its own cleanup. If interrupted or cleanup is
+unconfirmed, coordinate again and run:
 
 ```sh
 observer_cli trace stop --all
 ```
 
-`--all` is mandatory because this operation always calls
-`recon_trace:clear/0`. With `recon` 2.5.6 it can also terminate the fixed-name
-tracer or formatter processes. It may therefore remove unrelated node-static
-traces.
+`--all` is mandatory because the operation calls `recon_trace:clear/0`. With
+`recon` 2.5.6 it can also terminate fixed-name tracer or formatter processes,
+removing unrelated node-static traces.

@@ -1,8 +1,7 @@
 # Extend the TUI
 
-Add a plugin page when you need a small target-specific table in the
-interactive TUI. Add a formatter when process messages, dictionaries, or state
-need domain-specific rendering.
+Use a plugin page for a target-specific table. Use a formatter for
+domain-specific process messages, dictionaries, or state.
 
 Both extension types run on the node that hosts the TUI runtime. Include their
 modules in that node's release or code path.
@@ -49,22 +48,22 @@ sheet_body(State) ->
     }.
 ```
 
-The callback contracts are:
+Callback contracts:
 
-- `attributes/1` returns `#{rows => AttributeRows, state => NewState}`. Each
-  cell needs `content` and a positive `width`; `color` is optional.
-- `sheet_header/0` returns unique atom column IDs and a `default_sort` that
-  names one of them. A column `shortcut` is optional.
-- `sheet_body/1` returns `#{rows => Rows, state => NewState}`. Each row needs a
-  `cells` map keyed by the declared column IDs.
+- `attributes/1`: `#{rows => AttributeRows, state => NewState}`. Each cell
+  needs `content` and a positive `width`; `color` is optional.
+- `sheet_header/0`: unique atom column IDs and a `default_sort` naming one of
+  them. A column `shortcut` is optional.
+- `sheet_body/1`: `#{rows => Rows, state => NewState}`. Each row needs a `cells`
+  map keyed by declared column IDs.
 
-Observer CLI passes each callback's returned state back to that callback on the
-next refresh. Missing sheet cells render empty; undeclared cells are ignored.
+Each callback receives its returned state on the next refresh. Missing sheet
+cells render empty; undeclared cells are ignored.
 
 ### 2. Register the plugin
 
-Add it to the `observer_cli` application environment, normally in the target
-release's `sys.config`:
+Add the plugin to the `observer_cli` application environment, normally in the
+target release's `sys.config`:
 
 ```erlang
 {observer_cli, [
@@ -84,13 +83,13 @@ release's `sys.config`:
 milliseconds, and `sort` defaults to the callback's `default_sort`. Use refresh
 intervals of at least `1000` milliseconds.
 
-For a remote TUI, package the plugin module in the target release. The TUI's
-automatic core-module loading does not discover arbitrary plugin applications.
+For a remote TUI, package the module in the target release; automatic
+core-module loading does not discover plugin applications.
 
 ### 3. Open and verify the page
 
-Start the TUI, press `P` for **Plugin**, then press the configured `R` shortcut.
-You can also start directly in plugin mode from an Erlang shell:
+In the TUI, press `P` for **Plugin**, then the configured `R` shortcut. Or start
+plugin mode from an Erlang shell:
 
 ```erlang
 observer_cli:start_plugin().
@@ -110,12 +109,11 @@ To open the built-in process view, put a PID in an explicit row handle:
 }
 ```
 
-When a selected row has a PID handle and the plugin has no custom handler,
-Observer CLI opens the built-in Process detail view. Omit `handle` from rows
-that should not be selectable.
+A PID handle opens the built-in Process detail view when no custom handler is
+configured. Omit `handle` from non-selectable rows.
 
-Custom handlers participate in the internal TUI page lifecycle rather than a
-standalone public behavior. Their dispatch signature is recorded in the
+Custom handlers use the internal TUI page lifecycle, not a public behavior.
+Their dispatch signature is in the
 [configuration reference](../reference/configuration.md#plugin-configuration);
 use one only when the built-in PID drill-down cannot represent the selected
 resource.
@@ -137,9 +135,9 @@ format(Pid, Term) ->
     ).
 ```
 
-The callback must return a character list. It is used for the process Messages,
-Dictionary, and State views. Keep it total for every Erlang term; if it raises,
-Observer CLI falls back to `observer_cli_formatter_default`.
+Return a character list for the process Messages, Dictionary, and State views.
+Handle every Erlang term; if `format/2` raises, Observer CLI falls back to
+`observer_cli_formatter_default`.
 
 ### 2. Configure the formatter application and module
 
@@ -152,9 +150,8 @@ Observer CLI falls back to `observer_cli_formatter_default`.
 ]}.
 ```
 
-Both keys are required for the remote TUI path. `application` tells Observer CLI
-which application's modules and dependencies to load on the target; `mod` is
-the module that implements `format/2`.
+Both keys are required remotely. `application` identifies the modules and
+dependencies to load on the target; `mod` implements `format/2`.
 
 Include `my_formatter_app` in the release and open a process's Messages,
 Dictionary, and State views to verify normal terms, Unicode, and large nested
@@ -162,7 +159,7 @@ terms.
 
 ## Migrate a 1.x plugin to 2.0
 
-Update callback return values before changing optional configuration:
+Update callback return values first:
 
 | 1.x | 2.0 |
 | --- | --- |
@@ -173,6 +170,6 @@ Update callback return values before changing optional configuration:
 | `sort_column => N` | `sort => ColumnId` |
 | `handler => {Filter, Module}` | `handler => Module` plus explicit row handles |
 
-Observer CLI can translate `sort_column` and the old handler tuple at startup,
-but it rejects legacy callback shapes with `plugin_api_error`. Migrate the
-callbacks rather than adding an adapter layer.
+Observer CLI translates `sort_column` and the old handler tuple at startup, but
+rejects legacy callback shapes with `plugin_api_error`. Migrate the callbacks;
+do not add an adapter.
