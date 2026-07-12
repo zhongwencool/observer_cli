@@ -1183,8 +1183,8 @@ encode(text, #{
         case DiagnosticsModule of
             <<"missing">> ->
                 <<
-                    "Diagnostics are unavailable because observer_cli is not loaded on the target.\n"
-                    "Run connect again with --load-diagnostics to load it into the running target node.\n"
+                    "Diagnostics are missing or incompatible on the target.\n"
+                    "Run connect again with --load-diagnostics to load this observer_cli bundle.\n"
                 >>;
             _ ->
                 <<>>
@@ -1407,7 +1407,7 @@ reason_message(json_unavailable) ->
 reason_message(command_unavailable) ->
     <<"command capability is not available yet">>;
 reason_message(capability_unavailable) ->
-    <<"observer_cli diagnostics are not loaded on the target; retry connect with --load-diagnostics">>;
+    <<"observer_cli diagnostics are missing or incompatible; retry connect with --load-diagnostics">>;
 reason_message(response_too_large) ->
     <<"encoded response exceeds one MiB">>;
 reason_message(Reason) when is_binary(Reason) ->

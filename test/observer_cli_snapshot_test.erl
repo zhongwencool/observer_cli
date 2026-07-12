@@ -7,7 +7,11 @@
 -export([init/1, handle_call/3, handle_cast/2]).
 
 capabilities_test() ->
-    ?assertEqual(#{protocol_version => 1}, observer_cli_snapshot:capabilities()).
+    Capabilities = observer_cli_snapshot:capabilities(),
+    ?assertEqual(#{bundle_version => <<"2.0.0">>, protocol_version => 1}, Capabilities),
+    _ = application:load(observer_cli),
+    {ok, Version} = application:get_key(observer_cli, vsn),
+    ?assertEqual(list_to_binary(Version), maps:get(bundle_version, Capabilities)).
 
 boundary_helper_contract_test() ->
     lists:foreach(

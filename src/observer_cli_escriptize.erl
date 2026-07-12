@@ -21,6 +21,7 @@
     run/3,
     run/4,
     run_remote/4,
+    remote_module_available/1,
     remote_load/1,
     run_command/2,
     command_request/3,
@@ -77,6 +78,7 @@
     random_cookie/1,
     connect_before/3,
     capabilities/2,
+    compatible_capabilities/1,
     validated_response/5,
     run_snapshot/4,
     run_dispatch/5,
@@ -214,7 +216,7 @@ command_help("connect") ->
         "persistent connection is stored. Later commands use this context by default.\n"
         "\n"
         "Options:\n"
-        "  --load-diagnostics      Load observer_cli modules into the running target when missing\n"
+        "  --load-diagnostics      Load modules when diagnostics are missing or incompatible\n"
         "  --name-mode short|long\n"
         "  --timeout DURATION      Command deadline, up to 120s\n"
         "  --format text|term|json\n"
@@ -921,11 +923,20 @@ capabilities(_Target, Timeout) when Timeout =< 0 ->
     {error, required_probe, target_timeout};
 capabilities(Target, Timeout) ->
     try erpc:call(Target, observer_cli_snapshot, capabilities, [], Timeout) of
-        #{protocol_version := 1} = Capabilities -> {ok, Capabilities};
-        _Incompatible -> {error, capability, capability_unavailable}
+        Capabilities ->
+            case compatible_capabilities(Capabilities) of
+                true -> {ok, Capabilities};
+                false -> {error, capability, capability_unavailable}
+            end
     catch
         Class:Reason -> capability_error(Class, Reason)
     end.
+
+compatible_capabilities(Capabilities) when is_map(Capabilities) ->
+    Expected = observer_cli_snapshot:capabilities(),
+    maps:with(maps:keys(Expected), Capabilities) =:= Expected;
+compatible_capabilities(_Capabilities) ->
+    false.
 
 capability_error(error, undef) ->
     {error, capability, capability_unavailable};
@@ -1254,7 +1265,9 @@ valid_required_probes(snapshot, Status, Probes) ->
         probe_statuses_match_capture(Status, Required, Probes);
 valid_required_probes(diagnose, Status, Probes) ->
     Required = [Probe || #{<<"required">> := true} = Probe <- Probes],
-    [maps:get(<<"id">>, Probe) || Probe <- Required] =:= [<<"core_limits">>] andalso
+    lists:member([maps:get(<<"id">>, Probe) || Probe <- Required], [
+        [<<"core_limits">>], [<<"core_limits_and_memory">>]
+    ]) andalso
         probe_statuses_match_capture(Status, Required, Probes);
 valid_required_probes(memory, Status, Probes) ->
     Required = [Probe || #{<<"required">> := true} = Probe <- Probes],
@@ -1792,15 +1805,22 @@ run(TargetNode, Cookie, Interval, RemoteLoadFun) ->
 
 run_remote(TargetNode, ProbeFun, RemoteLoadFun, StartFun) ->
     case ProbeFun(TargetNode) of
-        true -> ok;
-        false -> RemoteLoadFun(TargetNode)
+        true ->
+            ok;
+        false ->
+            RemoteLoadFun(TargetNode),
+            case ProbeFun(TargetNode) of
+                true -> ok;
+                false -> erlang:error({remote_load_failed, TargetNode})
+            end
     end,
     maybe_wait_remote_stop(TargetNode),
     io:format("~p~n", [StartFun()]).
 
 remote_module_available(Node) ->
     net_kernel:hidden_connect_node(Node) andalso
-        rpc:call(Node, code, ensure_loaded, [observer_cli]) =:= {module, observer_cli}.
+        rpc:call(Node, code, ensure_loaded, [observer_cli]) =:= {module, observer_cli} andalso
+        compatible_capabilities(rpc:call(Node, observer_cli_snapshot, capabilities, [])).
 
 maybe_set_target_cookie(_Node, undefined) ->
     ok;
@@ -1822,11 +1842,25 @@ do_remote_load(Node) ->
     Formatter = application:get_env(observer_cli, formatter, ?DEFAULT_FORMATTER),
     FormatterApp = maps:get(application, Formatter),
     Apps = lists:usort([observer_cli, FormatterApp]),
-    [recon:remote_load([Node], Mod) || Mod <- required_modules(Apps)],
+    lists:foreach(fun(Mod) -> remote_load_module(Node, Mod) end, required_modules(Apps)),
     erpc:call(Node, ?MODULE, ensure_set_env, [
         observer_cli, application:get_all_env(observer_cli)
     ]),
     ok.
+
+remote_load_module(Node, Mod) ->
+    Result =
+        try
+            recon:remote_load([Node], Mod)
+        catch
+            Class:Reason -> {exception, Class, Reason}
+        end,
+    case Result of
+        {[{module, Mod}], []} ->
+            ok;
+        _ ->
+            erlang:error({remote_load_failed, Node, Mod, Result})
+    end.
 
 random_local_node_name() ->
     {_, {H, M, S}} = calendar:local_time(),

@@ -155,6 +155,7 @@
 -endif.
 
 -define(PROTOCOL_VERSION, 1).
+-define(BUNDLE_VERSION, <<"2.0.0">>).
 -define(TARGET_MARGIN_MS, 1000).
 -define(DEEP_FINISH_MARGIN_MS, 250).
 -define(MAX_HEAP_WORDS, 8 * 1024 * 1024).
@@ -182,9 +183,9 @@
 -define(MAX_WORKING_SET_BYTES, 64 * 1024 * 1024).
 -define(PROCESS_LABEL_CHARS_LIMIT, 256).
 
--spec capabilities() -> #{protocol_version := pos_integer()}.
+-spec capabilities() -> #{bundle_version := binary(), protocol_version := pos_integer()}.
 capabilities() ->
-    #{protocol_version => ?PROTOCOL_VERSION}.
+    #{bundle_version => ?BUNDLE_VERSION, protocol_version => ?PROTOCOL_VERSION}.
 
 -spec dispatch(pid(), atom(), term(), map()) -> map().
 dispatch(Controller, Command, Request, Options) when is_pid(Controller), is_atom(Command) ->

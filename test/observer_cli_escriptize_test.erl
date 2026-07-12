@@ -231,11 +231,14 @@ required_modules_test_() ->
         {"escript command exits", fun escript_command_exits/0},
         {"remote load local", fun remote_load_local_test/0},
         {"remote load peer node", fun remote_load_peer_node_test/0},
+        {"remote load replaces incompatible bundle",
+            fun remote_load_replaces_incompatible_bundle/0},
         {"run starts distribution", fun run_starts_distribution_test/0},
         {"run waits for missing node", fun run_waits_for_missing_node_test/0},
         {"run waits for stopped peer", fun run_waits_for_stopped_peer_test/0},
         {"run preinstalled TUI once", fun run_preinstalled_tui_once_test/0},
         {"run legacy-loaded TUI once", fun run_legacy_loaded_tui_once_test/0},
+        {"run rejects failed remote load", fun run_rejects_failed_remote_load_test/0},
         {"run name mode mismatch", fun run_name_mode_mismatch_test/0},
         {"run unreachable node", {timeout, 20000, fun run_unreachable_node_test/0}},
         {"refuse pre-distributed controller", fun refuse_pre_distributed_controller/0},
@@ -1163,6 +1166,32 @@ remote_load_peer_node_test() ->
         end
     end).
 
+remote_load_replaces_incompatible_bundle() ->
+    with_distribution(fun(_Cookie) ->
+        {ok, Peer, Node} = peer:start_link(#{name => peer:random_name("observer_cli_version")}),
+        Dir = temporary_directory("observer_cli_old_bundle"),
+        Source = filename:join(Dir, "observer_cli_snapshot.erl"),
+        try
+            ok = observer_cli_escriptize:remote_load(Node),
+            ?assert(observer_cli_escriptize:remote_module_available(Node)),
+            ok = file:write_file(
+                Source,
+                <<"-module(observer_cli_snapshot).\n-export([capabilities/0]).\ncapabilities() -> #{bundle_version => <<\"1.8.8\">>, protocol_version => 1}.\n">>
+            ),
+            {ok, observer_cli_snapshot, OldBeam} = compile:file(Source, [binary]),
+            ?assertEqual(
+                {module, observer_cli_snapshot},
+                erpc:call(Node, code, load_binary, [observer_cli_snapshot, Source, OldBeam])
+            ),
+            ?assertNot(observer_cli_escriptize:remote_module_available(Node)),
+            ok = observer_cli_escriptize:remote_load(Node),
+            ?assert(observer_cli_escriptize:remote_module_available(Node))
+        after
+            peer:stop(Peer),
+            file:del_dir_r(Dir)
+        end
+    end).
+
 run_starts_distribution_test() ->
     WasAlive = erlang:is_alive(),
     case WasAlive of
@@ -1172,8 +1201,8 @@ run_starts_distribution_test() ->
             Cookie = observer_cli_run_start_cookie,
             PrevCookie = erlang:get_cookie(),
             try
-                ?assertEqual(
-                    ok,
+                ?assertError(
+                    {remote_load_failed, 'missing@invalid-host'},
                     observer_cli_test_io:with_input(
                         [],
                         fun() ->
@@ -1197,8 +1226,8 @@ run_waits_for_missing_node_test() ->
         PrevStopEnv = application:get_env(observer_cli, test_stop_remote),
         ok = application:set_env(observer_cli, test_stop_remote, true),
         try
-            ?assertEqual(
-                ok,
+            ?assertError(
+                {remote_load_failed, 'missing@invalid-host'},
                 observer_cli_test_io:with_input(
                     [],
                     fun() ->
@@ -1219,11 +1248,12 @@ run_waits_for_missing_node_test() ->
 run_waits_for_stopped_peer_test() ->
     with_distribution(fun(Cookie) ->
         {ok, Peer, Node} = peer:start_link(#{name => peer:random_name("observer_cli_run")}),
+        ok = observer_cli_escriptize:remote_load(Node),
         PrevStopEnv = application:get_env(observer_cli, test_stop_remote),
         ok = application:set_env(observer_cli, test_stop_remote, true),
         try
             spawn(fun() ->
-                timer:sleep(50),
+                timer:sleep(200),
                 peer:stop(Peer)
             end),
             ?assertEqual(
@@ -1273,24 +1303,55 @@ run_preinstalled_tui_once_test() ->
 
 run_legacy_loaded_tui_once_test() ->
     Parent = self(),
-    ProbeFun = fun(_Node) -> false end,
+    ProbeKey = make_ref(),
+    ProbeFun = fun(_Node) ->
+        case get(ProbeKey) of
+            undefined ->
+                put(ProbeKey, loaded),
+                false;
+            loaded ->
+                true
+        end
+    end,
     RemoteLoadFun = fun(_Node) -> Parent ! remote_load_called end,
     StartFun = fun() ->
         Parent ! tui_started,
         quit
     end,
-    ?assertEqual(
-        ok,
+    try
+        ?assertEqual(
+            ok,
+            observer_cli_test_io:with_input(
+                [],
+                fun() ->
+                    observer_cli_escriptize:run_remote(
+                        missing_module@target, ProbeFun, RemoteLoadFun, StartFun
+                    )
+                end
+            )
+        ),
+        ?assertEqual([remote_load_called, tui_started], drain_run_messages([]))
+    after
+        erase(ProbeKey)
+    end.
+
+run_rejects_failed_remote_load_test() ->
+    Parent = self(),
+    ?assertError(
+        {remote_load_failed, incompatible@target},
         observer_cli_test_io:with_input(
             [],
             fun() ->
                 observer_cli_escriptize:run_remote(
-                    missing_module@target, ProbeFun, RemoteLoadFun, StartFun
+                    incompatible@target,
+                    fun(_Node) -> false end,
+                    fun(_Node) -> Parent ! remote_load_called end,
+                    fun() -> Parent ! tui_started end
                 )
             end
         )
     ),
-    ?assertEqual([remote_load_called, tui_started], drain_run_messages([])).
+    ?assertEqual([remote_load_called], drain_run_messages([])).
 
 refuse_pre_distributed_controller() ->
     with_distribution(fun(_Cookie) ->
@@ -1350,7 +1411,7 @@ dynamic_controller_handshake() ->
     RandomCookie = binary_to_atom(binary:encode_hex(RandomBytes)),
     try
         ?assertEqual(
-            {ok, #{protocol_version => 1}},
+            {ok, #{bundle_version => <<"2.0.0">>, protocol_version => 1}},
             observer_cli_escriptize:connect_target(
                 Target,
                 shortnames,
@@ -1620,7 +1681,7 @@ diagnose_escript_with_dispatch(Escript, Script, CookieEnv, ExitCode, DispatchRes
     Contents = io_lib:format(
         "-module(observer_cli_snapshot).~n"
         "-export([capabilities/0,dispatch/4]).~n"
-        "capabilities() -> #{protocol_version => 1}.~n"
+        "capabilities() -> #{bundle_version => <<\"2.0.0\">>, protocol_version => 1}.~n"
         "dispatch(_,diagnose,_,_) -> ~s.~n",
         [DispatchResult]
     ),
@@ -1922,8 +1983,19 @@ response_validation_boundaries_test() ->
         observer_cli_escriptize:capabilities(node(), 0)
     ),
     ?assertEqual(
-        {ok, #{protocol_version => 1}},
+        {ok, #{bundle_version => <<"2.0.0">>, protocol_version => 1}},
         observer_cli_escriptize:capabilities(node(), 1000)
+    ),
+    ?assert(
+        observer_cli_escriptize:compatible_capabilities(#{
+            bundle_version => <<"2.0.0">>, protocol_version => 1, extra => supported
+        })
+    ),
+    ?assertNot(observer_cli_escriptize:compatible_capabilities(#{protocol_version => 1})),
+    ?assertNot(
+        observer_cli_escriptize:compatible_capabilities(#{
+            bundle_version => <<"1.8.8">>, protocol_version => 1
+        })
     ),
     ?assertEqual(
         {error, schema, invalid_command_response},
@@ -2209,6 +2281,11 @@ validation_payload_contract(Probe) ->
     ),
     ?assert(
         observer_cli_escriptize:valid_required_probes(
+            diagnose, <<"complete">>, [Probe#{<<"id">> := <<"core_limits_and_memory">>}]
+        )
+    ),
+    ?assert(
+        observer_cli_escriptize:valid_required_probes(
             memory, <<"complete">>, [
                 Probe#{<<"id">> := <<"memory">>}, Probe#{<<"id">> := <<"allocator">>}
             ]
@@ -2310,7 +2387,7 @@ assert_partial_snapshot_exit(Escript, Script, CookieEnv) ->
         io_lib:format(
             "-module(observer_cli_snapshot).~n"
             "-export([capabilities/0,dispatch/4]).~n"
-            "capabilities() -> #{protocol_version => 1}.~n"
+            "capabilities() -> #{bundle_version => <<\"2.0.0\">>, protocol_version => 1}.~n"
             "dispatch(_,snapshot,_,_) -> ~tp.~n",
             [
                 #{
@@ -2355,7 +2432,7 @@ incompatible_capability() ->
     Source = filename:join(Dir, "observer_cli_snapshot.erl"),
     ok = file:write_file(
         Source,
-        <<"-module(observer_cli_snapshot).\n-export([capabilities/0]).\ncapabilities() -> #{protocol_version => 2}.\n">>
+        <<"-module(observer_cli_snapshot).\n-export([capabilities/0]).\ncapabilities() -> #{bundle_version => <<\"1.8.8\">>, protocol_version => 1}.\n">>
     ),
     {ok, observer_cli_snapshot} = compile:file(Source, [{outdir, Dir}]),
     try

@@ -47,10 +47,11 @@ observer_cli diagnose --help
 observer_cli processes --help
 ```
 
-By default, the target must already run a protocol-compatible `observer_cli` build.
-If it does not, `connect` explains how to retry with `--load-diagnostics`. That
-explicit option loads the escript's modules into the running target node, so use it
-only on trusted nodes running a compatible OTP version.
+By default, the target must already run the same protocol and bundle version of
+`observer_cli`. If it does not, `connect` explains how to retry with
+`--load-diagnostics`. That explicit option loads the escript's modules into the
+running target node, so use it only on trusted nodes running a compatible OTP
+version.
 
 ### Connect once, diagnose repeatedly
 
@@ -74,6 +75,35 @@ context.
 
 `observer_cli memory` returns both BEAM memory totals and the System page's
 `recon_alloc` block-size, SBCS/MBCS ratio, and allocator cache-hit metrics.
+
+The default text output for `diagnose`, `snapshot`, `memory`, `schedulers`,
+`distribution`, and `network` expands the complete response as indented fields. A
+successful diagnosis with no findings still shows the sampling plan, every probe and
+its coverage, captured context, skipped checks and their reasons, warnings, and
+errors. For example, the report contains sections like these:
+
+```text
+observer_cli diagnose
+schema: observer_cli.cli/v1
+command: diagnose
+target:
+  node: node-1
+  ...
+capture:
+  status: complete
+  ...
+  probes:
+    [0]:
+      id: core_limits
+      status: ok
+      ...
+data:
+  summary: Quick diagnostics completed with no limit findings.
+  ...
+```
+
+Use `--format term` or `--format json` when consuming the stable machine-readable
+envelope.
 
 For stateless automation, pass the target and cookie source on every invocation:
 
@@ -121,8 +151,9 @@ setup and `trace stop --all` use recon's node-global clear and can disrupt unrel
 static tracing. Snapshot and diagnose do not collect messages, dictionaries, table
 contents, application env, cookies, trace arguments, returns, exceptions, or stacks.
 There is no provider upload, daemon, cluster fan-out, arbitrary eval, automatic
-repair, or trace session registry. Remote loading occurs only when explicitly
-requested with `connect --load-diagnostics`.
+repair, or trace session registry. Command-first remote loading occurs only when
+explicitly requested with `connect --load-diagnostics`. The legacy positional TUI
+retains its historical automatic loading of missing or incompatible bundles.
 
 ## Installation
 
@@ -133,7 +164,7 @@ requested with `connect --load-diagnostics`.
 %% rebar.config
 {deps, [observer_cli]}
 %% erlang.mk
-dep_observer_cli = hex 1.8.8
+dep_observer_cli = hex 2.0.0
 ```
 
 ### Elixir
@@ -141,7 +172,7 @@ dep_observer_cli = hex 1.8.8
 ```elixir
 # mix.exs
    def deps do
-     [{:observer_cli, "~> 1.8"}]
+     [{:observer_cli, "~> 2.0"}]
    end
 ```
 <!-- tabs-close -->
