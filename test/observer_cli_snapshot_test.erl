@@ -212,28 +212,20 @@ snapshot_internal_contract_test() ->
 
 snapshot_runtime_helper_contract_test() ->
     OkReport = fun(Id) -> #{id => Id, status => ok} end,
+    Runtime = #{node => node(), otp_release => <<"test">>},
     Probes = [
         {OkReport(memory), #{memory => #{beam => beam}, runtime => #{node => node()}}},
         {OkReport(allocator), #{util_allocators => []}},
-        {OkReport(runtime), #{node => node(), otp_release => <<"test">>}}
+        {OkReport(runtime), Runtime}
     ],
     ?assertMatch(
         #{memory := #{allocator := #{util_allocators := []}}},
-        observer_cli_snapshot:memory_command_data(Probes)
+        observer_cli_snapshot:memory_command_data(Probes, Runtime)
     ),
-    ?assertEqual(null, observer_cli_snapshot:memory_command_data([])),
     ?assertEqual(
-        #{node => node(), otp_release => <<"test">>},
-        observer_cli_snapshot:memory_command_target(#{
-            runtime => #{node => node(), otp_release => <<"test">>}
-        })
+        #{runtime => Runtime, memory => #{allocator => null}},
+        observer_cli_snapshot:memory_command_data([], Runtime)
     ),
-    ?assertEqual(null, observer_cli_snapshot:memory_command_target(#{})),
-    ?assertEqual(
-        #{node => node(), otp_release => <<"test">>},
-        observer_cli_snapshot:target_from_probes(Probes)
-    ),
-    ?assertEqual(null, observer_cli_snapshot:target_from_probes([])),
     ?assertEqual({1, 10}, observer_cli_snapshot:binary_ref_stats([{ref, 10, 2}, invalid])),
     ?assertEqual({0, 0}, observer_cli_snapshot:binary_ref_stats(invalid)),
     ?assertEqual(

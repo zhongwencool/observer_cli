@@ -54,8 +54,7 @@
     controller_node/1,
     update_item_counts/1,
     pointer_protects_tail/3,
-    memory_command_data/1,
-    memory_command_target/1,
+    memory_command_data/2,
     binary_ref_stats/1,
     sanitize_stacktrace_location/1,
     default_mnesia_source/0,
@@ -83,7 +82,6 @@
     safe_system_info/1,
     controller_queue/4,
     limit_distribution/2,
-    target_from_probes/1,
     observer_effects/2,
     supervisor_counts/1,
     valid_supervisor_children/1,
@@ -541,8 +539,10 @@ capture_snapshot(Request, #{deadline := Deadline, controller := Controller} = Co
     StartedAt = erlang:system_time(millisecond),
     StartedMonotonic = erlang:monotonic_time(millisecond),
     ModuleLoaded = module_loaded(),
+    RuntimeProbe = runtime_probe(),
+    {ok, Runtime, _} = RuntimeProbe,
     CoreProbes = [
-        run_snapshot_probe(runtime, true, fun runtime_probe/0, Request, Deadline),
+        run_snapshot_probe(runtime, true, fun() -> RuntimeProbe end, Request, Deadline),
         run_snapshot_probe(resources, true, fun resources_probe/0, Request, Deadline),
         run_snapshot_probe(memory, true, fun memory_probe/0, Request, Deadline),
         run_snapshot_probe(schedulers, false, fun schedulers_probe/0, Request, Deadline),
@@ -561,7 +561,7 @@ capture_snapshot(Request, #{deadline := Deadline, controller := Controller} = Co
     #{
         schema => <<"observer_cli.cli/v1">>,
         command => snapshot,
-        target => target_from_probes(Probes),
+        target => target_from_runtime(Runtime),
         capture => #{
             status => capture_status(ProbeReports),
             started_at => rfc3339(StartedAt),
@@ -1042,18 +1042,21 @@ capture_memory(Request, #{deadline := Deadline, controller := Controller}) when 
     StartedAt = erlang:system_time(millisecond),
     StartedMonotonic = erlang:monotonic_time(millisecond),
     ModuleLoaded = module_loaded(),
+    {ok, Runtime, _} = runtime_probe(),
     Probes = [
-        run_snapshot_probe(memory, true, fun memory_command_probe/0, Request, Deadline),
+        run_snapshot_probe(
+            memory, true, fun() -> memory_command_probe(Runtime) end, Request, Deadline
+        ),
         run_snapshot_probe(allocator, true, fun allocator_probe/0, Request, Deadline)
     ],
     FinishedMonotonic = erlang:monotonic_time(millisecond),
     FinishedAt = erlang:system_time(millisecond),
     ProbeReports = [Report || {Report, _Data} <- Probes],
-    MemoryData = memory_command_data(Probes),
+    MemoryData = memory_command_data(Probes, Runtime),
     #{
         schema => <<"observer_cli.cli/v1">>,
         command => memory,
-        target => memory_command_target(MemoryData),
+        target => target_from_runtime(Runtime),
         capture => #{
             status => capture_status(ProbeReports),
             started_at => rfc3339(StartedAt),
@@ -1069,8 +1072,7 @@ capture_memory(Request, #{deadline := Deadline, controller := Controller}) when 
 capture_memory(_Request, _Context) ->
     {probe_error, invalid_request}.
 
-memory_command_probe() ->
-    {ok, Runtime, _} = runtime_probe(),
+memory_command_probe(Runtime) ->
     {ok, Memory, _} = memory_probe(),
     {ok, #{runtime => Runtime, memory => maps:with([beam, persistent_term], Memory)}, [
         target_identity, otp_runtime, beam_memory, persistent_term_summary
@@ -1081,12 +1083,12 @@ allocator_probe() ->
         allocator_average_block_sizes, allocator_sbcs_to_mbcs, allocator_cache_hit_rates
     ]}.
 
-memory_command_data(Probes) ->
+memory_command_data(Probes, Runtime) ->
     case probe_data(memory, Probes) of
         #{memory := Memory} = Data ->
             Data#{memory := Memory#{allocator => allocator_probe_data(Probes)}};
         _ ->
-            null
+            #{runtime => Runtime, memory => #{allocator => allocator_probe_data(Probes)}}
     end.
 
 allocator_probe_data(Probes) ->
@@ -1094,9 +1096,6 @@ allocator_probe_data(Probes) ->
         Data when is_map(Data) -> Data;
         _ -> null
     end.
-
-memory_command_target(#{runtime := Runtime}) -> target_from_runtime(Runtime);
-memory_command_target(_) -> null.
 
 allocator_data(#{
     average_block_curs := Current,
@@ -4864,14 +4863,6 @@ peer_state(_Peers) -> connected.
 
 text_system_info(Key) ->
     unicode:characters_to_binary(erlang:system_info(Key)).
-
-target_from_probes(Probes) ->
-    case probe_data(runtime, Probes) of
-        Runtime when is_map(Runtime) ->
-            target_from_runtime(Runtime);
-        _ ->
-            null
-    end.
 
 target_from_runtime(#{node := Node, otp_release := OtpRelease}) ->
     #{node => Node, otp_release => OtpRelease}.

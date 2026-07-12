@@ -473,6 +473,9 @@ command_request(gen_server_state, [Target], Options) ->
     (request_options(Options))#{target => Target};
 command_request(supervision_tree, [], Options) ->
     (request_options(Options))#{app => maps:get(app, Options)};
+command_request(schedulers, _Arguments, Options) ->
+    {ok, Duration} = observer_cli_cli:duration(Options),
+    #{duration_ms => Duration};
 command_request(Command, _Arguments, Options) when Command =:= snapshot; Command =:= diagnose ->
     maps:with([deep, observe, app], Options);
 command_request(_Command, _Arguments, Options) ->
@@ -648,6 +651,17 @@ run_dispatch(Target, Command, Request, Options, Remaining) ->
             Error
     end.
 
+dispatch_response(
+    #{
+        <<"command">> := Command,
+        <<"errors">> := [],
+        <<"capture">> := #{
+            <<"status">> := <<"partial">>,
+            <<"probes">> := [#{<<"id">> := <<"trace">>, <<"status">> := <<"ok">>}]
+        }
+    } = Response
+) when Command =:= <<"trace_call">>; Command =:= <<"trace_stop_all">> ->
+    {ok, Response, observer_cli_cli:exit_code(success)};
 dispatch_response(
     #{<<"errors">> := Errors} = Response
 ) when Errors =/= [] ->
@@ -1152,7 +1166,12 @@ valid_error_keys(Error) ->
 valid_error_class(<<"cleanup">>, <<"cleanup_unconfirmed">>) ->
     true;
 valid_error_class(<<"internal">>, Reason) ->
-    lists:member(Reason, [<<"internal_error">>, <<"capture_internal_error">>]);
+    lists:member(Reason, [
+        <<"internal_error">>,
+        <<"capture_internal_error">>,
+        <<"dispatcher_disconnected">>,
+        <<"helper_setup_failed">>
+    ]);
 valid_error_class(<<"schema">>, Reason) ->
     lists:member(Reason, [
         <<"field_too_large">>,
@@ -1164,7 +1183,11 @@ valid_error_class(<<"schema">>, Reason) ->
         <<"response_too_deep">>,
         <<"response_too_large">>
     ]);
-valid_error_class(<<"capability">>, <<"capability_unavailable">>) ->
+valid_error_class(<<"capability">>, Reason) ->
+    lists:member(Reason, [
+        <<"capability_unavailable">>, <<"mfa_unavailable">>, <<"mfa_not_traceable">>
+    ]);
+valid_error_class(<<"required_probe">>, <<"capability_unavailable">>) ->
     true;
 valid_error_class(Class, Reason) when is_binary(Reason) ->
     not lists:member(Reason, [
@@ -1274,16 +1297,36 @@ valid_required_probes(memory, Status, Probes) ->
     lists:sort([maps:get(<<"id">>, Probe) || Probe <- Required]) =:=
         [<<"allocator">>, <<"memory">>] andalso
         probe_statuses_match_capture(Status, Required, Probes);
+valid_required_probes(Command, <<"partial">>, [
+    #{<<"required">> := true, <<"id">> := <<"trace">>, <<"status">> := <<"ok">>}
+]) when Command =:= trace_call; Command =:= trace_stop_all ->
+    true;
 valid_required_probes(Command, Status, Probes) ->
     RequiredId = required_probe_id(Command),
     case Probes of
         [#{<<"required">> := true, <<"id">> := RequiredId} = Probe] ->
-            probe_statuses_match_capture(Status, [Probe], Probes);
+            direct_probe_statuses_match_capture(Status, [Probe], Probes);
         _ ->
             false
     end.
 
 probe_statuses_match_capture(<<"complete">>, Required, Probes) ->
+    lists:all(
+        fun(Probe) -> maps:get(<<"status">>, Probe) =:= <<"ok">> end,
+        Required
+    ) andalso
+        not lists:any(fun probe_started_failure/1, Probes);
+probe_statuses_match_capture(<<"partial">>, Required, Probes) ->
+    lists:any(fun probe_started_failure/1, Probes) orelse
+        lists:any(
+            fun
+                (#{<<"status">> := <<"unavailable">>}) -> true;
+                (_) -> false
+            end,
+            Required
+        ).
+
+direct_probe_statuses_match_capture(<<"complete">>, Required, Probes) ->
     lists:all(
         fun(Probe) ->
             lists:member(maps:get(<<"status">>, Probe), [<<"ok">>, <<"unavailable">>])
@@ -1291,7 +1334,7 @@ probe_statuses_match_capture(<<"complete">>, Required, Probes) ->
         Required
     ) andalso
         not lists:any(fun probe_started_failure/1, Probes);
-probe_statuses_match_capture(<<"partial">>, _Required, Probes) ->
+direct_probe_statuses_match_capture(<<"partial">>, _Required, Probes) ->
     lists:any(fun probe_started_failure/1, Probes).
 
 probe_started_failure(#{<<"status">> := Status}) ->

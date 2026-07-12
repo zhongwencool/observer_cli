@@ -7,6 +7,14 @@
 
 command_request_converts_validated_cli_values_test() ->
     ?assertEqual(
+        #{duration_ms => 1500},
+        observer_cli_escriptize:command_request(schedulers, [], #{})
+    ),
+    ?assertEqual(
+        #{duration_ms => 250},
+        observer_cli_escriptize:command_request(schedulers, [], #{duration => "250ms"})
+    ),
+    ?assertEqual(
         #{sort => reductions, limit => 5, duration_ms => 250},
         observer_cli_escriptize:command_request(
             processes, [], #{sort => "reductions", limit => "5", duration => "250ms"}
@@ -672,6 +680,77 @@ direct_unavailable_exit_classification_test() ->
     Budget = Response(<<"scan_budget_exceeded">>),
     ?assertEqual({ok, Budget, 3}, observer_cli_escriptize:dispatch_response(Budget)).
 
+successful_partial_trace_response_test() ->
+    Base = valid_controller_response(trace_call, atom_to_binary(node())),
+    Capture = (maps:get(<<"capture">>, Base))#{<<"status">> := <<"partial">>},
+    lists:foreach(
+        fun(Command) ->
+            Response = Base#{
+                <<"command">> := atom_to_binary(Command),
+                <<"capture">> := Capture
+            },
+            ?assertEqual(
+                ok,
+                observer_cli_escriptize:validate_response(
+                    Command, include, node(), Response
+                )
+            ),
+            ?assertEqual(
+                {ok, Response, 0}, observer_cli_escriptize:dispatch_response(Response)
+            )
+        end,
+        [trace_call, trace_stop_all]
+    ).
+
+controller_validates_real_trace_responses_test_() ->
+    {timeout, 5, fun controller_validates_real_trace_responses/0}.
+
+controller_validates_real_trace_responses() ->
+    Base = #{
+        action => call,
+        pid => list_to_binary(pid_to_list(self())),
+        duration_ms => 100,
+        max => 1,
+        replace_existing_trace => true
+    },
+    #{<<"status">> := <<"ok">>, <<"result">> := Missing} =
+        observer_cli_snapshot:dispatch(
+            self(),
+            trace,
+            Base#{mfa => <<"erlang:node/255">>},
+            #{timeout_ms => 2000, identifier_policy => include}
+        ),
+    ?assertMatch(
+        [#{<<"class">> := <<"capability">>, <<"reason_code">> := <<"mfa_unavailable">>}],
+        maps:get(<<"errors">>, Missing)
+    ),
+    ?assertEqual(
+        ok,
+        observer_cli_escriptize:validate_response(trace_call, include, node(), Missing)
+    ),
+    #{<<"status">> := <<"ok">>, <<"result">> := Partial} =
+        observer_cli_snapshot:dispatch(
+            self(),
+            trace,
+            Base#{mfa => <<"erlang:node/0">>},
+            #{timeout_ms => 2000, identifier_policy => include}
+        ),
+    ?assertMatch(
+        #{
+            <<"capture">> := #{
+                <<"status">> := <<"partial">>,
+                <<"probes">> := [#{<<"status">> := <<"ok">>}]
+            },
+            <<"errors">> := []
+        },
+        Partial
+    ),
+    ?assertEqual(
+        ok,
+        observer_cli_escriptize:validate_response(trace_call, include, node(), Partial)
+    ),
+    ?assertEqual({ok, Partial, 0}, observer_cli_escriptize:dispatch_response(Partial)).
+
 controller_response_validation_test() ->
     Response = valid_controller_response(memory, <<"node@host">>),
     Target = 'node@host',
@@ -919,6 +998,40 @@ controller_validates_real_resource_responses_test() ->
         observer_cli_escriptize:validate_response(processes, include, node(), Refused)
     ),
     ?assertMatch({ok, Refused, 3}, observer_cli_escriptize:dispatch_response(Refused)).
+
+controller_validates_required_unavailable_responses_test() ->
+    lists:foreach(
+        fun({Command, Probe}) ->
+            #{<<"status">> := <<"ok">>, <<"result">> := Response} =
+                observer_cli_snapshot:dispatch(
+                    self(),
+                    Command,
+                    #{test_probe_outcomes => #{Probe => {unavailable, capability_unavailable}}},
+                    #{timeout_ms => 5000, identifier_policy => include}
+                ),
+            ?assertMatch(#{<<"node">> := _}, maps:get(<<"target">>, Response)),
+            ?assert(is_map(maps:get(<<"data">>, Response))),
+            ?assertMatch(
+                #{<<"status">> := <<"partial">>}, maps:get(<<"capture">>, Response)
+            ),
+            ?assertMatch(
+                [
+                    #{
+                        <<"class">> := <<"required_probe">>,
+                        <<"reason_code">> := <<"capability_unavailable">>
+                    }
+                ],
+                maps:get(<<"errors">>, Response)
+            ),
+            ?assertEqual(
+                ok,
+                observer_cli_escriptize:validate_response(
+                    Command, include, node(), Response
+                )
+            )
+        end,
+        [{snapshot, runtime}, {memory, memory}]
+    ).
 
 oversized_structured_output_keeps_error_envelope_test() ->
     Escript = os:find_executable("escript"),
@@ -1858,8 +1971,12 @@ response_validation_boundaries_test() ->
         [
             {<<"cleanup">>, <<"cleanup_unconfirmed">>},
             {<<"internal">>, <<"internal_error">>},
+            {<<"internal">>, <<"helper_setup_failed">>},
             {<<"schema">>, <<"invalid_schema">>},
             {<<"capability">>, <<"capability_unavailable">>},
+            {<<"capability">>, <<"mfa_unavailable">>},
+            {<<"capability">>, <<"mfa_not_traceable">>},
+            {<<"required_probe">>, <<"capability_unavailable">>},
             {<<"argument">>, <<"bad_value">>}
         ]
     ),
