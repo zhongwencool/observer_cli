@@ -2588,10 +2588,16 @@ collect_admitted_applications(
                 Acc0
             ),
             ProcessFinished = erlang:monotonic_time(millisecond),
-            {Stats, Unattributed} = application_stats(maps:get(items, Acc), LeaderApps),
+            {Stats, Unattributed} = application_stats(
+                maps:get(items, Acc), LeaderApps, maps:get(info_fun, ProcessSource)
+            ),
             RunningSet = maps:from_keys([App || {App, _, _} <- Running], true),
             LoadedSet = maps:from_keys([App || {App, _, _} <- Loaded], true),
-            Items0 = [application_item(App, Stats, LoadedSet, RunningSet) || App <- Apps],
+            Versions = maps:from_list([{App, Version} || {App, _, Version} <- Loaded]),
+            Items0 = [
+                application_item(App, Stats, LoadedSet, RunningSet, Versions)
+             || App <- Apps ++ [no_group]
+            ],
             RankedItems = recon_top_n(Items0, Sort, Limit),
             Items = [maps:remove(memory, Item) || Item <- RankedItems],
             Audit = audit_inventory(Acc, length(Items), ProcessStarted, ProcessFinished),
@@ -2606,7 +2612,7 @@ collect_admitted_applications(
                 application_count => length(Apps),
                 admission_stage => post_enumeration,
                 attribution => group_leader_application,
-                attribution_semantics => approximation,
+                attribution_semantics => group_leader_chain,
                 unattributed_process_count => Unattributed,
                 baseline_count => 0,
                 tracked_field_count => 4,
@@ -2617,7 +2623,7 @@ collect_admitted_applications(
             {ok, Data, [
                 public_application_inventory,
                 shared_process_inventory,
-                group_leader_application_approximation,
+                group_leader_chain_attribution,
                 process_scan_admitted
             ]}
     end.
@@ -2641,44 +2647,82 @@ application_leaders(Apps, Source) ->
         Apps
     ).
 
-application_stats(Items, Leaders) ->
+application_stats(Items, Leaders, InfoFun) ->
     lists:foldl(
         fun(Item, {Stats, Unknown}) ->
-            case maps:find(maps:get(group_leader, Item), Leaders) of
-                {ok, App} ->
-                    Current = maps:get(App, Stats, empty_application_stats()),
-                    {
-                        Stats#{
-                            App => Current#{
-                                process_count := maps:get(process_count, Current) + 1,
-                                memory := maps:get(memory, Current) + maps:get(memory, Item),
-                                reductions := maps:get(reductions, Current) +
-                                    maps:get(reductions, Item),
-                                message_queue_len := maps:get(message_queue_len, Current) +
-                                    maps:get(message_queue_len, Item)
-                            }
-                        },
-                        Unknown
-                    };
-                error ->
-                    {Stats, Unknown + 1}
-            end
+            App = application_for_group(maps:get(group_leader, Item), Leaders, InfoFun, #{}),
+            {
+                increment_application_stats(App, Item, Stats),
+                Unknown +
+                    case App of
+                        no_group -> 1;
+                        _ -> 0
+                    end
+            }
         end,
         {#{}, 0},
         Items
     ).
 
+application_for_group(Group, Leaders, InfoFun, Seen) when is_pid(Group) ->
+    case maps:find(Group, Leaders) of
+        {ok, App} ->
+            App;
+        error when node(Group) =/= node() ->
+            no_group;
+        error ->
+            case maps:is_key(Group, Seen) of
+                true ->
+                    no_group;
+                false ->
+                    try InfoFun(Group, group_leader) of
+                        {group_leader, Parent} when is_pid(Parent) ->
+                            application_for_group(Parent, Leaders, InfoFun, Seen#{Group => true});
+                        _ ->
+                            no_group
+                    catch
+                        _:_ -> no_group
+                    end
+            end
+    end;
+application_for_group(_Group, _Leaders, _InfoFun, _Seen) ->
+    no_group.
+
+increment_application_stats(App, Item, Stats) ->
+    Current = maps:get(App, Stats, empty_application_stats()),
+    Stats#{
+        App => Current#{
+            process_count := maps:get(process_count, Current) + 1,
+            memory := maps:get(memory, Current) + maps:get(memory, Item),
+            reductions := maps:get(reductions, Current) + maps:get(reductions, Item),
+            message_queue_len := maps:get(message_queue_len, Current) +
+                maps:get(message_queue_len, Item)
+        }
+    }.
+
 empty_application_stats() ->
     #{process_count => 0, memory => 0, reductions => 0, message_queue_len => 0}.
 
-application_item(App, Stats, Loaded, Running) ->
+application_item(App, Stats, Loaded, Running, Versions) ->
     Values = maps:get(App, Stats, empty_application_stats()),
     Values#{
         application => {identifier, application, App},
         memory_bytes => maps:get(memory, Values),
         loaded => maps:is_key(App, Loaded),
-        running => maps:is_key(App, Running)
+        running => maps:is_key(App, Running),
+        version => application_version(App, Versions)
     }.
+
+application_version(App, Versions) ->
+    case maps:find(App, Versions) of
+        {ok, Version} ->
+            case bounded_identifier_text(Version) of
+                {ok, Text} -> Text;
+                error -> null
+            end;
+        error ->
+            null
+    end.
 
 collect_ets(Source, Sort, Limit, Context, Estimate) ->
     Started = erlang:monotonic_time(millisecond),
@@ -3426,9 +3470,12 @@ socket_sample(Source) ->
                             Item = #{
                                 raw_id => Socket,
                                 resource => {identifier, socket, Socket},
+                                owner => socket_owner(Info),
                                 domain => maps:get(domain, Info, null),
                                 type => maps:get(type, Info, null),
                                 protocol => maps:get(protocol, Info, null),
+                                rstate => maps:get(rstates, Info, maps:get(rstate, Info, null)),
+                                wstate => maps:get(wstates, Info, maps:get(wstate, Info, null)),
                                 counters => Counters,
                                 counter_shape => lists:sort(maps:keys(Counters))
                             },
@@ -3465,6 +3512,9 @@ socket_sample(Source) ->
         _ ->
             {error, invalid_enumeration_shape}
     end.
+
+socket_owner(#{owner := Owner}) when is_pid(Owner) -> {identifier, pid, Owner};
+socket_owner(_Info) -> null.
 
 resource_audit(Scanned, Eligible, Disappeared, Started) ->
     #{
@@ -3891,7 +3941,8 @@ port_identifier(_) -> null.
 total_resource_item(network, Item) ->
     add_network_metrics(Item, maps:get(counters, Item));
 total_resource_item(sockets, Item) ->
-    add_socket_metrics(Item, maps:get(counters, Item)).
+    Counters = maps:get(counters, Item),
+    add_socket_current_metrics(add_socket_metrics(Item, Counters), Counters).
 
 add_network_metrics(Item, Counters) ->
     add_metrics(Item, #{
@@ -3905,6 +3956,13 @@ add_network_metrics(Item, Counters) ->
 
 add_socket_metrics(Item, Counters) ->
     add_metrics(Item, socket_metrics(Counters)).
+
+add_socket_current_metrics(Item, Counters) ->
+    add_metrics(Item, #{
+        max_packet => counter_max_metric(
+            Counters, [read_pkg_max, write_pkg_max], [sendfile_pkg_max]
+        )
+    }).
 
 add_metrics(Item, Metrics) ->
     maps:fold(
@@ -3920,7 +3978,7 @@ add_metrics(Item, Metrics) ->
                     metric_states := (maps:get(metric_states, Acc, #{}))#{Key => Status}
                 }
         end,
-        Item#{metric_states => #{}},
+        Item#{metric_states => maps:get(metric_states, Item, #{})},
         Metrics
     ).
 
@@ -3930,6 +3988,7 @@ socket_metrics(Counters) when is_map(Counters) ->
         write_bytes => socket_metric(Counters, [write_byte], [sendfile_byte]),
         io => socket_metric(Counters, [read_byte, write_byte], [sendfile_byte]),
         packets => socket_metric(Counters, [read_pkg, write_pkg], [sendfile_pkg]),
+        accepts => socket_metric(Counters, [acc_success, acc_tries], []),
         waits => socket_metric(Counters, [acc_waits, read_waits, write_waits], [sendfile_waits]),
         fails => socket_metric(Counters, [acc_fails, read_fails, write_fails], [sendfile_fails])
     }.
@@ -3938,6 +3997,12 @@ socket_metric(Counters, Required, Optional) ->
     counter_metric(Counters, Required, Optional).
 
 counter_metric(Counters, Required, Optional) ->
+    counter_metric(Counters, Required, Optional, fun lists:sum/1).
+
+counter_max_metric(Counters, Required, Optional) ->
+    counter_metric(Counters, Required, Optional, fun lists:max/1).
+
+counter_metric(Counters, Required, Optional, Aggregate) ->
     RequiredValues = [maps:get(Key, Counters, missing) || Key <- Required],
     OptionalValues = [maps:get(Key, Counters, missing) || Key <- Optional],
     case lists:member(counter_reset, RequiredValues ++ OptionalValues) of
@@ -3954,9 +4019,9 @@ counter_metric(Counters, Required, Optional) ->
                 }
             of
                 {true, true} ->
-                    Value =
-                        lists:sum(RequiredValues) +
-                            lists:sum([V || V <- OptionalValues, valid_counter(V)]),
+                    Value = Aggregate(
+                        RequiredValues ++ [V || V <- OptionalValues, valid_counter(V)]
+                    ),
                     #{status => available, value => Value};
                 {false, _} ->
                     #{status => missing_core};
@@ -3968,7 +4033,9 @@ counter_metric(Counters, Required, Optional) ->
 valid_counter(Value) -> is_integer(Value) andalso Value >= 0.
 
 socket_optional_coverage(Counters) ->
-    Optional = [sendfile_byte, sendfile_pkg, sendfile_waits, sendfile_fails],
+    Optional = [
+        sendfile_byte, sendfile_pkg, sendfile_pkg_max, sendfile_waits, sendfile_fails
+    ],
     case lists:any(fun(Key) -> not maps:is_key(Key, Counters) end, Optional) of
         true -> [optional_sendfile_counter_absent];
         false -> []
@@ -4031,7 +4098,9 @@ socket_series_item(Items) ->
     case lists:usort(Shapes) of
         [_Shape] ->
             Deltas = socket_series_deltas([maps:get(counters, Item) || Item <- Items]),
-            Result = add_socket_metrics(Last, Deltas),
+            Result = add_socket_current_metrics(
+                add_socket_metrics(Last, Deltas), maps:get(counters, Last)
+            ),
             States = maps:values(maps:get(metric_states, Result)),
             Result#{
                 state =>
@@ -4076,8 +4145,12 @@ counter_delta_item(Command, First, Second) ->
             Deltas = counter_deltas(FirstCounters, SecondCounters),
             Item =
                 case Command of
-                    network -> add_network_metrics(Second, Deltas);
-                    sockets -> add_socket_metrics(Second, Deltas)
+                    network ->
+                        add_network_metrics(Second, Deltas);
+                    sockets ->
+                        add_socket_current_metrics(
+                            add_socket_metrics(Second, Deltas), SecondCounters
+                        )
                 end,
             States = maps:values(maps:get(metric_states, Item)),
             Item#{
@@ -4121,11 +4194,14 @@ unavailable_delta_item(network, Item, State) ->
         )
     };
 unavailable_delta_item(sockets, Item, State) ->
-    Keys = [io, read_bytes, write_bytes, packets, waits, fails],
-    lists:foldl(
-        fun(Key, Acc) -> Acc#{Key => null} end,
-        Item#{state => State, metric_states => maps:from_keys(Keys, State)},
-        Keys
+    Keys = [io, read_bytes, write_bytes, packets, accepts, waits, fails],
+    add_socket_current_metrics(
+        lists:foldl(
+            fun(Key, Acc) -> Acc#{Key => null} end,
+            Item#{state => State, metric_states => maps:from_keys(Keys, State)},
+            Keys
+        ),
+        maps:get(counters, Item)
     ).
 
 resource_item_state(Item) -> maps:get(state, Item, available).
@@ -4185,7 +4261,7 @@ resource_status(0) -> empty;
 resource_status(_) -> ok.
 
 tracked_counter_fields(network) -> 4;
-tracked_counter_fields(sockets) -> 14.
+tracked_counter_fields(sockets) -> 19.
 
 socket_counter_keys() ->
     [
@@ -4193,6 +4269,10 @@ socket_counter_keys() ->
         write_byte,
         read_pkg,
         write_pkg,
+        read_pkg_max,
+        write_pkg_max,
+        acc_success,
+        acc_tries,
         acc_waits,
         read_waits,
         write_waits,
@@ -4201,6 +4281,7 @@ socket_counter_keys() ->
         write_fails,
         sendfile_byte,
         sendfile_pkg,
+        sendfile_pkg_max,
         sendfile_waits,
         sendfile_fails
     ].

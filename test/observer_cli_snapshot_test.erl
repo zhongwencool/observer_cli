@@ -347,11 +347,19 @@ socket_helper_contract() ->
         info_fun => fun
             (Value) when Value =:= One ->
                 #{
+                    owner => self(),
                     domain => inet,
                     type => stream,
                     protocol => tcp,
+                    rstates => [bound],
+                    wstates => [connected],
                     counters => #{
-                        read_byte => 1, write_byte => 2
+                        read_byte => 1,
+                        write_byte => 2,
+                        read_pkg_max => 8,
+                        write_pkg_max => 9,
+                        acc_success => 3,
+                        acc_tries => 4
                     }
                 };
             (Value) when Value =:= Missing ->
@@ -366,6 +374,10 @@ socket_helper_contract() ->
     ?assertEqual(2, maps:get(disappeared_count, Audit)),
     ?assertEqual(true, maps:get(use_registry, Audit)),
     ?assertEqual([optional_sendfile_counter_absent], Coverage),
+    Item = maps:get(One, Items),
+    ?assertEqual({identifier, pid, self()}, maps:get(owner, Item)),
+    ?assertEqual([bound], maps:get(rstate, Item)),
+    ?assertEqual([connected], maps:get(wstate, Item)),
     ?assertEqual(
         {error, failed},
         observer_cli_snapshot:socket_sample(
@@ -388,7 +400,11 @@ socket_helper_contract() ->
     ?assertEqual(
         [],
         observer_cli_snapshot:socket_optional_coverage(#{
-            sendfile_byte => 0, sendfile_pkg => 0, sendfile_waits => 0, sendfile_fails => 0
+            sendfile_byte => 0,
+            sendfile_pkg => 0,
+            sendfile_pkg_max => 0,
+            sendfile_waits => 0,
+            sendfile_fails => 0
         })
     ).
 
@@ -3781,6 +3797,42 @@ socket_present_invalid_optional_counter_is_not_zero_test() ->
     ?assertEqual(invalid_optional, maps:get(status, maps:get(io, Metrics))),
     ?assertEqual(invalid_optional, maps:get(status, maps:get(write_bytes, Metrics))).
 
+socket_p0_fields_keep_current_metadata_and_window_semantics_test() ->
+    Socket = make_ref(),
+    First = socket_parity_item(Socket, self(), [bound], 2, 10),
+    Second = socket_parity_item(Socket, self(), [connected], 5, 20),
+    Window = observer_cli_snapshot:counter_window(
+        sockets, #{Socket => First}, #{Socket => Second}
+    ),
+    [WindowItem] = maps:get(items, Window),
+    ?assertEqual(6, maps:get(accepts, WindowItem)),
+    ?assertEqual(20, maps:get(max_packet, WindowItem)),
+    ?assertEqual([connected], maps:get(rstate, WindowItem)),
+    ?assertEqual({identifier, pid, self()}, maps:get(owner, WindowItem)),
+    Source = #{
+        available_fun => fun() -> true end,
+        count_fun => fun() -> 1 end,
+        global_fun => fun() -> #{use_registry => true} end,
+        all_fun => fun() -> {ok, [Socket]} end,
+        info_fun => fun(Requested) when Requested =:= Socket ->
+            (maps:without([raw_id, resource, counter_shape], Second))#{owner => self()}
+        end,
+        sleep_fun => fun(_Duration) -> ok end,
+        monotonic_fun => fun() -> erlang:monotonic_time(millisecond) end
+    },
+    Data = maps:get(
+        <<"data">>,
+        inspection(sockets, #{sort => io, limit => 1, test_socket_source => Source})
+    ),
+    [Item] = maps:get(<<"items">>, Data),
+    ?assertEqual(<<"pid-1">>, maps:get(<<"owner">>, Item)),
+    ?assertEqual([<<"connected">>], maps:get(<<"rstate">>, Item)),
+    ?assertEqual(10, maps:get(<<"accepts">>, Item)),
+    ?assertEqual(20, maps:get(<<"max_packet">>, Item)),
+    States = maps:get(<<"metric_states">>, Item),
+    ?assertEqual(<<"available">>, maps:get(<<"accepts">>, States)),
+    ?assertEqual(<<"available">>, maps:get(<<"max_packet">>, States)).
+
 diagnostic_inventory_admission_uses_mode_sample_count_test() ->
     Request = diagnostic_inventory_request(),
     Context = #{controller => self()},
@@ -3912,7 +3964,7 @@ diagnostic_inventory_request() ->
         },
         test_socket_source => #{
             available_fun => fun() -> true end,
-            count_fun => fun() -> 12000 end,
+            count_fun => fun() -> 10000 end,
             global_fun => fun() -> #{use_registry => true} end,
             all_fun => fun() -> {ok, []} end,
             info_fun => fun(_Socket) -> #{} end,
@@ -3942,6 +3994,36 @@ socket_trend_item(Socket, Value, Sendfile) ->
     #{
         raw_id => Socket,
         resource => {identifier, socket, Socket},
+        counters => Counters,
+        counter_shape => lists:sort(maps:keys(Counters))
+    }.
+
+socket_parity_item(Socket, Owner, RState, Value, MaxPacket) ->
+    Counters = #{
+        read_byte => Value,
+        write_byte => Value,
+        read_pkg => Value,
+        write_pkg => Value,
+        read_pkg_max => MaxPacket - 1,
+        write_pkg_max => MaxPacket,
+        acc_success => Value,
+        acc_tries => Value,
+        acc_waits => Value,
+        read_waits => Value,
+        write_waits => Value,
+        acc_fails => Value,
+        read_fails => Value,
+        write_fails => Value
+    },
+    #{
+        raw_id => Socket,
+        resource => {identifier, socket, Socket},
+        owner => {identifier, pid, Owner},
+        domain => inet,
+        type => stream,
+        protocol => tcp,
+        rstate => RState,
+        wstate => [],
         counters => Counters,
         counter_shape => lists:sort(maps:keys(Counters))
     }.

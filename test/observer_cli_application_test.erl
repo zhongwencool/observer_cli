@@ -238,16 +238,21 @@ diagnostics_application_attribution_uses_one_public_inventory_test() ->
             ),
         Data = maps:get(<<"data">>, Response),
         ?assertEqual(<<"group_leader_application">>, maps:get(<<"attribution">>, Data)),
-        ?assertEqual(<<"approximation">>, maps:get(<<"attribution_semantics">>, Data)),
+        ?assertEqual(<<"group_leader_chain">>, maps:get(<<"attribution_semantics">>, Data)),
         ?assertEqual(<<"fixture_list">>, maps:get(<<"inventory_path">>, Data)),
         ?assertEqual(2, maps:get(<<"scanned_count">>, Data)),
         ?assertEqual(0, maps:get(<<"unattributed_process_count">>, Data)),
-        [Item] = maps:get(<<"items">>, Data),
+        Items = maps:get(<<"items">>, Data),
+        Item = hd([I || #{<<"application">> := <<"observer_cli_goal08_app">>} = I <- Items]),
         ?assertEqual(<<"observer_cli_goal08_app">>, maps:get(<<"application">>, Item)),
         ?assertEqual(2, maps:get(<<"process_count">>, Item)),
         ?assertEqual(300, maps:get(<<"memory_bytes">>, Item)),
         ?assertEqual(true, maps:get(<<"loaded">>, Item)),
         ?assertEqual(true, maps:get(<<"running">>, Item)),
+        ?assertEqual(<<"1">>, maps:get(<<"version">>, Item)),
+        NoGroup = hd([I || #{<<"application">> := <<"no_group">>} = I <- Items]),
+        ?assertEqual(0, maps:get(<<"process_count">>, NoGroup)),
+        ?assertEqual(null, maps:get(<<"version">>, NoGroup)),
         receive
             {process_fold, Processes} -> ok
         end,
@@ -277,6 +282,81 @@ diagnostics_application_attribution_uses_one_public_inventory_test() ->
         end
     after
         lists:foreach(fun(Pid) -> exit(Pid, kill) end, [Leader, Root | Processes])
+    end.
+
+applications_follow_group_leader_chain_and_aggregate_no_group_test() ->
+    App = observer_cli_goal08_chain_app,
+    Leader = spawn(fun application_fixture/0),
+    Intermediate = spawn(fun application_fixture/0),
+    Unknown = spawn(fun application_fixture/0),
+    Root = spawn(fun application_fixture/0),
+    [Attributed, Unattributed] =
+        Processes = [
+            spawn(fun application_fixture/0), spawn(fun application_fixture/0)
+        ],
+    ProcessSource = diagnostics_process_source(Processes, fun
+        (Pid, Keys) when Pid =:= Attributed, is_list(Keys) ->
+            [
+                {memory, 100},
+                {message_queue_len, 2},
+                {reductions, 300},
+                {group_leader, Intermediate}
+            ];
+        (Pid, Keys) when Pid =:= Unattributed, is_list(Keys) ->
+            [
+                {memory, 40},
+                {message_queue_len, 4},
+                {reductions, 80},
+                {group_leader, Unknown}
+            ];
+        (Pid, group_leader) when Pid =:= Intermediate ->
+            {group_leader, Leader};
+        (Pid, group_leader) when Pid =:= Unknown ->
+            {group_leader, Unknown}
+    end),
+    AppSource = #{
+        loaded_fun => fun() -> [{App, "fixture", "1.2.3"}] end,
+        running_fun => fun(_Timeout) -> [{App, "fixture", "1.2.3"}] end,
+        supervisor_fun => fun(Requested) when Requested =:= App -> {ok, Root} end,
+        root_info_fun => fun(Requested, group_leader) when Requested =:= Root ->
+            {group_leader, Leader}
+        end
+    },
+    try
+        #{<<"status">> := <<"ok">>, <<"result">> := Response} =
+            observer_cli_snapshot:dispatch(
+                self(),
+                applications,
+                #{
+                    sort => memory,
+                    limit => 20,
+                    test_process_source => ProcessSource,
+                    test_application_source => AppSource
+                },
+                #{timeout_ms => 3000, identifier_policy => include}
+            ),
+        Data = maps:get(<<"data">>, Response),
+        ?assertEqual(1, maps:get(<<"unattributed_process_count">>, Data)),
+        Items = maps:get(<<"items">>, Data),
+        AppItem = hd([I || #{<<"application">> := <<"observer_cli_goal08_chain_app">>} = I <- Items]),
+        ?assertEqual(100, maps:get(<<"memory_bytes">>, AppItem)),
+        ?assertEqual(<<"1.2.3">>, maps:get(<<"version">>, AppItem)),
+        NoGroup = hd([I || #{<<"application">> := <<"no_group">>} = I <- Items]),
+        ?assertEqual(1, maps:get(<<"process_count">>, NoGroup)),
+        ?assertEqual(40, maps:get(<<"memory_bytes">>, NoGroup)),
+        ?assertEqual(80, maps:get(<<"reductions">>, NoGroup)),
+        ?assertEqual(4, maps:get(<<"message_queue_len">>, NoGroup)),
+        ?assertEqual(false, maps:get(<<"loaded">>, NoGroup)),
+        ?assertEqual(false, maps:get(<<"running">>, NoGroup)),
+        ?assertEqual(null, maps:get(<<"version">>, NoGroup)),
+        receive
+            {process_fold, Processes} -> ok
+        end
+    after
+        lists:foreach(
+            fun(Pid) -> exit(Pid, kill) end,
+            [Leader, Intermediate, Unknown, Root | Processes]
+        )
     end.
 
 application_post_enumeration_refusal_skips_attribution_test() ->

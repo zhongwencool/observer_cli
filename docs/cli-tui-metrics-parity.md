@@ -2,9 +2,7 @@
 
 日期：2026-07-12
 
-当前代码基线：`develop@3d8761d`。`2f9a0c4` 之后的 CLI 生产代码改动是校验与
-dispatch 去重，没有增加新指标或改变现有 schema；本文仍按当前 collector 的实际
-返回字段重新核对。
+当前代码基线：本文件所在提交的代码；本文按当前 collector 的实际返回字段核对。
 
 ## 1. 范围与判定方法
 
@@ -48,15 +46,15 @@ store 和 collector 进程，因此 process、port、atom、memory、reductions�
 | Process Info | `process TARGET`、`gen-server-state TARGET` | 部分覆盖 | `messages`、`dictionary` 有意排除；state 只返回有界 shape |
 | Network | `network` | 部分覆盖 | 字段已覆盖；collector 未直接复用 recon 的两种视角 |
 | Ports | `ports`、`port TARGET` | 已覆盖 | 列表字段及有界详情均覆盖；`locking` 为实现相关信息 |
-| Sockets | `sockets` | 部分覆盖 | general counters、endpoint/state/owner/fd、accept/max packet、详情 counters/options |
+| Sockets | `sockets` | 部分覆盖 | general counters、endpoint/fd、非 counter 排序、详情 counters/options |
 | System | `snapshot`、`memory`、`schedulers`、`distribution`、`network` | 部分覆盖 | 主机 RSS/VSZ、CPU 拓扑细项、distribution 连接细节 |
 | ETS | `ets` | 已覆盖 | 包含 write/read concurrency |
 | Mnesia | `mnesia` | 部分覆盖 | type、owner、index、registered name |
-| App | `applications` | 部分覆盖 | version；`no_group` 只有数量，没有完整资源聚合行 |
+| App | `applications` | 已覆盖 | 包含 version、递归 group leader 归属和 `no_group` 聚合行 |
 | Doc | 无 | 不属于指标 | TUI 内置帮助，不需要做成指标命令 |
 | Plugin | 无 | 未实现扩展协议 | CLI 没有执行 TUI plugin sheet 的通用命令 |
 
-Ports 与 ETS 已达到当前 TUI 可见字段的等价覆盖；其他数据页仍有字段或语义
+Ports、ETS 与 Applications 已达到当前 TUI 可见字段的等价覆盖；其他数据页仍有字段或语义
 缺口。CLI 已覆盖主要资源清单和自动化所需的稳定 envelope，但它不是 TUI
 页面的无损文本导出。
 
@@ -262,16 +260,16 @@ TUI 与 CLI 都排除 `tcp_inet`、`udp_inet`、`sctp_inet`，只在 Ports 页�
 | read/write/io bytes | 同名 metrics | 已覆盖 | point-in-time total 或显式 delta |
 | packets | `packets` | 已覆盖 | required/optional counter 状态另行返回 |
 | waits/fails | 同名 metrics | 已覆盖 | |
-| owner | 无 | 未实现 | |
+| owner | `owner` | 已覆盖 | 使用现有 PID identifier/redaction 语义 |
 | fd | 无 | 未实现 | |
 | local/remote endpoint | 无 | 未实现 | CLI 明确不额外获取 endpoint |
-| read/write state | 无 | 未实现 | |
-| accept success/tries | 无 | 未实现 | TUI 可显示并按 accepts 排序 |
-| max packet | 无 | 未实现 | TUI 可显示并排序 |
+| read/write state | `rstate`、`wstate` | 已覆盖 | 来自同一次 `socket:info/1` |
+| accept success/tries | `accepts` | 已覆盖 | success + tries；累计值或 duration delta |
+| max packet | `max_packet` | 已覆盖 | read/write/sendfile 当前最大 packet；duration 使用第二次采样值 |
 | sort by id/fd/owner/domain/type/protocol | 无 | 未实现 | CLI 只按六个 counter metric 排序 |
 | general：socket/monitor/domain/type/protocol counts、iov_max | 无 | 未实现 | |
 | detail：monitored_by | 无 | 未实现 | |
-| detail：完整 counters | 无 | 未实现 | CLI 只公开聚合后的六个 metrics |
+| detail：完整 counters | 无 | 未实现 | CLI 只公开聚合后的七个 counter metrics 和 max packet |
 | detail：socket options | 无 | 未实现 | |
 
 CLI 的 `registry_known_count`、`use_registry`、born/gone/reset/shape-change lifecycle 是
@@ -356,30 +354,23 @@ CLI 只列 local tables，并明确区分 RAM/disc memory bytes 与 disc-only di
 | reductions | `reductions` | 已覆盖 | |
 | message queue len | `message_queue_len` | 已覆盖 | |
 | status | `loaded` + `running` | 已覆盖 | 表达形式不同 |
-| version | 无 | 未实现 | |
-| `no_group` 完整聚合行 | 只有 `unattributed_process_count` | 部分覆盖 | 未返回 unattributed memory/reductions/msgq |
+| version | `version` | 已覆盖 | 来自 `application:loaded_applications/0` |
+| `no_group` 完整聚合行 | `items` 中的 `no_group` | 已覆盖 | 参与现有排序和 `--limit`，顶层 count 继续保留 |
 
-两边都按 group leader 推断 application 归属，但语义尚不完全一致：TUI 在直接
-group leader 无法匹配 application 时会递归追溯，CLI `application_stats/2` 只做一次
-直接匹配，未匹配的进程计入 `unattributed_process_count`。CLI 因此明确标记
-`attribution_semantics=approximation`。
+两边都沿 group leader 链递归推断 application 归属；无法解析、本地已退出或远程的
+leader 归入 `no_group`。CLI 标记 `attribution_semantics=group_leader_chain`。
 
 ## 13. 值得优化的修改点
 
 以“排障价值 / 实现成本 / 数据暴露面”排序，而不是追求字段数量相等。
 
-### P0：优先修正现有 collector 丢掉的高价值数据
+### P0：已完成——修正现有 collector 丢掉的高价值数据
 
-1. **Applications 归属与 `no_group` 聚合**：让 `application_stats/2` 与 TUI 一样追溯
-   group leader，并返回未归属进程的 memory/reductions/message queue 合计。当前已经
-   扫描这四个进程字段，不需要增加第二次全量扫描。
-2. **Applications version**：`loaded_fun` 已返回 `{App, Description, Version}`，当前在构建
-   `LoadedSet` 时丢弃了 version。直接保留并放入 application item 即可补齐，不需要
-   新 probe。
-3. **Sockets 列表的 owner/state/accepts/max packet**：`socket_sample/1` 已获取
-   `socket:info/1`，但只保留 domain/type/protocol 和部分 counters。owner、read/write state
-   可直接从同一 map 取值；accepts 和 max packet 只需扩大现有 counter allowlist 并派生
-   指标，不需要新的枚举路径。
+1. **Applications 归属与 `no_group` 聚合**：已沿 group leader 链追溯，并在同一次进程
+   inventory 中汇总未归属进程的 memory/reductions/message queue。
+2. **Applications version**：已保留 `loaded_fun` 返回的 version，无新增 probe。
+3. **Sockets owner/state/accepts/max packet**：已复用同一次 `socket:info/1` 并扩大现有
+   counter allowlist，无新增枚举路径。
 
 ### P1：有明确诊断价值，但需额外采集
 
@@ -421,5 +412,5 @@ group leader 无法匹配 application 时会递归追溯，CLI `application_stat
 - limit、timeout、resource budget、born/gone/reset/shape-change 语义。
 
 结论：命令式 CLI 已实现 TUI 的主要“资源是什么、当前多大、Top N 是谁”，但尚未实现
-TUI 的全部“详情和辅助上下文”。当前最值得补齐的是 Applications 归属/聚合、
-Socket 列表中已采集但被丢弃的 metadata/counters，以及 Distribution 连接上下文。
+TUI 的全部“详情和辅助上下文”。P0 中已采集但被丢弃的数据已经补齐；下一步最值得
+补充的是 Distribution 连接上下文、逐 scheduler 利用率和 Mnesia metadata。
