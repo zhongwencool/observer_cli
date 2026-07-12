@@ -22,7 +22,38 @@
 ]).
 
 -ifdef(TEST).
--export([context_path/0, write_context/2, read_context/1, decode_context/1, delete_context/1]).
+-export([
+    context_path/0,
+    write_context/2,
+    read_context/1,
+    decode_context/1,
+    delete_context/1,
+    validate_list_values/2,
+    validate_scheduler_timeout/2,
+    context_term/1,
+    decode_context_fields/3,
+    decode_context_source/1,
+    finish_target/3,
+    valid_env_name/1,
+    safe_cookie_file_mode/1,
+    strip_cookie_lf/1,
+    valid_application_name/1,
+    valid_mfa_text/1,
+    duration_ms/1,
+    multiply_duration/2,
+    reason_code/1,
+    ensure_context_dir/1,
+    safe_context_destination/1,
+    atomic_write_context/2,
+    readable_context_dir/1,
+    read_context_file/1,
+    read_context_bytes/1,
+    decode_context_binary/1,
+    delete_context_file/1,
+    read_cookie_bytes/1,
+    read_cookie_file/1,
+    finish_atomic_write/3
+]).
 -endif.
 
 -define(MAX_RESPONSE_BYTES, 1024 * 1024).
@@ -752,7 +783,10 @@ atomic_write_open(File, Temp, Path, Binary) ->
             Error -> Error
         end,
     Close = file:close(File),
-    case {Result, Close} of
+    finish_atomic_write(Temp, Path, {Result, Close}).
+
+finish_atomic_write(Temp, Path, Outcome) ->
+    case Outcome of
         {ok, ok} ->
             case file:rename(Temp, Path) of
                 ok -> ok;

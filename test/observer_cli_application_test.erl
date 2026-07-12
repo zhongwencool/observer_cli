@@ -630,4 +630,17 @@ application_fixture() ->
         stop -> ok
     end.
 
+dead_application_leader_test() ->
+    Dead = spawn(fun() -> ok end),
+    Mon = erlang:monitor(process, Dead),
+    receive
+        {'DOWN', Mon, process, Dead, normal} -> ok
+    end,
+    ?assertEqual(
+        #{},
+        observer_cli_application:leader_info([
+            {running, [{app, Dead}, invalid]}
+        ])
+    ).
+
 -endif.

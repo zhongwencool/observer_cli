@@ -44,7 +44,11 @@
     state_footer/2,
     truncate_str/2,
     format_mod/1,
-    format/1
+    format/1,
+    collect_process_extra/2,
+    binary_refs_summary/1,
+    format_suspending/1,
+    wait_for_state_view/4
 ]).
 -endif.
 

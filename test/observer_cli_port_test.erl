@@ -272,6 +272,57 @@ collect_ports_info_test() ->
         port_close(Port)
     end.
 
+port_runtime_helper_contract_test() ->
+    ?assertNot(observer_cli_port:keep_port(dead)),
+    ?assertNot(observer_cli_port:keep_port({0, 0, #{controls => "tcp_inet", name => "name"}})),
+    ?assert(observer_cli_port:keep_port({0, 0, #{controls => "efile", name => "efile"}})),
+    ?assertEqual(2, observer_cli_port:sort_value(memory, #{memory => 2})),
+    ?assertEqual(0, observer_cli_port:sort_value(memory, #{memory => invalid})),
+    ?assertEqual("controls", observer_cli_port:port_controls(invalid, [{controls, "controls"}])),
+    ?assertEqual("name", observer_cli_port:port_controls(invalid, [{name, "name"}])),
+    ?assertEqual("2", observer_cli_port:monitor_count([one, two])),
+    ?assertEqual("0", observer_cli_port:monitor_count(invalid)),
+    ?assert(is_list(observer_cli_port:monitor_to_list({process, self()}))),
+    ?assert(is_list(observer_cli_port:monitor_to_list({registered, node()}))),
+    ?assert(is_list(observer_cli_port:monitor_to_list(self()))),
+    ?assert(is_list(observer_cli_port:monitor_to_list(other))),
+    ?assertEqual([], observer_cli_port:render_option_rows([], [10, 10, 10, 10, 10, 10, 10, 10])),
+    ?assertNotEqual(
+        [],
+        observer_cli_port:render_option_rows(
+            [{active, false}], [10, 10, 10, 10, 10, 10, 10, 10]
+        )
+    ),
+    Port = open_port({spawn, "cat"}, [binary]),
+    try
+        ?assertMatch({0, _, #{port := Port}}, observer_cli_port:port_overview(Port, memory))
+    after
+        port_close(Port)
+    end,
+    ?assertEqual(dead, observer_cli_port:port_overview(Port, memory)),
+    {ok, Listen} = gen_tcp:listen(0, [binary, {active, false}]),
+    try
+        ?assert(is_list(observer_cli_port:collect_sock_opts(Listen)))
+    after
+        gen_tcp:close(Listen)
+    end,
+    ?assert(is_list(observer_cli_port:collect_sock_opts(invalid_port))),
+    ?assertEqual(
+        {active, true},
+        observer_cli_port:collect_sock_opt_result(
+            active, {ok, [{active, true}]}
+        )
+    ),
+    ?assertEqual({active, "-"}, observer_cli_port:collect_sock_opt_result(active, {ok, []})),
+    ?assertEqual(
+        {active, "Not Supported"},
+        observer_cli_port:collect_sock_opt_result(active, {error, einval})
+    ),
+    ?assertMatch(
+        {active, [$e, $r, $r, $o, $r, $: | _]},
+        observer_cli_port:collect_sock_opt_result(active, {error, failed})
+    ).
+
 select_port_test() ->
     Port0 = open_port({spawn, "cat"}, [binary]),
     try
@@ -298,7 +349,9 @@ render_ports_info_test() ->
         monitored_by => [self()]
     },
     Rows = observer_cli_port:render_ports_info({1, [{0, 0, PortInfo}]}, queue_size),
+    MemoryRows = observer_cli_port:render_ports_info({1, [{0, 0, PortInfo}]}, memory),
     Text = lists:flatten(Rows),
+    ?assert(string:find(lists:flatten(MemoryRows), "Memory") =/= nomatch),
     ?assert(string:find(Text, "Controls") =/= nomatch),
     ?assert(string:find(Text, "Mon/By") =/= nomatch).
 

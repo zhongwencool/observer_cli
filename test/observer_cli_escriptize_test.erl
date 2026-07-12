@@ -35,6 +35,179 @@ command_request_converts_validated_cli_values_test() ->
                 replace_existing_trace => true
             }
         )
+    ),
+    ?assertEqual(
+        #{action => stop_all},
+        observer_cli_escriptize:command_request(trace, ["stop"], #{})
+    ),
+    ?assertEqual(
+        #{target => "server"},
+        observer_cli_escriptize:command_request(gen_server_state, ["server"], #{})
+    ),
+    ?assertEqual(
+        #{app => "kernel"},
+        observer_cli_escriptize:command_request(supervision_tree, [], #{app => "kernel"})
+    ),
+    ?assertEqual(
+        #{deep => true},
+        observer_cli_escriptize:command_request(snapshot, [], #{deep => true, limit => "20"})
+    ),
+    ?assertEqual(
+        #{observe => "5s", app => "kernel"},
+        observer_cli_escriptize:command_request(
+            diagnose, [], #{observe => "5s", app => "kernel", limit => "20"}
+        )
+    ),
+    ?assertEqual(
+        #{sort => memory, limit => 20, duration_ms => 250},
+        observer_cli_escriptize:command_request(
+            sockets, [], #{sort => "memory", limit => "20", duration => "250ms"}
+        )
+    ).
+
+controller_boundary_helpers_test() ->
+    ?assertEqual(trace_call, observer_cli_escriptize:response_command(trace, #{action => call})),
+    ?assertEqual(
+        trace_stop_all,
+        observer_cli_escriptize:response_command(trace, #{action => stop_all})
+    ),
+    ?assertEqual(memory, observer_cli_escriptize:response_command(memory, #{})),
+    ?assert(observer_cli_escriptize:valid_probe_reason(<<"ok">>, null)),
+    ?assert(observer_cli_escriptize:valid_probe_reason(<<"error">>, <<"probe_failed">>)),
+    ?assertNot(observer_cli_escriptize:valid_probe_reason(<<"ok">>, <<"reason">>)),
+    lists:foreach(
+        fun({Command, Probe}) ->
+            ?assertEqual(Probe, observer_cli_escriptize:required_probe_id(Command))
+        end,
+        [
+            {memory, <<"memory">>},
+            {schedulers, <<"scheduler_wall_time">>},
+            {distribution, <<"distribution">>},
+            {processes, <<"process_inventory">>},
+            {process, <<"process_info">>},
+            {port, <<"port_info">>},
+            {applications, <<"application_inventory">>},
+            {ets, <<"ets_inventory">>},
+            {mnesia, <<"mnesia_inventory">>},
+            {network, <<"network_inventory">>},
+            {ports, <<"port_inventory">>},
+            {sockets, <<"socket_inventory">>},
+            {gen_server_state, <<"gen_server_state">>},
+            {supervision_tree, <<"supervision_tree">>},
+            {trace_call, <<"trace">>},
+            {trace_stop_all, <<"trace">>},
+            {unknown, undefined}
+        ]
+    ),
+    PointerValue = #{<<"a/b">> => #{<<"~key">> => [value]}},
+    ?assert(observer_cli_escriptize:pointer_exists(PointerValue, <<"/a~1b/~0key/0">>)),
+    lists:foreach(
+        fun(Pointer) ->
+            ?assertNot(observer_cli_escriptize:pointer_exists(PointerValue, Pointer))
+        end,
+        [
+            <<>>,
+            <<"missing-slash">>,
+            <<"/~2">>,
+            <<"/a~1b/missing">>,
+            <<"/a~1b/~0key/00">>,
+            <<"/a~1b/~0key/nope">>,
+            <<"/a~1b/~0key/2">>,
+            <<"/a~1b/~0key/0/extra">>
+        ]
+    ),
+    lists:foreach(
+        fun(Value) -> ?assert(observer_cli_escriptize:public_value(Value, 0)) end,
+        [null, true, false, 1, 1.5, <<"text">>, [1, 2], #{<<"key">> => <<"value">>}]
+    ),
+    ?assertNot(observer_cli_escriptize:public_value(<<16#ff>>, 0)),
+    ?assertNot(observer_cli_escriptize:public_value(#{atom_key => value}, 0)),
+    ?assertNot(observer_cli_escriptize:public_value(self(), 0)),
+    ?assertNot(observer_cli_escriptize:public_value(value, 33)),
+    lists:foreach(
+        fun({Class, Priority}) ->
+            ?assertEqual(Priority, observer_cli_escriptize:response_class_priority(Class))
+        end,
+        [
+            {<<"cleanup">>, 4},
+            {<<"schema">>, 4},
+            {<<"internal">>, 4},
+            {<<"safety_refusal">>, 3},
+            {<<"connection">>, 3},
+            {<<"required_probe">>, 3},
+            {<<"partial">>, 3},
+            {<<"capability">>, 2},
+            {<<"argument">>, 2},
+            {<<"unknown">>, 4}
+        ]
+    ),
+    ?assertEqual(json, observer_cli_escriptize:command_format(#{json => true})),
+    ?assertEqual(json, observer_cli_escriptize:command_format(#{format => "json"})),
+    ?assertEqual(term, observer_cli_escriptize:command_format(#{format => "term"})),
+    ?assertEqual(text, observer_cli_escriptize:command_format(#{})),
+    ?assertEqual(memory, observer_cli_escriptize:command_from_args(["memory"])),
+    ?assertEqual(memory, observer_cli_escriptize:command_from_args(["--json", "memory"])),
+    ?assertEqual(undefined, observer_cli_escriptize:command_from_args(["unknown"])),
+    ?assertEqual(undefined, observer_cli_escriptize:command_from_args([])),
+    ?assertEqual(json, observer_cli_escriptize:requested_format(["--json"])),
+    ?assertEqual(json, observer_cli_escriptize:requested_format(["--format", "json"])),
+    ?assertEqual(term, observer_cli_escriptize:requested_format(["x", "--format", "term"])),
+    ?assertEqual(text, observer_cli_escriptize:requested_format([])).
+
+command_output_and_error_paths_test() ->
+    Response = observer_cli_cli:envelope(memory, null, null, #{<<"value">> => 1}, [], []),
+    assert_halt(7, fun() ->
+        observer_cli_escriptize:command_output(#{format => "term"}, Response, 7)
+    end),
+    assert_halt(2, fun() ->
+        observer_cli_escriptize:command_error(memory, #{}, argument, invalid_arguments)
+    end),
+    assert_halt(3, fun() ->
+        observer_cli_escriptize:command_error(memory, term, connection, connection_failed)
+    end),
+    Oversized = observer_cli_cli:envelope(
+        memory, null, null, #{<<"value">> => binary:copy(<<"x">>, 1024 * 1024)}, [], []
+    ),
+    assert_halt(4, fun() ->
+        observer_cli_escriptize:command_output(#{format => "term"}, Oversized, 0)
+    end),
+    EncodeError = #{category => internal, reason => encoding_failed},
+    assert_halt(4, fun() -> observer_cli_escriptize:output_encode_error(EncodeError) end),
+    assert_halt(2, fun() ->
+        observer_cli_escriptize:output_command_encode_error(
+            memory, json, #{category => capability, reason => json_unavailable}
+        )
+    end),
+    assert_halt(4, fun() ->
+        observer_cli_escriptize:output_command_encode_error(memory, text, EncodeError)
+    end),
+    assert_halt(2, fun() ->
+        observer_cli_escriptize:main(["memory", "--invalid"])
+    end),
+    assert_halt(2, fun() ->
+        observer_cli_escriptize:main(["memory"])
+    end),
+    {ok, _} = observer_cli_test_io:capture_with_geometry(
+        24, 80, [], fun() -> observer_cli_escriptize:main(["unknown", "--help"]) end
+    ).
+
+assert_halt(Expected, Fun) ->
+    {ok, _Output} = observer_cli_test_io:capture_with_geometry(
+        24,
+        80,
+        [],
+        fun() ->
+            put(observer_cli_test_halt_fun, fun(Code) -> throw({halt, Code}) end),
+            put(observer_cli_test_output, capture),
+            try Fun() of
+                _ -> ?assert(false)
+            catch
+                throw:{halt, Expected} -> ok
+            after
+                erase(observer_cli_test_halt_fun),
+                erase(observer_cli_test_output)
+            end
+        end
     ).
 
 required_modules_test_() ->
@@ -1303,6 +1476,72 @@ snapshot_escript_envelopes_test_() ->
 diagnose_escript_exit_codes_test_() ->
     {timeout, 30, fun diagnose_escript_exit_codes/0}.
 
+direct_remote_command_suite_test_() ->
+    {timeout, 90, fun direct_remote_command_suite/0}.
+
+direct_remote_command_suite() ->
+    ?assertEqual(nonode@nohost, node()),
+    Cookie = observer_cli_direct_command_cookie,
+    {Port, Target} = start_target(shortnames, Cookie, [
+        snapshot_beam_dir(), filename:join(code:lib_dir(recon), "ebin")
+    ]),
+    Root = temporary_directory("observer_cli_direct_command_home"),
+    CookieEnv = "OBSERVER_CLI_DIRECT_COMMAND_COOKIE",
+    PreviousHome = os:getenv("HOME"),
+    true = os:putenv("HOME", Root),
+    true = os:putenv(CookieEnv, atom_to_list(Cookie)),
+    try
+        assert_command_ok(
+            connect,
+            #{
+                node => atom_to_list(Target),
+                cookie_env => CookieEnv,
+                arguments => [],
+                timeout => "10s"
+            }
+        ),
+        assert_command_ok(status, #{arguments => [], timeout => "10s"}),
+        lists:foreach(
+            fun({Command, Options}) ->
+                assert_command_ok(Command, Options#{timeout => "15s"})
+            end,
+            [
+                {snapshot, #{arguments => [], deep => true}},
+                {diagnose, #{arguments => []}},
+                {memory, #{arguments => []}},
+                {schedulers, #{arguments => [], duration => "250ms"}},
+                {distribution, #{arguments => [], limit => "20"}},
+                {processes, #{
+                    arguments => [], sort => "reductions", limit => "5", duration => "250ms"
+                }},
+                {process, #{arguments => ["init"]}},
+                {applications, #{arguments => [], sort => "memory", limit => "5"}},
+                {ets, #{arguments => [], sort => "size", limit => "5"}},
+                {mnesia, #{arguments => [], sort => "memory", limit => "5"}},
+                {network, #{arguments => [], sort => "oct", limit => "5", duration => "250ms"}},
+                {ports, #{arguments => [], sort => "io", limit => "5"}},
+                {port, #{arguments => ["#Port<0.0>"]}},
+                {sockets, #{arguments => [], sort => "io", limit => "5", duration => "250ms"}},
+                {gen_server_state, #{arguments => ["init"]}},
+                {supervision_tree, #{arguments => [], app => "kernel"}},
+                {trace, #{arguments => ["stop"]}}
+            ]
+        ),
+        assert_command_ok(disconnect, #{arguments => []})
+    after
+        true = os:unsetenv(CookieEnv),
+        restore_os_env("HOME", PreviousHome),
+        file:del_dir_r(Root),
+        stop_target(Port)
+    end,
+    ?assertEqual(nonode@nohost, node()).
+
+assert_command_ok(Command, Options) ->
+    case observer_cli_escriptize:run_command(Command, Options) of
+        {ok, #{<<"schema">> := <<"observer_cli.cli/v1">>}, _} -> ok;
+        Result -> erlang:error({command_failed, Command, Result})
+    end.
+
 diagnose_escript_exit_codes() ->
     ?assertEqual(nonode@nohost, node()),
     {Escript, Script} = context_escript(),
@@ -1490,6 +1729,529 @@ snapshot_escript_envelopes() ->
         stop_target(Port)
     end,
     ?assertEqual(nonode@nohost, node()).
+
+response_validation_boundaries_test() ->
+    ?assert(
+        observer_cli_escriptize:valid_target(
+            #{<<"node">> => <<"target@host">>, <<"otp_release">> => <<"28">>},
+            include,
+            <<"target@host">>
+        )
+    ),
+    ?assert(
+        observer_cli_escriptize:valid_target(
+            #{<<"node">> => <<"node-1">>, <<"otp_release">> => <<"28">>}, redact, ignored
+        )
+    ),
+    ?assertNot(observer_cli_escriptize:valid_target(#{}, include, <<"target">>)),
+    ?assert(observer_cli_escriptize:valid_otp_release(<<"28">>)),
+    ?assertNot(observer_cli_escriptize:valid_otp_release(<<"028">>)),
+    ?assertNot(observer_cli_escriptize:valid_otp_release(invalid)),
+    ?assert(observer_cli_escriptize:valid_rfc3339(<<"2026-07-12T00:00:00Z">>)),
+    ?assertNot(observer_cli_escriptize:valid_rfc3339(<<"not-a-timeZ">>)),
+    ?assertNot(observer_cli_escriptize:valid_rfc3339(<<"2026-07-12">>)),
+    ?assertNot(observer_cli_escriptize:valid_rfc3339(invalid)),
+    Probe = #{
+        <<"id">> => <<"runtime">>,
+        <<"required">> => true,
+        <<"status">> => <<"ok">>,
+        <<"reason_code">> => null,
+        <<"duration_ms">> => 1,
+        <<"samples">> => 1,
+        <<"coverage">> => []
+    },
+    ?assert(observer_cli_escriptize:valid_probe(Probe)),
+    ?assertNot(observer_cli_escriptize:valid_probe(Probe#{<<"status">> := <<"bad">>})),
+    ?assertNot(observer_cli_escriptize:valid_probe(invalid)),
+    Errors = [#{<<"class">> => <<"argument">>, <<"reason_code">> => <<"bad_value">>}],
+    ?assert(observer_cli_escriptize:valid_errors(Errors)),
+    ?assertNot(observer_cli_escriptize:valid_errors([#{}])),
+    ?assertNot(observer_cli_escriptize:valid_errors(invalid)),
+    lists:foreach(
+        fun({Class, Reason}) ->
+            ?assert(observer_cli_escriptize:valid_error_class(Class, Reason))
+        end,
+        [
+            {<<"cleanup">>, <<"cleanup_unconfirmed">>},
+            {<<"internal">>, <<"internal_error">>},
+            {<<"schema">>, <<"invalid_schema">>},
+            {<<"capability">>, <<"capability_unavailable">>},
+            {<<"argument">>, <<"bad_value">>}
+        ]
+    ),
+    ?assertNot(observer_cli_escriptize:valid_error_class(<<"argument">>, <<"invalid_schema">>)),
+    ?assertNot(observer_cli_escriptize:valid_error_class(invalid, invalid)),
+    validation_payload_contract(Probe),
+    validation_redaction_contract(),
+    Outcome = {ok, response, 0},
+    ?assertEqual(
+        Outcome,
+        observer_cli_escriptize:apply_error_priority(
+            #{<<"errors">> => []}, Outcome
+        )
+    ),
+    Partial = #{<<"capture">> => #{<<"status">> => <<"partial">>}},
+    ?assertEqual(
+        4,
+        observer_cli_escriptize:response_errors_exit_code(
+            Partial, [#{<<"class">> => <<"schema">>}]
+        )
+    ),
+    ?assertEqual(3, observer_cli_escriptize:response_errors_exit_code(Partial, [])),
+    ?assertEqual(
+        snapshot,
+        observer_cli_escriptize:command_from_arguments([
+            "--json", "snapshot"
+        ])
+    ),
+    ?assertEqual(undefined, observer_cli_escriptize:command_from_arguments(["--json"])),
+    ?assertEqual(undefined, observer_cli_escriptize:cookie_atom(undefined)),
+    ?assertEqual(test_cookie, observer_cli_escriptize:cookie_atom("test_cookie")),
+    ?assertEqual(ok, observer_cli_escriptize:maybe_set_target_cookie(node(), undefined)),
+    ?assertEqual({error, cleanup_unconfirmed}, observer_cli_escriptize:stop_controller(0)),
+    ?assertEqual(
+        #{sort => memory, limit => 2, duration_ms => 1000},
+        observer_cli_escriptize:request_options(
+            #{sort => "memory", limit => "2", duration => "1s"}
+        )
+    ),
+    Complete = #{<<"capture">> => #{<<"status">> => <<"complete">>}},
+    PartialResponse = #{<<"capture">> => #{<<"status">> => <<"partial">>}},
+    ?assertEqual({ok, Complete, 0}, observer_cli_escriptize:snapshot_response(Complete)),
+    ?assertEqual(
+        {ok, PartialResponse, 3},
+        observer_cli_escriptize:snapshot_response(PartialResponse)
+    ),
+    ?assertEqual(
+        {error, schema, invalid_snapshot_response},
+        observer_cli_escriptize:snapshot_response(#{})
+    ),
+    ?assertEqual(
+        3,
+        observer_cli_escriptize:unavailable_exit_code([
+            #{<<"status">> => <<"unavailable">>, <<"reason_code">> => <<"scan_budget_exceeded">>}
+        ])
+    ),
+    ?assertEqual(
+        2,
+        observer_cli_escriptize:unavailable_exit_code([
+            #{<<"status">> => <<"unavailable">>, <<"reason_code">> => <<"capability_unavailable">>}
+        ])
+    ),
+    ?assertEqual(
+        3,
+        observer_cli_escriptize:unavailable_exit_code([
+            #{<<"status">> => <<"unavailable">>, <<"reason_code">> => <<"other">>}
+        ])
+    ),
+    ?assertEqual(none, observer_cli_escriptize:unavailable_exit_code([])),
+    DiagnoseNone = Complete#{<<"data">> => #{<<"findings">> => []}},
+    DiagnoseSome = Complete#{<<"data">> => #{<<"findings">> => [finding]}},
+    ?assertEqual({ok, DiagnoseNone, 0}, observer_cli_escriptize:diagnose_response(DiagnoseNone)),
+    ?assertEqual({ok, DiagnoseSome, 1}, observer_cli_escriptize:diagnose_response(DiagnoseSome)),
+    ?assertEqual(
+        {ok, PartialResponse, 3},
+        observer_cli_escriptize:diagnose_response(PartialResponse)
+    ),
+    ?assertEqual(
+        {error, schema, invalid_diagnose_response},
+        observer_cli_escriptize:diagnose_response(#{})
+    ),
+    ?assertMatch(
+        {ok, #{node := "target@host"}},
+        observer_cli_escriptize:active_options(
+            #{node => "target@host"}
+        )
+    ),
+    ?assertMatch(
+        {ok, _},
+        observer_cli_escriptize:random_cookie(
+            fun() -> binary:copy(<<1>>, 24) end
+        )
+    ),
+    ?assertEqual(error, observer_cli_escriptize:random_cookie(fun() -> <<1>> end)),
+    ?assertEqual(error, observer_cli_escriptize:random_cookie(fun() -> error(failed) end)),
+    ?assertEqual(
+        {error, connection, connection_failed},
+        observer_cli_escriptize:connect_before(target, fun(_) -> true end, 0)
+    ),
+    ?assertEqual(ok, observer_cli_escriptize:connect_before(target, fun(_) -> true end, 100)),
+    ?assertEqual(
+        {error, connection, connection_failed},
+        observer_cli_escriptize:connect_before(target, fun(_) -> false end, 100)
+    ),
+    ?assertEqual(
+        {error, connection, connection_failed},
+        observer_cli_escriptize:connect_before(target, fun(_) -> exit(failed) end, 100)
+    ),
+    ?assertEqual(
+        {error, connection, connection_failed},
+        observer_cli_escriptize:connect_before(
+            target,
+            fun(_) -> receive
+                after infinity -> true
+                end end,
+            1
+        )
+    ),
+    ?assertEqual(
+        {error, required_probe, target_timeout},
+        observer_cli_escriptize:capabilities(node(), 0)
+    ),
+    ?assertEqual(
+        {ok, #{protocol_version => 1}},
+        observer_cli_escriptize:capabilities(node(), 1000)
+    ),
+    ?assertEqual(
+        {error, schema, invalid_command_response},
+        observer_cli_escriptize:validated_response(memory, include, node(), invalid, fun(X) -> X end)
+    ),
+    ?assertEqual(
+        {error, required_probe, target_timeout},
+        observer_cli_escriptize:run_snapshot(node(), #{}, #{}, 0)
+    ),
+    ?assertEqual(
+        {error, required_probe, invalid_timeout},
+        observer_cli_escriptize:run_snapshot(node(), #{timeout => "bad"}, #{}, 100)
+    ),
+    ?assertEqual(
+        {error, required_probe, target_timeout},
+        observer_cli_escriptize:run_dispatch(node(), memory, #{}, #{}, 0)
+    ),
+    ?assertEqual(
+        {error, required_probe, target_timeout},
+        observer_cli_escriptize:run_diagnose(node(), #{}, 0)
+    ),
+    ?assertMatch(
+        {ok, #{<<"value">> := 1}},
+        observer_cli_escriptize:target_dispatch(
+            node(), test_echo, #{value => 1}, #{}, include, 3000
+        )
+    ),
+    ?assertEqual(
+        {error, required_probe, <<"probe_failed">>},
+        observer_cli_escriptize:target_dispatch(
+            node(), test_crash, self(), #{}, include, 3000
+        )
+    ),
+    ?assertEqual(
+        {error, capability, no_active_context},
+        observer_cli_escriptize:probe_options(#{}, fun(_, _, _) -> ok end)
+    ),
+    ?assertEqual(
+        {error, argument, missing_cookie_source},
+        observer_cli_escriptize:probe_options(
+            #{node => "target@host"}, fun(_, _, _) -> ok end
+        )
+    ),
+    ?assertEqual(
+        {error, controller, random_cookie_unavailable},
+        observer_cli_escriptize:connect_started(
+            'target@host',
+            cookie,
+            erlang:monotonic_time(millisecond) + 1000,
+            fun() -> invalid end,
+            fun(_) -> true end,
+            fun(_, _, _) -> ok end
+        )
+    ),
+    ok = ignore_name_mode_result(shortnames),
+    ok = ignore_name_mode_result(longnames),
+    ?assertEqual({error, argument, no_active_context}, observer_cli_escriptize:run_connect(#{})),
+    ?assertMatch(
+        {error, internal, _},
+        observer_cli_escriptize:save_connected_context(
+            #{}, {ok, #{protocol_version => 1}}
+        )
+    ),
+    _ = observer_cli_escriptize:run_status(#{}),
+    _ = observer_cli_escriptize:run_disconnect(),
+    _ = observer_cli_escriptize:with_active_target(#{}, fun(_, _, _) -> ok end),
+    _ = observer_cli_escriptize:run_snapshot(
+        node(), #{include_identifiers => true}, 1, 3000
+    ),
+    _ = observer_cli_escriptize:run_dispatch(node(), memory, 1, #{}, 3000),
+    _ = observer_cli_escriptize:run_diagnose(node(), #{test_value => 1}, 3000),
+    ?assertEqual(
+        {error, argument, invalid_node},
+        observer_cli_escriptize:probe_options(
+            #{node => "bad@", cookie_env => "MISSING"}, fun(_, _, _) -> ok end
+        )
+    ),
+    Env = "OBSERVER_CLI_VALIDATION_COOKIE",
+    true = os:putenv(Env, "cookie"),
+    try
+        ?assertEqual(
+            {error, argument, invalid_timeout},
+            observer_cli_escriptize:probe_options(
+                #{node => "target@host", cookie_env => Env, timeout => "bad"},
+                fun(_, _, _) -> ok end
+            )
+        )
+    after
+        true = os:unsetenv(Env)
+    end,
+    with_distribution(fun(_PreviousCookie) ->
+        ?assertEqual(
+            {error, connection, connection_failed},
+            observer_cli_escriptize:connect_started(
+                'target@host',
+                cookie,
+                erlang:monotonic_time(millisecond) + 1000,
+                fun() -> binary:copy(<<2>>, 24) end,
+                fun(_) -> false end,
+                fun(_, _, _) -> ok end
+            )
+        ),
+        ?assertEqual(
+            ok,
+            observer_cli_escriptize:connect_started(
+                node(),
+                erlang:get_cookie(),
+                erlang:monotonic_time(millisecond) + 1000,
+                fun() -> binary:copy(<<3>>, 24) end,
+                fun(_) -> true end,
+                fun(_Target, {ok, #{protocol_version := 1}}, _Remaining) -> ok end
+            )
+        ),
+        ?assertEqual(
+            {error, controller, controller_already_distributed},
+            observer_cli_escriptize:probe_target(
+                node(),
+                shortnames,
+                erlang:get_cookie(),
+                1000,
+                fun() -> binary:copy(<<4>>, 24) end,
+                fun(_) -> true end,
+                fun(_, _, _) -> ok end
+            )
+        ),
+        ?assertEqual(
+            {error, cleanup_unconfirmed},
+            observer_cli_escriptize:controller_stopped(
+                erlang:monotonic_time(millisecond)
+            )
+        )
+    end),
+    ResponseWithError = #{
+        <<"errors">> => [#{<<"class">> => <<"argument">>}], <<"capture">> => null
+    },
+    ?assertEqual(
+        fallback,
+        observer_cli_escriptize:apply_error_priority(ResponseWithError, fallback)
+    ),
+    ?assertEqual(
+        0,
+        observer_cli_escriptize:response_errors_exit_code(
+            #{<<"capture">> => null}, []
+        )
+    ),
+    ?assertMatch(
+        {ok, #{<<"warnings">> := [_]}, 0},
+        observer_cli_escriptize:probe_response(
+            status,
+            #{node => "target@host"},
+            {error, capability, capability_unavailable}
+        )
+    ),
+    PartialDispatch = #{
+        <<"errors">> => [],
+        <<"capture">> => #{<<"status">> => <<"partial">>}
+    },
+    ?assertEqual(
+        {ok, PartialDispatch, 3},
+        observer_cli_escriptize:dispatch_response(PartialDispatch)
+    ),
+    ?assertEqual(
+        {error, schema, invalid_command_response},
+        observer_cli_escriptize:dispatch_response(#{})
+    ),
+    ?assertEqual(
+        {error, required_probe, target_timeout},
+        observer_cli_escriptize:run_dispatch(node(), memory, #{}, #{redact => true}, 0)
+    ),
+    ?assertEqual(
+        {error, required_probe, target_timeout},
+        observer_cli_escriptize:run_diagnose(node(), #{include_identifiers => true}, 0)
+    ),
+    ?assertEqual(
+        {error, argument, missing_cookie_source},
+        observer_cli_escriptize:with_active_target(
+            #{node => "target@host"}, fun(_, _, _) -> ok end
+        )
+    ),
+    MissingEnv = "OBSERVER_CLI_MISSING_VALIDATION_COOKIE",
+    true = os:unsetenv(MissingEnv),
+    ?assertEqual(
+        {error, connection, cookie_source_unavailable},
+        observer_cli_escriptize:probe_options(
+            #{node => "target@host", cookie_env => MissingEnv}, fun(_, _, _) -> ok end
+        )
+    ),
+    ?assertEqual(
+        ok,
+        observer_cli_escriptize:controller_stopped(
+            erlang:monotonic_time(millisecond) + 10
+        )
+    ),
+    malformed_active_context_contract(),
+    ok.
+
+ignore_name_mode_result(Mode) ->
+    try observer_cli_escriptize:ensure_net_kernel_name_mode(Mode) of
+        _ -> ok
+    catch
+        _:_ -> ok
+    end.
+
+malformed_active_context_contract() ->
+    Root = temporary_directory("observer_cli_malformed_active"),
+    Previous = os:getenv("HOME"),
+    true = os:putenv("HOME", Root),
+    Path = observer_cli_cli:context_path(),
+    Dir = filename:dirname(Path),
+    ok = filelib:ensure_dir(Path),
+    ok = file:change_mode(Dir, 8#700),
+    ok = file:write_file(Path, <<"invalid">>),
+    ok = file:change_mode(Path, 8#600),
+    try
+        ?assertEqual(
+            {error, internal, invalid_context},
+            observer_cli_escriptize:run_status(#{})
+        ),
+        ?assertEqual(
+            {error, internal, invalid_context},
+            observer_cli_escriptize:run_disconnect()
+        ),
+        ?assertEqual(
+            {error, internal, invalid_context},
+            observer_cli_escriptize:with_active_target(#{}, fun(_, _, _) -> ok end)
+        )
+    after
+        restore_os_env("HOME", Previous),
+        file:del_dir_r(Root)
+    end.
+
+validation_payload_contract(Probe) ->
+    lists:foreach(
+        fun({Command, Data}) ->
+            ?assert(
+                observer_cli_escriptize:valid_command_payload(
+                    Command, #{<<"data">> => Data}, [Probe]
+                )
+            )
+        end,
+        [
+            {snapshot, #{}},
+            {schedulers, #{<<"status">> => <<"ok">>}},
+            {distribution, #{
+                <<"connected_peers">> => [],
+                <<"returned_peer_count">> => 0,
+                <<"truncated">> => false
+            }},
+            {process, #{<<"status">> => <<"ok">>}},
+            {port, #{<<"status">> => <<"ok">>}},
+            {gen_server_state, #{<<"status">> => <<"ok">>, <<"risk_level">> => <<"low">>}},
+            {supervision_tree, #{
+                <<"status">> => <<"ok">>, <<"risk_level">> => <<"low">>
+            }},
+            {trace_call, #{<<"reason">> => null, <<"trace">> => #{}}},
+            {trace_stop_all, #{<<"reason">> => null, <<"trace">> => #{}}}
+        ]
+    ),
+    ?assert(observer_cli_escriptize:valid_map_fields(#{<<"x">> => 1}, [<<"x">>])),
+    ?assertNot(observer_cli_escriptize:valid_map_fields(invalid, [<<"x">>])),
+    Unavailable = Probe#{<<"status">> := <<"unavailable">>, <<"reason_code">> := <<"none">>},
+    ?assert(observer_cli_escriptize:valid_list_command_payload(processes, #{}, [Unavailable])),
+    ?assertNot(observer_cli_escriptize:valid_list_command_payload(invalid, #{}, [])),
+    ?assert(
+        observer_cli_escriptize:valid_required_probes(
+            schedulers, <<"complete">>, [Probe#{<<"id">> := <<"scheduler_wall_time">>}]
+        )
+    ),
+    ?assertNot(observer_cli_escriptize:valid_required_probes(schedulers, <<"complete">>, [])),
+    SnapshotProbes = [
+        Probe#{<<"id">> := Id}
+     || Id <- [<<"runtime">>, <<"resources">>, <<"memory">>]
+    ],
+    ?assert(
+        observer_cli_escriptize:valid_required_probes(
+            snapshot, <<"complete">>, SnapshotProbes
+        )
+    ),
+    ?assert(
+        observer_cli_escriptize:valid_required_probes(
+            diagnose, <<"complete">>, [Probe#{<<"id">> := <<"core_limits">>}]
+        )
+    ),
+    ?assert(
+        observer_cli_escriptize:valid_required_probes(
+            memory, <<"complete">>, [
+                Probe#{<<"id">> := <<"memory">>}, Probe#{<<"id">> := <<"allocator">>}
+            ]
+        )
+    ).
+
+validation_redaction_contract() ->
+    lists:foreach(
+        fun({Key, Prefix}) ->
+            ?assertEqual(Prefix, observer_cli_escriptize:identifier_field_prefix(Key))
+        end,
+        [
+            {<<"pid">>, <<"pid-">>},
+            {<<"owner">>, <<"pid-">>},
+            {<<"group_leader">>, <<"pid-">>},
+            {<<"controller">>, <<"pid-">>},
+            {<<"controller_peer">>, <<"peer-">>},
+            {<<"peer">>, <<"peer-">>},
+            {<<"node">>, <<"node-">>},
+            {<<"module">>, <<"module-">>},
+            {<<"function">>, <<"function-">>},
+            {<<"application">>, <<"application-">>},
+            {<<"table">>, <<"table-">>},
+            {<<"socket">>, <<"socket-">>},
+            {<<"port">>, <<"port-">>},
+            {<<"sockname">>, <<"endpoint-">>},
+            {<<"peername">>, <<"endpoint-">>},
+            {<<"registered_name">>, <<"name-">>},
+            {<<"other">>, undefined}
+        ]
+    ),
+    ?assert(observer_cli_escriptize:valid_stable_identifier(<<"pid-">>, <<"pid-1">>)),
+    ?assertNot(observer_cli_escriptize:valid_stable_identifier(<<"pid-">>, <<"pid-01">>)),
+    ?assertNot(observer_cli_escriptize:valid_stable_identifier(<<"pid-">>, <<"bad">>)),
+    ?assert(observer_cli_escriptize:valid_redacted_identifier_field(<<"pid">>, <<"pid-1">>)),
+    ?assert(observer_cli_escriptize:valid_redacted_identifier_field(<<"pid">>, null)),
+    ?assertNot(observer_cli_escriptize:valid_redacted_identifier_field(<<"pid">>, <<"raw">>)),
+    ?assertNot(observer_cli_escriptize:valid_redacted_identifier_field(<<"sockname">>, #{})),
+    ?assert(observer_cli_escriptize:valid_redaction(#{<<"pid">> => <<"pid-1">>})),
+    ?assertNot(observer_cli_escriptize:valid_redaction(#{<<"pid">> => <<"<0.1.0>">>})),
+    Evidence = #{
+        <<"path">> => <<"/data/context">>,
+        <<"sample_index">> => 0,
+        <<"monotonic_midpoint_ms">> => 1,
+        <<"observed">> => 2,
+        <<"operator">> => <<">">>,
+        <<"threshold">> => 1
+    },
+    Finding = #{
+        <<"id">> => <<"finding">>,
+        <<"severity">> => <<"warning">>,
+        <<"entity">> => #{<<"type">> => <<"vm">>, <<"id">> => <<"vm">>},
+        <<"summary">> => <<"summary">>,
+        <<"ruleset_version">> => 1,
+        <<"evidence">> => [Evidence],
+        <<"recommendations">> => [<<"inspect">>]
+    },
+    Response = #{<<"data">> => #{<<"context">> => #{}, <<"findings">> => [Finding]}},
+    ?assert(observer_cli_escriptize:valid_evidence(Response, Evidence)),
+    ?assertNot(observer_cli_escriptize:valid_evidence(Response, #{})),
+    ?assert(observer_cli_escriptize:valid_findings(Response)),
+    ?assertNot(
+        observer_cli_escriptize:valid_findings(
+            #{<<"data">> => #{<<"findings">> => [invalid]}}
+        )
+    ).
 
 assert_partial_snapshot_exit(Escript, Script, CookieEnv) ->
     Dir = temporary_directory("observer_cli_partial_snapshot"),

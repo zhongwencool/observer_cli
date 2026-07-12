@@ -48,7 +48,7 @@
 -export([pipe/2]).
 
 -ifdef(TEST).
--export([visible_length/1]).
+-export([visible_length/1, add_extra_remainder/3, join_lines/1]).
 -endif.
 
 -spec uptime() -> list().

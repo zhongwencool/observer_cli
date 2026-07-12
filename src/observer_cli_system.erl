@@ -27,7 +27,12 @@
     get_alloc/5,
     render_dist_node_info/1,
     get_address/1,
-    render_worker/3
+    render_worker/3,
+    get_dist_queue_size/1,
+    format_count_limit/2,
+    collect_runtime_info/0,
+    alloc_info/0,
+    maybe_system_info/1
 ]).
 -endif.
 

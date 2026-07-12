@@ -34,7 +34,63 @@
     cleanup_outcome/2,
     capability_error/2,
     probe_response/3,
-    command_output/3
+    command_output/3,
+    response_command/2,
+    valid_probe_reason/2,
+    required_probe_id/1,
+    pointer_exists/2,
+    public_value/2,
+    response_class_priority/1,
+    command_format/1,
+    command_from_args/1,
+    requested_format/1,
+    command_error/4,
+    output_encode_error/1,
+    output_command_encode_error/3,
+    apply_error_priority/2,
+    valid_target/3,
+    valid_otp_release/1,
+    valid_rfc3339/1,
+    valid_probe/1,
+    valid_errors/1,
+    valid_error_class/2,
+    valid_command_payload/3,
+    valid_map_fields/2,
+    valid_list_command_payload/3,
+    valid_required_probes/3,
+    valid_findings/1,
+    valid_evidence/2,
+    valid_redaction/1,
+    valid_redacted_identifier_field/2,
+    identifier_field_prefix/1,
+    valid_stable_identifier/2,
+    response_errors_exit_code/2,
+    command_from_arguments/1,
+    maybe_set_target_cookie/2,
+    cookie_atom/1,
+    stop_controller/1,
+    request_options/1,
+    snapshot_response/1,
+    unavailable_exit_code/1,
+    diagnose_response/1,
+    active_options/1,
+    random_cookie/1,
+    connect_before/3,
+    capabilities/2,
+    validated_response/5,
+    run_snapshot/4,
+    run_dispatch/5,
+    run_diagnose/3,
+    target_dispatch/6,
+    probe_options/2,
+    connect_started/6,
+    ensure_net_kernel_name_mode/1,
+    run_connect/1,
+    save_connected_context/2,
+    run_status/1,
+    run_disconnect/0,
+    with_active_target/2,
+    controller_stopped/1
 ]).
 -endif.
 
@@ -1579,8 +1635,8 @@ command_output(Options, Response, ExitCode) ->
     Format = command_format(Options),
     case observer_cli_cli:encode(Format, Response) of
         {ok, Output} ->
-            io:put_chars(standard_io, Output),
-            erlang:halt(ExitCode);
+            output_put_chars(standard_io, Output),
+            exit_with_code(ExitCode);
         {error, EncodeError} ->
             output_command_encode_error(
                 maps:get(<<"command">>, Response, <<"unknown">>), Format, EncodeError
@@ -1601,8 +1657,8 @@ command_error(Command, Format, Category, Reason) ->
                     text -> standard_error;
                     _ -> standard_io
                 end,
-            io:put_chars(Device, Output),
-            erlang:halt(observer_cli_cli:exit_code(Category));
+            output_put_chars(Device, Output),
+            exit_with_code(observer_cli_cli:exit_code(Category));
         {error, EncodeError} ->
             output_encode_error(EncodeError)
     end.
@@ -1619,10 +1675,10 @@ output_encode_error(EncodeError) ->
         <<"message">>,
         observer_cli_cli:error(maps:get(category, EncodeError), EncodeReason)
     ),
-    io:format(standard_error, "observer_cli: ~ts~n", [
+    output_format(standard_error, "observer_cli: ~ts~n", [
         observer_cli_cli:escape_text(Message)
     ]),
-    erlang:halt(observer_cli_cli:exit_code(EncodeError)).
+    exit_with_code(observer_cli_cli:exit_code(EncodeError)).
 
 -spec output_command_encode_error(binary() | atom(), text | term | json, map()) -> no_return().
 output_command_encode_error(_Command, json, #{reason := json_unavailable} = EncodeError) ->
@@ -1634,13 +1690,38 @@ output_command_encode_error(Command, Format, EncodeError) when Format =:= term; 
     Response = observer_cli_cli:envelope(Command, null, null, null, [], [Error]),
     case observer_cli_cli:encode(Format, Response) of
         {ok, Output} ->
-            io:put_chars(standard_io, Output),
-            erlang:halt(observer_cli_cli:exit_code(EncodeError));
+            output_put_chars(standard_io, Output),
+            exit_with_code(observer_cli_cli:exit_code(EncodeError));
         {error, _RetryError} ->
             output_encode_error(EncodeError)
     end;
 output_command_encode_error(_Command, _Format, EncodeError) ->
     output_encode_error(EncodeError).
+
+-ifdef(TEST).
+exit_with_code(Code) ->
+    case get(observer_cli_test_halt_fun) of
+        Fun when is_function(Fun, 1) -> Fun(Code);
+        undefined -> erlang:halt(Code)
+    end.
+output_put_chars(Device, Output) ->
+    case get(observer_cli_test_output) of
+        capture -> io:put_chars(Output);
+        undefined -> io:put_chars(Device, Output)
+    end.
+output_format(Device, Format, Args) ->
+    case get(observer_cli_test_output) of
+        capture -> io:format(Format, Args);
+        undefined -> io:format(Device, Format, Args)
+    end.
+-else.
+exit_with_code(Code) ->
+    erlang:halt(Code).
+output_put_chars(Device, Output) ->
+    io:put_chars(Device, Output).
+output_format(Device, Format, Args) ->
+    io:format(Device, Format, Args).
+-endif.
 
 command_from_args([[$-, $- | _] | _] = Arguments) ->
     command_from_arguments(Arguments);

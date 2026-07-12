@@ -703,4 +703,27 @@ wider_columns(Base, Wide, Columns) ->
 same_columns(Base, Wide, Columns) ->
     [Pos || Pos <- Columns, lists:nth(Pos, Base) =:= lists:nth(Pos, Wide)].
 
+system_private_helper_contract_test() ->
+    ?assertNotEqual([], observer_cli_system:format_count_limit(1, 10)),
+    ?assertNotEqual([], observer_cli_system:format_count_limit(unknown, unknown)),
+    ?assert(is_list(observer_cli_system:collect_runtime_info())),
+    ?assert(is_list(observer_cli_system:alloc_info())),
+    ?assert(is_integer(observer_cli_system:maybe_system_info(schedulers))),
+    ?assertEqual(undefined, observer_cli_system:maybe_system_info(not_a_system_info_key)),
+    Created = ensure_sys_dist(),
+    try
+        ?assertEqual(not_found, observer_cli_system:get_dist_queue_size(missing_node)),
+        ets:insert(sys_dist, {dummy}),
+        ?assertMatch([{_, #{health := ok}}], observer_cli_system:collect_distribution_info())
+    after
+        maybe_delete_sys_dist(Created)
+    end,
+    Previous = erlang:system_flag(multi_scheduling, block),
+    try
+        ?assert(is_list(observer_cli_system:collect_runtime_info()))
+    after
+        _ = erlang:system_flag(multi_scheduling, unblock),
+        Previous
+    end.
+
 -endif.

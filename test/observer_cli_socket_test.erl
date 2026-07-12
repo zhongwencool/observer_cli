@@ -146,6 +146,72 @@ collect_socket_detail_test() ->
         ?assert(lists:keymember(read_byte, 1, maps:get(counters, Detail)))
     end).
 
+socket_runtime_helper_contract_test() ->
+    ?assert(observer_cli_socket:socket_available()),
+    ?assert(is_list(observer_cli_socket:safe_which_sockets())),
+    Invalid = make_ref(),
+    ?assertEqual(error, observer_cli_socket:safe_socket_info(Invalid)),
+    ?assert(is_list(observer_cli_socket:socket_id(Invalid))),
+    ?assertEqual(1, observer_cli_socket:counter_value(#{read => 1}, read)),
+    ?assertEqual(0, observer_cli_socket:counter_value(#{read => invalid}, read)),
+    ?assertEqual("-", observer_cli_socket:socket_addr(Invalid, sockname)),
+    ?assertEqual("-", observer_cli_socket:socket_addr(Invalid, peername)),
+    ?assertEqual([], observer_cli_socket:safe_monitored_by(Invalid)),
+    ?assertEqual(dead, observer_cli_socket:socket_overview(Invalid)),
+    ?assertEqual(dead, observer_cli_socket:collect_socket_detail(Invalid)),
+    ?assert(is_list(observer_cli_socket:level_option_specs(socket))),
+    ?assert(is_list(observer_cli_socket:domain_option_specs(inet6))),
+    ?assert(is_list(observer_cli_socket:domain_option_specs(inet))),
+    ?assertMatch(
+        [$e, $r, $r, $o, $r, $: | _],
+        observer_cli_socket:getopt_value(
+            Invalid, {socket, sndbuf}
+        )
+    ),
+    ?assertEqual("-", observer_cli_socket:getopt_result({ok, []})),
+    ?assertEqual(value, observer_cli_socket:getopt_result({ok, value})),
+    ?assertEqual("Not Supported", observer_cli_socket:getopt_result({error, enotsup})),
+    ?assertEqual("Not Supported", observer_cli_socket:getopt_result({error, enoprotoopt})),
+    ?assertEqual("Not Connected", observer_cli_socket:getopt_result({error, enotconn})),
+    ?assertEqual(
+        "Not Implemented", observer_cli_socket:getopt_result({error, {invalid, option}})
+    ),
+    ?assertMatch(
+        [$e, $r, $r, $o, $r, $: | _],
+        observer_cli_socket:getopt_result({error, failed})
+    ),
+    ?assertEqual([], observer_cli_socket:render_kv_rows([], [10, 10])),
+    ?assertNotEqual(
+        [],
+        observer_cli_socket:render_kv_rows(
+            [{one, 1}, {two, 2}, {three, 3}], [10, 10, 10, 10]
+        )
+    ),
+    with_socket(fun(Socket) ->
+        ?assertMatch({ok, _}, observer_cli_socket:safe_socket_info(Socket)),
+        ?assert(is_list(observer_cli_socket:socket_id(Socket))),
+        ?assertMatch({_, _}, observer_cli_socket:collect_socket_info(id, #{})),
+        ?assertMatch(
+            {_, _},
+            observer_cli_socket:collect_socket_render_info(
+                10, 1, id, #{}
+            )
+        )
+    end),
+    observer_cli_test_io:with_geometry(24, 160, [], fun() ->
+        self() ! quit,
+        ?assertEqual(quit, observer_cli_socket:render_socket_worker(Invalid, 10, undefined)),
+        self() ! quit,
+        ?assertEqual(quit, observer_cli_socket:next_draw_view(undefined, 10, Invalid)),
+        ?assertNotEqual([], observer_cli_socket:output_die_view(Invalid, 10))
+    end),
+    with_socket(fun(Socket) ->
+        observer_cli_test_io:with_geometry(24, 160, [], fun() ->
+            self() ! quit,
+            ?assertEqual(quit, observer_cli_socket:render_socket_worker(Socket, 10, undefined))
+        end)
+    end).
+
 render_general_info_test() ->
     Text = plain(observer_cli_socket:render_general_info(general_fixture())),
     ?assert(string:find(Text, "General") =/= nomatch),
@@ -164,6 +230,27 @@ render_socket_rows_test() ->
     ?assert(string:find(Text, "#Socket<0.1.2>") =/= nomatch),
     ?assert(string:find(Text, "inet/tcp") =/= nomatch),
     ?assert(string:find(Text, "3/1") =/= nomatch).
+
+render_socket_empty_and_error_states_test() ->
+    ?assertNotEqual(
+        nomatch,
+        string:find(
+            plain(observer_cli_socket:render_general_info({error, unavailable})), "unavailable"
+        )
+    ),
+    {[], Empty} = observer_cli_socket:render_socket_rows({1, []}, io),
+    ?assertNotEqual(nomatch, string:find(plain(Empty), "No socket")),
+    {[], Error} = observer_cli_socket:render_socket_rows({error, unavailable}, io),
+    ?assertNotEqual(nomatch, string:find(plain(Error), "unavailable")),
+    lists:foreach(
+        fun(Sort) ->
+            {_Sockets, Rows} = observer_cli_socket:render_socket_rows(
+                {1, [ranked_overview_fixture()]}, Sort
+            ),
+            observer_cli_test_io:assert_ansi_boundaries(Rows)
+        end,
+        [id, fd, domain, type, protocol, pk, ac, wt, fl, mx]
+    ).
 
 render_socket_detail_test() ->
     Text = plain(observer_cli_socket:render_socket_detail(detail_fixture())),
@@ -207,7 +294,15 @@ select_socket_test() ->
                 end,
                 lists:seq(1, SocketCount)
             )
-        )
+        ),
+        lists:foreach(
+            fun(Sort) ->
+                ?assertMatch({ok, _}, observer_cli_socket:select_socket(1, #sockets{sort = Sort}))
+            end,
+            [io, rb, wb, pk, wt, fl, mx, ac, fd]
+        ),
+        ?assertEqual(error, observer_cli_socket:select_socket(0, #sockets{})),
+        ?assertEqual(error, observer_cli_socket:select_socket(SocketCount + 1, #sockets{}))
     end).
 
 start_quit_test() ->
@@ -229,7 +324,13 @@ start_manager_branches_test() ->
         "fl\n",
         "mx\n",
         "ac\n",
+        "id\n",
+        "fd\n",
         "ow\n",
+        "dm\n",
+        "tp\n",
+        "pt\n",
+        "1000\n",
         "pd\n",
         "pu\n",
         "x\n",
@@ -243,6 +344,14 @@ start_manager_branches_test() ->
         end
     ).
 
+start_invalid_selection_test() ->
+    observer_cli_test_io:with_input(
+        ["99999\n", "q\n"],
+        fun() ->
+            ?assertEqual(quit, observer_cli_socket:start(#view_opts{auto_row = false}))
+        end
+    ).
+
 start_detail_quit_test() ->
     with_socket(fun(Socket) ->
         observer_cli_test_io:with_input(
@@ -250,6 +359,36 @@ start_detail_quit_test() ->
             fun() ->
                 Opts = #view_opts{auto_row = false},
                 ?assertEqual(quit, observer_cli_socket:start(Socket, Opts))
+            end
+        )
+    end).
+
+start_detail_interval_test() ->
+    with_socket(fun(Socket) ->
+        observer_cli_test_io:with_input(
+            ["1000\n", "q\n"],
+            fun() ->
+                ?assertEqual(quit, observer_cli_socket:start(Socket, #view_opts{auto_row = false}))
+            end
+        )
+    end).
+
+start_detail_unknown_input_test() ->
+    with_socket(fun(Socket) ->
+        observer_cli_test_io:with_input(
+            ["x\n", "q\n"],
+            fun() ->
+                ?assertEqual(quit, observer_cli_socket:start(Socket, #view_opts{auto_row = false}))
+            end
+        )
+    end).
+
+start_socket_selection_test() ->
+    with_socket(fun(_Socket) ->
+        observer_cli_test_io:with_input(
+            ["1\n", "q\n"],
+            fun() ->
+                ?assertEqual(quit, observer_cli_socket:start(#view_opts{auto_row = false}))
             end
         )
     end).
@@ -265,7 +404,61 @@ socket_options_dynamic_test() ->
         ?assert(
             lists:any(fun({Key, _Value}) -> string:find(Key, "socket:") =/= nomatch end, Options)
         )
-    end).
+    end),
+    {ok, Datagram} = socket:open(inet, dgram, udp),
+    try
+        Info = socket:info(Datagram),
+        ?assert(is_list(observer_cli_socket:socket_options(Datagram, Info)))
+    after
+        socket:close(Datagram)
+    end.
+
+socket_boundary_helpers_test() ->
+    ?assert(is_list(observer_cli_socket:protocol_option_specs(inet6, stream, tcp))),
+    ?assert(is_list(observer_cli_socket:protocol_option_specs(inet, dgram, udp))),
+    ?assert(is_list(observer_cli_socket:protocol_option_specs(inet, seqpacket, sctp))),
+    ?assertEqual([], observer_cli_socket:protocol_option_specs(local, stream, default)),
+    ?assertEqual({error, badarg}, observer_cli_socket:safe_getopt(not_a_socket, {socket, type})),
+    ?assertEqual(
+        {error, badarg}, observer_cli_socket:safe_getopt(not_a_socket, socket, type)
+    ),
+    ?assertEqual(
+        "/tmp/observer-cli.sock",
+        observer_cli_socket:sockaddr_to_list(#{family => local, path => "/tmp/observer-cli.sock"})
+    ),
+    ?assertEqual(
+        "127.0.0.1:1883",
+        observer_cli_socket:sockaddr_to_list(#{
+            family => inet, addr => {127, 0, 0, 1}, port => 1883
+        })
+    ),
+    ?assertNotEqual(
+        nomatch,
+        string:find(
+            observer_cli_socket:sockaddr_to_list(#{
+                family => inet6,
+                addr => {0, 0, 0, 0, 0, 0, 0, 1},
+                port => 1883,
+                flowinfo => 1,
+                scope_id => 2
+            }),
+            ",1,2"
+        )
+    ),
+    ?assertEqual("other", observer_cli_socket:sockaddr_to_list(other)),
+    ?assertEqual(0, observer_cli_socket:value_or_zero(undefined)),
+    ?assertEqual(42, observer_cli_socket:value_or_zero(42)),
+    Reference = make_ref(),
+    ?assertEqual(ref_to_list(Reference), observer_cli_socket:format_value(Reference)),
+    ?assertEqual("binary", observer_cli_socket:format_value(<<"binary">>)),
+    ?assertEqual("[0]", observer_cli_socket:format_value([0])),
+    ?assertEqual("{tuple}", observer_cli_socket:format_value({tuple})),
+    Port = open_port({spawn, "cat"}, []),
+    try
+        ?assertEqual(port_to_list(Port), observer_cli_socket:format_value(Port))
+    after
+        port_close(Port)
+    end.
 
 with_socket(Fun) ->
     {ok, Socket} = socket:open(inet, stream, tcp),

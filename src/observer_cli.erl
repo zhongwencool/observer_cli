@@ -42,7 +42,10 @@
     node_stats/2,
     get_incremental_stats/1,
     check_auto_row/0,
-    select_home_process/3
+    select_home_process/3,
+    join_home_summary_rows/1,
+    scheduler_usage_rows/1,
+    update_net_ticktime_from/1
 ]).
 
 -endif.

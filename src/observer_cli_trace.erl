@@ -3,7 +3,35 @@
 -export([call/2, stop_all/0]).
 
 -ifdef(TEST).
--export([test_helpers/0]).
+-export([
+    test_helpers/0,
+    forced_reason/1,
+    outcome_events/1,
+    io_reply/1,
+    module_md5/1,
+    parse_pid/1,
+    format_event/4,
+    final_drain/1,
+    wait_formatter/3,
+    checked_helper_shutdown/3,
+    owner_result/3,
+    verify_cleanup/1,
+    wait_fixed_names/0,
+    trace_pattern_off/1,
+    stop_helper_checked/2,
+    stop_helper/1,
+    await_timeout_cleanup/6,
+    await_owner_down/4,
+    fallback_cleanup/3,
+    wait_trace/3,
+    stop_owner/2,
+    await_stop_ack/6,
+    await_helper_down/2,
+    await_killed_helper/2,
+    monitor_failure/3,
+    wait_fixed_names/1,
+    silent_io/0
+]).
 -endif.
 
 -define(OWNER, observer_cli_trace_owner).

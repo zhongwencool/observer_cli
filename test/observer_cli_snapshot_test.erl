@@ -9,6 +9,1824 @@
 capabilities_test() ->
     ?assertEqual(#{protocol_version => 1}, observer_cli_snapshot:capabilities()).
 
+boundary_helper_contract_test() ->
+    lists:foreach(
+        fun({Value, Type}) -> ?assertEqual(Type, observer_cli_snapshot:shape_type(Value)) end,
+        [
+            {atom, atom},
+            {1, number},
+            {1.5, number},
+            {<<"binary">>, binary},
+            {<<1:1>>, bitstring},
+            {#{}, map},
+            {{}, tuple},
+            {[], list},
+            {self(), other}
+        ]
+    ),
+    ?assertEqual(2, observer_cli_snapshot:stacktrace_arity(2)),
+    ?assertEqual(2, observer_cli_snapshot:stacktrace_arity([a, b])),
+    ?assertEqual(null, observer_cli_snapshot:stacktrace_arity(invalid)),
+    ?assertEqual({ok, <<"name">>}, observer_cli_snapshot:target_binary("name")),
+    ?assertEqual({ok, <<"name">>}, observer_cli_snapshot:target_binary(<<"name">>)),
+    ?assertEqual(error, observer_cli_snapshot:target_binary(binary:copy(<<"x">>, 256))),
+    ?assertEqual(error, observer_cli_snapshot:target_binary(<<16#ff>>)),
+    lists:foreach(
+        fun({Value, Protocol}) ->
+            ?assertEqual(Protocol, observer_cli_snapshot:inet_protocol(Value))
+        end,
+        [
+            {"tcp_inet", tcp},
+            {"udp_inet", udp},
+            {"sctp_inet", sctp},
+            {<<"tcp_inet">>, tcp},
+            {<<"udp_inet">>, udp},
+            {<<"sctp_inet">>, sctp},
+            {unknown, undefined}
+        ]
+    ),
+    ?assertEqual([a], observer_cli_snapshot:port_list_field([a])),
+    ?assertEqual([], observer_cli_snapshot:port_list_field(invalid)),
+    ?assertEqual(1, observer_cli_snapshot:stat_value(1)),
+    ?assertEqual(null, observer_cli_snapshot:stat_value(-1)),
+    ?assertEqual({ok, <<"value">>}, observer_cli_snapshot:bounded_identifier_text("value")),
+    ?assertEqual(error, observer_cli_snapshot:bounded_identifier_text([16#110000])),
+    ?assertEqual({identifier, pid, self()}, observer_cli_snapshot:port_identifier(self())),
+    ?assertEqual(null, observer_cli_snapshot:port_identifier(invalid)),
+    Reference = make_ref(),
+    ?assertEqual(
+        {identifier, socket, Reference},
+        observer_cli_snapshot:raw_resource_identifier(Reference)
+    ),
+    ?assertEqual(
+        {identifier, socket, {'$socket', Reference}},
+        observer_cli_snapshot:raw_resource_identifier({'$socket', Reference})
+    ),
+    Port = open_port({spawn, "cat"}, []),
+    try
+        ?assertEqual(
+            {identifier, port, Port}, observer_cli_snapshot:raw_resource_identifier(Port)
+        )
+    after
+        port_close(Port)
+    end,
+    ?assertEqual(raw, observer_cli_snapshot:raw_resource_identifier(raw)),
+    ?assertEqual({ok, 0}, observer_cli_snapshot:pointer_index(<<"0">>)),
+    ?assertEqual({ok, 12}, observer_cli_snapshot:pointer_index(<<"12">>)),
+    ?assertEqual(error, observer_cli_snapshot:pointer_index(<<"01">>)),
+    ?assertEqual(error, observer_cli_snapshot:pointer_index(<<"bad">>)),
+    ?assert(observer_cli_snapshot:json_safe(#{<<"items">> => [1, 1.5, true, false, null]})),
+    ?assertNot(observer_cli_snapshot:json_safe(#{atom_key => value})),
+    ?assertNot(observer_cli_snapshot:json_safe(self())).
+
+snapshot_internal_contract_test() ->
+    ?assertEqual(worker_heap_limit_exceeded, observer_cli_snapshot:deep_worker_reason(killed)),
+    ?assertEqual(probe_failed, observer_cli_snapshot:deep_worker_reason(other)),
+    Probe = #{status => ok, reason_code => null, samples => 1, coverage => [covered]},
+    ?assertEqual(
+        {ok, null, data, 1, [covered]},
+        observer_cli_snapshot:composed_probe(#{capture => #{probes => [Probe]}, data => data})
+    ),
+    ?assertEqual({error, invalid_probe_result}, observer_cli_snapshot:composed_probe(#{})),
+    lists:foreach(
+        fun(Result) ->
+            {Report, _Data} = observer_cli_snapshot:deep_probe_result(test_probe, Result, 10),
+            ?assertEqual(test_probe, maps:get(id, Report))
+        end,
+        [
+            {ok, null, data, 1, [covered]},
+            {unavailable, refused, data, 0, []},
+            {timeout, target_timeout},
+            {error, probe_failed},
+            invalid
+        ]
+    ),
+    ?assertEqual(error, observer_cli_snapshot:application_name_binary(kernel)),
+    ?assertEqual({ok, <<"kernel">>}, observer_cli_snapshot:application_name_binary("kernel")),
+    ?assertEqual(error, observer_cli_snapshot:application_name_binary(<<16#ff>>)),
+    ?assertEqual(error, observer_cli_snapshot:application_name_binary([])),
+    lists:foreach(
+        fun(State) -> ?assertMatch({ok, _, _}, observer_cli_snapshot:state_shape(State)) end,
+        [atom, 1, 1.5, <<"binary">>, <<1:1>>, #{key => value}, {a, b}, [a, b], self()]
+    ),
+    Port = open_port({spawn, "cat"}, []),
+    try
+        Signals = observer_cli_snapshot:sanitize_signal_list([
+            {process, self()},
+            {port, Port},
+            {process, {name, node()}},
+            {port, {name, node()}},
+            self(),
+            Port,
+            invalid
+        ]),
+        ?assertEqual(7, length(Signals))
+    after
+        port_close(Port)
+    end,
+    ?assertEqual([], observer_cli_snapshot:sanitize_signal_list(invalid)),
+    ?assertMatch(
+        [#{<<"active_suspend_count">> := 1}, #{<<"type">> := <<"other">>}],
+        observer_cli_snapshot:sanitize_suspending_list([{self(), 1, 2}, invalid])
+    ),
+    ?assertEqual([], observer_cli_snapshot:sanitize_suspending_list(invalid)),
+    ?assertEqual(
+        {identifier, module, error_handler},
+        observer_cli_snapshot:sanitize_error_handler(error_handler)
+    ),
+    ?assertEqual(null, observer_cli_snapshot:sanitize_error_handler(1)),
+    ?assertMatch(
+        #{arity := 2},
+        observer_cli_snapshot:sanitize_stacktrace_frame({module, function, [a, b], [{file, "x"}]})
+    ),
+    ?assertMatch(
+        #{<<"type">> := <<"other">>}, observer_cli_snapshot:sanitize_stacktrace_frame(invalid)
+    ),
+    ?assertEqual(
+        {identifier, endpoint, <<"127.0.0.1:1883">>},
+        observer_cli_snapshot:port_endpoint({ok, {{127, 0, 0, 1}, 1883}})
+    ),
+    ?assertEqual(null, observer_cli_snapshot:port_endpoint({ok, {invalid, 1883}})),
+    ?assertEqual(
+        {identifier, endpoint, <<"/tmp/socket">>},
+        observer_cli_snapshot:port_endpoint({ok, {local, "/tmp/socket"}})
+    ),
+    ?assertEqual(null, observer_cli_snapshot:port_endpoint({ok, {local, [16#110000]}})),
+    ?assertEqual(null, observer_cli_snapshot:port_endpoint(error)),
+    lists:foreach(
+        fun({Result, Status}) ->
+            Source = #{getopts_fun => fun(_Port, _Options) -> Result end},
+            ?assertEqual(
+                Status, maps:get(status, observer_cli_snapshot:port_option(port, nodelay, Source))
+            )
+        end,
+        [
+            {{ok, [{nodelay, true}]}, available},
+            {{ok, [{nodelay, self()}]}, error},
+            {{ok, []}, unsupported},
+            {{error, einval}, unsupported},
+            {{error, closed}, error},
+            {invalid, error}
+        ]
+    ),
+    CrashingOption = #{getopts_fun => fun(_Port, _Options) -> erlang:error(failed) end},
+    ?assertEqual(
+        error, maps:get(status, observer_cli_snapshot:port_option(port, nodelay, CrashingOption))
+    ),
+    ?assertEqual(1, observer_cli_snapshot:safe_resource_count(#{count_fun => fun() -> 1 end})),
+    ?assert(
+        observer_cli_snapshot:safe_resource_count(#{count_fun => fun() -> invalid end}) > 100000
+    ),
+    ?assert(
+        observer_cli_snapshot:safe_resource_count(#{count_fun => fun() -> error(failed) end}) >
+            100000
+    ),
+    A = #{raw_id => 1, value => 2},
+    B = #{raw_id => 2, value => 1},
+    ?assert(observer_cli_snapshot:resource_precedes(A, B, value)),
+    ?assertNot(observer_cli_snapshot:resource_precedes(B, A, value)),
+    ?assert(observer_cli_snapshot:resource_precedes(A, B, missing)),
+    ?assertEqual(2, observer_cli_snapshot:top_n_value(A, value)),
+    ?assertEqual(-1, observer_cli_snapshot:top_n_value(A, missing)),
+    ?assertEqual(node(), observer_cli_snapshot:controller_node(self())),
+    ?assertEqual(undefined, observer_cli_snapshot:controller_node(undefined)),
+    ?assertEqual(
+        #{<<"items">> => [one], <<"returned_count">> => 1, <<"dropped_count">> => 3},
+        observer_cli_snapshot:update_item_counts(#{
+            <<"items">> => [one], <<"returned_count">> => 2, <<"dropped_count">> => 2
+        })
+    ),
+    ?assertEqual(
+        #{<<"items">> => []}, observer_cli_snapshot:update_item_counts(#{<<"items">> => []})
+    ),
+    ?assert(observer_cli_snapshot:pointer_protects_tail([[<<"items">>]], [<<"items">>], 1)),
+    ?assert(
+        observer_cli_snapshot:pointer_protects_tail([[<<"items">>, <<"1">>]], [<<"items">>], 1)
+    ),
+    ?assertNot(observer_cli_snapshot:pointer_protects_tail([[<<"other">>]], [<<"items">>], 1)),
+    ?assertNot(observer_cli_snapshot:pointer_protects_tail([[]], [<<"items">>], 1)).
+
+snapshot_runtime_helper_contract_test() ->
+    OkReport = fun(Id) -> #{id => Id, status => ok} end,
+    Probes = [
+        {OkReport(memory), #{memory => #{beam => beam}, runtime => #{node => node()}}},
+        {OkReport(allocator), #{util_allocators => []}},
+        {OkReport(runtime), #{node => node(), otp_release => <<"test">>}}
+    ],
+    ?assertMatch(
+        #{memory := #{allocator := #{util_allocators := []}}},
+        observer_cli_snapshot:memory_command_data(Probes)
+    ),
+    ?assertEqual(null, observer_cli_snapshot:memory_command_data([])),
+    ?assertEqual(
+        #{node => node(), otp_release => <<"test">>},
+        observer_cli_snapshot:memory_command_target(#{
+            runtime => #{node => node(), otp_release => <<"test">>}
+        })
+    ),
+    ?assertEqual(null, observer_cli_snapshot:memory_command_target(#{})),
+    ?assertEqual(
+        #{node => node(), otp_release => <<"test">>},
+        observer_cli_snapshot:target_from_probes(Probes)
+    ),
+    ?assertEqual(null, observer_cli_snapshot:target_from_probes([])),
+    ?assertEqual({1, 10}, observer_cli_snapshot:binary_ref_stats([{ref, 10, 2}, invalid])),
+    ?assertEqual({0, 0}, observer_cli_snapshot:binary_ref_stats(invalid)),
+    ?assertEqual(
+        #{<<"line">> => 12},
+        observer_cli_snapshot:sanitize_stacktrace_location([{file, "x"}, {line, 12}])
+    ),
+    ?assertEqual(null, observer_cli_snapshot:sanitize_stacktrace_location([{line, 0}])),
+    ?assertEqual(null, observer_cli_snapshot:sanitize_stacktrace_location(invalid)),
+    MnesiaSource = observer_cli_snapshot:default_mnesia_source(),
+    ?assert(is_boolean((maps:get(available_fun, MnesiaSource))())),
+    ?assertEqual(erlang:system_info(wordsize), (maps:get(word_size_fun, MnesiaSource))()),
+    ?assertMatch({ok, [_ | _]}, observer_cli_snapshot:safe_ports()),
+    ?assertMatch({ok, _}, observer_cli_snapshot:safe_sockets()),
+    Port = open_port({spawn, "cat"}, []),
+    try
+        ?assertMatch({ok, _}, observer_cli_snapshot:safe_port_info(Port, name)),
+        ?assertEqual(missing, observer_cli_snapshot:safe_port_info(Port, invalid_key)),
+        controller_queue_contract(Port)
+    after
+        port_close(Port)
+    end,
+    ?assertEqual(missing, observer_cli_snapshot:safe_port_info(Port, name)),
+    network_helper_contract(),
+    socket_helper_contract(),
+    counter_helper_contract(),
+    probe_helper_contract(),
+    scheduler_helper_contract(),
+    distribution_helper_contract(),
+    ?assertMatch({ok, _}, observer_cli_snapshot:safe_system_info(schedulers)),
+    ?assertEqual(
+        {unavailable, capability_unavailable},
+        observer_cli_snapshot:safe_system_info(not_a_system_info_key)
+    ),
+    ?assertEqual(2, length(observer_cli_snapshot:observer_effects(false, undefined))),
+    ?assertEqual(3, length(observer_cli_snapshot:observer_effects(true, self()))).
+
+network_helper_contract() ->
+    Info = fun
+        (_Port, queue_size) -> {ok, 1};
+        (_Port, memory) -> {ok, 2};
+        (_Port, input) -> {ok, 3};
+        (_Port, output) -> {ok, 4}
+    end,
+    Source = #{
+        all_fun => fun() -> {ok, [tcp, skipped, gone, malformed, crashed]} end,
+        monotonic_fun => fun() -> 100 end,
+        name_fun => fun
+            (tcp) -> {ok, "tcp_inet"};
+            (skipped) -> {ok, "other"};
+            (gone) -> missing;
+            (malformed) -> {ok, "udp_inet"};
+            (crashed) -> {ok, "tcp_inet"}
+        end,
+        stat_fun => fun
+            (tcp) -> {ok, [{recv_oct, 10}, {send_oct, 20}]};
+            (malformed) -> {ok, malformed};
+            (crashed) -> erlang:error(closed)
+        end,
+        info_fun => Info,
+        peername_fun => fun(_Port) -> {error, enotconn} end,
+        io_fun => fun() -> {{input, 11}, {output, 22}} end
+    },
+    {ok, Items, Audit, []} = observer_cli_snapshot:network_sample(Source, #{}),
+    ?assertEqual(1, map_size(Items)),
+    ?assertEqual(3, maps:get(disappeared_count, Audit)),
+    ?assertEqual(#{input => 11, output => 22}, maps:get(vm_io_counters, Audit)),
+    ?assertEqual(
+        {error, failed},
+        observer_cli_snapshot:network_sample(
+            Source#{all_fun := fun() -> {error, failed} end}, #{}
+        )
+    ),
+    ?assertEqual(
+        {error, invalid_enumeration_shape},
+        observer_cli_snapshot:network_sample(
+            Source#{all_fun := fun() -> invalid end}, #{}
+        )
+    ),
+    ?assertEqual(1, observer_cli_snapshot:network_port_field(tcp, queue_size, Source)),
+    ?assertEqual(
+        null,
+        observer_cli_snapshot:network_port_field(
+            tcp, queue_size, Source#{info_fun := fun(_, _) -> erlang:error(closed) end}
+        )
+    ),
+    ?assertEqual(
+        {ok, #{recv_oct => 1}},
+        observer_cli_snapshot:parse_network_counters([
+            {recv_oct, 1}
+        ])
+    ),
+    ?assertEqual(error, observer_cli_snapshot:parse_network_counters([{<<"bad">>, 1}])),
+    ?assertEqual(error, observer_cli_snapshot:parse_network_counters(invalid)),
+    ?assertEqual(
+        #{input => 1, output => 2},
+        observer_cli_snapshot:network_io_counters(#{
+            io_fun => fun() -> {{input, 1}, {output, 2}} end
+        })
+    ),
+    ?assertEqual(#{}, observer_cli_snapshot:network_io_counters(#{io_fun => fun() -> invalid end})),
+    ?assertEqual(
+        #{},
+        observer_cli_snapshot:network_io_counters(#{
+            io_fun => fun() -> erlang:error(failed) end
+        })
+    ).
+
+socket_helper_contract() ->
+    One = make_ref(),
+    Missing = make_ref(),
+    Crashed = make_ref(),
+    Source = #{
+        all_fun => fun() -> {ok, [One, Missing, Crashed]} end,
+        monotonic_fun => fun() -> 200 end,
+        info_fun => fun
+            (Value) when Value =:= One ->
+                #{
+                    domain => inet,
+                    type => stream,
+                    protocol => tcp,
+                    counters => #{
+                        read_byte => 1, write_byte => 2
+                    }
+                };
+            (Value) when Value =:= Missing ->
+                #{};
+            (Value) when Value =:= Crashed ->
+                erlang:error(closed)
+        end,
+        global_fun => fun() -> #{use_registry => true} end
+    },
+    {ok, Items, Audit, Coverage} = observer_cli_snapshot:socket_sample(Source),
+    ?assertEqual(1, map_size(Items)),
+    ?assertEqual(2, maps:get(disappeared_count, Audit)),
+    ?assertEqual(true, maps:get(use_registry, Audit)),
+    ?assertEqual([optional_sendfile_counter_absent], Coverage),
+    ?assertEqual(
+        {error, failed},
+        observer_cli_snapshot:socket_sample(
+            Source#{all_fun := fun() -> {error, failed} end}
+        )
+    ),
+    ?assertEqual(
+        {error, invalid_enumeration_shape},
+        observer_cli_snapshot:socket_sample(
+            Source#{all_fun := fun() -> invalid end}
+        )
+    ),
+    {ok, _, CrashAudit, _} = observer_cli_snapshot:socket_sample(
+        Source#{
+            all_fun := fun() -> {ok, []} end,
+            global_fun := fun() -> erlang:error(failed) end
+        }
+    ),
+    ?assertEqual(unknown, maps:get(use_registry, CrashAudit)),
+    ?assertEqual(
+        [],
+        observer_cli_snapshot:socket_optional_coverage(#{
+            sendfile_byte => 0, sendfile_pkg => 0, sendfile_waits => 0, sendfile_fails => 0
+        })
+    ).
+
+counter_helper_contract() ->
+    Stats = observer_cli_snapshot:port_statistics(port, #{
+        stat_fun => fun(_, _) -> {ok, [{recv_oct, 1}, {send_oct, -1}]} end
+    }),
+    ?assertEqual(available, maps:get(status, Stats)),
+    ?assertEqual(1, maps:get(recv_oct, Stats)),
+    ?assertEqual(null, maps:get(send_oct, Stats)),
+    ?assertEqual(
+        error,
+        maps:get(
+            status,
+            observer_cli_snapshot:port_statistics(port, #{
+                stat_fun => fun(_, _) -> erlang:error(closed) end
+            })
+        )
+    ),
+    ?assertEqual(
+        {ok, #{enabled => true, seconds => 3}},
+        observer_cli_snapshot:safe_port_option_value(linger, {true, 3})
+    ),
+    ?assertEqual(error, observer_cli_snapshot:safe_port_option_value(linger, {true, -1})),
+    ?assertEqual(
+        {ok, {identifier, interface, <<"en0">>}},
+        observer_cli_snapshot:safe_port_option_value(bind_to_device, "en0")
+    ),
+    ?assertEqual(
+        {ok, {identifier, netns, <<"ns">>}},
+        observer_cli_snapshot:safe_port_option_value(netns, <<"ns">>)
+    ),
+    ?assertEqual({ok, true}, observer_cli_snapshot:safe_port_option_value(active, true)),
+    ?assertEqual({ok, <<"text">>}, observer_cli_snapshot:safe_port_option_value(mode, "text")),
+    ?assertEqual(error, observer_cli_snapshot:safe_port_option_value(mode, self())),
+    ?assertEqual(10, observer_cli_snapshot:counter_series_delta([1, 5, 11])),
+    ?assertEqual(counter_reset, observer_cli_snapshot:counter_series_delta([5, 4])),
+    ?assertEqual(invalid_counter, observer_cli_snapshot:counter_series_delta([1, invalid])),
+    ?assertEqual(
+        #{good => 2, reset => counter_reset, invalid => invalid_counter},
+        observer_cli_snapshot:counter_deltas(
+            #{good => 1, reset => 3, invalid => invalid},
+            #{good => 3, reset => 2, invalid => 4}
+        )
+    ).
+
+probe_helper_contract() ->
+    ?assertEqual(
+        {ok, data, [coverage]},
+        observer_cli_snapshot:call_snapshot_probe(
+            fun() -> {ok, data, [coverage]} end
+        )
+    ),
+    ?assertEqual(
+        {unavailable, unavailable},
+        observer_cli_snapshot:call_snapshot_probe(
+            fun() -> {unavailable, unavailable} end
+        )
+    ),
+    ?assertEqual(
+        {error, invalid_probe_result},
+        observer_cli_snapshot:call_snapshot_probe(
+            fun() -> invalid end
+        )
+    ),
+    ?assertEqual(
+        {unavailable, capability_unavailable},
+        observer_cli_snapshot:call_snapshot_probe(
+            fun() -> erlang:error(badarg) end
+        )
+    ),
+    ?assertEqual(
+        {error, probe_failed},
+        observer_cli_snapshot:call_snapshot_probe(
+            fun() -> erlang:error(other) end
+        )
+    ),
+    lists:foreach(
+        fun(Outcome) ->
+            {Report, _} = observer_cli_snapshot:probe_result(probe, true, Outcome, 9),
+            ?assertEqual(probe, maps:get(id, Report)),
+            ?assertEqual(9, maps:get(duration_ms, Report))
+        end,
+        [
+            {ok, data, [coverage]},
+            {unavailable, unavailable},
+            {timeout, timed_out},
+            {error, failed},
+            invalid
+        ]
+    ).
+
+scheduler_helper_contract() ->
+    ?assertEqual({error, invalid_counter_shape}, observer_cli_snapshot:wall_map(invalid)),
+    ?assertEqual(
+        {error, duplicate_scheduler_id},
+        observer_cli_snapshot:wall_map([
+            {1, 1, 2}, {1, 2, 3}
+        ])
+    ),
+    ?assertEqual({error, invalid_counter_shape}, observer_cli_snapshot:wall_map([invalid])),
+    ?assertEqual({ok, #{1 => {1, 2}}}, observer_cli_snapshot:wall_map([{1, 1, 2}])),
+    ?assertEqual(
+        {error, invalid_counter_shape},
+        observer_cli_snapshot:with_wall_maps(
+            #{wall_time => invalid}, #{wall_time => []}, fun(_, _) -> ok end
+        )
+    ),
+    ?assertEqual(
+        {error, duplicate_scheduler_id},
+        observer_cli_snapshot:with_wall_maps(
+            #{wall_time => []}, #{wall_time => [{1, 1, 2}, {1, 2, 3}]}, fun(_, _) -> ok end
+        )
+    ),
+    ?assertEqual(
+        ok,
+        observer_cli_snapshot:with_wall_maps(
+            #{wall_time => []}, #{wall_time => []}, fun(_, _) -> ok end
+        )
+    ),
+    ?assertMatch({ok, #{status := unavailable}}, observer_cli_snapshot:pool_delta([], #{}, #{})),
+    ?assertMatch(
+        {ok, #{utilization_ratio := 0.5}},
+        observer_cli_snapshot:pool_delta(
+            [1], #{1 => {1, 2}}, #{1 => {2, 4}}
+        )
+    ),
+    ?assertEqual(
+        {error, zero_denominator},
+        observer_cli_snapshot:pool_delta(
+            [1], #{1 => {1, 2}}, #{1 => {1, 2}}
+        )
+    ),
+    ?assertEqual(
+        {error, counter_reset},
+        observer_cli_snapshot:pool_delta(
+            [1], #{1 => {2, 3}}, #{1 => {1, 4}}
+        )
+    ),
+    ?assertEqual({error, missing_scheduler_id}, observer_cli_snapshot:pool_delta([1], #{}, #{})),
+    ?assertEqual({ok, 3, 3}, observer_cli_snapshot:run_queue_sample(2, [1, 2, 3])),
+    ?assertEqual(error, observer_cli_snapshot:run_queue_sample(2, [1, invalid, 3])),
+    ?assertEqual(error, observer_cli_snapshot:run_queue_sample(2, [1, 2])),
+    ?assertMatch(
+        {ok, _},
+        observer_cli_snapshot:run_queue_window(
+            1, #{run_queue_lengths => [1, 2]}, #{run_queue_lengths => [2, 3]}
+        )
+    ),
+    ?assertEqual(
+        {error, invalid_run_queue_shape},
+        observer_cli_snapshot:run_queue_window(
+            1, #{run_queue_lengths => invalid}, #{run_queue_lengths => [2, 3]}
+        )
+    ),
+    Topology = #{
+        schedulers_configured => 1,
+        schedulers_online => 1,
+        dirty_cpu_schedulers_online => 1
+    },
+    First = #{
+        wall_time => [{1, 1, 2}, {2, 1, 2}],
+        run_queue_lengths => [0, 0],
+        monotonic_ms => 10
+    },
+    Second = #{
+        wall_time => [{1, 2, 4}, {2, 2, 4}],
+        run_queue_lengths => [0, 0],
+        monotonic_ms => 20
+    },
+    ?assertMatch(
+        {ok, #{interval_ms := 10}},
+        observer_cli_snapshot:scheduler_window_data(Topology, First, Second)
+    ),
+    ?assertEqual(
+        {error, invalid_interval},
+        observer_cli_snapshot:scheduler_window_data(
+            Topology, First, Second#{monotonic_ms := 5}
+        )
+    ).
+
+controller_queue_contract(Port) ->
+    Peer = 'peer@example',
+    ?assertMatch(
+        #{status := available},
+        observer_cli_snapshot:controller_queue(
+            Peer, [{Peer, Port}], 1024, fun(_) -> {queue_size, 3} end
+        )
+    ),
+    ?assertMatch(
+        #{status := unavailable},
+        observer_cli_snapshot:controller_queue(
+            Peer, [{Peer, Port}], 1024, fun(_) -> invalid end
+        )
+    ),
+    ?assertMatch(
+        #{status := unavailable},
+        observer_cli_snapshot:controller_queue(
+            Peer, [{Peer, Port}], 1024, fun(_) -> erlang:error(closed) end
+        )
+    ),
+    ?assertMatch(
+        #{status := unavailable},
+        observer_cli_snapshot:controller_queue(
+            Peer, [], 1024, fun(_) -> {queue_size, 0} end
+        )
+    ).
+
+distribution_helper_contract() ->
+    Peer1 = {identifier, peer, one},
+    Peer2 = {identifier, peer, two},
+    Data = #{
+        connected_peers => [Peer1, Peer2],
+        visible_peers => [Peer1],
+        hidden_peers => [Peer2],
+        controller_queues => [#{peer => Peer1}, #{peer => Peer2}]
+    },
+    ?assertEqual(
+        false, maps:get(truncated, observer_cli_snapshot:limit_distribution(Data, infinity))
+    ),
+    Limited = observer_cli_snapshot:limit_distribution(Data, 1),
+    ?assertEqual([Peer1], maps:get(connected_peers, Limited)),
+    ?assertEqual([], maps:get(hidden_peers, Limited)),
+    ?assertEqual(1, maps:get(returned_peer_count, Limited)),
+    ?assertEqual(true, maps:get(truncated, Limited)).
+
+snapshot_internal_boundary_matrix_test() ->
+    ?assertMatch(
+        {ok, #{specs := 1}},
+        observer_cli_snapshot:supervisor_counts([
+            {specs, 1}, {active, 1}, {supervisors, 0}, {workers, 1}
+        ])
+    ),
+    ?assertEqual(error, observer_cli_snapshot:supervisor_counts([{specs, -1}])),
+    ?assertEqual(error, observer_cli_snapshot:supervisor_counts(invalid)),
+    ?assert(
+        observer_cli_snapshot:valid_supervisor_children([
+            {child, self(), worker, [?MODULE]},
+            {restarting, restarting, supervisor, [?MODULE]},
+            {undefined, undefined, worker, [?MODULE]}
+        ])
+    ),
+    ?assertNot(observer_cli_snapshot:valid_supervisor_children([invalid])),
+    AliveSource = #{alive_fun => fun erlang:is_process_alive/1},
+    ?assertMatch(#{state := alive}, observer_cli_snapshot:child_pid_item(self(), AliveSource)),
+    ?assertMatch(#{state := restarting}, observer_cli_snapshot:child_pid_item(restarting, #{})),
+    ?assertMatch(#{state := undefined}, observer_cli_snapshot:child_pid_item(undefined, #{})),
+    ?assertEqual(
+        {ok, kernel},
+        observer_cli_snapshot:resolve_loaded_application(
+            <<"kernel">>, [{kernel, "Kernel", "1"}]
+        )
+    ),
+    ?assertEqual(
+        not_found,
+        observer_cli_snapshot:resolve_loaded_application(
+            <<"missing">>, [{kernel, "Kernel", "1"}]
+        )
+    ),
+    ?assertEqual(not_found, observer_cli_snapshot:resolve_loaded_application(<<>>, [])),
+    {Capped, _} = observer_cli_snapshot:shape_term(value, 0, #{nodes => 10000}),
+    ?assertEqual(truncated, maps:get(type, Capped)),
+    {Depth, _} = observer_cli_snapshot:shape_term(value, 6, #{nodes => 0}),
+    ?assertEqual(depth_cap, maps:get(truncation_reason, Depth)),
+    ?assertMatch(
+        {[], #{nodes := 10000}},
+        observer_cli_snapshot:shape_children(
+            [one], 0, #{nodes => 10000}, []
+        )
+    ),
+    ?assertMatch(
+        {[], null, false, _},
+        observer_cli_snapshot:shape_list(
+            [one], 0, #{nodes => 10000}, [], 0
+        )
+    ),
+    ?assertMatch(
+        {_, null, false, _},
+        observer_cli_snapshot:shape_list(
+            [one | improper], 0, #{nodes => 0}, [], 0
+        )
+    ),
+    ProcessSource = #{
+        alive_fun => fun erlang:is_process_alive/1,
+        whereis_fun => fun erlang:whereis/1
+    },
+    ?assertEqual(
+        {ok, self()},
+        observer_cli_snapshot:resolve_pid_text(
+            list_to_binary(pid_to_list(self())), ProcessSource
+        )
+    ),
+    ?assertEqual(not_found, observer_cli_snapshot:resolve_pid_text(<<"bad">>, ProcessSource)),
+    Name = observer_cli_snapshot_test_registered,
+    true = register(Name, self()),
+    try
+        ?assertEqual(
+            {ok, self()},
+            observer_cli_snapshot:resolve_registered_name(
+                atom_to_binary(Name), ProcessSource
+            )
+        )
+    after
+        unregister(Name)
+    end,
+    ?assertEqual(
+        not_found,
+        observer_cli_snapshot:resolve_registered_name(
+            <<"observer_cli_snapshot_missing_name">>, ProcessSource
+        )
+    ),
+    AppSource = #{
+        supervisor_fun => fun
+            (kernel) -> {ok, self()};
+            (_) -> undefined
+        end,
+        root_info_fun => fun(_, group_leader) -> {group_leader, self()} end
+    },
+    ?assertEqual(
+        #{self() => kernel},
+        observer_cli_snapshot:application_leaders(
+            [kernel, missing], AppSource
+        )
+    ),
+    MnesiaSource = #{
+        info_fun => fun
+            (_, size) -> 1;
+            (_, _) -> erlang:error(failed)
+        end,
+        whereis_fun => fun(_) -> make_ref() end,
+        ets_info_fun => fun(Tid, id) -> Tid end
+    },
+    ?assertEqual(1, observer_cli_snapshot:mnesia_info(MnesiaSource, table, size)),
+    ?assertEqual(undefined, observer_cli_snapshot:mnesia_info(MnesiaSource, table, memory)),
+    TableId = make_ref(),
+    CorrSource = MnesiaSource#{
+        whereis_fun := fun(_) -> TableId end,
+        ets_info_fun := fun(_, _) -> TableId end
+    },
+    ?assertEqual(
+        {mnesia_main_table, TableId},
+        observer_cli_snapshot:mnesia_correlation(
+            table, ram_copies, CorrSource
+        )
+    ),
+    ?assertEqual(
+        {management_unknown, table},
+        observer_cli_snapshot:mnesia_correlation(
+            table, disc_only_copies, CorrSource
+        )
+    ),
+    ?assertMatch({_, _}, observer_cli_snapshot:process_fold()),
+    ?assert(
+        observer_cli_snapshot:list_process_fold(
+            fun(Pid, Found) -> Found orelse Pid =:= self() end, false
+        )
+    ),
+    ?assert(observer_cli_snapshot:socket_available()),
+    resource_boundary_matrix(),
+    normalization_boundary_matrix().
+
+resource_boundary_matrix() ->
+    FirstAudit = #{vm_io_counters => #{input => 1, output => 2}, sample_monotonic_ms => 1},
+    SecondAudit = #{
+        vm_io_counters => #{input => 4, output => 6},
+        sample_monotonic_ms => 2,
+        scanned_count => 1
+    },
+    ?assertMatch(
+        #{vm_port_driver_io := #{<<"io_bytes_delta">> := 7}},
+        observer_cli_snapshot:delta_resource_audit(network, FirstAudit, SecondAudit)
+    ),
+    ?assertMatch(
+        #{vm_port_driver_io := #{status := shape_change}},
+        observer_cli_snapshot:delta_resource_audit(
+            network,
+            FirstAudit,
+            SecondAudit#{vm_io_counters := #{input => 4}}
+        )
+    ),
+    ?assertEqual(
+        #{scanned_count => 1},
+        observer_cli_snapshot:delta_resource_audit(
+            sockets, FirstAudit, #{scanned_count => 1, sample_monotonic_ms => 2}
+        )
+    ),
+    ?assertMatch(
+        #{<<"io_bytes_total">> := 3},
+        observer_cli_snapshot:vm_io_metrics(
+            #{input => 1, output => 2}, total
+        )
+    ),
+    ?assertMatch(
+        #{status := missing_core},
+        observer_cli_snapshot:vm_io_metrics(
+            #{input => invalid, output => 2}, delta
+        )
+    ),
+    ?assertEqual(#{}, observer_cli_snapshot:observer_port_exclusions(#{})),
+    Port = open_port({spawn, "cat"}, []),
+    try
+        ?assertMatch(
+            #{resource := {identifier, port, Port}},
+            observer_cli_snapshot:port_exclusion(Port, diagnostics_controller)
+        ),
+        ?assertEqual(
+            {ok, Port},
+            observer_cli_snapshot:resolve_port_target(
+                list_to_binary(port_to_list(Port))
+            )
+        )
+    after
+        port_close(Port)
+    end,
+    ?assertEqual(not_found, observer_cli_snapshot:resolve_port_target(<<"bad">>)),
+    Info = fun
+        (_, name) ->
+            {ok, "efile"};
+        (_, connected) ->
+            {ok, self()};
+        (_, Key) when
+            Key =:= queue_size;
+            Key =:= memory;
+            Key =:= id;
+            Key =:= input;
+            Key =:= output
+        ->
+            {ok, 1};
+        (_, _) ->
+            missing
+    end,
+    Item = observer_cli_snapshot:port_resource(dummy, #{info_fun => Info}),
+    ?assertEqual(2, maps:get(io, Item)),
+    ?assertEqual(
+        skip,
+        observer_cli_snapshot:port_resource(dummy, #{
+            info_fun => fun(_, name) -> {ok, "tcp_inet"} end
+        })
+    ),
+    ?assertEqual(
+        disappeared,
+        observer_cli_snapshot:port_resource(dummy, #{
+            info_fun => fun(_, _) -> missing end
+        })
+    ),
+    ?assertEqual(
+        ok,
+        observer_cli_snapshot:call_port_fun(fun_key, dummy, #{
+            fun_key => fun(_) -> ok end
+        })
+    ),
+    ?assertEqual(
+        {error, failed},
+        observer_cli_snapshot:call_port_fun(fun_key, dummy, #{
+            fun_key => fun(_) -> erlang:error(failed) end
+        })
+    ),
+    ?assertEqual(
+        #{status => unavailable, items => []},
+        observer_cli_snapshot:socket_series_trend([])
+    ).
+
+normalization_boundary_matrix() ->
+    State = #{ids => #{}, counts => #{}},
+    ?assertMatch(
+        {ok, <<"atom">>, _}, observer_cli_snapshot:normalize_value(atom, include, 0, State)
+    ),
+    ?assertMatch({ok, _, _}, observer_cli_snapshot:normalize_value(self(), redact, 0, State)),
+    ?assertEqual(
+        {error, invalid_schema},
+        observer_cli_snapshot:normalize_value(
+            fun() -> ok end, include, 0, State
+        )
+    ),
+    ?assertEqual(
+        {error, invalid_schema},
+        observer_cli_snapshot:normalize_map(
+            [{<<"key">>, 1}, {<<"key">>, 2}], include, 0, State, #{}
+        )
+    ),
+    ?assertEqual({ok, <<"key">>}, observer_cli_snapshot:normalize_key(key)),
+    ?assertEqual(error, observer_cli_snapshot:normalize_key(1)),
+    ?assertEqual({ok, <<"module">>}, observer_cli_snapshot:identifier_text(module)),
+    ?assertEqual(error, observer_cli_snapshot:identifier_text(self())),
+    ?assertEqual(none, observer_cli_snapshot:trim_map_values([], #{}, [], [])),
+    ?assertEqual(none, observer_cli_snapshot:trim_list_values([], [], [], [], 0)),
+    Nested = #{<<"items">> => [one]},
+    ?assertMatch(
+        {ok, _},
+        observer_cli_snapshot:trim_map_values(
+            [{<<"nested">>, Nested}], #{<<"nested">> => Nested}, [], []
+        )
+    ),
+    ?assertMatch({ok, _}, observer_cli_snapshot:trim_list_values([Nested], [], [], [], 0)),
+    ?assertEqual({ok, []}, observer_cli_snapshot:evidence_pointers_values([], [])),
+    ?assertEqual(
+        error,
+        observer_cli_snapshot:evidence_pointers_values(
+            [
+                #{<<"evidence">> => invalid}
+            ],
+            []
+        )
+    ),
+    ?assertEqual({ok, []}, observer_cli_snapshot:parse_pointer(<<>>)),
+    ?assertEqual(
+        {ok, [<<"a/b">>, <<"~c">>]},
+        observer_cli_snapshot:parse_pointer(
+            <<"/a~1b/~0c">>
+        )
+    ),
+    ?assertEqual(error, observer_cli_snapshot:parse_pointer(<<"bad">>)),
+    ?assertEqual(error, observer_cli_snapshot:parse_pointer(<<"/~2">>)).
+
+snapshot_worker_and_diagnostic_boundary_test() ->
+    ?assertEqual(
+        {ok, include, 10000, 8 * 1024 * 1024},
+        observer_cli_snapshot:dispatch_options(#{})
+    ),
+    ?assertEqual(error, observer_cli_snapshot:dispatch_options(#{timeout_ms => 0})),
+    ?assertEqual(error, observer_cli_snapshot:dispatch_options(invalid)),
+    ?assertMatch(
+        #{<<"reason_code">> := <<"worker_heap_limit_exceeded">>},
+        observer_cli_snapshot:worker_down(make_ref(), killed)
+    ),
+    ?assertMatch(
+        #{<<"reason_code">> := <<"probe_failed">>},
+        observer_cli_snapshot:worker_down(make_ref(), failed)
+    ),
+    Worker = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
+    WorkerRef = erlang:monitor(process, Worker),
+    ?assertMatch(
+        #{<<"reason_code">> := <<"test_reason">>},
+        observer_cli_snapshot:stop_worker(Worker, WorkerRef, test_reason)
+    ),
+    ?assertEqual(
+        #{status => unavailable, reason_code => observation_not_requested},
+        observer_cli_snapshot:diagnostic_memory(#{})
+    ),
+    ?assertEqual(
+        #{status => unavailable, reason_code => observation_not_requested},
+        observer_cli_snapshot:diagnostic_ets(#{})
+    ),
+    Ets = observer_cli_snapshot:diagnostic_ets(#{
+        sample_index => 0,
+        test_ets_source => #{
+            count_fun => fun() -> 1 end,
+            all_fun => fun() -> [table] end,
+            info_fun => fun(_, _) -> erlang:error(disappeared) end
+        }
+    }),
+    ?assertEqual(#{}, maps:get(values, Ets)),
+    PortError = observer_cli_snapshot:diagnostic_ports(
+        #{
+            sample_index => 0,
+            test_port_source => #{
+                count_fun => fun() -> 1 end,
+                all_fun => fun() -> invalid end
+            }
+        },
+        #{}
+    ),
+    ?assertEqual(port_inventory_failed, maps:get(reason_code, PortError)),
+    ?assertEqual(
+        #{status => unavailable, reason_code => observation_not_requested},
+        observer_cli_snapshot:diagnostic_ports(#{}, #{})
+    ),
+    SocketBudget = observer_cli_snapshot:diagnostic_sockets(#{
+        observe => true,
+        test_socket_source => #{
+            available_fun => fun() -> true end,
+            count_fun => fun() -> 100001 end
+        }
+    }),
+    ?assertEqual(scan_budget_exceeded, maps:get(reason_code, SocketBudget)),
+    ?assertEqual(
+        #{status => unavailable, reason_code => observation_not_requested},
+        observer_cli_snapshot:diagnostic_sockets(#{})
+    ),
+    ?assertEqual(
+        #{queue_size => 1},
+        observer_cli_snapshot:diagnostic_port(port, #{
+            info_fun => fun
+                (_, queue_size) -> {ok, 1};
+                (_, _) -> missing
+            end
+        })
+    ),
+    ?assertEqual(
+        #{status => unavailable, reason_code => application_not_requested},
+        observer_cli_snapshot:diagnostic_application(#{})
+    ),
+    Normal = spawn(fun() ->
+        receive
+            go -> ok
+        end
+    end),
+    NormalMon = erlang:monitor(process, Normal),
+    Normal ! go,
+    ?assertEqual(
+        outcome,
+        observer_cli_snapshot:finish_deep_probe(
+            Normal, NormalMon, outcome, erlang:monotonic_time(millisecond) + 1000
+        )
+    ),
+    Abnormal = spawn(fun() ->
+        receive
+            go -> exit(failed)
+        end
+    end),
+    AbnormalMon = erlang:monitor(process, Abnormal),
+    Abnormal ! go,
+    ?assertEqual(
+        {error, probe_failed},
+        observer_cli_snapshot:finish_deep_probe(
+            Abnormal, AbnormalMon, outcome, erlang:monotonic_time(millisecond) + 1000
+        )
+    ),
+    Stuck = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
+    StuckMon = erlang:monitor(process, Stuck),
+    ?assertEqual(
+        {timeout, cleanup_unconfirmed},
+        observer_cli_snapshot:finish_deep_probe(
+            Stuck, StuckMon, outcome, erlang:monotonic_time(millisecond)
+        )
+    ),
+    snapshot_coordinate_contract().
+
+snapshot_coordinate_contract() ->
+    ControllerRef = erlang:monitor(process, self()),
+    ErrorWorker = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
+    ErrorMon = erlang:monitor(process, ErrorWorker),
+    ErrorRun = make_ref(),
+    self() ! {ErrorRun, ErrorWorker, {error, test_error}},
+    ?assertMatch(
+        #{<<"reason_code">> := <<"test_error">>},
+        observer_cli_snapshot:coordinate(
+            ControllerRef,
+            ErrorWorker,
+            ErrorMon,
+            ErrorRun,
+            erlang:monotonic_time(millisecond) + 1000
+        )
+    ),
+    InvalidWorker = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
+    InvalidMon = erlang:monitor(process, InvalidWorker),
+    InvalidRun = make_ref(),
+    self() ! {InvalidRun, InvalidWorker, {ok, self()}},
+    ?assertMatch(
+        #{<<"reason_code">> := <<"invalid_schema">>},
+        observer_cli_snapshot:coordinate(
+            ControllerRef,
+            InvalidWorker,
+            InvalidMon,
+            InvalidRun,
+            erlang:monotonic_time(millisecond) + 1000
+        )
+    ),
+    Normal = spawn(fun() ->
+        receive
+            {_Ref, finish} -> ok
+        end
+    end),
+    NormalMon = erlang:monitor(process, Normal),
+    NormalRun = make_ref(),
+    ?assertMatch(
+        #{<<"status">> := <<"ok">>},
+        observer_cli_snapshot:finish_worker(
+            ControllerRef,
+            Normal,
+            NormalMon,
+            NormalRun,
+            erlang:monotonic_time(millisecond) + 1000,
+            #{<<"ok">> => true}
+        )
+    ),
+    Abnormal = spawn(fun() ->
+        receive
+            {_Ref, finish} -> exit(failed)
+        end
+    end),
+    AbnormalMon = erlang:monitor(process, Abnormal),
+    AbnormalRun = make_ref(),
+    ?assertMatch(
+        #{<<"reason_code">> := <<"cleanup_unconfirmed">>},
+        observer_cli_snapshot:finish_worker(
+            ControllerRef,
+            Abnormal,
+            AbnormalMon,
+            AbnormalRun,
+            erlang:monotonic_time(millisecond) + 1000,
+            #{}
+        )
+    ),
+    Timed = spawn(fun() ->
+        receive
+            _ -> receive
+                after infinity -> ok
+                end
+        end
+    end),
+    TimedMon = erlang:monitor(process, Timed),
+    ?assertMatch(
+        #{<<"reason_code">> := <<"cleanup_unconfirmed">>},
+        observer_cli_snapshot:finish_worker(
+            ControllerRef,
+            Timed,
+            TimedMon,
+            make_ref(),
+            erlang:monotonic_time(millisecond),
+            #{}
+        )
+    ),
+    erlang:demonitor(ControllerRef, [flush]).
+
+snapshot_capture_boundary_contract_test() ->
+    ?assertEqual({probe_error, invalid_request}, observer_cli_snapshot:capture_trace(#{}, #{})),
+    NullTrace = observer_cli_snapshot:trace_response(
+        trace_call,
+        fun() ->
+            #{
+                status => error,
+                category => argument,
+                reason => invalid,
+                capture => null,
+                warnings => []
+            }
+        end,
+        #{controller => self()}
+    ),
+    ?assertEqual(null, maps:get(capture, NullTrace)),
+    CompleteTrace = observer_cli_snapshot:trace_response(
+        trace_call,
+        fun() ->
+            #{
+                status => ok,
+                category => success,
+                reason => complete,
+                capture => #{status => complete},
+                warnings => []
+            }
+        end,
+        #{controller => self()}
+    ),
+    ?assertEqual(complete, maps:get(status, maps:get(capture, CompleteTrace))),
+    PartialTrace = observer_cli_snapshot:trace_response(
+        trace_call,
+        fun() ->
+            #{
+                status => error,
+                category => cleanup,
+                reason => failed,
+                capture => #{status => partial},
+                warnings => []
+            }
+        end,
+        #{controller => self()}
+    ),
+    ?assertEqual(partial, maps:get(status, maps:get(capture, PartialTrace))),
+    RootSource = #{count_children_fun => fun(_) -> invalid end},
+    ?assertMatch(
+        {error, supervisor_count_failed, _},
+        observer_cli_snapshot:collect_root_children(app, self(), RootSource, #{})
+    ),
+    ?assertMatch(
+        {error, supervisor_count_failed, _},
+        observer_cli_snapshot:collect_root_children(
+            app,
+            self(),
+            #{count_children_fun => fun(_) -> erlang:error(failed) end},
+            #{}
+        )
+    ),
+    Counts = #{specs => 1, active => 1, supervisors => 0, workers => 1},
+    ?assertMatch(
+        {error, supervisor_children_failed, _},
+        observer_cli_snapshot:collect_admitted_root_children(
+            app, self(), #{which_children_fun => fun(_) -> [invalid] end}, #{}, Counts
+        )
+    ),
+    ?assertMatch(
+        {error, supervisor_children_failed, _},
+        observer_cli_snapshot:collect_admitted_root_children(
+            app, self(), #{which_children_fun => fun(_) -> invalid end}, #{}, Counts
+        )
+    ),
+    ?assertMatch(
+        {error, supervisor_children_failed, _},
+        observer_cli_snapshot:collect_admitted_root_children(
+            app, self(), #{which_children_fun => fun(_) -> erlang:error(failed) end}, #{}, Counts
+        )
+    ),
+    ProcessSource = #{
+        whereis_fun => fun erlang:whereis/1,
+        alive_fun => fun erlang:is_process_alive/1
+    },
+    Target = list_to_binary(pid_to_list(self())),
+    ?assertMatch(
+        {error, state_timeout, _},
+        observer_cli_snapshot:collect_gen_server_state(
+            Target, #{
+                process_source => ProcessSource,
+                get_state_fun => fun(_, _) -> exit({timeout, state}) end
+            }
+        )
+    ),
+    ?assertMatch(
+        {error, state_probe_failed, _},
+        observer_cli_snapshot:collect_gen_server_state(
+            Target, #{
+                process_source => ProcessSource,
+                get_state_fun => fun(_, _) -> erlang:error(failed) end
+            }
+        )
+    ),
+    lists:foreach(
+        fun(Fun) -> ?assertEqual({probe_error, invalid_request}, Fun()) end,
+        [
+            fun() -> observer_cli_snapshot:capture_applications(invalid, #{}) end,
+            fun() -> observer_cli_snapshot:capture_ets(invalid, #{}) end,
+            fun() -> observer_cli_snapshot:capture_mnesia(invalid, #{}) end,
+            fun() -> observer_cli_snapshot:capture_ports(invalid, #{}) end
+        ]
+    ),
+    ?assertEqual(
+        {probe_error, invalid_request},
+        observer_cli_snapshot:capture_counter_resources(
+            network, probe, #{sort => invalid}, #{}, #{}
+        )
+    ),
+    {PastReport, undefined} = observer_cli_snapshot:run_snapshot_probe(
+        probe, true, fun() -> {ok, data, []} end, #{}, erlang:monotonic_time(millisecond)
+    ),
+    ?assertEqual(timeout, maps:get(status, PastReport)),
+    {InjectedReport, data} = observer_cli_snapshot:run_snapshot_probe(
+        probe,
+        true,
+        fun() -> error(unexpected) end,
+        #{test_probe_outcomes => #{probe => {ok, data, []}}},
+        erlang:monotonic_time(millisecond) + 1000
+    ),
+    ?assertEqual(ok, maps:get(status, InjectedReport)).
+
+snapshot_remaining_boundary_contract_test() ->
+    lists:foreach(
+        fun(Fun) -> ?assertEqual({probe_error, invalid_request}, Fun()) end,
+        [
+            fun() -> observer_cli_snapshot:capture_applications(#{sort => invalid}, #{}) end,
+            fun() -> observer_cli_snapshot:capture_ets(#{sort => invalid}, #{}) end,
+            fun() -> observer_cli_snapshot:capture_mnesia(#{sort => invalid}, #{}) end,
+            fun() -> observer_cli_snapshot:capture_ports(#{sort => invalid}, #{}) end
+        ]
+    ),
+    ?assertEqual(
+        error,
+        observer_cli_snapshot:application_name_binary(
+            lists:duplicate(256, $x)
+        )
+    ),
+    ?assertEqual(
+        error,
+        observer_cli_snapshot:application_name_binary(
+            binary:copy(<<"x">>, 256)
+        )
+    ),
+    Tid = make_ref(),
+    ?assertEqual(
+        {management_unknown, table},
+        observer_cli_snapshot:mnesia_correlation(
+            table,
+            ram_copies,
+            #{whereis_fun => fun(_) -> Tid end, ets_info_fun => fun(_, _) -> other end}
+        )
+    ),
+    Source = observer_cli_snapshot:default_mnesia_source(),
+    ok = ignore_snapshot_fun(maps:get(running_fun, Source)),
+    ok = ignore_snapshot_fun(maps:get(local_tables_fun, Source)),
+    ok = ignore_snapshot_fun(fun() -> (maps:get(whereis_fun, Source))(missing_table) end),
+    ok = ignore_snapshot_fun(fun() ->
+        (maps:get(ets_info_fun, Source))(missing_table, size)
+    end),
+    ?assertEqual(
+        error,
+        observer_cli_snapshot:safe_port_option_value(
+            bind_to_device, [16#110000]
+        )
+    ),
+    ?assertEqual(
+        error,
+        observer_cli_snapshot:safe_port_option_value(
+            option, [16#110000]
+        )
+    ),
+    SameA = #{raw_id => a, value => 1},
+    SameB = #{raw_id => b, value => 1},
+    ?assert(observer_cli_snapshot:resource_precedes(SameA, SameB, value)),
+    ?assertNot(observer_cli_snapshot:resource_precedes(SameB, SameA, value)),
+    ?assertNot(observer_cli_snapshot:resource_precedes(SameA, SameA, value)),
+    ?assertEqual(
+        [],
+        maps:get(
+            connected_peers,
+            observer_cli_snapshot:limit_distribution(
+                #{
+                    connected_peers => [{identifier, peer, one}],
+                    visible_peers => [],
+                    hidden_peers => [],
+                    controller_queues => []
+                },
+                0
+            )
+        )
+    ),
+    NormalizeState = #{ids => #{}, counts => #{}},
+    ?assertEqual(
+        {error, invalid_schema},
+        observer_cli_snapshot:normalize_value(
+            <<1:1>>, include, 0, NormalizeState
+        )
+    ),
+    ?assertMatch(
+        {ok, #{<<"arity">> := 0}, _},
+        observer_cli_snapshot:normalize_value(
+            {mfa, erlang, node, 0}, redact, 0, NormalizeState
+        )
+    ),
+    ?assertEqual(
+        {error, invalid_identifier},
+        observer_cli_snapshot:normalize_value(
+            {identifier, invalid, value}, include, 0, NormalizeState
+        )
+    ),
+    ?assertEqual(error, observer_cli_snapshot:normalize_key(<<16#ff>>)),
+    ?assertEqual(error, observer_cli_snapshot:identifier_text(<<16#ff>>)),
+    ?assertEqual(error, observer_cli_snapshot:pointer_index(<<"1x">>)).
+
+ignore_snapshot_fun(Fun) ->
+    try Fun() of
+        _ -> ok
+    catch
+        _:_ -> ok
+    end.
+
+snapshot_inventory_collector_contract_test() ->
+    BaseAcc = #{
+        scanned => 0,
+        eligible => 0,
+        disappeared => 0,
+        exclusions => [],
+        excluded_pids => #{},
+        limit => 1,
+        top => []
+    },
+    ?assertMatch(
+        {skip, #{disappeared := 1}},
+        observer_cli_snapshot:scan_process(
+            self(), [memory], #{info_fun => fun(_, _) -> undefined end}, BaseAcc
+        )
+    ),
+    ?assertMatch(
+        {skip, #{exclusions := [_]}},
+        observer_cli_snapshot:scan_process(
+            self(), [memory], #{}, BaseAcc#{excluded_pids := #{self() => controller}}
+        )
+    ),
+    ?assertMatch(
+        {ok, #{memory := 10}, _},
+        observer_cli_snapshot:scan_process(
+            self(), [memory], #{info_fun => fun(_, _) -> [{memory, 10}] end}, BaseAcc
+        )
+    ),
+    SamplePid = spawn(fun() ->
+        receive
+            stop -> ok
+        end
+    end),
+    Fold = fun(Fun, Acc) -> Fun(SamplePid, Acc) end,
+    Sample = observer_cli_snapshot:collect_process_sample(
+        memory,
+        #{
+            fold => {test, Fold},
+            info_fun => fun(_, _) -> [{memory, 10}] end,
+            monotonic_fun => fun() -> 1 end
+        },
+        #{}
+    ),
+    ?assertEqual(10, maps:get(SamplePid, maps:get(values, Sample))),
+    SkippedSample = observer_cli_snapshot:collect_process_sample(
+        memory,
+        #{
+            fold => {test, Fold},
+            info_fun => fun(_, _) -> undefined end,
+            monotonic_fun => fun() -> 1 end
+        },
+        #{}
+    ),
+    ?assertEqual(#{}, maps:get(values, SkippedSample)),
+    InvalidSample = observer_cli_snapshot:collect_process_sample(
+        memory,
+        #{
+            fold => {test, Fold},
+            info_fun => fun(_, _) -> [{memory, invalid}] end,
+            monotonic_fun => fun() -> 1 end
+        },
+        #{}
+    ),
+    ?assertEqual(#{}, maps:get(values, InvalidSample)),
+    SamplePid ! stop,
+    ProcessSource = #{
+        whereis_fun => fun(_) -> undefined end,
+        alive_fun => fun(_) -> true end,
+        info_fun => fun(_, _) -> undefined end
+    },
+    ?assertMatch(
+        {ok, #{status := not_found}, _},
+        observer_cli_snapshot:collect_process(
+            <<"missing_name">>, ProcessSource
+        )
+    ),
+    ?assertMatch(
+        {ok, #{status := not_found}, _},
+        observer_cli_snapshot:collect_process(
+            list_to_binary(pid_to_list(self())), ProcessSource
+        )
+    ),
+    ?assertMatch(
+        {ok, #{status := running}, _},
+        observer_cli_snapshot:collect_process(
+            list_to_binary(pid_to_list(self())), ProcessSource#{
+                info_fun := fun(_, _) -> [{status, running}, {group_leader, self()}] end
+            }
+        )
+    ),
+    ?assertMatch(
+        {ok, #{status := not_running}, _},
+        observer_cli_snapshot:collect_available_mnesia(
+            #{running_fun => fun() -> no end}, memory, 20, #{}
+        )
+    ),
+    ?assertMatch(
+        {unavailable, capability_unavailable, _},
+        observer_cli_snapshot:collect_available_mnesia(
+            #{running_fun => fun() -> invalid end}, memory, 20, #{}
+        )
+    ),
+    HugeTables = lists:seq(1, 10001),
+    ?assertMatch(
+        {unavailable, scan_budget_exceeded, _},
+        observer_cli_snapshot:collect_available_mnesia(
+            #{running_fun => fun() -> yes end, local_tables_fun => fun() -> HugeTables end},
+            memory,
+            20,
+            #{}
+        )
+    ),
+    MnesiaAcc = #{scanned => 0, disappeared => 0, eligible => 0, top => []},
+    ?assertMatch(
+        #{disappeared := 1},
+        observer_cli_snapshot:scan_mnesia_table(
+            table, #{info_fun => fun(_, _) -> undefined end}, memory, 1, MnesiaAcc
+        )
+    ),
+    ?assertMatch(
+        {unavailable, scan_budget_exceeded, _},
+        observer_cli_snapshot:collect_counter_resources(
+            network, #{count_fun => fun() -> 100001 end}, io, 20, undefined, #{}
+        )
+    ),
+    CounterSource = #{
+        all_fun => fun() -> {error, failed} end,
+        monotonic_fun => fun() -> 1 end
+    },
+    ?assertMatch(
+        {error, enumeration_error, _},
+        observer_cli_snapshot:collect_admitted_counter_resources(
+            network, CounterSource, io, 20, undefined, #{}, 1
+        )
+    ),
+    ?assertMatch(
+        {error, enumeration_error, _},
+        observer_cli_snapshot:collect_admitted_counter_resources(
+            network, CounterSource, io, 20, 1, #{}, 1
+        )
+    ),
+    ?assertEqual(
+        disappeared,
+        observer_cli_snapshot:network_resource(port, #{
+            name_fun => fun(_) -> {ok, "tcp_inet"} end,
+            stat_fun => fun(_) -> invalid end
+        })
+    ),
+    ?assertMatch(
+        {unavailable, scan_budget_exceeded, _},
+        observer_cli_snapshot:collect_ports(
+            #{count_fun => fun() -> 100001 end}, memory, 20, #{}
+        )
+    ),
+    ?assertMatch(
+        {error, enumeration_error, _},
+        observer_cli_snapshot:collect_ports(
+            #{count_fun => fun() -> 1 end, all_fun => fun() -> {error, failed} end},
+            memory,
+            20,
+            #{}
+        )
+    ),
+    ?assertMatch(
+        {error, enumeration_error, _},
+        observer_cli_snapshot:collect_ports(
+            #{count_fun => fun() -> 1 end, all_fun => fun() -> invalid end},
+            memory,
+            20,
+            #{}
+        )
+    ),
+    put(counter_sample_calls, 0),
+    DeltaSource = #{
+        all_fun => fun() ->
+            Calls = get(counter_sample_calls),
+            put(counter_sample_calls, Calls + 1),
+            case Calls of
+                0 -> {ok, []};
+                _ -> {error, second_failed}
+            end
+        end,
+        monotonic_fun => fun() -> 10 end,
+        io_fun => fun() -> {{input, 0}, {output, 0}} end,
+        sleep_fun => fun(_) -> ok end
+    },
+    ?assertMatch(
+        {error, enumeration_error, _},
+        observer_cli_snapshot:collect_admitted_counter_resources(
+            network, DeltaSource, io, 20, 1, #{}, 1
+        )
+    ),
+    erase(counter_sample_calls),
+    PortInfo = fun
+        (item, name) ->
+            {ok, "efile"};
+        (skip, name) ->
+            {ok, "tcp_inet"};
+        (gone, _) ->
+            missing;
+        (_, connected) ->
+            {ok, self()};
+        (_, Key) when
+            Key =:= queue_size;
+            Key =:= memory;
+            Key =:= id;
+            Key =:= input;
+            Key =:= output
+        ->
+            {ok, 1};
+        (_, _) ->
+            missing
+    end,
+    ?assertMatch(
+        {ok, #{items := [_], disappeared_count := 1}, _},
+        observer_cli_snapshot:collect_ports(
+            #{
+                count_fun => fun() -> 3 end,
+                all_fun => fun() -> {ok, [item, skip, gone]} end,
+                info_fun => PortInfo
+            },
+            memory,
+            20,
+            #{}
+        )
+    ).
+
+snapshot_last_pure_branches_test() ->
+    Source = #{alive_fun => fun(_) -> true end, whereis_fun => fun(_) -> undefined end},
+    ?assertEqual(
+        not_found,
+        observer_cli_snapshot:resolve_pid_text(
+            <<"<0.999999999999999999999999999999999999999.0>">>, Source
+        )
+    ),
+    ?assertEqual(
+        not_found, observer_cli_snapshot:resolve_registered_name(<<"kernel">>, Source)
+    ),
+    ?assertEqual(
+        #{},
+        observer_cli_snapshot:application_leaders([kernel], #{
+            supervisor_fun => fun(_) -> {ok, self()} end,
+            root_info_fun => fun(_, _) -> invalid end
+        })
+    ),
+    ?assertEqual(
+        error,
+        observer_cli_snapshot:safe_port_option_value(
+            bind_to_device, binary:copy(<<"x">>, 65537)
+        )
+    ),
+    Topology = #{
+        schedulers_configured => 1, schedulers_online => 1, dirty_cpu_schedulers_online => 1
+    },
+    First = #{
+        wall_time => [{1, 1, 2}, {2, 1, 2}],
+        run_queue_lengths => [0, 0],
+        monotonic_ms => 1
+    },
+    Second = #{
+        wall_time => [{1, 2, 4}, {2, 2, 4}],
+        run_queue_lengths => [0, 0],
+        monotonic_ms => 2
+    },
+    ?assertEqual(
+        {error, missing_scheduler_id},
+        observer_cli_snapshot:scheduler_window_data(
+            Topology, First#{wall_time := [{2, 1, 2}]}, Second
+        )
+    ),
+    ?assertEqual(
+        {error, invalid_run_queue_shape},
+        observer_cli_snapshot:scheduler_window_data(
+            Topology, First#{run_queue_lengths := invalid}, Second
+        )
+    ),
+    State = #{ids => #{}, counts => #{}},
+    ?assertEqual(
+        {error, invalid_schema},
+        observer_cli_snapshot:normalize_value({mfa, erlang, node, invalid}, include, 0, State)
+    ),
+    ?assertEqual(
+        {error, invalid_schema},
+        observer_cli_snapshot:normalize_map(
+            [{<<"key">>, fun() -> ok end}], include, 0, State, #{}
+        )
+    ),
+    ?assertEqual(error, observer_cli_snapshot:normalize_key(binary:copy(<<"x">>, 65537))),
+    ?assertEqual(error, observer_cli_snapshot:identifier_text(binary:copy(<<"x">>, 65537))),
+    Dead = spawn(fun() -> ok end),
+    DeadMon = erlang:monitor(process, Dead),
+    receive
+        {'DOWN', DeadMon, process, Dead, normal} -> ok
+    end,
+    ?assertMatch(
+        #{state := dead},
+        observer_cli_snapshot:child_pid_item(Dead, #{alive_fun => fun(_) -> false end})
+    ),
+    ?assertEqual(error, observer_cli_snapshot:application_name_binary([16#110000])),
+    ProcessSource = #{
+        whereis_fun => fun(_) -> undefined end,
+        alive_fun => fun(_) -> true end,
+        info_fun => fun(_, _) -> [{status, waiting}] end
+    },
+    ?assertMatch(
+        {ok, #{status := waiting}, _},
+        observer_cli_snapshot:collect_process(
+            list_to_binary(pid_to_list(self())), ProcessSource
+        )
+    ),
+    Tid = make_ref(),
+    MnesiaSource = #{
+        info_fun => fun
+            (_, storage_type) -> ram_copies;
+            (_, size) -> 1;
+            (_, memory) -> 1
+        end,
+        word_size_fun => fun() -> 8 end,
+        whereis_fun => fun(_) -> undefined end,
+        ets_info_fun => fun(_, _) -> undefined end
+    },
+    MnesiaAcc = #{scanned => 0, disappeared => 0, eligible => 0, top => []},
+    ?assertEqual(
+        0,
+        maps:get(
+            eligible,
+            observer_cli_snapshot:scan_mnesia_table(
+                Tid, MnesiaSource, unknown_sort, 1, MnesiaAcc
+            )
+        )
+    ),
+    ?assertEqual(
+        {management_unknown, Tid},
+        observer_cli_snapshot:mnesia_correlation(Tid, ram_copies, MnesiaSource)
+    ),
+    DefaultProcess = observer_cli_snapshot:default_process_source(),
+    ?assert(is_integer((maps:get(monotonic_fun, DefaultProcess))())),
+    DefaultMnesia = observer_cli_snapshot:default_mnesia_source(),
+    ?assert(is_boolean((maps:get(available_fun, DefaultMnesia))())),
+    ?assertEqual(invalid, maps:get(status, observer_cli_snapshot:scheduler_window(#{}, #{}))).
+
+snapshot_rare_branch_contract_test() ->
+    self() ! stop,
+    ?assertEqual(ok, observer_cli_snapshot:probe(test_timeout, self(), #{})),
+    receive
+        {test_worker, _} -> ok
+    end,
+    ?assertMatch(
+        #{command := trace_stop_all},
+        observer_cli_snapshot:capture_trace(
+            #{action => stop_all}, #{controller => self()}
+        )
+    ),
+    ?assertEqual(
+        scan_budget_exceeded,
+        maps:get(
+            reason_code,
+            observer_cli_snapshot:diagnostic_ets(#{
+                sample_index => 0,
+                test_ets_source => #{count_fun => fun() -> 100001 end}
+            })
+        )
+    ),
+    ?assertEqual(
+        scan_budget_exceeded,
+        maps:get(
+            reason_code,
+            observer_cli_snapshot:diagnostic_ports(
+                #{
+                    sample_index => 0,
+                    test_port_source => #{count_fun => fun() -> 100001 end}
+                },
+                #{}
+            )
+        )
+    ),
+    AppBase = #{
+        loaded_fun => fun() -> [{kernel, "Kernel", "1"}] end,
+        running_fun => fun(_) -> [{kernel, "Kernel", "1"}] end,
+        supervisor_fun => fun(_) -> {ok, self()} end,
+        root_info_fun => fun(_, _) -> {group_leader, self()} end,
+        alive_fun => fun(_) -> true end,
+        which_children_fun => fun(_) -> [] end
+    },
+    UnavailableApp = observer_cli_snapshot:diagnostic_application(#{
+        observe => true,
+        app => "kernel",
+        test_application_source => AppBase#{
+            count_children_fun => fun(_) ->
+                [
+                    {specs, 5001}, {active, 5001}, {supervisors, 0}, {workers, 5001}
+                ]
+            end
+        }
+    }),
+    ?assertEqual(unavailable, maps:get(status, UnavailableApp)),
+    ErrorApp = observer_cli_snapshot:diagnostic_application(#{
+        observe => true,
+        app => "kernel",
+        test_application_source => AppBase#{count_children_fun => fun(_) -> invalid end}
+    }),
+    ?assertEqual(error, maps:get(status, ErrorApp)),
+    ProcessSource = #{count_fun => fun() -> 100001 end},
+    ?assertMatch(
+        {unavailable, scan_budget_exceeded, _},
+        observer_cli_snapshot:collect_admitted_applications(
+            [],
+            [],
+            [],
+            #{},
+            ProcessSource,
+            memory,
+            20,
+            #{deadline => erlang:monotonic_time(millisecond) + 1000},
+            0
+        )
+    ),
+    ?assertEqual(
+        null,
+        maps:get(
+            connected_pid,
+            observer_cli_snapshot:port_resource(item, #{
+                info_fun => fun
+                    (_, name) ->
+                        {ok, "efile"};
+                    (_, connected) ->
+                        {ok, invalid};
+                    (_, Key) when
+                        Key =:= queue_size;
+                        Key =:= memory;
+                        Key =:= id;
+                        Key =:= input;
+                        Key =:= output
+                    ->
+                        {ok, 1};
+                    (_, _) ->
+                        missing
+                end
+            })
+        )
+    ),
+    ?assertEqual(
+        null,
+        maps:get(
+            io,
+            observer_cli_snapshot:port_resource(item, #{
+                info_fun => fun
+                    (_, name) -> {ok, "efile"};
+                    (_, connected) -> {ok, self()};
+                    (_, input) -> missing;
+                    (_, output) -> {ok, 1};
+                    (_, Key) when Key =:= queue_size; Key =:= memory; Key =:= id -> {ok, 1};
+                    (_, _) -> missing
+                end
+            })
+        )
+    ),
+    ?assertEqual(
+        not_found,
+        observer_cli_snapshot:resolve_port_target(
+            <<"#Port<0.999999999999999999999999999>">>
+        )
+    ),
+    ?assertEqual(not_found, observer_cli_snapshot:resolve_port_target(<<"#Port<0.01>">>)),
+    ?assertEqual(error, observer_cli_snapshot:bounded_identifier_text([<<"x">> | improper])),
+    ?assert(
+        observer_cli_snapshot:resource_precedes(
+            #{raw_id => a, value => 1}, #{raw_id => b, value => null}, value
+        )
+    ),
+    ?assertNot(
+        observer_cli_snapshot:resource_precedes(
+            #{raw_id => a, value => null}, #{raw_id => b, value => 1}, value
+        )
+    ),
+    Hidden = {identifier, peer, hidden},
+    Limited = observer_cli_snapshot:limit_distribution(
+        #{
+            connected_peers => [Hidden],
+            visible_peers => [],
+            hidden_peers => [Hidden],
+            controller_queues => []
+        },
+        1
+    ),
+    ?assertEqual([Hidden], maps:get(hidden_peers, Limited)).
+
 allocator_data_test() ->
     Data = observer_cli_snapshot:allocator_data(#{
         average_block_curs => [
@@ -695,6 +2513,56 @@ runtime_inspection_commands() ->
         maps:get(<<"queue_semantics">>, DistributionData)
     ),
     ?assert(is_list(maps:get(<<"controller_queues">>, DistributionData))).
+
+invalid_runtime_inspection_requests_are_rejected_test() ->
+    Cases = [
+        {snapshot, invalid, invalid_request},
+        {memory, invalid, invalid_request},
+        {schedulers, #{duration_ms => 249}, invalid_duration},
+        {schedulers, invalid, invalid_duration},
+        {distribution, #{limit => 0}, invalid_limit},
+        {distribution, invalid, invalid_request},
+        {processes, #{sort => invalid}, invalid_request},
+        {processes, invalid, invalid_request},
+        {process, invalid, invalid_request},
+        {port, invalid, invalid_request},
+        {applications, invalid, invalid_request},
+        {ets, invalid, invalid_request},
+        {mnesia, invalid, invalid_request},
+        {network, invalid, invalid_request},
+        {ports, invalid, invalid_request},
+        {sockets, invalid, invalid_request},
+        {gen_server_state, invalid, invalid_request},
+        {supervision_tree, invalid, invalid_request},
+        {trace, invalid, invalid_request},
+        {unknown_command, #{}, capability_unavailable}
+    ],
+    lists:foreach(
+        fun({Command, Request, Reason}) ->
+            Result = observer_cli_snapshot:dispatch(
+                self(), Command, Request, options(3000, redact)
+            ),
+            ?assertNotEqual(
+                nomatch,
+                binary:match(term_to_binary(Result), atom_to_binary(Reason))
+            )
+        end,
+        Cases
+    ),
+    lists:foreach(
+        fun({Controller, Options, Reason}) ->
+            Result = observer_cli_snapshot:dispatch(Controller, memory, #{}, Options),
+            ?assertNotEqual(
+                nomatch,
+                binary:match(term_to_binary(Result), atom_to_binary(Reason))
+            )
+        end,
+        [
+            {not_a_pid, options(3000, redact), invalid_request},
+            {self(), options(1000, redact), target_timeout},
+            {self(), #{timeout_ms => 3000, identifier_policy => invalid}, invalid_request}
+        ]
+    ).
 
 process_inventory_boundary_and_stable_top_n_test() ->
     Parent = self(),
@@ -1439,7 +3307,81 @@ invalid_utf8_and_field_cap_test() ->
     ?assertEqual(
         {error, field_too_large},
         observer_cli_snapshot:normalize(binary:copy(<<"x">>, 64 * 1024 + 1), include)
+    ),
+    ?assertEqual(
+        {error, field_too_large},
+        observer_cli_snapshot:normalize(binary:copy(<<16#ff>>, 64 * 1024), include)
     ).
+
+normalization_edge_contract_test() ->
+    Port = open_port({spawn, "cat"}, []),
+    Reference = make_ref(),
+    try
+        Values = #{
+            port => Port,
+            table_integer => {identifier, table, 42},
+            socket_reference => {identifier, socket, Reference},
+            child => {identifier, child, <<"worker">>},
+            endpoint => {identifier, endpoint, <<"127.0.0.1:1883">>},
+            interface => {identifier, interface, en0},
+            netns => {identifier, netns, <<"default">>},
+            application => {identifier, application, kernel}
+        },
+        {ok, Included} = observer_cli_snapshot:normalize(Values, include),
+        ?assertEqual(list_to_binary(port_to_list(Port)), maps:get(<<"port">>, Included)),
+        ?assertEqual(<<"42">>, maps:get(<<"table_integer">>, Included)),
+        {ok, Redacted} = observer_cli_snapshot:normalize(Values, redact),
+        ?assertEqual(<<"port-1">>, maps:get(<<"port">>, Redacted))
+    after
+        port_close(Port)
+    end,
+    lists:foreach(
+        fun(Term) ->
+            ?assertEqual({error, invalid_schema}, observer_cli_snapshot:normalize(Term, include))
+        end,
+        [
+            #{foo => 1, <<"foo">> => 2},
+            #{1 => value},
+            [head | tail],
+            {mfa, erlang, node, -1},
+            fun() -> ok end
+        ]
+    ),
+    ?assertEqual(
+        {error, invalid_identifier},
+        observer_cli_snapshot:normalize({identifier, unknown, value}, include)
+    ),
+    ?assertEqual(
+        {error, invalid_identifier_policy}, observer_cli_snapshot:normalize(#{}, invalid)
+    ),
+    Deep = lists:foldl(fun(_, Acc) -> [Acc] end, value, lists:seq(1, 34)),
+    ?assertEqual({error, response_too_deep}, observer_cli_snapshot:normalize(Deep, include)).
+
+evidence_pointer_contract_test() ->
+    ?assertEqual({ok, #{}}, observer_cli_snapshot:truncate(#{})),
+    lists:foreach(
+        fun(Response) ->
+            ?assertEqual(
+                {error, invalid_evidence_pointer}, observer_cli_snapshot:truncate(Response)
+            )
+        end,
+        [
+            #{<<"evidence">> => invalid},
+            #{<<"evidence">> => [#{}]},
+            #{<<"evidence">> => [#{<<"path">> => 1}]},
+            #{<<"evidence">> => [#{<<"path">> => <<"missing-slash">>}]},
+            #{<<"evidence">> => [#{<<"path">> => <<"/~2">>}]},
+            #{<<"items">> => [], <<"evidence">> => [#{<<"path">> => <<"/items/1">>}]},
+            #{<<"items">> => value, <<"evidence">> => [#{<<"path">> => <<"/items/0">>}]},
+            #{<<"items">> => [value], <<"evidence">> => [#{<<"path">> => <<"/items/00">>}]},
+            #{<<"items">> => [value], <<"evidence">> => [#{<<"path">> => <<"/items/nope">>}]}
+        ]
+    ),
+    Escaped = #{
+        <<"a/b">> => #{<<"~key">> => value},
+        <<"evidence">> => [#{<<"path">> => <<"/a~1b/~0key">>}]
+    },
+    ?assertEqual({ok, Escaped}, observer_cli_snapshot:truncate(Escaped)).
 
 dispatch_success_and_schema_failures_test() ->
     ?assertMatch(
@@ -1917,6 +3859,42 @@ diagnostic_port_uses_default_source_result_shape_test() ->
     after
         port_close(Port)
     end.
+
+diagnostic_runtime_failure_paths_test() ->
+    BadProcess = (process_source([], fun(_Pid, _Keys) -> undefined end))#{
+        count_fun => fun() -> erlang:error(process_count_failed) end
+    },
+    PortError = #{
+        count_fun => fun() -> 1 end,
+        all_fun => fun() -> {error, port_registry_failed} end,
+        info_fun => fun(_Port, _Key) -> missing end
+    },
+    Base = (diagnostic_inventory_request())#{
+        observe => <<"5s">>,
+        test_process_source => BadProcess,
+        test_port_source => PortError,
+        test_socket_source => #{available_fun => fun() -> false end}
+    },
+    Sample = observer_cli_snapshot:diagnostic_sample(Base, #{controller => self()}),
+    ?assertEqual(
+        process_inventory_failed, maps:get(reason_code, maps:get(process_inventory, Sample))
+    ),
+    ?assertEqual(port_inventory_failed, maps:get(reason_code, maps:get(port_inventory, Sample))),
+    ?assertEqual(capability_unavailable, maps:get(reason_code, maps:get(socket_inventory, Sample))),
+    SocketError = #{
+        available_fun => fun() -> true end,
+        count_fun => fun() -> 0 end,
+        global_fun => fun() -> #{} end,
+        all_fun => fun() -> {error, socket_registry_failed} end,
+        info_fun => fun(_Socket) -> #{} end,
+        monotonic_fun => fun() -> erlang:monotonic_time(millisecond) end
+    },
+    FailedSocket = observer_cli_snapshot:diagnostic_sample(
+        Base#{test_socket_source := SocketError}, #{controller => self()}
+    ),
+    ?assertEqual(
+        socket_registry_failed, maps:get(reason_code, maps:get(socket_inventory, FailedSocket))
+    ).
 
 diagnostic_inventory_request() ->
     #{

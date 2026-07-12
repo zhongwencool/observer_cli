@@ -15,7 +15,8 @@
     find_group_leader/1,
     app_render_info/4,
     render_app_info/3,
-    update_app_stats/6
+    update_app_stats/6,
+    leader_info/1
 ]).
 -endif.
 

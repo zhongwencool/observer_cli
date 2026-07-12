@@ -17,6 +17,639 @@ recursive_fixture(Count) ->
 validation_and_admission_do_not_clear_test_() ->
     {timeout, 10, fun validation_and_admission_do_not_clear/0}.
 
+input_validation_contract_test() ->
+    Base = request(self()),
+    Dead = spawn(fun() -> ok end),
+    Mon = erlang:monitor(process, Dead),
+    receive
+        {'DOWN', Mon, process, Dead, normal} -> ok
+    end,
+    Cases = [
+        {not_a_pid, Base, invalid_request},
+        {self(), not_a_map, invalid_request},
+        {self(), maps:remove(mfa, Base), invalid_mfa},
+        {self(), Base#{mfa => 1}, invalid_mfa},
+        {self(), Base#{mfa => <<"bad">>}, invalid_mfa},
+        {self(), Base#{mfa => <<"erlang:node/0/1">>}, invalid_mfa},
+        {self(), Base#{mfa => <<"_:node/0">>}, invalid_mfa},
+        {self(), Base#{mfa => <<"erlang:node/256">>}, invalid_mfa},
+        {self(), maps:remove(pid, Base), trace_pid_required},
+        {self(), Base#{pid => <<"not-a-pid">>}, invalid_trace_pid},
+        {self(), Base#{pid => list_to_binary(pid_to_list(Dead))}, invalid_trace_pid},
+        {self(), Base#{pid => binary:copy(<<"x">>, 129)}, invalid_trace_pid},
+        {self(), Base#{duration_ms => 99}, invalid_trace_bounds},
+        {self(), Base#{duration_ms => 60001}, invalid_trace_bounds},
+        {self(), Base#{duration_ms => invalid}, invalid_trace_bounds},
+        {self(), Base#{max => 0}, invalid_trace_bounds},
+        {self(), Base#{max => 1001}, invalid_trace_bounds},
+        {self(), Base#{max => {0, 1000}}, invalid_trace_bounds},
+        {self(), Base#{max => {201, 1000}}, invalid_trace_bounds},
+        {self(), Base#{max => invalid}, invalid_trace_bounds}
+    ],
+    lists:foreach(
+        fun({Controller, Request, Reason}) ->
+            ?assertEqual(Reason, maps:get(reason, observer_cli_trace:call(Controller, Request)))
+        end,
+        Cases
+    ).
+
+trace_protocol_helper_contract_test() ->
+    ?assertEqual(
+        {forced, controller, controller_disconnected},
+        observer_cli_trace:forced_reason(controller_disconnected)
+    ),
+    ?assertEqual(
+        {forced, internal, capture_internal_error}, observer_cli_trace:forced_reason(unexpected)
+    ),
+    Events = [#{mfa => <<"erlang:node/0">>}],
+    ?assertEqual(Events, observer_cli_trace:outcome_events({natural, stopped, Events, false})),
+    ?assertEqual([], observer_cli_trace:outcome_events({forced, success, stopped})),
+    ?assertEqual(null, observer_cli_trace:module_md5(observer_cli_missing_module)),
+    lists:foreach(
+        fun(Request) -> ?assertEqual(ok, observer_cli_trace:io_reply(Request)) end,
+        [
+            {put_chars, <<"text">>},
+            {put_chars, unicode, <<"text">>},
+            {put_chars, io_lib, format, ["~s", ["text"]]},
+            {put_chars, unicode, io_lib, format, ["~s", ["text"]]},
+            {requests, [{put_chars, <<"one">>}, {put_chars, <<"two">>}]}
+        ]
+    ),
+    ?assertEqual(
+        {error, request}, observer_cli_trace:io_reply({put_chars, missing, function, []})
+    ),
+    ?assertEqual(
+        {error, request},
+        observer_cli_trace:io_reply({requests, [{put_chars, missing, function, []}]})
+    ),
+    ?assertEqual({error, enotsup}, observer_cli_trace:io_reply({get_geometry, rows})),
+    ?assertEqual({error, enotsup}, observer_cli_trace:io_reply(unsupported)),
+    ?assertEqual(
+        error,
+        observer_cli_trace:parse_pid("<0.999999999999999999999999999999999999999.0>")
+    ).
+
+trace_cleanup_helper_contract_test_() ->
+    {timeout, 15, fun trace_cleanup_helper_contract/0}.
+
+trace_cleanup_helper_contract() ->
+    ?assertEqual({ok, self()}, observer_cli_trace:parse_pid(pid_to_list(self()))),
+    ?assertEqual({ok, self()}, observer_cli_trace:parse_pid(list_to_binary(pid_to_list(self())))),
+    ?assertEqual(error, observer_cli_trace:parse_pid(invalid)),
+    Session = make_ref(),
+    Collector = spawn(fun() -> formatter_collector(self()) end),
+    ?assertEqual(
+        [],
+        observer_cli_trace:format_event(
+            {trace_ts, self(), call, {erlang, node, 0}, os:timestamp()},
+            Collector,
+            Session,
+            os:timestamp()
+        )
+    ),
+    ?assertEqual([], observer_cli_trace:format_event(invalid, Collector, Session, os:timestamp())),
+    Collector ! stop,
+    DrainCollector = spawn(fun final_collector/0),
+    ?assertEqual(
+        {natural, limit_reached, [event], false},
+        observer_cli_trace:final_drain(#{
+            collector => DrainCollector,
+            collector_mon => erlang:monitor(process, DrainCollector),
+            max => 1
+        })
+    ),
+    RateCollector = spawn(fun final_collector/0),
+    ?assertEqual(
+        {natural, rate_exceeded, [event], false},
+        observer_cli_trace:wait_formatter(
+            #{
+                collector => RateCollector,
+                collector_mon => erlang:monitor(process, RateCollector),
+                max => {1, 1000},
+                ref => make_ref()
+            },
+            #{formatter => undefined, formatter_mon => undefined},
+            erlang:monotonic_time(millisecond) + 1000
+        )
+    ),
+    helper_shutdown_contract(),
+    owner_result_contract(),
+    ?assertEqual(
+        ok,
+        observer_cli_trace:verify_cleanup(#{
+            pid => self(), mfa => {?MODULE, fixture, 0}
+        })
+    ),
+    ?assertEqual(true, observer_cli_trace:trace_pattern_off({?MODULE, fixture, 0})),
+    ?assertEqual(true, observer_cli_trace:trace_pattern_off({missing_module, missing, 0})),
+    1 = erlang:trace_pattern({?MODULE, fixture, 0}, true, []),
+    ?assertEqual(false, observer_cli_trace:trace_pattern_off({?MODULE, fixture, 0})),
+    1 = erlang:trace(self(), true, [call]),
+    ?assertEqual(
+        {error, cleanup_unconfirmed},
+        observer_cli_trace:verify_cleanup(#{
+            pid => self(), mfa => {?MODULE, fixture, 0}
+        })
+    ),
+    1 = erlang:trace(self(), false, [call]),
+    1 = erlang:trace_pattern({?MODULE, fixture, 0}, false, []),
+    ?assertEqual(ok, observer_cli_trace:wait_fixed_names()),
+    ?assertEqual(ok, observer_cli_trace:stop_helper(not_a_pid)),
+    Normal = spawn(fun() ->
+        receive
+            stop -> ok
+        end
+    end),
+    ?assertEqual(ok, observer_cli_trace:stop_helper(Normal)),
+    Stubborn = spawn(fun stubborn_helper/0),
+    ?assertEqual(ok, observer_cli_trace:stop_helper(Stubborn)),
+    wait_formatter_contract(),
+    drain_failure_contract(),
+    FixedName = spawn(fun stubborn_helper/0),
+    true = register(recon_trace_formatter, FixedName),
+    spawn(fun() ->
+        timer:sleep(20),
+        exit(FixedName, kill)
+    end),
+    ?assertEqual(ok, observer_cli_trace:wait_fixed_names()),
+    trace_owner_protocol_contract().
+
+trace_owner_protocol_contract() ->
+    ?assertEqual(
+        {forced, internal, capture_internal_error},
+        run_wait_trace_case(force_stop)
+    ),
+    ?assertMatch(
+        {forced, success, stopped, {_Stopper, _StopRef}},
+        run_wait_trace_case(stop_request)
+    ),
+    ?assertEqual({forced, success, duration_elapsed}, run_wait_trace_case(timeout)),
+    ?assertEqual(
+        cleanup_unconfirmed,
+        maps:get(reason, observer_cli_trace:fallback_cleanup(#{}, [], false))
+    ),
+    Owner = spawn(fun stubborn_helper/0),
+    OwnerMon = erlang:monitor(process, Owner),
+    exit(Owner, kill),
+    ?assertEqual(
+        result, observer_cli_trace:await_owner_down(Owner, OwnerMon, make_ref(), result)
+    ),
+    TimeoutOwner = spawn(fun stubborn_helper/0),
+    TimeoutMon = erlang:monitor(process, TimeoutOwner),
+    exit(TimeoutOwner, kill),
+    TimeoutResult = observer_cli_trace:await_timeout_cleanup(
+        TimeoutOwner, TimeoutMon, make_ref(), #{}, [], false
+    ),
+    ?assertEqual(cleanup_unconfirmed, maps:get(reason, TimeoutResult)),
+    Warning = #{code => warning},
+    Response = #{status => ok},
+    Cooperative = spawn(fun() ->
+        receive
+            {stop_request, Stopper, RequestRef} ->
+                Stopper ! {RequestRef, armed, self()},
+                Stopper ! {RequestRef, cleanup_ack, Response}
+        end
+    end),
+    ?assertEqual(Response, observer_cli_trace:stop_owner(Cooperative, Warning)),
+    Dying = spawn(fun() ->
+        receive
+            _ -> exit(failed)
+        end
+    end),
+    ?assertEqual(
+        cleanup_unconfirmed, maps:get(reason, observer_cli_trace:stop_owner(Dying, Warning))
+    ),
+    ?assertEqual(
+        Response,
+        observer_cli_trace:await_stop_ack(
+            self(), make_ref(), make_ref(), Warning, Response, true
+        )
+    ),
+    ControllerMon = make_ref(),
+    DispatcherMon = make_ref(),
+    TraceeMon = make_ref(),
+    MonitorState = #{
+        controller_mon => ControllerMon,
+        dispatcher_mon => DispatcherMon,
+        tracee_mon => TraceeMon
+    },
+    ?assertEqual(
+        {forced, controller, controller_disconnected},
+        observer_cli_trace:monitor_failure(MonitorState, ControllerMon, failed)
+    ),
+    ?assertEqual(
+        {forced, internal, dispatcher_disconnected},
+        observer_cli_trace:monitor_failure(MonitorState, DispatcherMon, failed)
+    ),
+    ?assertEqual(
+        {forced, safety_refusal, tracee_exited},
+        observer_cli_trace:monitor_failure(MonitorState, TraceeMon, failed)
+    ),
+    ?assertEqual(
+        {forced, internal, capture_internal_error},
+        observer_cli_trace:monitor_failure(MonitorState, make_ref(), failed)
+    ),
+    Collision = spawn(fun stubborn_helper/0),
+    true = register(observer_cli_trace_owner, Collision),
+    DeadOwner = spawn(fun() ->
+        receive
+            stop -> ok
+        end
+    end),
+    DeadOwnerMon = erlang:monitor(process, DeadOwner),
+    DeadOwner ! stop,
+    ?assertEqual(
+        cleanup_unconfirmed,
+        maps:get(
+            reason,
+            observer_cli_trace:await_owner_down(
+                DeadOwner, DeadOwnerMon, make_ref(), result
+            )
+        )
+    ),
+    exit(Collision, kill),
+    ResultOwner = spawn(fun() ->
+        receive
+            stop -> ok
+        end
+    end),
+    ResultOwnerMon = erlang:monitor(process, ResultOwner),
+    ResultRef = make_ref(),
+    self() ! {ResultRef, result, result},
+    spawn(fun() ->
+        timer:sleep(10),
+        ResultOwner ! stop
+    end),
+    ?assertEqual(
+        result,
+        observer_cli_trace:await_timeout_cleanup(
+            ResultOwner, ResultOwnerMon, ResultRef, #{}, [], false
+        )
+    ),
+    ?assertEqual({error, cleanup_unconfirmed}, observer_cli_trace:wait_fixed_names(0)),
+    Silent = spawn(fun observer_cli_trace:silent_io/0),
+    Silent ! unknown,
+    Silent ! stop,
+    SilentMon = erlang:monitor(process, Silent),
+    receive
+        {'DOWN', SilentMon, process, Silent, normal} -> ok
+    end,
+    ?assertEqual(
+        cleanup_unconfirmed,
+        observer_cli_trace:await_killed_helper(self(), make_ref())
+    ).
+
+run_wait_trace_case(Kind) ->
+    Parent = self(),
+    Pid = spawn(fun() ->
+        Ref = make_ref(),
+        State = #{
+            ref => Ref,
+            duration_ms => 100,
+            controller_mon => make_ref(),
+            dispatcher_mon => make_ref(),
+            tracee_mon => make_ref()
+        },
+        Recon = #{tracer => self(), tracer_mon => make_ref()},
+        Parent ! {wait_trace_ready, self(), Ref},
+        Deadline =
+            case Kind of
+                timeout -> erlang:monotonic_time(millisecond);
+                _ -> erlang:monotonic_time(millisecond) + 1000
+            end,
+        Parent ! {wait_trace_result, self(), observer_cli_trace:wait_trace(State, Recon, Deadline)}
+    end),
+    ReadyRef =
+        receive
+            {wait_trace_ready, Pid, Ref} ->
+                case Kind of
+                    force_stop -> Pid ! {force_stop, Ref, dispatcher_timeout};
+                    stop_request -> Pid ! {stop_request, Parent, Ref};
+                    timeout -> ok
+                end,
+                Ref
+        end,
+    receive
+        {ReadyRef, armed, Pid} -> ok
+    after 0 ->
+        ok
+    end,
+    receive
+        {wait_trace_result, Pid, Result} -> Result
+    end.
+
+helper_shutdown_contract() ->
+    Dead = spawn(fun() -> ok end),
+    DeadMon = erlang:monitor(process, Dead),
+    receive
+        {'DOWN', DeadMon, process, Dead, normal} -> ok
+    end,
+    ?assertEqual(helper_failed, observer_cli_trace:stop_helper_checked(Dead, DeadMon)),
+    Normal = spawn(fun checked_helper/0),
+    NormalMon = erlang:monitor(process, Normal),
+    ?assertEqual(ok, observer_cli_trace:stop_helper_checked(Normal, NormalMon)),
+    Abnormal = spawn(fun() ->
+        receive
+            {stop, Owner, Ref} ->
+                Owner ! {Ref, stopping},
+                exit(abnormal)
+        end
+    end),
+    AbnormalMon = erlang:monitor(process, Abnormal),
+    ?assertEqual(helper_failed, observer_cli_trace:stop_helper_checked(Abnormal, AbnormalMon)),
+    First = spawn(fun checked_helper/0),
+    Second = spawn(fun checked_helper/0),
+    State = #{
+        collector => First,
+        collector_mon => erlang:monitor(process, First),
+        silent_io => Second,
+        silent_mon => erlang:monitor(process, Second)
+    },
+    ?assertEqual(
+        {{forced, success, stopped}, ok},
+        observer_cli_trace:checked_helper_shutdown(State, {forced, success, stopped}, ok)
+    ),
+    Stubborn = spawn(fun stubborn_helper/0),
+    StubbornMon = erlang:monitor(process, Stubborn),
+    ?assertEqual(
+        cleanup_unconfirmed,
+        observer_cli_trace:stop_helper_checked(Stubborn, StubbornMon)
+    ),
+    VerificationA = spawn(fun checked_helper/0),
+    VerificationB = spawn(fun checked_helper/0),
+    VerificationState = #{
+        collector => VerificationA,
+        collector_mon => erlang:monitor(process, VerificationA),
+        silent_io => VerificationB,
+        silent_mon => erlang:monitor(process, VerificationB)
+    },
+    ?assertMatch(
+        {_, {error, cleanup_unconfirmed}},
+        observer_cli_trace:checked_helper_shutdown(
+            VerificationState, outcome, {error, cleanup_unconfirmed}
+        )
+    ),
+    DeadCollector = spawn(fun() -> ok end),
+    DeadCollectorMon = erlang:monitor(process, DeadCollector),
+    receive
+        {'DOWN', DeadCollectorMon, process, DeadCollector, normal} -> ok
+    end,
+    LiveSilent = spawn(fun checked_helper/0),
+    ?assertEqual(
+        {{forced, internal, capture_internal_error}, ok},
+        observer_cli_trace:checked_helper_shutdown(
+            #{
+                collector => DeadCollector,
+                collector_mon => DeadCollectorMon,
+                silent_io => LiveSilent,
+                silent_mon => erlang:monitor(process, LiveSilent)
+            },
+            outcome,
+            ok
+        )
+    ),
+    LiveCollector = spawn(fun checked_helper/0),
+    DeadSilent = spawn(fun() -> ok end),
+    DeadSilentMon = erlang:monitor(process, DeadSilent),
+    receive
+        {'DOWN', DeadSilentMon, process, DeadSilent, normal} -> ok
+    end,
+    ?assertEqual(
+        {{forced, internal, capture_internal_error}, ok},
+        observer_cli_trace:checked_helper_shutdown(
+            #{
+                collector => LiveCollector,
+                collector_mon => erlang:monitor(process, LiveCollector),
+                silent_io => DeadSilent,
+                silent_mon => DeadSilentMon
+            },
+            outcome,
+            ok
+        )
+    ),
+    Awaited = spawn(fun stubborn_helper/0),
+    AwaitedMon = erlang:monitor(process, Awaited),
+    ?assertEqual(
+        cleanup_unconfirmed,
+        observer_cli_trace:await_helper_down(Awaited, AwaitedMon)
+    ),
+    NoAck = spawn(fun() ->
+        receive
+            {stop, _, _} -> exit(failed)
+        end
+    end),
+    NoAckMon = erlang:monitor(process, NoAck),
+    ?assertEqual(helper_failed, observer_cli_trace:stop_helper_checked(NoAck, NoAckMon)),
+    StubbornCollector = spawn(fun stubborn_helper/0),
+    NormalSilent = spawn(fun checked_helper/0),
+    ?assertMatch(
+        {_, {error, cleanup_unconfirmed}},
+        observer_cli_trace:checked_helper_shutdown(
+            #{
+                collector => StubbornCollector,
+                collector_mon => erlang:monitor(process, StubbornCollector),
+                silent_io => NormalSilent,
+                silent_mon => erlang:monitor(process, NormalSilent)
+            },
+            outcome,
+            ok
+        )
+    ),
+    NormalCollector = spawn(fun checked_helper/0),
+    StubbornSilent = spawn(fun stubborn_helper/0),
+    ?assertMatch(
+        {_, {error, cleanup_unconfirmed}},
+        observer_cli_trace:checked_helper_shutdown(
+            #{
+                collector => NormalCollector,
+                collector_mon => erlang:monitor(process, NormalCollector),
+                silent_io => StubbornSilent,
+                silent_mon => erlang:monitor(process, StubbornSilent)
+            },
+            outcome,
+            ok
+        )
+    ).
+
+wait_formatter_contract() ->
+    Base = #{
+        max => 1,
+        ref => make_ref(),
+        controller_mon => make_ref(),
+        dispatcher_mon => make_ref(),
+        tracee_mon => make_ref()
+    },
+    NormalCollector = spawn(fun final_collector/0),
+    Normal = spawn(fun() -> ok end),
+    NormalMon = erlang:monitor(process, Normal),
+    ?assertMatch(
+        {natural, limit_reached, _, _},
+        observer_cli_trace:wait_formatter(
+            Base#{
+                collector => NormalCollector,
+                collector_mon => erlang:monitor(process, NormalCollector)
+            },
+            #{formatter => Normal, formatter_mon => NormalMon},
+            erlang:monotonic_time(millisecond) + 1000
+        )
+    ),
+    Abnormal = spawn(fun() -> exit(abnormal) end),
+    AbnormalMon = erlang:monitor(process, Abnormal),
+    ?assertEqual(
+        {forced, internal, capture_internal_error},
+        observer_cli_trace:wait_formatter(
+            Base,
+            #{formatter => Abnormal, formatter_mon => AbnormalMon},
+            erlang:monotonic_time(millisecond) + 1000
+        )
+    ),
+    StopRef = make_ref(),
+    self() ! {stop_request, self(), StopRef},
+    ?assertEqual(
+        {forced, success, stopped, {self(), StopRef}},
+        observer_cli_trace:wait_formatter(
+            Base,
+            #{formatter => self(), formatter_mon => make_ref()},
+            erlang:monotonic_time(millisecond) + 1000
+        )
+    ),
+    receive
+        {StopRef, armed, _} -> ok
+    end,
+    StateRef = maps:get(ref, Base),
+    self() ! {force_stop, StateRef, controller_disconnected},
+    ?assertEqual(
+        {forced, controller, controller_disconnected},
+        observer_cli_trace:wait_formatter(
+            Base,
+            #{formatter => self(), formatter_mon => make_ref()},
+            erlang:monotonic_time(millisecond) + 1000
+        )
+    ),
+    ?assertEqual(
+        {forced, success, duration_elapsed},
+        observer_cli_trace:wait_formatter(
+            Base,
+            #{formatter => self(), formatter_mon => make_ref()},
+            erlang:monotonic_time(millisecond)
+        )
+    ),
+    UnknownMon = make_ref(),
+    self() ! {'DOWN', UnknownMon, process, self(), failed},
+    ?assertEqual(
+        {forced, internal, capture_internal_error},
+        observer_cli_trace:wait_formatter(
+            Base,
+            #{formatter => self(), formatter_mon => make_ref()},
+            erlang:monotonic_time(millisecond) + 1000
+        )
+    ).
+
+drain_failure_contract() ->
+    Dead = spawn(fun() -> ok end),
+    DeadMon = erlang:monitor(process, Dead),
+    receive
+        {'DOWN', DeadMon, process, Dead, normal} = Down -> self() ! Down
+    end,
+    ?assertEqual(
+        {forced, internal, capture_internal_error},
+        observer_cli_trace:final_drain(#{collector => Dead, collector_mon => DeadMon, max => 1})
+    ),
+    Silent = spawn(fun stubborn_helper/0),
+    SilentMon = erlang:monitor(process, Silent),
+    ?assertEqual(
+        {forced, internal, capture_internal_error},
+        observer_cli_trace:final_drain(#{collector => Silent, collector_mon => SilentMon, max => 1})
+    ),
+    exit(Silent, kill),
+    DownCollector = spawn(fun() -> ok end),
+    DownMon = erlang:monitor(process, DownCollector),
+    receive
+        {'DOWN', DownMon, process, DownCollector, normal} = Down2 -> self() ! Down2
+    end,
+    ?assertException(
+        error,
+        collector_down,
+        observer_cli_trace:format_event(
+            {trace_ts, self(), call, {erlang, node, 0}, os:timestamp()},
+            DownCollector,
+            make_ref(),
+            os:timestamp()
+        )
+    ),
+    NoAck = spawn(fun stubborn_helper/0),
+    ?assertException(
+        error,
+        collector_ack_timeout,
+        observer_cli_trace:format_event(
+            {trace_ts, self(), call, {erlang, node, 0}, os:timestamp()},
+            NoAck,
+            make_ref(),
+            os:timestamp()
+        )
+    ),
+    exit(NoAck, kill).
+
+owner_result_contract() ->
+    Md5 = observer_cli_trace:module_md5(?MODULE),
+    State = #{
+        mfa => {?MODULE, fixture, 0}, module_md5 => Md5, test_end_module_md5 => Md5
+    },
+    Complete = observer_cli_trace:owner_result(
+        State, {natural, limit_reached, [event], false}, ok
+    ),
+    ?assertEqual(ok, maps:get(status, Complete)),
+    ?assertEqual(true, maps:get(trace_complete, maps:get(capture, Complete))),
+    Partial = observer_cli_trace:owner_result(
+        State#{test_end_module_md5 := changed}, {natural, limit_reached, [], true}, ok
+    ),
+    ?assertEqual(false, maps:get(trace_complete, maps:get(capture, Partial))),
+    Forced = observer_cli_trace:owner_result(State, {forced, success, stopped}, ok),
+    ?assertEqual(ok, maps:get(status, Forced)),
+    ?assertEqual(
+        error,
+        maps:get(
+            status,
+            observer_cli_trace:owner_result(
+                State, {error, internal, capture_internal_error}, ok
+            )
+        )
+    ),
+    Cleanup = observer_cli_trace:owner_result(
+        State, {natural, limit_reached, [event], false}, {error, cleanup_unconfirmed}
+    ),
+    ?assertEqual(cleanup_unconfirmed, maps:get(reason, Cleanup)).
+
+formatter_collector(_Parent) ->
+    receive
+        {event, Formatter, Session, Ref, _Event} ->
+            Formatter ! {Session, Ref, ack},
+            formatter_collector(undefined);
+        stop ->
+            ok
+    end.
+
+final_collector() ->
+    receive
+        {final, Owner, Ref} ->
+            Owner ! {Ref, [event], false},
+            final_collector();
+        stop ->
+            ok
+    end.
+
+checked_helper() ->
+    receive
+        {stop, Owner, Ref} ->
+            Owner ! {Ref, stopping},
+            ok
+    end.
+
+stubborn_helper() ->
+    receive
+        _ -> stubborn_helper()
+    end.
+
 validation_and_admission_do_not_clear() ->
     cleanup(),
     MFA = {?MODULE, fixture, 0},
@@ -45,6 +678,36 @@ natural_count_drain_and_cleanup_test_() ->
 
 natural_rate_drain_and_cleanup_test_() ->
     {timeout, 10, fun() -> natural_capture({1, 1000}, 2, rate_exceeded) end}.
+
+preloaded_erlang_mfa_trace_test_() ->
+    {timeout, 10, fun preloaded_erlang_mfa_trace/0}.
+
+preloaded_erlang_mfa_trace() ->
+    cleanup(),
+    Parent = self(),
+    Tracee = spawn(fun() ->
+        receive
+            call ->
+                Parent ! {node_result, node()},
+                receive
+                    stop -> ok
+                end
+        end
+    end),
+    Request = (request(Tracee))#{mfa => <<"erlang:node/0">>, max => 1, duration_ms => 1000},
+    {Caller, Ref} = start_call(self(), Request),
+    wait_trace_active(Tracee, {erlang, node, 0}),
+    Tracee ! call,
+    receive
+        {node_result, Node} -> ?assertEqual(node(), Node)
+    after 1000 ->
+        erlang:error(tracee_timeout)
+    end,
+    Result = receive_result(Caller, Ref),
+    ?assertEqual(ok, maps:get(status, Result)),
+    ?assert(is_list(maps:get(events, maps:get(capture, Result)))),
+    assert_clean(Tracee),
+    Tracee ! stop.
 
 setup_replaces_global_trace_and_fixed_collision_test_() ->
     {timeout, 10, fun setup_replaces_global_trace_and_fixed_collision/0}.

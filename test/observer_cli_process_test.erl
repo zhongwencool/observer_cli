@@ -30,6 +30,24 @@ start_state_view_success_action_test() ->
     ?assert(is_pid(Pid)),
     ?assertEqual(true, run_start(["S\n", "P\n", "q\n"], Pid)).
 
+state_view_none_returns_to_manager_test() ->
+    RenderPid = spawn(fun() ->
+        receive
+            quit -> ok
+        end
+    end),
+    self() ! {state_view_done, {ok, none}},
+    observer_cli_test_io:with_input(
+        ["q\n"],
+        fun() ->
+            Opts = #view_opts{auto_row = false},
+            ?assertEqual(
+                true,
+                observer_cli_process:wait_for_state_view(RenderPid, home, self(), Opts)
+            )
+        end
+    ).
+
 start_view_switch_test() ->
     Pid = spawn(fun() -> receive
         after infinity -> ok
@@ -984,5 +1002,32 @@ detail_info(Keys) ->
         garbage_collection_info => [{heap_size, 10}, {minor_gcs, 99}, {secret, true}]
     },
     [{Key, maps:get(Key, Values, undefined)} || Key <- Keys].
+
+process_private_helper_contract_test() ->
+    ?assertEqual(
+        {2, 10},
+        observer_cli_process:binary_refs_summary([
+            {ref, 10, 1}, invalid
+        ])
+    ),
+    ?assertEqual("0", observer_cli_process:format_suspending([])),
+    ?assert(is_list(observer_cli_process:format_suspending([self(), self(), self(), self()]))),
+    ?assertMatch(
+        #{binary_refs := _},
+        observer_cli_process:collect_process_extra(
+            self(), erlang:system_info(wordsize)
+        )
+    ),
+    Dead = spawn(fun() -> ok end),
+    Mon = erlang:monitor(process, Dead),
+    receive
+        {'DOWN', Mon, process, Dead, normal} -> ok
+    end,
+    ?assertEqual(
+        dead,
+        observer_cli_process:collect_process_extra(
+            Dead, erlang:system_info(wordsize)
+        )
+    ).
 
 -endif.

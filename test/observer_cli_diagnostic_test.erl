@@ -22,6 +22,276 @@ strict_limit_edges_and_highest_evidence_test() ->
         maps:get(path, ProcessEvidence)
     ).
 
+diagnostic_boundary_helpers_test() ->
+    ?assertNot(observer_cli_diagnostic:valid_memory_sample(#{})),
+    ?assert(
+        observer_cli_diagnostic:valid_memory_sample(#{
+            memory => #{status => ok, values => #{total_bytes => 1, binary_bytes => 1}}
+        })
+    ),
+    ?assert(
+        observer_cli_diagnostic:valid_application_sample(application, #{
+            application => #{status => not_running}
+        })
+    ),
+    ?assertNot(observer_cli_diagnostic:valid_application_sample(application, #{})),
+    ?assert(observer_cli_diagnostic:valid_application_sample(observation, #{})),
+    ?assertEqual(error, observer_cli_diagnostic:map_status(#{status => timeout})),
+    ?assertEqual(ok, observer_cli_diagnostic:map_status(#{status => ok})),
+    ?assertEqual(unavailable, observer_cli_diagnostic:map_status(#{})),
+    ?assertEqual(unavailable, observer_cli_diagnostic:scheduler_status([])),
+    ?assertEqual(error, observer_cli_diagnostic:scheduler_status([#{status => invalid}])),
+    ?assertEqual(ok, observer_cli_diagnostic:scheduler_status([#{status => valid}])),
+    ?assert(
+        observer_cli_diagnostic:scheduler_over_threshold(#{
+            active_delta => #{value => 8}, total_delta => #{value => 10}
+        })
+    ),
+    ?assert(observer_cli_diagnostic:scheduler_over_threshold(#{utilization_ratio => 0.8})),
+    ?assertNot(observer_cli_diagnostic:scheduler_over_threshold(#{})),
+    ?assertEqual(
+        #{status => unavailable}, observer_cli_diagnostic:map_gauge_trend([], memory, values)
+    ),
+    ?assertEqual(
+        #{status => unavailable, items => []},
+        observer_cli_diagnostic:entity_trends([], process_inventory, values, [memory])
+    ),
+    lists:foreach(
+        fun(Domain) ->
+            ?assert(is_binary(observer_cli_diagnostic:rule_id(Domain))),
+            ?assert(is_list(observer_cli_diagnostic:domain_name(Domain))),
+            ?assert(is_binary(observer_cli_diagnostic:recommendation(Domain)))
+        end,
+        [process, port, atom, ets]
+    ),
+    Unavailable = #{process_inventory => #{status => unavailable, reason_code => refused}},
+    Failed = #{process_inventory => #{status => error}},
+    ?assertMatch(
+        #{status := unavailable}, observer_cli_diagnostic:process_context([Unavailable, #{}])
+    ),
+    ?assertMatch(
+        #{status := unavailable}, observer_cli_diagnostic:process_context([#{}, Unavailable])
+    ),
+    ?assertMatch(#{status := partial}, observer_cli_diagnostic:process_context([Failed, Failed])),
+    ?assertMatch(#{status := partial}, observer_cli_diagnostic:process_context([])),
+    ?assertEqual({unavailable, refused}, observer_cli_diagnostic:inventory(Unavailable)),
+    ?assertEqual({error, error}, observer_cli_diagnostic:inventory(Failed)),
+    ?assertEqual({unavailable, capability_unavailable}, observer_cli_diagnostic:inventory(#{})),
+    ?assertEqual(error, observer_cli_diagnostic:optional_status([Failed])),
+    ?assertEqual(unavailable, observer_cli_diagnostic:optional_status([Unavailable])),
+    ?assertEqual(error, observer_cli_diagnostic:distribution_status(#{status => error})),
+    ?assertEqual(ok, observer_cli_diagnostic:distribution_status(#{})),
+    ?assertEqual(process_inventory_failed, observer_cli_diagnostic:optional_reason(error, [])),
+    ?assertEqual(capability_unavailable, observer_cli_diagnostic:optional_reason(unavailable, [])),
+    ?assertEqual(0, observer_cli_diagnostic:sample_duration([])),
+    ?assertEqual(0, observer_cli_diagnostic:sample_duration([#{monotonic_finish_ms => 1}])),
+    ?assertEqual(0, observer_cli_diagnostic:sample_duration([#{monotonic_start_ms => 1}])).
+
+diagnostic_series_helper_contract_test() ->
+    Window = #{
+        status => valid,
+        heavy_probe_overlap => false,
+        normal => #{status => available, utilization_ratio => 0.9},
+        run_queues => #{
+            normal => #{end_observed_runnable_count_including_observer => 1}
+        },
+        to_sample_index => 1,
+        monotonic_midpoint_ms => 100
+    },
+    ?assertMatch(
+        {true, #{observed := 0.9}},
+        observer_cli_diagnostic:pressure_window(normal, Window)
+    ),
+    ?assertEqual(
+        false,
+        observer_cli_diagnostic:pressure_window(
+            normal,
+            Window#{heavy_probe_overlap := true}
+        )
+    ),
+    ?assert(
+        observer_cli_diagnostic:same_generation([
+            #{generation => one}, #{generation => one}
+        ])
+    ),
+    ?assertNot(
+        observer_cli_diagnostic:same_generation([
+            #{generation => one}, #{generation => two}
+        ])
+    ),
+    ?assertNot(observer_cli_diagnostic:same_generation([#{generation => one}, invalid])),
+    ?assert(observer_cli_diagnostic:same_generation([])),
+    ?assertEqual(
+        [
+            #{reductions_delta => 10, reductions_per_second => 5.0},
+            #{reductions_delta => null, reductions_per_second => null}
+        ],
+        observer_cli_diagnostic:reductions_rates(
+            [#{reductions_delta => 10}, #{reductions_delta => null}], 2000
+        )
+    ),
+    ?assertEqual(
+        [#{reductions_delta => 10, reductions_per_second => null}],
+        observer_cli_diagnostic:reductions_rates([#{reductions_delta => 10}], 0)
+    ),
+    ?assertEqual(#{value => 5.0}, observer_cli_diagnostic:rates(#{value => 10}, 2000)),
+    ?assertEqual(#{}, observer_cli_diagnostic:rates(#{value => 10}, 0)),
+    ?assertEqual(0.5, observer_cli_diagnostic:positive_step_ratio([1, 2, 1])),
+    ?assertEqual(null, observer_cli_diagnostic:positive_step_ratio([invalid])),
+    ?assertEqual(
+        #{input => 4},
+        observer_cli_diagnostic:metric_series_delta(input, [#{input => 1}, #{input => 5}], #{})
+    ),
+    ?assertEqual(
+        #{input => null, <<"input_state">> => counter_reset},
+        observer_cli_diagnostic:metric_series_delta(input, [#{input => 5}, #{input => 1}], #{})
+    ),
+    ?assertEqual(#{}, observer_cli_diagnostic:metric_series_delta(input, [#{}], #{})),
+    ?assertEqual(
+        #{memory => 3},
+        observer_cli_diagnostic:metric_series_delta(
+            memory,
+            [#{memory => 1}, #{memory => 4}],
+            #{}
+        )
+    ),
+    ?assertEqual(#{}, observer_cli_diagnostic:metric_series_delta(memory, [#{}], #{})),
+    ?assertEqual(
+        failed,
+        observer_cli_diagnostic:first_field_reason(
+            [#{field => #{reason_code => failed}}], field
+        )
+    ),
+    ?assertEqual(capability_unavailable, observer_cli_diagnostic:first_field_reason([], field)),
+    Limit = #{observed_count_including_observer => 1, limit => 10},
+    Sample = #{
+        status => ok,
+        resources => #{
+            process => Limit,
+            port => Limit,
+            atom => Limit,
+            ets => #{observed_count => 1, limit => 10}
+        }
+    },
+    ?assert(observer_cli_diagnostic:required_complete([Sample, Sample])),
+    ?assertNot(observer_cli_diagnostic:required_complete([Sample])),
+    ?assert(observer_cli_diagnostic:valid_limit(Limit)),
+    ?assert(observer_cli_diagnostic:valid_limit(#{observed_count => 1, limit => 10})),
+    ?assertNot(observer_cli_diagnostic:valid_limit(#{})),
+    ?assert(is_list(observer_cli_diagnostic:skipped_checks([]))),
+    ?assertEqual(
+        [
+            #{
+                class => required_probe,
+                probe => core_limits,
+                reason_code => required_coverage_incomplete
+            }
+        ],
+        observer_cli_diagnostic:capture_errors(false, ok, ok)
+    ),
+    ?assertEqual(2, length(observer_cli_diagnostic:capture_errors(true, error, error))),
+    ?assertEqual([], observer_cli_diagnostic:capture_errors(true, ok, ok)).
+
+diagnostic_error_boundary_test() ->
+    ?assertEqual({probe_error, invalid_request}, observer_cli_diagnostic:capture(#{}, #{})),
+    ?assertEqual(false, observer_cli_diagnostic:pressure_window(normal, #{})),
+    ?assertEqual(
+        #{status => unavailable, items => []},
+        observer_cli_diagnostic:application_trend([
+            #{application => #{status => unavailable}},
+            #{application => #{status => unavailable}}
+        ])
+    ),
+    ?assertEqual(
+        #{status => invalid, reason_code => sampling_gap, items => []},
+        observer_cli_diagnostic:application_trend([
+            #{application => #{status => ok}},
+            #{application => #{status => error}}
+        ])
+    ),
+    ?assertEqual([], observer_cli_diagnostic:limit_findings([])),
+    ?assertMatch(
+        #{status := unavailable},
+        observer_cli_diagnostic:process_context([
+            #{process_inventory => #{status => unavailable, reason_code => refused}}, #{}
+        ])
+    ),
+    ?assertEqual(
+        [#{status => error, reason_code => sampling_gap, target_monotonic_ms => 0}],
+        observer_cli_diagnostic:capture_observation_samples(#{}, #{}, [0], 0, 1, [])
+    ),
+    Past = erlang:monotonic_time(millisecond) - 100,
+    First = #{monotonic_finish_ms => Past + 10},
+    ?assertEqual(
+        [First, #{status => error, reason_code => sampling_gap}],
+        observer_cli_diagnostic:capture_samples(
+            #{test_samples => [First, #{}]}, #{}, [Past, Past + 1]
+        )
+    ),
+    ValidInventory = #{
+        process_inventory => #{status => ok, values => #{}, audit => #{}}
+    },
+    ?assertMatch(
+        #{status := unavailable, reason_code := refused},
+        observer_cli_diagnostic:process_context([
+            ValidInventory,
+            #{process_inventory => #{status => unavailable, reason_code => refused}}
+        ])
+    ).
+
+real_deep_observation_test_() ->
+    {timeout, 15, fun real_deep_observation/0}.
+
+real_observation_modes_test_() ->
+    [
+        {"observation", {timeout, 15, fun() -> real_observation_mode(#{}) end}},
+        {"application", {timeout, 15, fun() -> real_observation_mode(#{app => "kernel"}) end}}
+    ].
+
+real_observation_mode(Mode) ->
+    #{<<"status">> := <<"ok">>, <<"result">> := Result} =
+        observer_cli_snapshot:dispatch(
+            self(),
+            diagnose,
+            Mode#{observe => <<"5000">>},
+            #{timeout_ms => 12000, identifier_policy => redact}
+        ),
+    Context = maps:get(<<"context">>, maps:get(<<"data">>, Result)),
+    Trends = maps:get(<<"trends">>, Context),
+    ?assertEqual(5, maps:get(<<"sample_count">>, maps:get(<<"processes">>, Trends))).
+
+real_deep_observation() ->
+    #{<<"status">> := <<"ok">>, <<"result">> := Result} =
+        observer_cli_snapshot:dispatch(
+            self(),
+            diagnose,
+            #{observe => "5s", deep => true},
+            #{timeout_ms => 12000, identifier_policy => redact}
+        ),
+    Capture = maps:get(<<"capture">>, Result),
+    ?assert(lists:member(maps:get(<<"status">>, Capture), [<<"complete">>, <<"partial">>])),
+    Data = maps:get(<<"data">>, Result),
+    Context = maps:get(<<"context">>, Data),
+    Trends = maps:get(<<"trends">>, Context),
+    ?assertEqual(7, maps:get(<<"sample_count">>, maps:get(<<"processes">>, Trends))),
+    ?assert(is_list(maps:get(<<"findings">>, Data))).
+
+invalid_observation_durations_test() ->
+    lists:foreach(
+        fun(Observe) ->
+            Result = observer_cli_snapshot:dispatch(
+                self(),
+                diagnose,
+                #{observe => Observe},
+                #{timeout_ms => 3000, identifier_policy => redact}
+            ),
+            ?assertNotEqual(
+                nomatch, binary:match(term_to_binary(Result), <<"invalid_duration">>)
+            )
+        end,
+        ["4s", <<"61s">>, <<"5000wat">>, 5000]
+    ).
+
 stable_reductions_denominator_lifecycle_and_signed_gauges_test() ->
     Stable = spawn(fun wait/0),
     Reset = spawn(fun wait/0),

@@ -48,6 +48,10 @@ get_ets_info_missing_test() ->
     {_, _, Info} = observer_cli_ets:get_ets_info(nonexistent_table, size),
     ?assertEqual(unread, proplists:get_value(name, Info)).
 
+get_ets_info_invalid_identifier_test() ->
+    {_, _, Info} = observer_cli_ets:get_ets_info({invalid, table}, size),
+    ?assertEqual(unread, proplists:get_value(name, Info)).
+
 is_reg_test() ->
     register(test_owner, self()),
     ?assertEqual(test_owner, observer_cli_ets:is_reg(self())),

@@ -15,7 +15,30 @@
     render_socket_rows/2,
     select_socket/2,
     socket_overview/1,
-    socket_options/2
+    socket_options/2,
+    protocol_option_specs/3,
+    safe_getopt/2,
+    safe_getopt/3,
+    sockaddr_to_list/1,
+    format_value/1,
+    value_or_zero/1,
+    collect_socket_render_info/4,
+    socket_available/0,
+    safe_which_sockets/0,
+    safe_socket_info/1,
+    socket_id/1,
+    counter_value/2,
+    socket_addr/2,
+    safe_monitored_by/1,
+    level_option_specs/1,
+    domain_option_specs/1,
+    getopt_value/2,
+    render_kv_rows/2,
+    collect_socket_info/2,
+    render_socket_worker/3,
+    output_die_view/2,
+    next_draw_view/3,
+    getopt_result/1
 ]).
 -endif.
 
@@ -605,15 +628,15 @@ socket_option(Socket, {Key, true}) ->
     {option_key(Key), getopt_value(Socket, Key)}.
 
 getopt_value(Socket, Key) ->
-    case safe_getopt(Socket, Key) of
-        {ok, []} -> "-";
-        {ok, Value} -> Value;
-        {error, enotsup} -> "Not Supported";
-        {error, enoprotoopt} -> "Not Supported";
-        {error, enotconn} -> "Not Connected";
-        {error, {invalid, _}} -> "Not Implemented";
-        {error, Reason} -> io_lib:format("error:~p", [Reason])
-    end.
+    getopt_result(safe_getopt(Socket, Key)).
+
+getopt_result({ok, []}) -> "-";
+getopt_result({ok, Value}) -> Value;
+getopt_result({error, enotsup}) -> "Not Supported";
+getopt_result({error, enoprotoopt}) -> "Not Supported";
+getopt_result({error, enotconn}) -> "Not Connected";
+getopt_result({error, {invalid, _}}) -> "Not Implemented";
+getopt_result({error, Reason}) -> io_lib:format("error:~p", [Reason]).
 
 safe_getopt(Socket, Key) ->
     try socket:getopt(Socket, Key) of

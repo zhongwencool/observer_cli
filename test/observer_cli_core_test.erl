@@ -452,6 +452,25 @@ node_stats_test() ->
 check_auto_row_test() ->
     ?assert(is_boolean(observer_cli:check_auto_row())).
 
+private_home_layout_contract_test() ->
+    ?assertEqual([], observer_cli:join_home_summary_rows([])),
+    ?assertNotEqual(
+        [],
+        observer_cli:join_home_summary_rows([
+            {normal, [{"one", 10}]}
+        ])
+    ),
+    ?assertNotEqual(
+        [],
+        observer_cli:join_home_summary_rows([
+            {normal, [{"one", 10}]}, {normal, [{"two", 10}]}
+        ])
+    ),
+    ?assertEqual(0, observer_cli:scheduler_usage_rows(undefined)),
+    ?assertEqual(2, observer_cli:scheduler_usage_rows([a, b, c])),
+    ?assertEqual(3, observer_cli:scheduler_usage_rows(lists:seq(1, 12))),
+    ?assertEqual(11, observer_cli:scheduler_usage_rows(lists:seq(1, 101))).
+
 home_summary_widths(IoData) ->
     Header =
         case non_empty_lines(IoData) of
