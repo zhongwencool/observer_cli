@@ -148,7 +148,7 @@
     collect_ports/4,
     default_process_source/0,
     probe/3,
-    collect_admitted_applications/9
+    collect_admitted_applications/8
 ]).
 -endif.
 
@@ -2454,8 +2454,8 @@ stable_process_window(First, Second, _Interval) ->
 rank_window(Values, Limit) ->
     [
         Item
-     || {_, _, Item} <- recon_lib:sublist_top_n_attrs(
-            [{Pid, Value, {Pid, Value}} || {Pid, Value} <- maps:to_list(Values)], Limit
+     || {_, _, [Item]} <- recon_lib:sublist_top_n_attrs(
+            [{Pid, Value, [{Pid, Value}]} || {Pid, Value} <- maps:to_list(Values)], Limit
         )
     ].
 
@@ -2619,12 +2619,19 @@ collect_applications(AppSource, ProcessSource, Sort, Limit, Context) ->
             }};
         true ->
             collect_admitted_applications(
-                Apps, Loaded, Running, AppSource, ProcessSource, Sort, Limit, Context, AppEstimate
+                Apps,
+                Loaded,
+                Running,
+                AppSource,
+                ProcessSource,
+                Sort,
+                Limit,
+                {Context, AppEstimate}
             )
     end.
 
 collect_admitted_applications(
-    Apps, Loaded, Running, AppSource, ProcessSource, Sort, Limit, Context, AppEstimate
+    Apps, Loaded, Running, AppSource, ProcessSource, Sort, Limit, {Context, AppEstimate}
 ) ->
     case
         admit_process_scan(
@@ -3450,28 +3457,7 @@ network_resource(Port, Source) ->
                 Protocol ->
                     try (maps:get(stat_fun, Source))(Port) of
                         {ok, Stats} ->
-                            case parse_network_counters(Stats) of
-                                {ok, Counters} ->
-                                    Fields = [queue_size, memory, input, output],
-                                    Values = maps:from_list([
-                                        {Key, network_port_field(Port, Key, Source)}
-                                     || Key <- Fields
-                                    ]),
-                                    {Peername, PeerErrors} = network_peername(Port, Source),
-                                    maps:merge(Values, #{
-                                        raw_id => Port,
-                                        resource => {identifier, port, Port},
-                                        protocol => Protocol,
-                                        peername => Peername,
-                                        field_errors =>
-                                            [Key || Key <- Fields, maps:get(Key, Values) =:= null] ++
-                                            PeerErrors,
-                                        counters => Counters,
-                                        counter_shape => lists:sort(maps:keys(Counters))
-                                    });
-                                error ->
-                                    disappeared
-                            end;
+                            network_resource_from_stats(Port, Protocol, Stats, Source);
                         _ ->
                             disappeared
                     catch
@@ -3479,6 +3465,29 @@ network_resource(Port, Source) ->
                     end
             end;
         missing ->
+            disappeared
+    end.
+
+network_resource_from_stats(Port, Protocol, Stats, Source) ->
+    case parse_network_counters(Stats) of
+        {ok, Counters} ->
+            Fields = [queue_size, memory, input, output],
+            Values = maps:from_list([
+                {Key, network_port_field(Port, Key, Source)}
+             || Key <- Fields
+            ]),
+            {Peername, PeerErrors} = network_peername(Port, Source),
+            maps:merge(Values, #{
+                raw_id => Port,
+                resource => {identifier, port, Port},
+                protocol => Protocol,
+                peername => Peername,
+                field_errors =>
+                    [Key || Key <- Fields, maps:get(Key, Values) =:= null] ++ PeerErrors,
+                counters => Counters,
+                counter_shape => lists:sort(maps:keys(Counters))
+            });
+        error ->
             disappeared
     end.
 
@@ -3776,20 +3785,23 @@ resolve_port_target(Target) ->
         {ok, Text} when byte_size(Text) =< 64 ->
             case re:run(Text, <<"^#Port<0\\.[0-9]+>$">>, [{capture, none}]) of
                 match ->
-                    try list_to_port(binary_to_list(Text)) of
-                        Port ->
-                            case list_to_binary(port_to_list(Port)) =:= Text of
-                                true -> {ok, Port};
-                                false -> not_found
-                            end
-                    catch
-                        error:badarg -> not_found
-                    end;
+                    canonical_port(Text);
                 nomatch ->
                     not_found
             end;
         _ ->
             not_found
+    end.
+
+canonical_port(Text) ->
+    try list_to_port(binary_to_list(Text)) of
+        Port ->
+            case list_to_binary(port_to_list(Port)) =:= Text of
+                true -> {ok, Port};
+                false -> not_found
+            end
+    catch
+        error:badarg -> not_found
     end.
 
 collect_port_detail(Port, Source) ->
@@ -4289,8 +4301,8 @@ resource_precedes(A, B, Sort) ->
 recon_top_n(Items, Sort, Limit) ->
     [
         Item
-     || {_, _, Item} <- recon_lib:sublist_top_n_attrs(
-            [{top_n_identity(Item), top_n_value(Item, Sort), Item} || Item <- Items], Limit
+     || {_, _, [Item]} <- recon_lib:sublist_top_n_attrs(
+            [{top_n_identity(Item), top_n_value(Item, Sort), [Item]} || Item <- Items], Limit
         )
     ].
 

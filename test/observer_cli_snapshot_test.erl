@@ -1765,8 +1765,7 @@ snapshot_rare_branch_contract_test() ->
             ProcessSource,
             memory,
             20,
-            #{deadline => erlang:monotonic_time(millisecond) + 1000},
-            0
+            {#{deadline => erlang:monotonic_time(millisecond) + 1000}, 0}
         )
     ),
     ?assertEqual(

@@ -28,11 +28,13 @@ supporting evidence, inspect individual runtime resources, and run an explicitly
 bounded function trace. Text is intended for operators; Erlang terms and JSON are
 stable machine-readable envelopes for scripts and agents.
 
-The legacy entry point remains available:
+Use the explicit TUI entry point for interactive work:
 
 ```sh
-observer_cli test@127.0.0.1 your-cookie
+observer_cli tui test@127.0.0.1 your-cookie
 ```
+
+The bare `observer_cli NODE [COOKIE REFRESH_MS]` form was removed in 2.0.
 
 ### Build and discover
 
@@ -43,15 +45,21 @@ rebar3 escriptize
 export PATH="$PWD/_build/default/bin:$PATH"
 
 observer_cli --help
+observer_cli --version
+observer_cli tui --help
 observer_cli diagnose --help
 observer_cli processes --help
 ```
 
-By default, the target must already run the same protocol and bundle version of
-`observer_cli`. If it does not, `connect` explains how to retry with
-`--load-diagnostics`. That explicit option loads the escript's modules into the
-running target node, so use it only on trusted nodes running a compatible OTP
-version.
+The command-first interface never injects or replaces code on the target. The target
+release must install an `observer_cli` diagnostics bundle with the expected protocol
+and bundle versions. `connect` and `status` report the expected and observed versions
+and distinguish `compatible`, `missing`, and `incompatible` targets.
+
+`scripts/escript-smoke.sh` builds the generated escript and checks its help, version,
+exit-code, stdout, and stderr contracts. CI is configured to run that smoke script in
+each OTP 26-29 job; this is a controller-build check, not a cross-version target
+matrix.
 
 ### Connect once, diagnose repeatedly
 
@@ -69,18 +77,29 @@ observer_cli disconnect
 ```
 
 `connect` verifies the target and saves only its node name and cookie-source metadata
-in a `0600` context file. It never stores the cookie or keeps a daemon connection.
+in a `0600` context file. It writes the context only after the temporary controller
+has stopped successfully, so a connection, probe, or cleanup failure leaves the
+previous context unchanged. It never stores the cookie or keeps a daemon connection.
 Every later command reconnects and probes the target; `disconnect` removes the saved
-context.
+context. If a protected regular context file is malformed or oversized,
+`disconnect` removes it and reports that recovery; unsafe file types or permissions
+are still refused.
+
+A reachable target with missing or incompatible diagnostics can still be selected.
+`connect` and `status` exit 0 with a warning and report the target OTP release, name
+mode, cookie-source metadata, diagnostics status, and expected and observed
+capabilities. Commands that require the diagnostics bundle return capability exit 2
+until the matching bundle is installed in the target release.
 
 `observer_cli memory` returns both BEAM memory totals and the System page's
 `recon_alloc` block-size, SBCS/MBCS ratio, and allocator cache-hit metrics.
 
-The default text output for `diagnose`, `snapshot`, `memory`, `schedulers`,
-`distribution`, and `network` expands the complete response as indented fields. A
-successful diagnosis with no findings still shows the sampling plan, every probe and
-its coverage, captured context, skipped checks and their reasons, warnings, and
-errors. For example, the report contains sections like these:
+Default text output for every successful diagnostic, inspection, and trace command
+expands the complete response as indented fields; no command falls back to a raw
+Erlang map. The context commands use concise text summaries. A successful diagnosis
+with no findings still shows the sampling plan, every probe and its coverage,
+captured context, skipped checks and their reasons, warnings, and errors. For example,
+the report contains sections like these:
 
 ```text
 observer_cli diagnose
@@ -104,6 +123,15 @@ data:
 
 Use `--format term` or `--format json` when consuming the stable machine-readable
 envelope.
+
+Help, no-argument usage, and `--version` write to stdout and exit 0. Successful
+commands also write to stdout. Text errors write a short message to stderr; argument
+errors also include the relevant help hint. Term and JSON errors use the same
+versioned envelope on stdout once that encoder is available; bootstrap and encoder
+failures remain plain stderr.
+Exit codes are 0 for success, 1 for a complete diagnosis with findings, 2 for usage,
+format, or direct capability errors, 3 for runtime/refusal/partial outcomes, and 4
+for internal, schema, or unconfirmed-cleanup failures.
 
 For stateless automation, pass the target and cookie source on every invocation:
 
@@ -132,8 +160,7 @@ one versioned envelope, so callers can rely on the exit code and structured resp
 instead of scraping terminal text.
 
 See [`docs/observer-cli-2.0-diagnostics-validation.md`](docs/observer-cli-2.0-diagnostics-validation.md)
-for the exact schemas, exit codes, command flags, compatibility matrix, and measured
-validation evidence.
+for the exact tracked gates, evidence boundary, and remaining release proof.
 
 ### Safety boundaries
 
@@ -151,9 +178,8 @@ setup and `trace stop --all` use recon's node-global clear and can disrupt unrel
 static tracing. Snapshot and diagnose do not collect messages, dictionaries, table
 contents, application env, cookies, trace arguments, returns, exceptions, or stacks.
 There is no provider upload, daemon, cluster fan-out, arbitrary eval, automatic
-repair, or trace session registry. Command-first remote loading occurs only when
-explicitly requested with `connect --load-diagnostics`. The legacy positional TUI
-retains its historical automatic loading of missing or incompatible bundles.
+repair, trace session registry, or command-first remote loader. The explicit `tui`
+route retains automatic loading of missing or incompatible bundles.
 
 ## Installation
 
@@ -226,7 +252,8 @@ iex(1)> :observer_cli.start(:'target@host', :'magic_cookie')
 1. cd path/to/observer_cli/
 2. `rebar3 escriptize` to generate an escript executable containing the project's and its dependencies' BEAM files.
    Place script(`_build/default/bin/observer_cli`) anywhere in your path and use `observer_cli` command.
-3. `observer_cli TARGETNODE [TARGETCOOKIE REFRESHMS]` to monitor remote node.
+3. `observer_cli tui TARGETNODE [TARGETCOOKIE REFRESHMS]` to monitor a remote node.
+   The bare `observer_cli TARGETNODE ...` form is not supported in 2.0.
 
 
 ## Features

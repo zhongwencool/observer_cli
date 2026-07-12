@@ -4,6 +4,8 @@
 
 -export([
     parse/1,
+    command/1,
+    schema/0,
     target/1,
     cookie_source/1,
     duration/1,
@@ -81,13 +83,13 @@
 -spec parse([string()]) -> {ok, route()} | {error, parse_error()}.
 parse([]) ->
     argument_error(invalid_arguments);
-parse([[$-, $- | _] | _]) ->
+parse([[$- | _] | _]) ->
     argument_error(global_option_before_command);
 parse(["tui" | Arguments]) ->
     parse_tui(Arguments);
 parse([First | _] = Arguments) ->
     case command(First) of
-        undefined -> parse_tui(Arguments);
+        undefined -> argument_error({unknown_command, First});
         Command -> parse_command(Command, tl(Arguments))
     end.
 
@@ -95,8 +97,15 @@ parse_tui([Target]) ->
     {ok, #{route => tui, target => Target, cookie => undefined, interval => 1500}};
 parse_tui([Target, Cookie, IntervalText]) ->
     try list_to_integer(IntervalText) of
-        Interval ->
-            {ok, #{route => tui, target => Target, cookie => Cookie, interval => Interval}}
+        Interval when Interval >= 1000 ->
+            {ok, #{
+                route => tui,
+                target => Target,
+                cookie => Cookie,
+                interval => Interval
+            }};
+        _ ->
+            argument_error(invalid_refresh_interval)
     catch
         error:badarg -> argument_error(invalid_refresh_interval)
     end;
@@ -192,7 +201,17 @@ validate_trace_command(Arguments, _Options) ->
     validate_arguments(trace, Arguments).
 
 trace_mode_keys(Options) ->
-    Global = [node, cookie_env, cookie_file, name_mode, format, json, timeout],
+    Global = [
+        node,
+        cookie_env,
+        cookie_file,
+        name_mode,
+        format,
+        json,
+        timeout,
+        redact,
+        include_identifiers
+    ],
     lists:sort(maps:keys(maps:without(Global, Options))).
 
 validate_options(Command, Options) ->
@@ -302,6 +321,11 @@ validate_runtime_options(supervision_tree, #{app := App} = Options) ->
     end;
 validate_runtime_options(supervision_tree, _Options) ->
     {error, application_required};
+validate_runtime_options(trace, #{all := true} = Options) ->
+    case only_options(trace, Options, [all]) of
+        true -> validate_target_options(Options);
+        false -> {error, unsupported_command_option}
+    end;
 validate_runtime_options(trace, Options) ->
     validate_trace_options(Options);
 validate_runtime_options(Command, Options) ->
@@ -361,7 +385,7 @@ only_options(Command, Options, CommandOptions) ->
     ).
 
 global_options(connect) ->
-    remote_options() ++ [load_diagnostics];
+    remote_options();
 global_options(status) ->
     [format, json, timeout];
 global_options(disconnect) ->
@@ -1102,7 +1126,6 @@ option("--name-mode") -> {value, name_mode};
 option("--format") -> {value, format};
 option("--json") -> {flag, json};
 option("--timeout") -> {value, timeout};
-option("--load-diagnostics") -> {flag, load_diagnostics};
 option("--redact") -> {flag, redact};
 option("--include-identifiers") -> {flag, include_identifiers};
 option("--deep") -> {flag, deep};
@@ -1119,6 +1142,7 @@ option("--all") -> {flag, all};
 option([$-, $- | _]) -> unknown;
 option(_Argument) -> positional.
 
+-spec command(string()) -> atom() | undefined.
 command("connect") -> connect;
 command("status") -> status;
 command("disconnect") -> disconnect;
@@ -1140,6 +1164,9 @@ command("supervision-tree") -> supervision_tree;
 command("trace") -> trace;
 command("diagnose") -> diagnose;
 command(_Argument) -> undefined.
+
+-spec schema() -> binary().
+schema() -> ?SCHEMA.
 
 argument_error(Reason) ->
     {error, #{category => argument, exit_code => 2, reason => Reason}}.
@@ -1171,8 +1198,13 @@ encode(text, #{
     <<"data">> := #{
         <<"node">> := Node,
         <<"probe">> := <<"succeeded">>,
-        <<"diagnostics_module">> := DiagnosticsModule
-    }
+        <<"diagnostics_module">> := DiagnosticsModule,
+        <<"name_mode">> := NameMode,
+        <<"cookie_source">> := CookieSource,
+        <<"expected_capabilities">> := Expected,
+        <<"observed_capabilities">> := Observed
+    },
+    <<"target">> := #{<<"otp_release">> := OtpRelease}
 }) when Command =:= <<"connect">>; Command =:= <<"status">> ->
     Prefix =
         case Command of
@@ -1183,8 +1215,13 @@ encode(text, #{
         case DiagnosticsModule of
             <<"missing">> ->
                 <<
-                    "Diagnostics are missing or incompatible on the target.\n"
-                    "Run connect again with --load-diagnostics to load this observer_cli bundle.\n"
+                    "Diagnostics are not installed on the target.\n"
+                    "Install the matching observer_cli bundle in the target release.\n"
+                >>;
+            <<"incompatible">> ->
+                <<
+                    "The target diagnostics bundle is incompatible.\n"
+                    "Install the matching observer_cli bundle in the target release.\n"
                 >>;
             _ ->
                 <<>>
@@ -1193,13 +1230,32 @@ encode(text, #{
         iolist_to_binary([
             Prefix,
             escape_text(Node),
-            <<"; probe succeeded.\ndiagnostics_module=">>,
+            <<"; probe succeeded.\ntarget_otp_release=">>,
+            escape_text(OtpRelease),
+            <<"\nname_mode=">>,
+            escape_text(NameMode),
+            <<"\ncookie_source=">>,
+            cookie_source_text(CookieSource),
+            <<"\ndiagnostics_module=">>,
             DiagnosticsModule,
+            <<"\nexpected_capabilities=">>,
+            capabilities_text(Expected),
+            <<"\nobserved_capabilities=">>,
+            capabilities_text(Observed),
             <<"\n">>,
             DiagnosticsHint,
             <<"No persistent connection is kept.\n">>
         ])
     );
+encode(text, #{
+    <<"command">> := <<"disconnect">>,
+    <<"data">> := #{
+        <<"node">> := null,
+        <<"disconnected">> := true,
+        <<"recovered_invalid_context">> := true
+    }
+}) ->
+    {ok, <<"Removed invalid saved target context.\n">>};
 encode(text, #{
     <<"command">> := <<"disconnect">>,
     <<"data">> := #{<<"node">> := null, <<"disconnected">> := true}
@@ -1209,28 +1265,23 @@ encode(text, #{
     <<"command">> := <<"disconnect">>,
     <<"data">> := #{<<"node">> := Node, <<"disconnected">> := true}
 }) ->
-    capped(iolist_to_binary([<<"Disconnected ">>, escape_text(Node), <<".\n">>]));
-encode(text, #{<<"command">> := Command} = Response) when
-    Command =:= <<"diagnose">>;
-    Command =:= <<"snapshot">>;
-    Command =:= <<"memory">>;
-    Command =:= <<"schedulers">>;
-    Command =:= <<"distribution">>;
-    Command =:= <<"network">>
-->
+    capped(
+        iolist_to_binary([
+            <<"Removed saved target context for ">>, escape_text(Node), <<".\n">>
+        ])
+    );
+encode(text, #{<<"command">> := Command} = Response) ->
     capped(
         iolist_to_binary([
             <<"observer_cli ">>, escape_text(Command), <<"\n">>, render_text_map(Response, 0, root)
         ])
     );
-encode(text, Response) ->
-    capped(iolist_to_binary(io_lib:format("~tp~n", [Response])));
 encode(term, Response) ->
     capped(iolist_to_binary(io_lib:format("~tp.~n", [Response])));
 encode(json, Response) ->
     case code:ensure_loaded(json) of
         {module, json} ->
-            try capped(iolist_to_binary(erlang:apply(json, encode, [Response]))) of
+            try capped(iolist_to_binary([erlang:apply(json, encode, [Response]), <<"\n">>])) of
                 Result -> Result
             catch
                 _:_ -> encoder_error(json_encoding_failed)
@@ -1240,6 +1291,23 @@ encode(json, Response) ->
     end;
 encode(_Format, _Response) ->
     {error, controller_error(format, unsupported_format)}.
+
+cookie_source_text(#{<<"type">> := <<"env">>, <<"name">> := Name}) ->
+    [<<"env:">>, escape_text(Name)];
+cookie_source_text(#{<<"type">> := <<"file">>, <<"path">> := Path}) ->
+    [<<"file:">>, escape_text(Path)].
+
+capabilities_text(null) ->
+    <<"none">>;
+capabilities_text(#{
+    <<"protocol_version">> := Protocol, <<"bundle_version">> := Bundle
+}) ->
+    [
+        <<"protocol=">>,
+        text_scalar(Protocol),
+        <<",bundle=">>,
+        text_scalar(Bundle)
+    ].
 
 render_text_map(Map, Indent, Order) ->
     [render_text_field(Key, maps:get(Key, Map), Indent) || Key <- text_map_keys(Map, Order)].
@@ -1305,10 +1373,10 @@ text_map_keys(Map, root) ->
             <<"schema">>,
             <<"command">>,
             <<"target">>,
-            <<"capture">>,
             <<"data">>,
             <<"warnings">>,
-            <<"errors">>
+            <<"errors">>,
+            <<"capture">>
         ]
     );
 text_map_keys(Map, nested) ->
@@ -1400,20 +1468,71 @@ reason_code(_Reason) ->
 
 reason_message({unknown_option, Option}) ->
     iolist_to_binary([<<"unknown option: ">>, escape_text(Option)]);
+reason_message({unknown_command, Command}) ->
+    iolist_to_binary([<<"unknown command: ">>, escape_text(Command)]);
+reason_message({duplicate_option, Option}) ->
+    iolist_to_binary([<<"option may only be specified once: ">>, option_text(Option)]);
+reason_message({missing_option_value, Option}) ->
+    iolist_to_binary([<<"missing value for option: ">>, escape_text(Option)]);
+reason_message({mutually_exclusive_options, Left, Right}) ->
+    iolist_to_binary([
+        option_text(Left), <<" and ">>, option_text(Right), <<" cannot be used together">>
+    ]);
 reason_message({unsupported_format, Format}) ->
     iolist_to_binary([<<"unsupported format: ">>, escape_text(Format)]);
+reason_message({unsupported_name_mode, Mode}) ->
+    iolist_to_binary([<<"unsupported name mode: ">>, escape_text(Mode)]);
 reason_message(json_unavailable) ->
     <<"JSON output requires OTP 27 or newer">>;
 reason_message(command_unavailable) ->
     <<"command capability is not available yet">>;
 reason_message(capability_unavailable) ->
-    <<"observer_cli diagnostics are missing or incompatible; retry connect with --load-diagnostics">>;
+    <<"install a matching observer_cli diagnostics bundle on the target">>;
+reason_message(diagnostics_missing) ->
+    <<"observer_cli diagnostics are not installed on the target">>;
+reason_message(diagnostics_incompatible) ->
+    <<"the target observer_cli diagnostics bundle is incompatible">>;
+reason_message(no_active_context) ->
+    <<"no saved target context; run observer_cli connect first">>;
+reason_message(global_option_before_command) ->
+    <<"options must appear after the command name">>;
+reason_message(missing_cookie_source) ->
+    <<"--node requires exactly one of --cookie-env or --cookie-file">>;
+reason_message(process_target_required) ->
+    <<"process requires one PID_OR_NAME">>;
+reason_message(port_target_required) ->
+    <<"port requires one PORT_ID">>;
+reason_message(gen_server_target_required) ->
+    <<"gen-server-state requires one PID_OR_NAME">>;
+reason_message(application_required) ->
+    <<"supervision-tree requires --app APP">>;
+reason_message(observe_required) ->
+    <<"--deep and --app require --observe DURATION">>;
+reason_message(replace_existing_trace_required) ->
+    <<"trace call requires --replace-existing-trace">>;
+reason_message(trace_pid_required) ->
+    <<"trace call requires --pid PID">>;
+reason_message(trace_all_required) ->
+    <<"trace stop requires --all">>;
+reason_message(timeout_too_short) ->
+    <<"--timeout must cover the sampling duration plus five seconds">>;
+reason_message(invalid_refresh_interval) ->
+    <<"REFRESH_MS must be an integer of at least 1000">>;
+reason_message(connection_failed) ->
+    <<"target connection failed; check node name, name mode, EPMD, network, and cookie">>;
+reason_message(tui_start_failed) ->
+    <<"interactive TUI startup failed; check target reachability, cookie, and bundle compatibility">>;
 reason_message(response_too_large) ->
     <<"encoded response exceeds one MiB">>;
 reason_message(Reason) when is_binary(Reason) ->
     escape_text(Reason);
+reason_message(Reason) when is_atom(Reason) ->
+    list_to_binary(string:replace(atom_to_list(Reason), "_", " ", all));
 reason_message(Reason) ->
     iolist_to_binary(io_lib:format("~tp", [Reason])).
+
+option_text(Option) when is_atom(Option) ->
+    list_to_binary(["--", string:replace(atom_to_list(Option), "_", "-", all)]).
 
 capped(Binary) when byte_size(Binary) =< ?MAX_RESPONSE_BYTES ->
     {ok, Binary};

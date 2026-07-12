@@ -28,6 +28,8 @@ jobs:
           rebar3-version: ${{matrix.rebar3}}
       - name: quality checks
         run: rebar3 check
+      - name: generated escript smoke
+        run: scripts/escript-smoke.sh
       - name: test coverage
         run: |
           epmd -daemon

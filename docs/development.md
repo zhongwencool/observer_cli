@@ -15,7 +15,7 @@ do not add a generic TUI framework.
 | Pagination | `observer_cli_lib`, `observer_cli_store`, page records | Own page math, selected-row positions, and per-page `cur_page` / `pages` state. |
 | Plugin | `observer_cli_plugin`, `observer_cli_plugin_compat` | Own plugin registration, 2.0 callback shapes, compatibility migration, sheet rendering, sorting, shortcuts, and row drill-down. |
 | Formatter | `observer_cli_formatter`, `observer_cli_formatter_default`, `observer_cli_process` | Own process State formatting; default behavior must remain compatible and custom formatter failures fall back to the default formatter. |
-| Diagnostics CLI | `observer_cli_cli`, `observer_cli_escriptize` | Parse command-first arguments, manage bounded context metadata, start the outbound-only controller, encode envelopes, and preserve the positional TUI route. |
+| Diagnostics CLI | `observer_cli_cli`, `observer_cli_escriptize` | Parse command-first arguments, manage bounded context metadata, start the outbound-only controller, render every command envelope, and preserve the explicit TUI route. |
 | Diagnostics target | `observer_cli_snapshot`, `observer_cli_diagnostic`, `observer_cli_trace` | Dispatch bounded target workers, normalize/cap results, compose snapshots and findings, and own the recon 2.5.6 trace lifecycle. |
 
 ## Current page boundaries
@@ -48,7 +48,22 @@ do not add a generic TUI framework.
 - Add no per-command modules or provider abstractions. New target probes must stay
   deadline-, heap-, schema-, and response-cap bounded and must normalize sensitive
   values before they cross distribution.
-- Keep command-first diagnostics non-mutating by default. The legacy `remote_load/1`
-  path is allowed only behind the explicit `connect --load-diagnostics` option.
+- Never call legacy `remote_load/1` from a command-first route. Targets must install a
+  matching diagnostics bundle in their release; `connect` and `status` report
+  compatible, missing, or incompatible without injecting code.
+- Keep automatic remote loading only in the explicit `observer_cli tui NODE ...`
+  route. Bare positional input is an unknown command in 2.0.
+- Save a new active context only after the outbound controller has stopped and
+  cleanup is confirmed. Any connection, probe, or cleanup error must preserve the
+  previous context.
+- Let `disconnect` recover from malformed or oversized context contents only after
+  the existing directory, regular-file, and permission checks pass. Do not unlink an
+  unsafe context path.
+- Keep human text errors on stderr and term/JSON error envelopes on stdout after
+  encoder selection. Successful command envelopes use the shared structured text
+  renderer; do not reintroduce raw Erlang-map text for individual commands.
+- Keep `scripts/escript-smoke.sh` in the OTP 26-29 CI jobs. It must exercise the
+  generated escript with stdout, stderr, and exit code captured separately; it is not
+  a substitute for a cross-version controller/target runtime matrix.
 - Run real disposable-node cleanup tests for distribution, scheduler flags, target
   workers, and recon tracing; a controller timeout alone does not cancel target work.

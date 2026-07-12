@@ -1,138 +1,144 @@
 # observer_cli 2.0 diagnostics release validation
 
-Date: 2026-07-11
+Date: 2026-07-12
 Design: `docs/observer-cli-2.0-diagnostics-design.md`, sections 17-23
-Result: **design-reviewed; current gates pass, repeatable release runner pending**
+Result: **design-reviewed; OTP 29 local gates and generated-escript smoke passed;
+cross-version target proof pending**
 
-The results below include the post-review rerun. All runtime targets were
-disposable local nodes, loaded modules from their own OTP-specific build, and
-received no remote BEAM injection. The adversarially discovered implementation
-and proof gaps were repaired before this rerun.
+This document separates commands that were actually run from gates that are only
+tracked or configured. CI configuration is not reported as a passing result before
+the jobs finish.
 
-## Supported combinations
+## Evidence from the current CLI contract change
 
-The 181-test focused parser, snapshot, diagnostic, trace, and escript suite plus
-compile and escriptize passed on OTP 26.2.5.2, 27.3.4.2, 28.5, and 29.0.3.
-OTP 26/27 exercised the list inventory path; OTP 28/29 exercised iterators.
-Term output passed on all four. JSON passed on OTP 27-29 and intentionally
-returns a capability error on OTP 26, which has no stdlib `json` module.
+The following commands were actually run on the local OTP 29 controller:
 
-Every controller/target cell ran a real `snapshot --format term`, asserted exit
-0, `status=ok`, and the target OTP release:
+```text
+rebar3 fmt
+rebar3 as test eunit --module=observer_cli_cli_test,observer_cli_snapshot_test,observer_cli_diagnostic_test,observer_cli_trace_test,observer_cli_escriptize_test
+rebar3 eunit
+rebar3 compile
+rebar3 as ci compile
+rebar3 lint
+rebar3 xref
+rebar3 dialyzer
+rebar3 ex_doc
+rebar3 check
+sh -n scripts/escript-smoke.sh
+dash -n scripts/escript-smoke.sh
+dash scripts/escript-smoke.sh
+scripts/escript-smoke.sh
+git diff --check
+```
 
-| Controller / Target | 26 | 27 | 28 | 29 |
-| --- | ---: | ---: | ---: | ---: |
-| 26 | 554 ms | 171 ms | 169 ms | 173 ms |
-| 27 | 397 ms | 129 ms | 132 ms | 131 ms |
-| 28 | 407 ms | 139 ms | 138 ms | 139 ms |
-| 29 | 408 ms | 140 ms | 141 ms | 139 ms |
+All commands passed. The focused suite ran 240 tests and full EUnit ran 649 tests,
+both with zero failures. Both smoke executions ran `rebar3 escriptize` and passed all
+ten generated-binary cases. The static closeout also removed the existing Elvis and
+Dialyzer failures by matching recon's declared ranking payload type and extracting
+the nested snapshot helpers without changing returned data. No OTP 26-28 runtime,
+controller-target cross-version matrix, disposable 10,000/100,000-resource run, or
+Trace benchmark was run for this change.
 
-All 16 cells passed. This proves protocol compatibility, not BEAM compatibility:
-the target must install `observer_cli` built for its own OTP major.
+## Tracked generated-escript smoke
 
-End-to-end OTP 29 escript checks also passed for `memory`, `processes`,
-`snapshot --deep`, `diagnose`, and `trace call`; every result used
-`observer_cli.cli/v1`. The trace used a disposable node and cleaned the exact
-PID flag and MFA pattern.
+`scripts/escript-smoke.sh` captures stdout and stderr separately and checks these
+ten cases against the generated binary:
 
-The allocator extension was rechecked on an OTP 29 disposable `-noshell` node.
-Both term and JSON `memory` commands exited 0 with complete `memory` and
-`allocator` probes, nine ordered util allocator rows, and cache instances 0-8.
+| Case | Exit | Stdout | Stderr |
+| --- | ---: | --- | --- |
+| `--help` | 0 | usage | empty |
+| no arguments | 0 | usage | empty |
+| `-h` | 0 | usage | empty |
+| `trace call --help` | 0 | subcommand usage | empty |
+| `--version` | 0 | version | empty |
+| unknown option | 2 | empty | error |
+| bare `target@host` | 2 | empty | unknown command |
+| `process --bogus` | 2 | empty | command error |
+| `process --bogus --format term` | 2 | error envelope | empty |
+| trace call without `--replace-existing-trace` | 2 | empty | safety argument error |
 
-## Section 21 proof map
+The GitHub workflow is configured to run this script in each OTP 26, 27, 28, and 29
+job after `rebar3 check` and before EUnit/coverage. A green job would prove the local
+generated-escript contract for that controller OTP only; it would not prove a
+controller on one OTP can diagnose a target on another.
 
-- **Parser/context:** `observer_cli_cli_test` covers all reserved verbs, legacy
-  and `tui` forms, misplaced/unknown/duplicate/mutually exclusive flags, four
-  diagnose modes, duration/timeout coupling, target/name modes, cookie
-  sources, hostile terminal text, bounded safe-ETF context files, permissions,
-  symlink/type/corruption rejection, and atomic replacement.
-- **Transport/schema:** `observer_cli_escriptize_test`, `observer_cli_cli_test`,
-  and `observer_cli_snapshot_test` cover unique outbound-only controllers,
-  cookie ordering, pre-distributed refusal, legacy startup once, exits 0-4,
-  JSON-safe normalization, term round trips, redaction, UTF-8 tagging, caps,
-  evidence pointers, and timeout/crash/heap/controller cleanup.
-- **Inspection:** snapshot and resource-specific tests cover allocator block-size,
-  ratio, cache-hit schema and snapshot exclusion, exact allowlists,
-  stable raw generations, atom-safe lookup, born/dead/reset handling,
-  deterministic Top N, staged admission, observer exclusions, Mnesia units and
-  ownership, socket registry coverage, no endpoint acquisition, counter-shape
-  compatibility, and disappearing resources.
-- **Advanced inspection:** snapshot/application tests cover full-state
-  acquisition followed by target-side value-free shaping, late execution,
-  secret/exception redaction, public application supervisor results, local-live
-  roots, restarting/remote/dynamic children, identity caps, and one-level-only
-  traversal.
-- **Diagnostics:** diagnostic tests cover exact 85/95 percent thresholds,
-  evidence paths, required/optional mode sets, complete/partial precedence,
-  stable reductions share, signed gauges, resets/gaps, context-only growth,
-  online normal/dirty scheduler topology, run-queue wording, and paired
-  scheduler wall-time cleanup.
-- **Trace:** trace tests cover exact MFA/PID admission with the locked recon
-  version and rejection of another profile, external-global versus local-call
-  coverage, replacement consent, active-session busy/name-collision and
-  zero-match paths, count/rate/duration, ACK-based natural drain, response caps,
-  forced loss, controller/dispatcher/tracee/owner/formatter/collector/silent-IO
-  failure, module reload, legal and emergency stop, fixed names, silent IO
-  protocol behavior, PID call-flag cleanup, and exact MFA pattern cleanup.
-- **TUI parity:** `tui_resource_counts_match_snapshot_window_test` compares the
-  existing System collector and the diagnostics resource snapshot in one
-  sampling window with bounded observer drift.
+## CLI contract under test
 
-Full EUnit now covers the detailed tracked Trace fixtures enumerated in design
-section 21.
+### Help, version, streams, and exits
 
-## Open release blockers
+- No arguments, `--help`, `-h`, `help COMMAND`, command help, `tui --help`, and Trace
+  subcommand help are local stdout success paths.
+- `--version` reports the local observer_cli bundle version, CLI schema, protocol,
+  and controller OTP without starting distribution.
+- Known malformed commands return exit 2 instead of successful top-level help.
+  Text errors use stderr and point to the relevant command or Trace subcommand help.
+- Trace errors and successes use stable machine identities `trace_call` and
+  `trace_stop_all`; human errors use `trace call` and `trace stop`.
+- Term and JSON errors use the `observer_cli.cli/v1` envelope on stdout after encoder
+  selection. Bootstrap and encoder failures use stable plain-text stderr.
+- Exit codes are fixed: 0 success, 1 complete diagnosis with findings, 2
+  argument/format/direct capability, 3 runtime/refusal/partial, and 4
+  internal/schema/cleanup.
+- Successful diagnostics, inspection, and Trace commands use the shared indented
+  text renderer. Context commands retain concise text summaries; no ordinary command
+  falls back to a raw Erlang map.
 
-- Move the disposable cross-version and 10,000/100,000-resource proof commands
-  out of temporary files into a tracked, repeatable release runner.
+### Context and target capabilities
 
-## Disposable budgets
+- `connect` writes node, name mode, and cookie-source metadata only; it never writes
+  the cookie or keeps a daemon connection.
+- The new context is saved only after the temporary controller stops and cleanup is
+  confirmed. Connection, capability, target-OTP, and cleanup failures leave the
+  previous context unchanged.
+- `connect` and `disconnect` preflight the selected encoder before mutating context.
+  Observed capability versions are bounded to printable public values, so invalid
+  UTF-8, oversized integers, and extra target fields cannot poison output.
+- `disconnect` can remove malformed or oversized protected context contents, but
+  continues to refuse unsafe directory permissions, file permissions, symlinks, and
+  non-regular paths.
+- `connect` and `status` report target OTP, name mode, non-secret cookie-source
+  metadata, expected/observed protocol and bundle versions, and one of
+  `compatible|missing|incompatible`.
+- Reachable missing or incompatible targets return exit 0 with a warning and may be
+  selected as context. Commands requiring diagnostics return `capability_unavailable`
+  until the matching bundle is installed in the target release.
+- `connect --load-diagnostics` is an unknown option. Command-first routes never call
+  the legacy remote loader.
 
-OTP 29.0.3 ran with `+P 300000 +Q 300000`. Production target dispatch measured:
+### TUI boundary
 
-| Resource | Created | Outcome | Capture | Wall | Peak worker heap |
-| --- | ---: | --- | ---: | ---: | ---: |
-| Processes | 10,000 | 10,051 scanned | 14 ms | 18 ms | 54,078 words |
-| ETS tables | 10,000 | 10,019 scanned | 11 ms | 11 ms | 139,267 words |
-| Ports (`ram_file_drv`) | 10,000 | 10,001 scanned | 13 ms | 14 ms | 1,029,676 words |
-| Processes | 100,000 | refused at 100,051 | 0 ms | 5 ms | below sample interval |
-| ETS tables | 100,000 | refused at 100,019 | 0 ms | 1 ms | 1,597 words |
-| Ports | 100,000 | refused before enumeration | 0 ms | 1 ms | 1,597 words |
+- `observer_cli tui NODE [COOKIE REFRESH_MS]` is the only interactive escript entry.
+- Bare `observer_cli NODE [COOKIE REFRESH_MS]` input is an unknown command with exit 2.
+- Only the TUI route retains automatic loading of a missing or incompatible bundle.
+  Command-first diagnostics require a target-side installation.
+- TUI refresh defaults to 1500 ms and rejects values below 1000 ms. A positional
+  cookie remains visible in argv and shell history.
 
-All dispatch responses reported cleanup confirmation. Afterwards zero fixture
-processes remained, ETS returned to 19 tables, ports returned to one, and the
-scheduler wall-time flag was false.
+## Tracked unit and scenario fixtures
 
-With 100,000 disposable processes, `recon_trace:calls/3` matched one exact MFA;
-implicit-clear setup took 7 ms and final `clear/0` took 4 ms. The wrapper became
-active in 11 ms and naturally drained one event in 16 ms total. Cleanup left no
-fixture worker, owner, tracer, formatter, PID call flag, or MFA pattern. Count
-and rate bound captured events, not recon's node-global setup/cleanup cost.
+The repository contains focused fixtures for:
 
-On a warmed target, the first command added 364 one-time module/runtime atoms;
-commands 2 through 100 all reported 12,776 atoms. Twenty concurrent controllers
-produced a sampled peak of 12,777. There was no command-count-linear growth.
+- parser command identity, help routing, removed positional TUI rejection, refresh
+  validation, and rejection of `--load-diagnostics`;
+- independent Trace stop timeout validation and canonical call/stop error identities;
+- compatible, missing, and incompatible capability probes with bounded observed
+  version fields;
+- hostile capability values and JSON-unavailable mutation preflight;
+- connect/status text and envelopes, secret-free cookie-source metadata, and target
+  OTP reporting;
+- preserving the previous context when cleanup is unconfirmed;
+- recovering from malformed protected context contents without weakening path or
+  permission checks;
+- explicit TUI loading for missing and incompatible bundles;
+- shared structured text rendering for every public command;
+- term round trips, JSON availability, response caps, redaction, schema validation,
+  worker/controller cleanup, diagnostics, and Trace cleanup boundaries.
 
-## Operator boundaries
+These fixtures passed in the focused and full EUnit runs recorded above.
 
-- Use trusted targets and networks only. Erlang distribution is bidirectional
-  and normally unencrypted; the outbound-only controller is not a sandbox.
-- New commands require compatible target modules and never use legacy
-  `remote_load/1`.
-- Snapshot and diagnose do not acquire process messages/dictionaries, table
-  rows, application env, cookies, arbitrary state, trace values, or stacks.
-- `gen-server-state` copies full state inside a bounded target worker before
-  returning only a value-free shape. Supervision inspection is one public
-  application root and its direct children.
-- Socket results are registry-known coverage. Distribution queue data and
-  uncalibrated growth remain context, not health/root-cause claims.
-- Trace is one exact MFA and local PID, call-only and node-global at setup and
-  cleanup. No provider, daemon, cluster fan-out, eval, auto-fix, trace session
-  registry, scoped clear, or remote loader is supported.
+## Executed final gates
 
-## Broad gates
-
-The final OTP 29.0.3 closeout runs:
+The local closeout executed:
 
 ```text
 rebar3 fmt
@@ -143,7 +149,34 @@ rebar3 as ci compile
 rebar3 xref
 rebar3 dialyzer
 rebar3 check
+scripts/escript-smoke.sh
 git diff --check
 ```
 
-Exact final test counts are recorded in the Goal 17 commit message.
+CI must also complete its OTP 26-29 jobs. If release notes promise cross-version
+controller-target operation, add and run a tracked matrix that starts targets from
+their own OTP-specific builds; the current generated-escript smoke does not provide
+that evidence.
+
+## Open release proof
+
+- OTP 26-28 generated-escript results depend on CI and are not claimed locally.
+- No current tracked cross-version controller-target matrix is present here.
+- Large-resource admission and disposable Trace cleanup benchmarks were not rerun for
+  this CLI contract change. Historical measurements are intentionally not treated as
+  current release evidence.
+
+## Operator boundaries
+
+- Use trusted targets and networks only. Erlang distribution is bidirectional and
+  normally unencrypted; the outbound-only controller is not a sandbox.
+- New commands require compatible target modules and never use legacy
+  `remote_load/1`.
+- Snapshot and diagnose do not acquire process messages/dictionaries, table rows,
+  application env, cookies, arbitrary state, trace values, or stacks.
+- `gen-server-state` copies full state inside a bounded target worker before returning
+  only a value-free shape. Supervision inspection is one public application root and
+  its direct children.
+- Trace is one exact MFA and local PID, call-only and node-global at setup and cleanup.
+  There is no provider, daemon, cluster fan-out, eval, auto-fix, trace session
+  registry, scoped clear, or command-first remote loader.

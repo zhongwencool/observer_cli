@@ -83,7 +83,7 @@ observer_cli diagnose --observe 60s --deep
 observer_cli diagnose --observe 30s --app my_app
 ```
 
-上面的 inspection 示例要求目标 release 已安装协议兼容的 observer_cli diagnostics module。新 CLI v1 不复用现有远程 loader；缺少 module 时返回明确 capability error。旧 positional/TUI 路径继续保持现有自动加载行为。
+上面的 inspection 示例要求目标 release 已安装协议兼容的 observer_cli diagnostics module。新 CLI v1 不复用现有远程 loader；缺少 module 时返回明确 capability error。显式 `tui` 路径继续保持现有自动加载行为。
 
 这是一套 2.0 命令面，不是一个 PR 的范围。实现必须分切片交付。
 
@@ -138,7 +138,7 @@ observer_cli diagnose --observe 30s --app my_app
 
 1. 校验 node name、cookie source、name mode 和 reachability；
 2. 探测目标 OTP、observer_cli diagnostics module 和可用能力；
-3. reachability 和认证成功后保存一个 active context；
+3. 临时 controller 停止且 cleanup 确认后，才保存一个 active context；
 4. 后续每个命令临时启动 hidden controller node，连接、调用 target-side bounded worker、确认清理、断开并退出。
 
 成功提示必须明确：
@@ -148,15 +148,15 @@ Selected myapp@host; probe succeeded.
 No persistent connection is kept.
 ```
 
-`disconnect` 只删除 active context；它不是网络断连操作。`status` 读取 context，并执行一次新的 reachability/capability probe。
+`disconnect` 只删除 active context；它不是网络断连操作。`status` 读取 context，并执行一次新的 reachability/capability probe。它输出 target OTP、name mode、cookie source 元数据、diagnostics 状态，以及 expected/observed protocol 和 bundle version；cookie 值永不输出。
 
-目标可达但缺少 diagnostics module 时，`connect` 仍成功选择 context，同时输出 `diagnostics_module=missing` 警告。后续 inspection 命令返回 `capability_unavailable`，直到目标正式安装兼容 module。`connect` 不能把 DNS、端口、cookie 或节点未启动造成的失败可靠地区分开；对外统一返回 `connection_failed`，只提供排查提示，不声称已经证明是认证错误。
+目标可达时，`connect` 和 `status` 明确区分 `diagnostics_module=compatible|missing|incompatible`。missing 的 observed capabilities 为 `null`；incompatible 只回显经过类型、printable-ASCII、长度和数值上限限制的 protocol/bundle 字段，其它 target map 字段永不复制。missing 或 incompatible 都可以成功选择 context，并以 exit 0 加 warning 返回；后续需要 diagnostics 的命令统一返回 `capability_unavailable`，直到目标 release 正式安装兼容 module。`connect` 不能把 DNS、端口、cookie 或节点未启动造成的失败可靠地区分开；对外统一返回 `connection_failed`，只提供排查提示，不声称已经证明是认证错误。
 
-legacy TUI 保持当前 `resolve_target_name/1` 规则。新命令默认在 host 含 `.` 或 `:`（IPv6 literal）时推断 longnames，否则推断 shortnames；`--name-mode short|long` 可以显式覆盖，IPv6 还要求现有 inet6 构建 profile。node 文本必须恰好包含零个或一个 `@`，并拒绝空组件、控制字符和超长输入。
+显式 TUI 保持当前 `resolve_target_name/1` 规则。新命令默认在 host 含 `.` 或 `:`（IPv6 literal）时推断 longnames，否则推断 shortnames；`--name-mode short|long` 可以显式覆盖，IPv6 还要求现有 inet6 构建 profile。node 文本必须恰好包含零个或一个 `@`，并拒绝空组件、控制字符和超长输入。
 
-新命令不继续生成本地 controller 名称。OTP 26+ 使用 public `net_kernel:start(undefined, #{name_domain => Mode, dist_listen => false, hidden => true})` 启动 dynamic hidden controller；启动后立即取 24-byte `crypto:strong_rand_bytes/1`、hex encode 成 cookie-safe atom且绝不回显，并以 public `erlang:set_cookie/1` 替换 default cookie，再为 explicit target 设置 per-node cookie，最后才调用 `net_kernel:connect_node/1`。随机源不可用就必须在连接前失败，不能降级成时间/`rand`。一参数 API 在 dynamic name 尚未分配、`node()=nonode@nohost` 时也能设置 default；不能错误地调用此时会失败的 `set_cookie(node(), Cookie)`。动态名称由目标在 handshake 时唯一分配，因此并行 agent 不会争用当前 `random_local_node_name/0` 的秒级名称，也不在 controller 上开放 distribution listener。旧 positional/TUI 路径继续保持当前命名方式，不把这项新协议改动倒灌进去。
+新命令不继续生成本地 controller 名称。OTP 26+ 使用 public `net_kernel:start(undefined, #{name_domain => Mode, dist_listen => false, hidden => true})` 启动 dynamic hidden controller；启动后立即取 24-byte `crypto:strong_rand_bytes/1`、hex encode 成 cookie-safe atom且绝不回显，并以 public `erlang:set_cookie/1` 替换 default cookie，再为 explicit target 设置 per-node cookie，最后才调用 `net_kernel:connect_node/1`。随机源不可用就必须在连接前失败，不能降级成时间/`rand`。一参数 API 在 dynamic name 尚未分配、`node()=nonode@nohost` 时也能设置 default；不能错误地调用此时会失败的 `set_cookie(node(), Cookie)`。动态名称由目标在 handshake 时唯一分配，因此并行 agent 不会争用当前 `random_local_node_name/0` 的秒级名称，也不在 controller 上开放 distribution listener。显式 TUI 路径继续保持当前命名方式，不把这项新协议改动倒灌进去。
 
-新非交互 escript 要求启动时 `node() =:= nonode@nohost`；若 controller runtime 已经 distributed，就返回 `controller_already_distributed`，不复用一个可能有 listener、旧 cookie 或错误 name mode 的节点。legacy TUI/library path 保持现行为。
+新非交互 escript 要求启动时 `node() =:= nonode@nohost`；若 controller runtime 已经 distributed，就返回 `controller_already_distributed`，不复用一个可能有 listener、旧 cookie 或错误 name mode 的节点。显式 TUI/library path 保持现行为。
 
 ### 5.2 Context 文件
 
@@ -174,7 +174,8 @@ filename:join(filename:basedir(user_config, "observer_cli"), "context.etf")
 - 配置目录 mode `0700`，context/temp file mode `0600`；
 - 拒绝 symlink 和非普通文件；使用唯一 temp file，close 后在同一目录 atomic rename；
 - decode 后做完整 allowlist/类型/长度校验，再解析 node；不使用 `file:consult/1`；
-- 并发 `connect` 采用 last-successful-rename-wins；`disconnect` 遇到不存在文件仍成功。
+- probe 完成后必须先停止临时 controller 并确认 cleanup，再 atomic replace context；connection/probe/cleanup 失败保留原 context；
+- 并发成功的 `connect` 采用 last-successful-rename-wins；`disconnect` 遇到不存在文件仍成功；若通过既有 directory、regular-file 和 permission 检查但内容 malformed/oversized，则安全删除并报告 recovery，symlink、类型或权限异常仍拒绝。
 
 第一版只支持一个 active context，不做 profiles、credential store 或 daemon。
 
@@ -198,33 +199,32 @@ observer_cli processes --node myapp@host --cookie-env ERL_COOKIE \
 
 v1 只支持 command-first grammar；不接受 global flags 前置。显式 `--node` 不修改 context，并且必须同时给出 cookie source，绝不继承另一个 context 的凭据。
 
-## 6. 旧 TUI 兼容与保留字
+## 6. 显式 TUI 与命令边界
 
-现有入口继续保留：
+唯一的交互式 escript 入口是显式 `tui`；library API 保持不变：
 
 ```text
-observer_cli TARGETNODE [TARGETCOOKIE REFRESHMS]
+observer_cli tui TARGETNODE [TARGETCOOKIE REFRESHMS]
 observer_cli:start/0,1,2
 ```
 
-但 `memory`、`diagnose`、`connect` 等单词今天也可能被解释为短节点名。不能根据“本机是否已有 context”动态解释，否则同一条脚本在不同机器行为不同。
+2.0 删除裸 `observer_cli TARGETNODE [TARGETCOOKIE REFRESHMS]` 形式。未知首 token 统一作为 unknown command 返回 exit 2，不启动 distribution 或 TUI。显式 `tui` 进入现有自动 loader，command-first 路径绝不进入该 loader。
 
-2.0 使用确定性规则，并且只检查首 token：
+2.0 使用确定性首 token 规则：
 
 - 首 token 是已知 command word 时始终按新命令解析，不受参数个数影响；
-- 只有首 token 非保留字时，单 positional 或三 positional 才走旧 TUI 路径；
-- 未被占用的单 positional 参数仍走旧 TUI 路径；
-- 三 positional 参数旧路径继续保留；
-- 新增显式 `tui` escape，访问与命令同名的节点：
+- 首 token 是 `tui` 时只按显式 TUI 参数解析；
+- 其它首 token 统一返回 unknown command；
+- 与命令同名的节点也必须使用显式 `tui`：
 
 ```text
 observer_cli tui memory
 observer_cli tui diagnose COOKIE 1500
 ```
 
-这是一个小范围、明确记录的 2.0 语法变化；页面、导航、刷新、远程加载和退出行为仍保持兼容。
+这是明确记录的 2.0 语法删除；页面、导航、刷新、显式 TUI 远程加载和退出行为保持不变。
 
-当前 `observer_cli_escriptize:run/4` 先假定第一次远程 `start` 必须得到 `{badrpc,_}`，目标已预装 observer_cli 时会在 TUI 退出后 badmatch。Slice A 必须先改成“probe module → 缺失才 legacy-load → TUI 只启动一次”，并为预装/缺失两条路径保留行为测试。
+当前 `observer_cli_escriptize:run_remote/4` 先 probe compatible bundle，只在缺失或 incompatible 时调用自动 loader，再次 probe 成功后只启动一次 TUI；预装、自动加载和加载失败三条路径都有行为测试。
 
 ## 7. 通用选项与输出契约
 
@@ -245,10 +245,15 @@ observer_cli tui diagnose COOKIE 1500
 - options 只出现在 command 之后；unknown、duplicate 或互斥 flags 返回 2。
 - `--json` 与显式非 JSON `--format` 互斥；`--redact` 与 `--include-identifiers` 互斥。
 - text 默认；只有 TTY text 可以使用 ANSI，JSON/term 永不包含 ANSI。
+- 所有成功的 diagnostics、inspection 和 trace command envelope 共用递归、稳定的 indented text renderer；不允许某个命令退回 raw Erlang `#{...}`。connect/status/disconnect 保留窄的人类摘要。
 - text 模式成功结果写 stdout、错误写 stderr；JSON/term 在 parser 和 encoder 可用后，无论成功失败都输出同一 envelope。bootstrap/encoder 不可用错误使用稳定纯文本 stderr。
+- `connect`/`disconnect` 在写入或删除 context 前先确认所选 encoder 可用；target capability 值先被收缩成可编码 public shape，避免输出失败发生在本地 mutation 之后。
+- 无参数、`--help`、`-h`、`help COMMAND`、`COMMAND --help` 和 trace/TUI 子帮助写 stdout 并返回 0；`--version` 仅读取本地 bundle/schema/protocol/controller OTP，写 stdout、返回 0，且不启动 distribution。
+- 已知 command 的 malformed invocation 和以 `-` 开头的未知 option 返回 2、写 text stderr，并指向对应 command 或 trace 子命令帮助；其它 bare token 返回 unknown command 和 exit 2。
+- Trace 从 parser error、context/capability/runtime error 到 success 始终使用 canonical machine command `trace_call|trace_stop_all`；text 前缀使用公开语法 `trace call|trace stop`。
 - byte、count、ratio、millisecond 保留数值，单位写入字段名。
 - 列表稳定排序；值相同时使用规范化 resource identifier 打破平局。
-- `--timeout` 是整个命令 deadline：不含采样窗口的普通命令默认 10 s、硬上限 120 s。任何 duration-bearing command（schedulers/network/sockets、processes duration window、observe、trace）的默认 timeout 为 `max(10 s, duration + 5 s)`；显式 timeout 小于 `duration + 5 s` 时直接拒绝。当前所有 duration 硬上限不超过 60 s，因此不会撞到 120 s command cap。
+- `--timeout` 是整个命令 deadline：不含采样窗口的普通命令默认 10 s、硬上限 120 s。任何 duration-bearing command（schedulers/network/sockets、processes duration window、observe、trace call）的默认 timeout 为 `max(10 s, duration + 5 s)`；显式 timeout 小于 `duration + 5 s` 时直接拒绝。`trace stop --all` 没有采样窗口，只使用普通 command timeout 校验。当前所有 duration 硬上限不超过 60 s，因此不会撞到 120 s command cap。
 - target deadline 比 controller deadline 至少早 1 s；所有 probes 共用 remaining budget，不能每个 optional probe 各消耗一份完整 timeout。
 - target-side normalized response 结构上限为 1 MiB；controller 编码后再次检查 1 MiB。超过时截断有界列表并设置 `truncated=true`，不返回任意大 term。
 - 不增加 `--output`；使用 shell redirect。
@@ -276,7 +281,7 @@ observer_cli tui diagnose COOKIE 1500
 | `schedulers` | normal/dirty CPU utilization、run queue lengths | `--duration` | 临时 wall-time measurement，有 observer effect |
 | `distribution` | public connected visible/hidden peer 集合、controller queue/limit capability | `--limit` | controller peer 排除；不承诺 per-peer state 或 in/out |
 | `processes` | process Top N + safe metadata | `--sort`、`--limit`、`--duration` | 不读取 messages/dictionary/state |
-| `process` | 单进程 explicit-key metadata、GC summary | `--info` | 不读取 links/monitors/dictionary/stack/binary；对象消失返回 `not_found` |
+| `process` | 单进程 explicit-key metadata、GC/binary summary、bounded relationships 与 normalized stacktrace | `--info` | 不读取 messages/dictionary/arbitrary state；关系与 stack 有硬上限，对象消失返回 `not_found` |
 | `applications` | group-leader attribution 的 count/memory/reductions/msgq | `--sort`、`--limit` | 近似归因，不是严格 ownership |
 | `ets` | table metadata、size、memory、owner | `--sort`、`--limit` | 不读 table content |
 | `mnesia` | table metadata、storage、size、memory | `--sort`、`--limit` | 未运行是 `not_running`，不是故障 |
@@ -371,9 +376,9 @@ Top N 在 target 侧使用 `{metric, canonical_raw_id}` 作为选择 key，再�
 
 ### 8.3 `process`
 
-`--info` 是默认模式，可保留为显式可读别名。v1 使用明确的 `process_info/2` key list，不调用当前 `observer_cli_process:collect_process_info/1` 或 `recon:info/1`。默认不请求 messages、dictionary、current stacktrace、binary refs、links、monitors、suspending 或 arbitrary state。
+`--info` 是默认模式并继续作为 parser-compatible alias，但不在 help 中突出。v1 使用明确的 `process_info/2` key list，不调用当前 `observer_cli_process:collect_process_info/1` 或 `recon:info/1`。它不请求 messages、dictionary 或 arbitrary state；current stacktrace 只保留最多 30 个 normalized MFA/arity/line frame，不返回 args；links、monitors、monitored_by 和 suspending 只返回 sanitized bounded 列表与 total/truncated 元数据；binary refs 只在目标侧归并成 count/bytes，不跨 distribution 返回 ref。
 
-`process --info` allowlist 固定为 `registered_name|status|current_function|initial_call|memory|message_queue_len|reductions|heap_size|total_heap_size|stack_size|group_leader|garbage_collection_info`；GC info 再做 fixed numeric/boolean field allowlist。单点 process inventory 为每个候选读取 TUI Top N 行需要的 `registered_name|current_function|initial_call|memory|message_queue_len|reductions` 和当前 sort；只有显式 `--sort binary_memory` 才额外读取 binary refs，并只在 target 求和后立即丢弃 ref 列表。duration inventory 的两个全量样本仍只读取 sort 字段，排名后再为最终 Top N 补读上述当前上下文。OTP 27+ 的 process label 同样只为最终 Top N 读取并有界化；旧版本、无 label 或进程已退出时返回 `null`。
+`process --info` allowlist 还包含 status/priority/catchlevel/trap_exit/error_handler、GC numeric/boolean summary、bounded signal relationships 和 normalized current stacktrace；每种复合字段都在目标侧丢弃任意值并做 shape/count cap。单点 process inventory 为每个候选读取 TUI Top N 行需要的 `registered_name|current_function|initial_call|memory|message_queue_len|reductions` 和当前 sort；只有显式 `--sort binary_memory` 才额外读取 binary refs，并只在 target 求和后立即丢弃 ref 列表。duration inventory 的两个全量样本仍只读取 sort 字段，排名后再为最终 Top N 补读上述当前上下文。OTP 27+ 的 process label 同样只为最终 Top N 读取并有界化；旧版本、无 label 或进程已退出时返回 `null`。
 
 目标解析在目标 VM 内完成：
 
@@ -415,7 +420,7 @@ observer_cli gen-server-state SERVER --redact
 - 不调用完整 `length/1`、`term_to_binary/1` 或 `external_size/1` 深遍历任意业务 term；
 - 默认最大深度 6、最大访问节点数 10,000、normalized output 上限 64 KiB；
 - 64 KiB 只限制归一化输出，不能限制 `sys:get_state` 先复制完整 state 的成本；timeout 也不能撤销已经发给目标 process 的 system request；
-- 当前 TUI 的 `collect_process_state/1` 会直接返回完整 state，只能保留给显式旧 TUI，不能提升为新 CLI probe；
+- 当前 TUI 的 `collect_process_state/1` 会直接返回完整 state，只能保留给显式 TUI，不能提升为新 CLI probe；
 - callback exception 在目标侧归一化成稳定 reason code，不返回或记录 arbitrary reason/stack；
 - v1 删除 `--include-values`；如果无法接受完整 state copy 的固有风险，就不发布该命令；
 - 永不自动加入 `snapshot` 或 `diagnose`。
@@ -853,12 +858,12 @@ Erlang term 输出以 `.` 结尾，可由 `file:consult/1` 或 `erl_scan`/`erl_p
 v1 要求目标已安装协议兼容的 diagnostics module，不提供新命令 `--load`。这不是功能遗漏，而是对当前代码的事实修正：
 
 - 当前 `observer_cli_escriptize:remote_load/1` 会遍历并加载 observer_cli、recon、formatter 的完整 module 集合；
-- 它复制 application env，内部 RPC 没有整体 deadline，并忽略逐 module load 结果；
+- 它复制 application env，以逐 module、非事务方式加载，内部 RPC 没有整体 deadline；失败虽会被检查，但可能已经在目标留下 partial replacement；
 - `recon:remote_load` 最终可能覆盖/purge 目标已有 code、执行 `on_load`，操作不可事务回滚；
 - controller 本地 filename/debug info 也可能被带到目标；
-- 实测新 OTP major 编译的 BEAM 注入旧 major 会失败。
+- 不承诺不同 OTP major 的 BEAM injection 兼容性，因此不能把它作为 v1 部署机制。
 
-旧 positional/TUI 路径为兼容性继续使用现 loader；新 AI-native commands 不复用它。如果以后必须支持临时注入，应单独设计 per-OTP artifact、missing-only whitelist、hash/protocol check、拒绝覆盖和逐项结果，但不放进 v1。
+显式 TUI 路径继续使用现 loader；新 AI-native commands 不复用它。如果以后必须支持临时注入，应单独设计 per-OTP artifact、missing-only whitelist、hash/protocol check、拒绝覆盖和逐项结果，但不放进 v1。
 
 即使不注入，controller connection、dynamic node-name atom、首次 module/RPC lazy load 和 target worker 仍会影响 process/port/atom/distribution count、memory、IO 与 GC counters。response 必须记录 observer effects；采集结果是连接后的状态，不能宣称完全无污染。
 
@@ -918,14 +923,14 @@ v1 要求目标已安装协议兼容的 diagnostics module，不提供新命令 
 
 Trace 因 count/rate 自然停止时仍是成功 capture，response 标记 `limit_reached` 或 `rate_exceeded`；duration 或合法 active owner 收到 explicit stop 也是预期停止、退出 0，但按第 11 节保守标记 `trace_complete=false, truncated=true, dropped_count=null`。owner absent/name collision/timeout 的 emergency `trace stop --all` 以及任何 node-global cleanup 未确认都返回 4。
 
-新子命令写完 stdout/stderr 后显式 `erlang:halt(Code)`；旧 TUI 路径保持当前 `main/1` 返回行为。第一版不承诺额外 SIGINT/130 处理。
+新子命令写完 stdout/stderr 后显式 `erlang:halt(Code)`；显式 TUI 路径保持当前 `main/1` 返回行为。第一版不承诺额外 SIGINT/130 处理。
 
 ## 20. 实现切片
 
 ### Slice A：CLI contract
 
 - stateless `--node`、cookie source、统一 envelope；
-- reserved verbs、`tui` escape、legacy parser tests；
+- reserved verbs、显式 `tui`、bare shorthand rejection tests；
 - text/term/JSON capability；
 - 先不做 context file。
 
@@ -975,18 +980,25 @@ Trace 因 count/rate 自然停止时仍是成功 capture，response 标记 `limi
 
 ### Parser 与 context
 
-- command-first grammar、全部 reserved words、legacy positional、`tui` escape；
+- command-first grammar、全部 reserved words、显式 `tui`、bare shorthand rejection；
 - global option 前置被拒绝；unknown/duplicate/互斥 flags 返回 2；
+- no-argument/`--help`/`-h`/command/subcommand help 与纯本地 `--version` 返回 0；known malformed command 使用 command-specific stderr，不退化成成功的顶级 help；
+- 顶层 help 列出 `-h`、`help COMMAND` 和 `--version`；所有 help 行不超过 79 bytes；process help 与 bounded normalized current stacktrace 的真实行为一致；
+- `connect --load-diagnostics` 作为 unknown option 返回 2，且 command-first 路径没有 remote module injection；
 - diagnose 四种 mode matrix；bare `--deep`/`--app`、deep+app 等非法组合返回 2；
 - 所有 duration-bearing command 的 min/max、默认 `max(10s,duration+5s)`、显式 timeout 小于 `duration+5s` 被拒绝；
 - explicit node 必须同时提供 cookie source，不能继承其它 context 凭据；
 - malformed/multi-`@` node、name-mode override、short/long/IPv4/inet6 peer；
 - cookie env/file 的 missing、empty、CRLF、oversized、permission 和 secret absence；
 - context oversized/compressed/corrupt ETF、symlink、非普通文件、目录 `0700`、file `0600`、并发 atomic replace；
+- connect 只有在 controller cleanup 确认后才替换 context；connection/probe/cleanup 失败保持旧 context bytes 不变；
+- connect/status 对 compatible、missing、incompatible 三种 diagnostics 状态输出 target OTP、cookie source metadata 与 expected/observed versions，且 missing/incompatible 都不触发 loader；
+- hostile capability values（invalid UTF-8、超界 protocol、额外 secret fields）归一化成 bounded null/public fields，不能破坏 term/JSON 输出或污染保存的 context；OTP 26 JSON encoder 不可用时 connect/disconnect 必须在 mutation 前失败；
 - 两个并发 dynamic controller 都由目标分配唯一名称；`dist_listen=false`、dynamic-name 前以 `crypto:strong_rand_bytes/1` + `set_cookie/1` 设置不回显的随机 default、per-node target cookie、`net_kernel:connect_node/1` 的严格顺序有真实节点测试；随机源失败时不得连接；
-- 预先 distributed 的 controller 被新命令拒绝，legacy TUI/library path 不回归；
-- legacy TUI 在 target 预装/缺少 observer_cli 时都只启动一次；
-- pure dispatcher 测试外，真实 escript subprocess 分别断言 exit 0–4。
+- 预先 distributed 的 controller 被新命令拒绝，显式 TUI/library path 不回归；
+- 显式 TUI 在 target 预装/缺少 observer_cli 时都只启动一次；
+- pure dispatcher 测试外，真实 escript subprocess 分别捕获 stdout、stderr 和 exit 0–4；所有普通 command text envelope 走同一 structured renderer。
+- Trace call/stop 的 parser、context 和 runtime error envelope 与 success response 使用相同 canonical command identity；stop 的短 timeout 不继承 call sampling window。
 
 ### Inspection 与 schema
 
@@ -1000,8 +1012,8 @@ Trace 因 count/rate 自然停止时仍是成功 capture，response 标记 `limi
 - 默认 redacted snapshot/diagnose 不含真实 node/PID/name/MFA；control sequence 不进入 text terminal；
 - target-side response cap、单字段 cap、invalid UTF-8 tagged base64；
 - response truncation 保留所有 finding evidence target 并重验 JSON Pointer；无法容纳 required evidence 时退出 4；
-- 默认 process probe 没有 dictionary/stack/binary/links/monitors 请求；
-- process info/inventory exact key allowlist；binary refs 只在 explicit binary_memory worker 内求和并不跨 target boundary；
+- 默认 process detail 不请求 messages/dictionary/arbitrary state；stack、signal relationships 和 binary refs 按上述 target-side normalization/cap 返回，inventory 仍使用窄 key list；
+- process info/inventory exact key allowlist；binary refs 只以 target-side count/bytes summary 跨 boundary，inventory 的 explicit binary_memory worker 同样不返回 ref；
 - process registered-name lookup 不调用 `registered/0`/不创建 atom；超长、non-existing atom、existing-but-unregistered atom 都归一化且不泄漏区别；
 - application attribution 不调用 `application:info/0`，只输出 public API 可证明的 loaded/running 与 group-leader approximation；
 - 动态 process/port/socket/table 消失；
@@ -1081,8 +1093,11 @@ rebar3 as ci compile
 rebar3 xref
 rebar3 dialyzer
 rebar3 check
+scripts/escript-smoke.sh
 git diff --check
 ```
+
+`scripts/escript-smoke.sh` 必须先 `rebar3 escriptize`，再直接运行生成的 `_build/default/bin/observer_cli`，分别检查 help/no-argument/`-h`、trace sub-help、version、unknown option、known malformed command 和缺少 trace safety acknowledgement 的 stdout、stderr 与 exit code。CI 在 OTP 26–29 的每个 controller job 中调用它；这只证明各 job 的生成 escript contract，不等于 controller-target 交叉运行矩阵。
 
 ## 22. MVP 非目标与建议决策
 
@@ -1121,9 +1136,9 @@ git diff --check
 
 | 原方案假设 | 代码事实 | 本稿修复 |
 | --- | --- | --- |
-| global flags 可前置且 parser 看首 token | `observer_cli_escriptize:parse_args/1` 目前只有 1/3 positional | v1 command-first |
-| 新 CLI 应继续生成本地 controller name | 当前秒级名称会并发碰撞；OTP 26+ 支持 target-assigned dynamic name 和 `dist_listen=false` | 新命令使用 dynamic outbound-only controller；legacy TUI 不变 |
-| 当前 `remote_load/1` 可直接复用 | 它加载完整 app/recon/formatter、复制 env、忽略逐项结果且无整体 deadline | 新 CLI v1 删除 `--load` |
+| global flags 可前置且 parser 看首 token | parser 只接受显式 `tui` 或已知 command 首 token | v1 command-first；其它 bare token 返回 unknown command |
+| 新 CLI 应继续生成本地 controller name | OTP 26+ 支持 target-assigned dynamic name 和 `dist_listen=false` | 新命令使用 dynamic outbound-only controller；显式 TUI 的可读时间名称追加 OS PID，避免同秒进程碰撞 |
+| 当前 `remote_load/1` 可直接复用 | 它加载完整 app/recon/formatter、复制 env，逐 module 非事务执行且无整体 deadline，失败可留下 partial target | 新 CLI v1 删除 `--load` |
 | `erpc` timeout 会停止目标工作 | OTP `erpc` 明确说 timeout/noconnection 后函数可能仍执行 | target dispatcher/worker、较早 target deadline、controller monitor |
 | 当前 process collector 是安全 metadata | `collect_process_info/1` 经 `recon:info/1` 读取 dictionary、stack、binary refs 和无界 relationships | 新 explicit-key `process_info/2` probe |
 | `--limit` 限制扫描成本 | recon/page collectors 先物化全进程/表/port/socket list | 默认 scan-free snapshot、scan admission、worker heap/deadline |
@@ -1137,39 +1152,28 @@ git diff --check
 | Trace 需要新 session manager | 当前 recon 已有 public call trace、PID/arity/count/rate | v1 收缩成 single-session recon thin wrapper |
 | recon cleanup 是 scoped | `recon_trace:calls/3` setup 先 global `clear/0`，且固定 tracer names | 强制 `--replace-existing-trace`，显式 global interference |
 
-### 23.2 第二轮：OTP 26–29 实测
+### 23.2 当前实现边界
 
-本机对 OTP 26.2、27.3、28.5、29.0 做了小型只读 probes，结论是：
+实现按 OTP 26–29 controller support contract 保留 list/iterator、term/JSON 等 capability 分支；GitHub CI 也配置了四个独立 OTP job。每个 job 会构建生成 escript 并运行 `scripts/escript-smoke.sh`。这些 job 验证各 controller build 的本地 CLI contract，不构成 controller-target 交叉运行证据。
 
-- stdlib `json`：OTP 26 无，OTP 27+ 有；
-- `filename:basedir/2`、`sys:get_state/2`、`application:get_supervisor/1`：OTP 26–29 可用；
-- `processes_iterator/0` 与 `processes_next/1`：OTP 26/27 无，OTP 28/29 有，必须成对 capability-check；
-- `ets:info(Table,id)`：OTP 26–29 对 named table 都给唯一 ref，可作为 generation；
-- scheduler wall-time、normal/dirty CPU samples 和 `run_queue_lengths`：OTP 26–29 可用；
-- `net_kernel:start(undefined, dist_listen=false)` + pre-connect `set_cookie/1` random default + per-node cookie + `connect_node/1`：实测 `set_cookie/1` 在 OTP 26–29 的 `nonode@nohost` dynamic state 可用，且 26→26、26→29、27→29、29→26、29→29 都取得 target-assigned dynamic name；
-- `recon_trace:calls/3` 使用 legacy node-static tracing，可在 OTP 26–29 走同一条路径；
-- 新 major 编译的 BEAM 注入旧 major并不可靠，不能作为 v1 部署机制。
+v1 不自建 isolated trace session manager，也不提供 command-first code injection。目标 release 必须安装为自身 OTP 构建的 compatible diagnostics bundle；missing 和 incompatible 由 capability probe 区分，不能靠跨 major BEAM injection 修复。
 
-第二轮也撤回了两项不必要设计：不再自建 isolated trace session manager，不再提供新 CLI code injection。两者都由缩小 v1 范围解决，而不是增加兼容层。
+### 23.3 对抗式设计复核
 
-### 23.3 第三至最终轮：对抗式复核
+CLI/runtime、inspection/diagnostics、Trace/high-risk 三条线的关键设计闭环包括：
 
-后续按 CLI/runtime、inspection/diagnostics、Trace/high-risk 三条线反复用源码和 OTP probe 反证，并在每轮修订后重新审阅。最终轮三条线均为 **design-level PASS**，关键闭环包括：
-
-- dynamic outbound-only controller、pre-connect random/default + per-node cookie 顺序、legacy parser/context/exit schema；
+- dynamic outbound-only controller、pre-connect random/default + per-node cookie 顺序、显式 TUI/bare rejection、context/exit schema；
 - exact delta/trend 的 O(admitted resources) baseline、staged Application/Mnesia admission、Mnesia storage unit、Port/Socket raw generation 与 registry coverage；
 - online scheduler ID/run-queue 非原子与 observer 语义、required sampling coverage、fixed sort/formula/unit/evidence contract；
 - supervision 收缩为 public application root/direct children 一层，不对任意 gen_server 或 child 递归调用 supervisor API；
 - Trace 只用 recon 2.5.6 public `calls/3`/`clear/0` 控制面，并补齐 owner/helper、IO、drain barrier、forced-loss、global cleanup verification；
 - 所有 private/unbounded/sensitive acquisition、observer contamination 和无法证明的 suspect 都被删除、降级或标成明确 High-risk/proof gate。
 
-这个 PASS 只表示文档自洽。2026-07-11 的后续对抗审查修复了 Trace helper、diagnostics trend、controller deadline/schema/privacy 和 response envelope 缺口，并补齐对应 tracked fixtures；修复后的 OTP 26–29 focused suites、16 组交叉节点矩阵和 disposable resource/Trace proofs 均已重跑通过。当前状态仍为 **design-reviewed**，直到这些一次性 proof commands 进入 tracked repeatable runner；证据和未关闭项见 `docs/observer-cli-2.0-diagnostics-validation.md`。
+这只表示设计与当前源码契约对齐，不等于 release proof。当前证据和未关闭项以 `docs/observer-cli-2.0-diagnostics-validation.md` 为准。
 
 ### 23.4 当前验证证据
 
-Goal 17 曾运行 focused/full EUnit、compile、CI compile、xref、Dialyzer、OTP 26–29 和跨节点矩阵，并记录 disposable resource/Trace measurements。本轮修复后，OTP 29 本地 full EUnit、compile、CI compile、xref、Dialyzer、lint、format 和文档检查重新通过，两条独立最终审查线均未发现可复现 P1/P2。
-
-当前实现矩阵已通过；在 release proof commands 进入可复现 runner 前仍不标记 `release-ready`。当前精确覆盖和开放项记录在 validation 文档中。
+2026-07-12 本轮已在本机 OTP 29 实际运行 focused EUnit（240 tests）、full EUnit（649 tests）、`rebar3 fmt`、compile/CI compile、lint、xref、Dialyzer、ExDoc、`rebar3 check`、两种 shell 的 syntax/smoke 和 `git diff --check`，全部通过且 EUnit 为 0 failures。两个 smoke 执行都会先运行 `rebar3 escriptize`，再检查九个生成二进制场景。没有在本轮运行 OTP 26–28，也没有运行 controller-target 交叉矩阵、disposable 10k/100k resource 或 Trace benchmark；不得把 CI 配置或旧记录描述成当前通过证据。
 
 ### 23.5 不能伪造的“100%”
 

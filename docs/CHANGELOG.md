@@ -1,8 +1,16 @@
 # Changelog
 - 2.0.0 (release candidate)
-  - Preserve the positional TUI while adding command-first snapshot, inspection, diagnostic, active-context, and bounded recon call-trace commands.
-  - Add capped text, consultable Erlang-term, and OTP 27+ JSON envelopes with explicit exit classes and target-side normalization.
-  - Support OTP 26 through 29 and validated cross-version controller/target pairs without remote BEAM injection; targets require a compatible diagnostics installation.
+  - Add command-first snapshot, inspection, diagnostic, active-context, and bounded recon call-trace commands.
+  - Make `tui` the only interactive escript command and remove the positional TUI shorthand; automatic module loading remains TUI-only.
+  - Add local help and version routes, command-specific usage errors, fixed exit classes, and separate stdout/stderr contracts.
+  - Keep canonical Trace command identities across parser, context, runtime, and success paths; validate stop timeouts independently from call sampling.
+  - Render every successful command envelope as structured text; keep consultable Erlang-term and OTP 27+ JSON machine output.
+  - Report compatible, missing, and incompatible diagnostics with expected/observed versions; save context only after controller cleanup is confirmed.
+  - Bound and sanitize observed capability values and preflight encoders before context mutations.
+  - Allow `disconnect` to remove a malformed or oversized protected context file while retaining path, type, and permission checks.
+  - Remove command-first remote BEAM injection; targets require a compatible diagnostics installation built for their OTP release.
+  - Track generated-escript help, version, error-stream, and exit-code smoke in each configured OTP 26-29 CI job.
+  - Restore green lint, Dialyzer, ExDoc, and aggregate check gates with type-correct recon ranking payloads and smaller snapshot helpers.
   - Document scan admission, ordinary Erlang distribution trust, High-risk state/supervision inspection, and node-global recon cleanup.
   - Introduce plugin API breaking changes for custom plugin authors; use the explicit 2.0 callback shapes in `docs/plugin.md`.
 

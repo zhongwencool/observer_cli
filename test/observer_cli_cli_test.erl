@@ -47,23 +47,33 @@ reserved_command_words_test() ->
         Commands
     ).
 
-legacy_tui_forms_test() ->
-    ?assertEqual(
-        {ok, #{route => tui, target => "target@host", cookie => undefined, interval => 1500}},
+positional_tui_forms_are_unknown_commands_test() ->
+    ?assertMatch(
+        {error, #{reason := {unknown_command, "target@host"}}},
         observer_cli_cli:parse(["target@host"])
     ),
-    ?assertEqual(
-        {ok, #{route => tui, target => "target@host", cookie => "secret", interval => 2000}},
+    ?assertMatch(
+        {error, #{reason := {unknown_command, "target@host"}}},
         observer_cli_cli:parse(["target@host", "secret", "2000"])
     ).
 
 explicit_tui_escape_test() ->
     ?assertEqual(
-        {ok, #{route => tui, target => "memory", cookie => undefined, interval => 1500}},
+        {ok, #{
+            route => tui,
+            target => "memory",
+            cookie => undefined,
+            interval => 1500
+        }},
         observer_cli_cli:parse(["tui", "memory"])
     ),
     ?assertEqual(
-        {ok, #{route => tui, target => "diagnose", cookie => "secret", interval => 1500}},
+        {ok, #{
+            route => tui,
+            target => "diagnose",
+            cookie => "secret",
+            interval => 1500
+        }},
         observer_cli_cli:parse(["tui", "diagnose", "secret", "1500"])
     ).
 
@@ -139,6 +149,28 @@ trace_command_contract_test() ->
     ?assertMatch(
         {ok, #{command := trace, arguments := ["stop"], options := #{all := true}}},
         observer_cli_cli:parse(["trace", "stop", "--all"])
+    ),
+    ?assertMatch(
+        {ok, #{
+            command := trace,
+            arguments := ["stop"],
+            options := #{all := true, timeout := "1s", redact := true}
+        }},
+        observer_cli_cli:parse([
+            "trace", "stop", "--all", "--timeout", "1s", "--redact"
+        ])
+    ),
+    ?assertMatch(
+        {ok, #{options := #{redact := true}}},
+        observer_cli_cli:parse([
+            "trace",
+            "call",
+            "my_mod:my_fun/2",
+            "--pid",
+            "<0.123.0>",
+            "--replace-existing-trace",
+            "--redact"
+        ])
     ),
     ?assertEqual({ok, 10000}, observer_cli_cli:trace_duration(#{})),
     ?assertEqual({ok, 100}, observer_cli_cli:trace_limit(#{})),
@@ -515,17 +547,37 @@ mutually_exclusive_options_test() ->
 
 invalid_tui_forms_test() ->
     assert_argument_error(invalid_arguments, observer_cli_cli:parse([])),
-    assert_argument_error(invalid_arguments, observer_cli_cli:parse(["target", "cookie"])),
+    assert_argument_error(
+        {unknown_command, "target"}, observer_cli_cli:parse(["target", "cookie"])
+    ),
     assert_argument_error(invalid_arguments, observer_cli_cli:parse(["tui"])),
     assert_argument_error(
         invalid_refresh_interval,
         observer_cli_cli:parse(["tui", "target", "cookie", "fast"])
-    ).
+    ),
+    assert_argument_error(
+        invalid_refresh_interval,
+        observer_cli_cli:parse(["tui", "target", "cookie", "999"])
+    ),
+    assert_argument_error(global_option_before_command, observer_cli_cli:parse(["-x"])).
 
 unsupported_format_test() ->
     assert_argument_error(
         {unsupported_format, "yaml"},
         observer_cli_cli:parse(["memory", "--format", "yaml"])
+    ).
+
+command_first_loader_is_rejected_test() ->
+    assert_argument_error(
+        {unknown_option, "--load-diagnostics"},
+        observer_cli_cli:parse([
+            "connect",
+            "--node",
+            "target@host",
+            "--cookie-env",
+            "COOKIE",
+            "--load-diagnostics"
+        ])
     ).
 
 target_validation_test() ->
@@ -915,6 +967,7 @@ json_encoder_test() ->
             lists:foreach(
                 fun(Response) ->
                     {ok, Encoded} = observer_cli_cli:encode(json, Response),
+                    ?assertEqual($\n, binary:last(Encoded)),
                     ?assertEqual(Response, erlang:apply(json, decode, [Encoded]))
                 end,
                 [Success, Failure]
@@ -1001,19 +1054,6 @@ health_command_text_reports_test() ->
             "target:\n"
             "  node: node-1\n"
             "  otp_release: 29\n"
-            "capture:\n"
-            "  status: complete\n"
-            "  duration_ms: 1500\n"
-            "  probes:\n"
-            "    [0]:\n"
-            "      id: core_limits\n"
-            "      status: ok\n"
-            "      reason_code: null\n"
-            "      required: true\n"
-            "      coverage:\n"
-            "        [0]: process_count_limit\n"
-            "        [1]: port_count_limit\n"
-            "      samples: 2\n"
             "data:\n"
             "  summary: Quick diagnostics completed with no limit findings.\n"
             "  context:\n"
@@ -1028,6 +1068,19 @@ health_command_text_reports_test() ->
             "      reason_code: ruleset_not_calibrated\n"
             "warnings: []\n"
             "errors: []\n"
+            "capture:\n"
+            "  status: complete\n"
+            "  duration_ms: 1500\n"
+            "  probes:\n"
+            "    [0]:\n"
+            "      id: core_limits\n"
+            "      status: ok\n"
+            "      reason_code: null\n"
+            "      required: true\n"
+            "      coverage:\n"
+            "        [0]: process_count_limit\n"
+            "        [1]: port_count_limit\n"
+            "      samples: 2\n"
         >>,
         Text
     ),
@@ -1036,27 +1089,49 @@ health_command_text_reports_test() ->
         fun(Command) ->
             HealthResponse = Response#{<<"command">> := atom_to_binary(Command)},
             {ok, HealthText} = observer_cli_cli:encode(text, HealthResponse),
-            ?assertMatch(<<"observer_cli ", _/binary>>, HealthText)
+            ?assertMatch(<<"observer_cli ", _/binary>>, HealthText),
+            ?assertEqual(nomatch, binary:match(HealthText, <<"#{">>))
         end,
-        [diagnose, snapshot, memory, schedulers, distribution, network]
-    ),
-    OtherResponse = Response#{<<"command">> := <<"processes">>},
-    {ok, OtherText} = observer_cli_cli:encode(text, OtherResponse),
-    ?assertNotEqual(nomatch, binary:match(OtherText, <<"#{">>)).
+        [
+            diagnose,
+            snapshot,
+            memory,
+            schedulers,
+            distribution,
+            network,
+            processes,
+            process,
+            applications,
+            ets,
+            mnesia,
+            ports,
+            port,
+            sockets,
+            gen_server_state,
+            supervision_tree,
+            trace_call
+        ]
+    ).
 
 command_text_and_error_encoding_test() ->
+    Capabilities = #{<<"protocol_version">> => 1, <<"bundle_version">> => <<"2.0.0">>},
+    ContextData = #{
+        <<"node">> => <<"target@host">>,
+        <<"name_mode">> => <<"short">>,
+        <<"cookie_source">> => #{<<"type">> => <<"env">>, <<"name">> => <<"COOKIE">>},
+        <<"probe">> => <<"succeeded">>,
+        <<"diagnostics_module">> => <<"compatible">>,
+        <<"expected_capabilities">> => Capabilities,
+        <<"observed_capabilities">> => Capabilities,
+        <<"persistent_connection">> => false
+    },
     lists:foreach(
-        fun({Command, Node, Fragment}) ->
+        fun({Command, Fragment}) ->
             Response = observer_cli_cli:envelope(
                 Command,
-                null,
-                null,
-                #{
-                    <<"node">> => Node,
-                    <<"probe">> => <<"succeeded">>,
-                    <<"diagnostics_module">> => <<"available">>,
-                    <<"disconnected">> => true
-                },
+                #{<<"node">> => <<"target@host">>, <<"otp_release">> => <<"29">>},
+                #{<<"status">> => <<"complete">>},
+                ContextData,
                 [],
                 []
             ),
@@ -1064,11 +1139,43 @@ command_text_and_error_encoding_test() ->
             ?assertNotEqual(nomatch, binary:match(Text, Fragment))
         end,
         [
-            {connect, <<"target@host">>, <<"Selected target@host">>},
-            {status, <<"target@host">>, <<"Active target@host">>},
-            {disconnect, <<"target@host">>, <<"Disconnected target@host">>},
-            {disconnect, null, <<"No active context">>}
+            {connect, <<"Selected target@host">>},
+            {status, <<"Active target@host">>}
         ]
+    ),
+    lists:foreach(
+        fun({Node, Fragment}) ->
+            Response = observer_cli_cli:envelope(
+                disconnect,
+                null,
+                null,
+                #{<<"node">> => Node, <<"disconnected">> => true},
+                [],
+                []
+            ),
+            {ok, Text} = observer_cli_cli:encode(text, Response),
+            ?assertNotEqual(nomatch, binary:match(Text, Fragment))
+        end,
+        [
+            {<<"target@host">>, <<"Removed saved target context for target@host">>},
+            {null, <<"No active context">>}
+        ]
+    ),
+    Recovery = observer_cli_cli:envelope(
+        disconnect,
+        null,
+        null,
+        #{
+            <<"node">> => null,
+            <<"disconnected">> => true,
+            <<"recovered_invalid_context">> => true
+        },
+        [],
+        []
+    ),
+    ?assertEqual(
+        {ok, <<"Removed invalid saved target context.\n">>},
+        observer_cli_cli:encode(text, Recovery)
     ),
     ?assertMatch(
         {error, #{reason := unsupported_format}},
@@ -1076,18 +1183,18 @@ command_text_and_error_encoding_test() ->
     ),
     Missing = observer_cli_cli:envelope(
         connect,
-        null,
-        null,
-        #{
-            <<"node">> => <<"target@host">>,
-            <<"probe">> => <<"succeeded">>,
-            <<"diagnostics_module">> => <<"missing">>
+        #{<<"node">> => <<"target@host">>, <<"otp_release">> => <<"29">>},
+        #{<<"status">> => <<"complete">>},
+        ContextData#{
+            <<"diagnostics_module">> := <<"missing">>,
+            <<"observed_capabilities">> := null
         },
         [],
         []
     ),
     {ok, MissingText} = observer_cli_cli:encode(text, Missing),
-    ?assertNotEqual(nomatch, binary:match(MissingText, <<"--load-diagnostics">>)),
+    ?assertEqual(nomatch, binary:match(MissingText, <<"--load-diagnostics">>)),
+    ?assertNotEqual(nomatch, binary:match(MissingText, <<"Install the matching">>)),
     ?assertMatch(
         {error, #{reason := json_encoding_failed}},
         observer_cli_cli:encode(json, #{<<"pid">> => self()})

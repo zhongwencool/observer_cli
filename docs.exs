@@ -4,6 +4,7 @@
     "./docs/development.md",
     "./docs/plugin.md",
     "./docs/formatter.md",
+    "./docs/observer-cli-2.0-diagnostics-validation.md",
     "./docs/CHANGELOG.md",
     "LICENSE"
   ],

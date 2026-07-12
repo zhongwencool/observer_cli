@@ -1519,8 +1519,8 @@ ratio_key(ets) -> ets_usage_ratio.
 recon_top_n(Items, Sort, Limit) ->
     [
         Item
-     || {_, _, Item} <- recon_lib:sublist_top_n_attrs(
-            [{top_n_identity(Item), top_n_value(Item, Sort), Item} || Item <- Items], Limit
+     || {_, _, [Item]} <- recon_lib:sublist_top_n_attrs(
+            [{top_n_identity(Item), top_n_value(Item, Sort), [Item]} || Item <- Items], Limit
         )
     ].
 
