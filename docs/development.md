@@ -48,7 +48,7 @@ do not add a generic TUI framework.
 - Add no per-command modules or provider abstractions. New target probes must stay
   deadline-, heap-, schema-, and response-cap bounded and must normalize sensitive
   values before they cross distribution.
-- Never reuse the legacy `remote_load/1` path for command-first diagnostics. Cross-OTP
-  operation requires a compatible target-side installation built for that OTP major.
+- Keep command-first diagnostics non-mutating by default. The legacy `remote_load/1`
+  path is allowed only behind the explicit `connect --load-diagnostics` option.
 - Run real disposable-node cleanup tests for distribution, scheduler flags, target
   workers, and recon tracing; a controller timeout alone does not cancel target work.

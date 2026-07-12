@@ -446,6 +446,17 @@ parse_args_test() ->
     ?assertMatch(
         {error, #{exit_code := 2}},
         observer_cli_escriptize:parse_args(["target@host", "cookie", "not-an-integer"])
+    ),
+    ?assertMatch(
+        {ok, #{command := connect, options := #{load_diagnostics := true}}},
+        observer_cli_escriptize:parse_args([
+            "connect",
+            "--node",
+            "target@host",
+            "--cookie-env",
+            "ERL_COOKIE",
+            "--load-diagnostics"
+        ])
     ).
 
 run_args_test() ->
@@ -1444,7 +1455,18 @@ connect_missing_diagnostics() ->
             "--cookie-env",
             CookieEnv
         ]),
-        ?assertNotEqual(nomatch, binary:match(Output, <<"diagnostics_module=missing">>))
+        ?assertNotEqual(nomatch, binary:match(Output, <<"diagnostics_module=missing">>)),
+        ?assertNotEqual(nomatch, binary:match(Output, <<"--load-diagnostics">>)),
+        {0, Loaded} = run_escript(Escript, [
+            Script,
+            "connect",
+            "--node",
+            atom_to_list(Target),
+            "--cookie-env",
+            CookieEnv,
+            "--load-diagnostics"
+        ]),
+        ?assertNotEqual(nomatch, binary:match(Loaded, <<"diagnostics_module=available">>))
     after
         true = os:unsetenv(CookieEnv),
         restore_os_env("HOME", PreviousHome),
@@ -1457,15 +1479,16 @@ connect_missing_diagnostics() ->
 context_escript() ->
     Escript = os:find_executable("escript"),
     AppDir = code:lib_dir(observer_cli),
+    ReconDir = code:lib_dir(recon),
     Script = filename:join(
         os:getenv("TMPDIR", "/tmp"),
         "observer_cli_context_" ++
             integer_to_list(erlang:unique_integer([positive])) ++ ".escript"
     ),
     Contents = io_lib:format(
-        "#!/usr/bin/env escript~n%%! -pa ~ts/ebin~n"
+        "#!/usr/bin/env escript~n%%! -pa ~ts/ebin ~ts/ebin~n"
         "main(Args) -> observer_cli_escriptize:main(Args).~n",
-        [AppDir]
+        [AppDir, ReconDir]
     ),
     ok = file:write_file(Script, Contents),
     {Escript, Script}.

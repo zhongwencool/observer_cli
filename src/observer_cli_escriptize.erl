@@ -214,6 +214,7 @@ command_help("connect") ->
         "persistent connection is stored. Later commands use this context by default.\n"
         "\n"
         "Options:\n"
+        "  --load-diagnostics      Load observer_cli modules into the running target when missing\n"
         "  --name-mode short|long\n"
         "  --timeout DURATION      Command deadline, up to 120s\n"
         "  --format text|term|json\n"
@@ -505,12 +506,15 @@ trace_request(Action, Options) ->
 run_connect(Options) ->
     case observer_cli_cli:context_options(Options) of
         {ok, ContextOptions} ->
-            probe_options(ContextOptions, fun(_Target, CapabilityResult, _Remaining) ->
-                case CapabilityResult of
+            probe_options(ContextOptions, fun(Target, CapabilityResult, Remaining) ->
+                LoadedCapabilityResult = maybe_load_diagnostics(
+                    ContextOptions, Target, CapabilityResult, Remaining
+                ),
+                case LoadedCapabilityResult of
                     {ok, _Capabilities} ->
-                        save_connected_context(ContextOptions, CapabilityResult);
+                        save_connected_context(ContextOptions, LoadedCapabilityResult);
                     {error, capability, capability_unavailable} ->
-                        save_connected_context(ContextOptions, CapabilityResult);
+                        save_connected_context(ContextOptions, LoadedCapabilityResult);
                     Error ->
                         Error
                 end
@@ -518,6 +522,17 @@ run_connect(Options) ->
         {error, Reason} ->
             {error, argument, Reason}
     end.
+
+maybe_load_diagnostics(
+    #{load_diagnostics := true}, Target, {error, capability, capability_unavailable}, Remaining
+) ->
+    try remote_load(Target) of
+        ok -> capabilities(Target, Remaining)
+    catch
+        _Class:_Reason -> {error, capability, capability_unavailable}
+    end;
+maybe_load_diagnostics(_Options, _Target, CapabilityResult, _Remaining) ->
+    CapabilityResult.
 
 save_connected_context(ContextOptions, CapabilityResult) ->
     case observer_cli_cli:save_context(ContextOptions) of

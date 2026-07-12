@@ -1,6 +1,10 @@
 # observer_cli CLI 与 TUI 指标对比
 
-日期：2026-07-11
+日期：2026-07-12
+
+当前代码基线：`develop@3d8761d`。`2f9a0c4` 之后的 CLI 生产代码改动是校验与
+dispatch 去重，没有增加新指标或改变现有 schema；本文仍按当前 collector 的实际
+返回字段重新核对。
 
 ## 1. 范围与判定方法
 
@@ -40,7 +44,7 @@ store 和 collector 进程，因此 process、port、atom、memory、reductions�
 | TUI 页面/详情 | 对应 CLI | 结论 | 主要缺口 |
 |---|---|---|---|
 | Home 系统概要 | `snapshot`、`memory`、`schedulers` | 部分覆盖 | 主机 CPU/内存占比、active tasks、context switches、总 reductions/增量、逐 scheduler 利用率 |
-| Home 进程 Top N | `processes` | 部分覆盖 | CLI 每行不总是返回 TUI 全部列；只有 reductions 支持窗口排序 |
+| Home 进程 Top N | `processes` | 部分覆盖 | 五种 sort 均支持窗口排序；CLI 每行不总是返回 TUI 全部列，且无 proc label |
 | Process Info | `process TARGET`、`gen-server-state TARGET` | 部分覆盖 | `messages`、`dictionary` 有意排除；state 只返回有界 shape |
 | Network | `network` | 部分覆盖 | 字段已覆盖；collector 未直接复用 recon 的两种视角 |
 | Ports | `ports`、`port TARGET` | 已覆盖 | 列表字段及有界详情均覆盖；`locking` 为实现相关信息 |
@@ -52,8 +56,9 @@ store 和 collector 进程，因此 process、port、atom、memory、reductions�
 | Doc | 无 | 不属于指标 | TUI 内置帮助，不需要做成指标命令 |
 | Plugin | 无 | 未实现扩展协议 | CLI 没有执行 TUI plugin sheet 的通用命令 |
 
-当前没有一个 TUI 数据页达到“所有可见字段逐项完全等价”。CLI 已覆盖主要资源清单和
-自动化所需的稳定 envelope，但它不是 TUI 页面的无损文本导出。
+Ports 与 ETS 已达到当前 TUI 可见字段的等价覆盖；其他数据页仍有字段或语义
+缺口。CLI 已覆盖主要资源清单和自动化所需的稳定 envelope，但它不是 TUI
+页面的无损文本导出。
 
 ## 3. 实际数值对比
 
@@ -354,38 +359,52 @@ CLI 只列 local tables，并明确区分 RAM/disc memory bytes 与 disc-only di
 | version | 无 | 未实现 | |
 | `no_group` 完整聚合行 | 只有 `unattributed_process_count` | 部分覆盖 | 未返回 unattributed memory/reductions/msgq |
 
-两边都按 group leader 推断 application 归属；CLI 明确标记
+两边都按 group leader 推断 application 归属，但语义尚不完全一致：TUI 在直接
+group leader 无法匹配 application 时会递归追溯，CLI `application_stats/2` 只做一次
+直接匹配，未匹配的进程计入 `unattributed_process_count`。CLI 因此明确标记
 `attribution_semantics=approximation`。
 
-## 13. TUI 中尚未在 CLI 实现的参数清单
+## 13. 值得优化的修改点
 
-按优先级合并去重后：
+以“排障价值 / 实现成本 / 数据暴露面”排序，而不是追求字段数量相等。
 
-### P0：直接影响常见排障
+### P0：优先修正现有 collector 丢掉的高价值数据
 
-1. Ports：controls、slot、parallelism、locking、monitors、monitored_by。
-2. Distribution：address、in/out、type、state。
-3. Applications：version 和 `no_group` 的 memory/reductions/msgq 聚合。
+1. **Applications 归属与 `no_group` 聚合**：让 `application_stats/2` 与 TUI 一样追溯
+   group leader，并返回未归属进程的 memory/reductions/message queue 合计。当前已经
+   扫描这四个进程字段，不需要增加第二次全量扫描。
+2. **Applications version**：`loaded_fun` 已返回 `{App, Description, Version}`，当前在构建
+   `LoadedSet` 时丢弃了 version。直接保留并放入 application item 即可补齐，不需要
+   新 probe。
+3. **Sockets 列表的 owner/state/accepts/max packet**：`socket_sample/1` 已获取
+   `socket:info/1`，但只保留 domain/type/protocol 和部分 counters。owner、read/write state
+   可直接从同一 map 取值；accepts 和 max packet 只需扩大现有 counter allowlist 并派生
+   指标，不需要新的枚举路径。
 
-### P1：有诊断价值，但可按需增加
+### P1：有明确诊断价值，但需额外采集
 
-1. Home 全局 active tasks、context switches、reductions total/delta、GC interval delta、
-   logger queue、port parallelism。
-2. 逐 scheduler 利用率，而不是只有 normal/dirty aggregate。
-3. 非 reductions 的 process window Top N。
-4. Socket owner/fd/endpoint/state、accepts、max packet 和 identity/metadata sorts。
-5. Mnesia type、owner、index、registered name。
-6. System module count、logical CPU 细项、thread/async 信息。
+1. **Distribution 连接上下文**：补 address、in/out、type、state，优先复用 TUI
+   `collect_distribution_info/0` 中的 `net_kernel:nodes_info/0` 结果。queue percent 是已有
+   size/limit 的派生值。不建议在 CLI 中直接复制 TUI 的 85% health 阈值；队列原因
+   需要结合现场语境。
+2. **逐 scheduler 利用率**：`scheduler_sample/0` 已保留每个 scheduler ID 的两次
+   wall-time 样本，现在 `pool_delta/3` 过早汇总为 normal/dirty aggregate。可在同一
+   window 中返回有界 items，无需新采样器。
+3. **Mnesia metadata**：补 type、owner、index、registered name。这些值在 TUI 中都来自
+   `mnesia:table_info/2`/schema owner；应在现有 table scan 内取值，不增加另一轮扫描。
+4. **Home 全局窗口计数**：active tasks、context switches、reductions 和 GC delta 有排障
+   价值，但应挂在显式 duration command 上，不要让默认 `snapshot` 睡眠采样。
+5. **Socket 有界详情**：fd、endpoint、monitored_by 以及 options 需要额外系统调用，更适合
+   独立的 `socket TARGET` 命令，不应对列表中的每个 socket 全量采集。
 
-### P2：成本或暴露面较高
+### P2：暂不值得为 parity 实现
 
-1. Socket 的完整详情、完整 counters/options。
-2. Process messages、dictionary（保留有意不返回）。
-3. TUI plugin sheet 的通用 CLI 执行协议。
+1. host `ps` CPU/memory/RSS/VSZ：平台相关，与 BEAM 指标不同源。
+2. Process messages、dictionary、raw state、完整 stacktrace：复制成本和敏感信息风险高。
+3. 默认 snapshot 中的完整 socket counters/options：字段不稳定且输出体积不可控。
+4. TUI plugin sheet 的通用 CLI 执行协议：这是扩展机制，不是指标 parity。
 
-不建议为了“字段完全相等”直接把 process state、messages、dictionary、完整 stacktrace 或完整
-socket options 塞进 `snapshot`。这些数据复制成本和敏感信息风险高；若要补，应保持独立、
-显式、有界的独立命令。
+已完成的 Ports 详情、ETS concurrency 和五种 process window sort 不再列为待办。
 
 ## 14. CLI 独有能力
 
@@ -402,5 +421,5 @@ socket options 塞进 `snapshot`。这些数据复制成本和敏感信息风险
 - limit、timeout、resource budget、born/gone/reset/shape-change 语义。
 
 结论：命令式 CLI 已实现 TUI 的主要“资源是什么、当前多大、Top N 是谁”，但尚未实现
-TUI 的全部“详情和辅助上下文”。最明显的缺口集中在 Process signals/GC、
-Ports detail、Sockets detail，以及各页面只为人读而存在的扩展字段。
+TUI 的全部“详情和辅助上下文”。当前最值得补齐的是 Applications 归属/聚合、
+Socket 列表中已采集但被丢弃的 metadata/counters，以及 Distribution 连接上下文。

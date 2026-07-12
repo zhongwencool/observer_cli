@@ -47,8 +47,10 @@ observer_cli diagnose --help
 observer_cli processes --help
 ```
 
-The target must already run a protocol-compatible `observer_cli` build for its OTP
-major. The diagnostics interface does not inject BEAM files into the target.
+By default, the target must already run a protocol-compatible `observer_cli` build.
+If it does not, `connect` explains how to retry with `--load-diagnostics`. That
+explicit option loads the escript's modules into the running target node, so use it
+only on trusted nodes running a compatible OTP version.
 
 ### Connect once, diagnose repeatedly
 
@@ -118,8 +120,9 @@ local PID, a duration, a count or rate, and `--replace-existing-trace`; both tra
 setup and `trace stop --all` use recon's node-global clear and can disrupt unrelated
 static tracing. Snapshot and diagnose do not collect messages, dictionaries, table
 contents, application env, cookies, trace arguments, returns, exceptions, or stacks.
-There is no provider upload, daemon, cluster fan-out, arbitrary eval, remote loader,
-automatic repair, or trace session registry.
+There is no provider upload, daemon, cluster fan-out, arbitrary eval, automatic
+repair, or trace session registry. Remote loading occurs only when explicitly
+requested with `connect --load-diagnostics`.
 
 ## Installation
 

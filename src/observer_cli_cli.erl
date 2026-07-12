@@ -361,7 +361,7 @@ only_options(Command, Options, CommandOptions) ->
     ).
 
 global_options(connect) ->
-    remote_options();
+    remote_options() ++ [load_diagnostics];
 global_options(status) ->
     [format, json, timeout];
 global_options(disconnect) ->
@@ -1102,6 +1102,7 @@ option("--name-mode") -> {value, name_mode};
 option("--format") -> {value, format};
 option("--json") -> {flag, json};
 option("--timeout") -> {value, timeout};
+option("--load-diagnostics") -> {flag, load_diagnostics};
 option("--redact") -> {flag, redact};
 option("--include-identifiers") -> {flag, include_identifiers};
 option("--deep") -> {flag, deep};
@@ -1178,13 +1179,25 @@ encode(text, #{
             <<"connect">> -> <<"Selected ">>;
             <<"status">> -> <<"Active ">>
         end,
+    DiagnosticsHint =
+        case DiagnosticsModule of
+            <<"missing">> ->
+                <<
+                    "Diagnostics are unavailable because observer_cli is not loaded on the target.\n"
+                    "Run connect again with --load-diagnostics to load it into the running target node.\n"
+                >>;
+            _ ->
+                <<>>
+        end,
     capped(
         iolist_to_binary([
             Prefix,
             escape_text(Node),
             <<"; probe succeeded.\ndiagnostics_module=">>,
             DiagnosticsModule,
-            <<"\nNo persistent connection is kept.\n">>
+            <<"\n">>,
+            DiagnosticsHint,
+            <<"No persistent connection is kept.\n">>
         ])
     );
 encode(text, #{
@@ -1285,6 +1298,8 @@ reason_message(json_unavailable) ->
     <<"JSON output requires OTP 27 or newer">>;
 reason_message(command_unavailable) ->
     <<"command capability is not available yet">>;
+reason_message(capability_unavailable) ->
+    <<"observer_cli diagnostics are not loaded on the target; retry connect with --load-diagnostics">>;
 reason_message(response_too_large) ->
     <<"encoded response exceeds one MiB">>;
 reason_message(Reason) when is_binary(Reason) ->

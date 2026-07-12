@@ -985,6 +985,20 @@ command_text_and_error_encoding_test() ->
         {error, #{reason := unsupported_format}},
         observer_cli_cli:encode(yaml, #{})
     ),
+    Missing = observer_cli_cli:envelope(
+        connect,
+        null,
+        null,
+        #{
+            <<"node">> => <<"target@host">>,
+            <<"probe">> => <<"succeeded">>,
+            <<"diagnostics_module">> => <<"missing">>
+        },
+        [],
+        []
+    ),
+    {ok, MissingText} = observer_cli_cli:encode(text, Missing),
+    ?assertNotEqual(nomatch, binary:match(MissingText, <<"--load-diagnostics">>)),
     ?assertMatch(
         {error, #{reason := json_encoding_failed}},
         observer_cli_cli:encode(json, #{<<"pid">> => self()})
