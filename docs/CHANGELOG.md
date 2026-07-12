@@ -1,151 +1,234 @@
 # Changelog
-- 2.0.0 (release candidate)
-  - Add command-first snapshot, inspection, diagnostic, active-context, and bounded recon call-trace commands.
-  - Make `tui` the only interactive escript command and remove the positional TUI shorthand; automatic module loading remains TUI-only.
-  - Add local help and version routes, command-specific usage errors, fixed exit classes, and separate stdout/stderr contracts.
-  - Keep canonical Trace command identities across parser, context, runtime, and success paths; validate stop timeouts independently from call sampling.
-  - Render every successful command envelope as structured text; keep consultable Erlang-term and OTP 27+ JSON machine output.
-  - Report compatible, missing, and incompatible diagnostics with expected/observed versions; save context only after controller cleanup is confirmed.
-  - Bound and sanitize observed capability values and preflight encoders before context mutations.
-  - Allow `disconnect` to remove a malformed or oversized protected context file while retaining path, type, and permission checks.
-  - Remove command-first remote BEAM injection; targets require a compatible diagnostics installation built for their OTP release.
-  - Track generated-escript help, version, error-stream, and exit-code smoke in each configured OTP 26-29 CI job.
-  - Restore green lint, Dialyzer, ExDoc, and aggregate check gates with type-correct recon ranking payloads and smaller snapshot helpers.
-  - Document scan admission, ordinary Erlang distribution trust, High-risk state/supervision inspection, and node-global recon cleanup.
-  - Introduce plugin API breaking changes for custom plugin authors; use the explicit 2.0 callback shapes in `docs/plugin.md`.
 
-- 1.8.8
-  - Automatically adapt terminal layout width across Home, Application, ETS, Mnesia, Network, Process, Port, System, and less footers.
-  - Reorganize Doc help shortcuts into clearer command groups.
-  - Relax the Elvis god-module rule for existing large renderer modules.
+This page records release and maintenance changes to `observer_cli`, newest
+first.
 
-- 1.8.7
-  - Handle unchanged case in `net_kernel:set_net_ticktime`.
-  - Fix `rebar3 check` by updating the Elvis macro rule name to `macro_naming_convention`.
-  - Simplify `observer_cli_escriptize` test shutdown code by replacing an unnecessary anonymous function wrapper.
+## 2.0.0 (release candidate)
 
-- 1.8.6
-  - Add external formatter support (dynamic loading/app env) and docs; formatter callback now receives pid.
-  - Improve State view rendering by fixing redraw timers and infinite-loop edge cases.
-  - Improve less_client/less_server navigation and status output (F/B commands, last line, row fetching).
-  - Auto update net_ticktime.
-  - Fix mix compilation and avoid compiling test/ in release builds.
-  - Remove recon from included_applications.
+- Added command-first snapshot, inspection, diagnostics, saved-target context,
+  and bounded `recon` call-trace commands.
+- Made `tui` the only interactive escript command and removed the positional
+  TUI shorthand. Automatic remote module loading remains TUI-only.
+- Added local help and version routes, command-specific usage errors, fixed exit
+  classes, and separate stdout/stderr contracts.
+- Kept canonical trace command identities across parser, context, runtime, and
+  success paths, with trace-stop timeouts validated independently from call
+  sampling.
+- Rendered successful commands as structured text while retaining consultable
+  Erlang terms and OTP 27+ JSON for machine output.
+- Reported compatible, missing, and incompatible target diagnostics, including
+  expected and observed bundle/protocol versions.
+- Saved target context only after controller cleanup is confirmed, bounded and
+  sanitized observed capabilities, and preflighted encoders before context
+  changes.
+- Allowed `disconnect` to remove malformed or oversized protected context data
+  without weakening file-type or permission checks.
+- Removed command-first remote BEAM injection. Command targets now require a
+  compatible diagnostics bundle in their release.
+- Added generated-escript help, version, stream, and exit-code smoke checks to
+  every configured OTP 26–29 CI job.
+- Restored green lint, Dialyzer, ExDoc, and aggregate check gates.
+- Published an ExDoc `llms.txt` index, per-page Markdown documents, and
+  copy-ready Markdown controls for LLM and agent workflows.
+- Documented scan admission, Erlang distribution trust, high-risk state and
+  supervision inspection, and node-global `recon` cleanup.
+- Introduced explicit 2.0 plugin callback shapes. See
+  [Extend the TUI](how-to/extend-the-tui.md) for the migration table.
 
-- 1.8.5
-  - Sync default env between mix.exs and .app.src; comment out scheduler_usage default.
-  - Refactor app stats and command parsing internals; update type specs and configs.
-  - Update docs and plugin guide; refresh README images/assets.
-  - CI: drop OTP 24/25 from test matrix.
+## 1.8.8
 
-- 1.8.4
-  - Fix OTP 28 dialyzer warning.
-  - Use erlang:processes_iterator/0, erlang:process_next/1 to fold processes when OTP 28.
-  
-- 1.8.3
-  - Fix mnesia crash by handling unknown storage types.
-  - Fix OTP 27 warning.
-  - Support ex_doc to generate documents.
-  
-- 1.8.2
-  - Fix unit of `fullsweep_after`, The value of `fullsweep_after` is a number, not bytes.
+- Adapted terminal width automatically across Home, Application, ETS, Mnesia,
+  Network, Process, Port, System, and pager footers.
+- Reorganized Doc-view shortcuts into clearer command groups.
+- Relaxed the Elvis god-module rule for existing large renderer modules.
 
-- 1.8.1
-  - Show node name in system pane.
- 
-- 1.8.0
-  - Support `<Pid` to jump to specific pid.
-  - Show process's label if it's set with [proc_lib:set_label(Label)](https://www.erlang.org/doc/apps/stdlib/proc_lib.html#set_label/1)
-  - Show the number of bytes in the output distribution queue on System View. This queue sits between the Erlang code and the port driver, using undocumented function `erlang:dist_get_stat/1`.
-  - Fix Doc View not showing when OTP version = 27
-  
-- 1.7.5
-  - Fix crash when mnesia table with external copies.
-    Which `mnesia:table_info(TabName, storage_type)` returns tuple `{ext, _, _}`
-  - Correct the order of the application information; the items Memory and Reductions have been switched.
+## 1.8.7
 
-- 1.7.4
-  - fix crash when ets:info/1 returns undefined.
-- 1.7.3
-  - fix system pane exception by `ps` command.
-- 1.7.2
-  - Fix error when inspecting process that monitors via {RegName, Node}.
-- 1.7.1
-  - application view shows starting/loading/start_p_false/loaded/started application.
-  - fixed badarg when starting by RPC and stopping with `ctrl+c`.
-  - fixed mix.exs version error
-- 1.7.0
-  - application view support reductions/memory/process_count sort
-  - plugin support `{byte, 1024}` to `10.0000 KB`
-  - plugin support `{percent, 0.1234}` to `12.34%`
-  - plugin support dig deep process view.
-- 1.6.2
-  - fixed crash when ps command not found on Windows.
-- 1.6.1
-  - remove precise OTP version
-- 1.6.0
-  - hidden scheduler usage default
-  - format with erlfmt
-  - add `ps -o pcpu,pmem,rss,vsz` information
-  - remove recon_alloc:memory/1 from `HOME`(too much cpu usage)
-- 1.5.4
-  - Bump Recon to 2.5.1 for otp23 alloc compat.
-- 1.5.2
-  - Use erlang:system_info(otp_release) when can't find `OTP_VERSION` file for the full version.
-- 1.5.1
-  - Hide mnesia tab when it's not started
-  - Show specific erl version such as '22.0.5'
-- 1.5.0
-  - Bump Recon to 2.5.0
-- 1.4.5
-  - Include a minimal mix.exs build file
-  - Make sure EXIT message has been cleared
-- 1.4.4
-  - Make sure connection errors can be handled
-- 1.4.3
-  - Bump Recon to 2.4.0
-- 1.4.2
-  - Hidden scheduler process bar when core > 100.
-  - Allow to compile escript w/ inet6 based distribution.
-  - Rewrite plugin callback, rename kv_label/0 to attributes/1.
-- 1.4.1
-  - Fixed ets view memory usage wrong.
-  - mnesia view memory usage according to bytes.
-- 1.4.0
-  - Support writing your own plugin.
-- 1.3.4
-  - View(ets mnesia) support page down/up; support sort by memory or size.
-  - Fixed pause crash.
-  - Make refresh interval configurable.
-- 1.3.3
-  - fixed io:format(Format, Args) does not support iolist in OTP R21
-- 1.3.2
-  - Make sure all observer_cli processes exit when quit.
-  - Upgrade recon to 2.3.6
-- 1.3.1
-  - Add atom limit/count in home.
-  - Escript support short name and long name.
-  - Fixed store process not exiting.
-  - [Upgrade recon to 2.3.5](https://github.com/ferd/recon/commit/e0c3614334589e375f8b1492f404e4b764fe35e7)
-- 1.3.0
-  - Rewrite Network/Process view.
-  - Support PageDown/PageUp for top n list.
-  - Escript auto-loads observer_cli when it's not loaded on target node.
-- 1.2.2
-  - fix scheduler number >= 32 displayed incorrectly.
-  - improve memory(byte/kilobyte/megabyte/gigabyte) unit.
-- 1.2.1
-  - fixed autosize not working.
-  - try our best to make color adjust on all platforms.
-- 1.2.0
+- Handled the unchanged result from `net_kernel:set_net_ticktime/1`.
+- Fixed `rebar3 check` by updating the Elvis macro rule name.
+- Simplified `observer_cli_escriptize` test shutdown.
 
-  - add application GUI.
-  - Rearrange GUI and optimize render.
-  - Always automatically adapt to the window size.
+## 1.8.6
 
-- 1.1.0
+- Added external process formatter support; the formatter callback now receives
+  the process PID.
+- Fixed process State redraw timers and repeated-render edge cases.
+- Improved pager navigation and status output.
+- Updated `net_ticktime` automatically for remote TUI sessions.
+- Fixed Mix compilation and excluded test sources from release builds.
+- Removed `recon` from `included_applications`.
 
-  - Support escript, `observer_cli <TARGETNODE> <COOKIE>`
+## 1.8.5
 
-- 1.0.9
-  - Upgrade rebar3 to 3.3.3 for publish hex repo.
+- Synchronized default application environment between `mix.exs` and the
+  application resource file.
+- Refactored application statistics and command parsing.
+- Updated plugin documentation and terminal images.
+- Removed OTP 24 and 25 from the CI matrix.
+
+## 1.8.4
+
+- Fixed an OTP 28 Dialyzer warning.
+- Used the OTP 28 process iterator APIs when available.
+
+## 1.8.3
+
+- Handled unknown Mnesia storage types without crashing.
+- Fixed an OTP 27 warning.
+- Added ExDoc generation.
+
+## 1.8.2
+
+- Corrected `fullsweep_after`: it is a count, not a byte value.
+
+## 1.8.1
+
+- Displayed the node name in the System view.
+
+## 1.8.0
+
+- Added direct PID input with `<PID` shorthand.
+- Displayed labels set with `proc_lib:set_label/1`.
+- Displayed distribution output-queue bytes in the System view.
+- Fixed the Doc view on OTP 27.
+
+## 1.7.5
+
+- Handled Mnesia external-copy storage types such as `{ext, Module, State}`.
+- Corrected the Memory and Reductions column order in the Application view.
+
+## 1.7.4
+
+- Handled ETS tables that disappear before `ets:info/1` returns.
+
+## 1.7.3
+
+- Prevented System-view failure when the `ps` command fails.
+
+## 1.7.2
+
+- Handled process monitors addressed by `{RegisteredName, Node}`.
+
+## 1.7.1
+
+- Displayed application lifecycle states in the Application view.
+- Fixed remote RPC shutdown with `Ctrl+C`.
+- Corrected the version in `mix.exs`.
+
+## 1.7.0
+
+- Added process-count, memory, and reductions sorting to the Application view.
+- Added `{byte, Value}` and `{percent, Value}` plugin formatting.
+- Added process drill-down from plugin rows.
+
+## 1.6.2
+
+- Prevented a crash when `ps` is unavailable on Windows.
+
+## 1.6.1
+
+- Removed the precise OTP-version display.
+
+## 1.6.0
+
+- Hid scheduler utilization by default.
+- Adopted `erlfmt` formatting.
+- Added BEAM OS-process CPU, memory, RSS, and VSZ data from `ps`.
+- Removed the expensive `recon_alloc:memory/1` call from Home.
+
+## 1.5.4
+
+- Upgraded `recon` to 2.5.1 for OTP 23 allocator compatibility.
+
+## 1.5.2
+
+- Used `erlang:system_info(otp_release)` when the `OTP_VERSION` file is absent.
+
+## 1.5.1
+
+- Hid the Mnesia tab when Mnesia is not running.
+- Displayed the detailed ERTS version when available.
+
+## 1.5.0
+
+- Upgraded `recon` to 2.5.0.
+
+## 1.4.5
+
+- Added a minimal `mix.exs` build file.
+- Ensured stale `EXIT` messages are cleared.
+
+## 1.4.4
+
+- Handled connection failures without crashing.
+
+## 1.4.3
+
+- Upgraded `recon` to 2.4.0.
+
+## 1.4.2
+
+- Hid the scheduler bar on systems with more than 100 cores.
+- Added inet6 distribution support to the escript build.
+- Renamed the plugin `kv_label/0` callback to `attributes/1`.
+
+## 1.4.1
+
+- Corrected ETS-view memory usage.
+- Reported Mnesia memory in bytes.
+
+## 1.4.0
+
+- Added custom TUI plugins.
+
+## 1.3.4
+
+- Added paging and memory/size sorting to ETS and Mnesia views.
+- Fixed pause handling.
+- Made the refresh interval configurable.
+
+## 1.3.3
+
+- Avoided passing iolists as `io:format/2` format strings on OTP 21.
+
+## 1.3.2
+
+- Ensured every `observer_cli` process exits when the TUI quits.
+- Upgraded `recon` to 2.3.6.
+
+## 1.3.1
+
+- Added atom count and limit data to Home.
+- Added short-name and long-name escript support.
+- Fixed store-process cleanup.
+- Upgraded `recon` to 2.3.5.
+
+## 1.3.0
+
+- Rewrote the Network and Process views.
+- Added paging to the Home Top-N process list.
+- Added TUI escript loading when `observer_cli` is absent from the target.
+
+## 1.2.2
+
+- Fixed scheduler rendering on systems with 32 or more schedulers.
+- Improved byte-unit rendering.
+
+## 1.2.1
+
+- Fixed automatic terminal sizing.
+- Improved terminal color adaptation.
+
+## 1.2.0
+
+- Added the Application view.
+- Reorganized the TUI and its render loop.
+- Adapted the layout to terminal size automatically.
+
+## 1.1.0
+
+- Added the original remote-node escript interface.
+
+## 1.0.9
+
+- Upgraded `rebar3` to 3.3.3 for Hex publishing.
