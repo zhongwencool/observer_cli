@@ -2585,10 +2585,12 @@ process_inventory_boundary_and_stable_top_n_test() ->
     Pids = [spawn(fun process_fixture/0) || _ <- lists:seq(1, 4)],
     try
         Values = maps:from_list(lists:zip(Pids, [10, 20, 20, 5])),
-        Source = process_source(Pids, fun(Pid, Keys) ->
+        Source = (process_source(Pids, fun(Pid, Keys) ->
             Parent ! {process_info_keys, Keys},
             process_info_fixture(Pid, Keys, maps:get(Pid, Values))
-        end),
+        end))#{
+            label_fun => fun(Pid) -> {worker, Pid} end
+        },
         Response = inspection_include(processes, #{
             sort => memory, limit => 2, test_process_source => Source
         }),
@@ -2609,6 +2611,14 @@ process_inventory_boundary_and_stable_top_n_test() ->
             [list_to_binary(pid_to_list(Pid)) || Pid <- ExpectedTie],
             [maps:get(<<"pid">>, First), maps:get(<<"pid">>, Second)]
         ),
+        ?assertEqual(20, maps:get(<<"memory_bytes">>, First)),
+        ?assertEqual(20, maps:get(<<"reductions">>, First)),
+        ?assertEqual(20, maps:get(<<"message_queue_len">>, First)),
+        ?assertMatch(
+            #{<<"module">> := _, <<"function">> := _, <<"arity">> := 0},
+            maps:get(<<"current_function">>, First)
+        ),
+        ?assertMatch(<<"{worker,", _/binary>>, maps:get(<<"label">>, First)),
         KeysList = [
             receive
                 {process_info_keys, K} -> K
@@ -2618,7 +2628,15 @@ process_inventory_boundary_and_stable_top_n_test() ->
         ?assert(
             lists:all(
                 fun(Keys) ->
-                    Keys =:= [current_function, initial_call, memory, registered_name]
+                    Keys =:=
+                        [
+                            current_function,
+                            initial_call,
+                            memory,
+                            message_queue_len,
+                            reductions,
+                            registered_name
+                        ]
                 end,
                 KeysList
             )
@@ -2638,6 +2656,26 @@ process_inventory_boundary_and_stable_top_n_test() ->
         ?assertEqual(nomatch, binary:match(term_to_binary(Response), <<"#Ref<">>))
     after
         lists:foreach(fun(Pid) -> exit(Pid, kill) end, Pids)
+    end.
+
+process_inventory_label_is_bounded_and_redacted_test() ->
+    Pid = spawn(fun process_fixture/0),
+    try
+        Source = (process_source([Pid], fun(ItemPid, Keys) ->
+            process_info_fixture(ItemPid, Keys, 10)
+        end))#{
+            label_fun => fun(_ItemPid) -> binary:copy(<<"label">>, 1000) end
+        },
+        Request = #{sort => memory, limit => 1, test_process_source => Source},
+        [Included] = maps:get(
+            <<"items">>, maps:get(<<"data">>, inspection_include(processes, Request))
+        ),
+        Label = maps:get(<<"label">>, Included),
+        ?assert(byte_size(Label) =< 256),
+        [Redacted] = maps:get(<<"items">>, maps:get(<<"data">>, inspection(processes, Request))),
+        ?assertMatch(<<"label-", _/binary>>, maps:get(<<"label">>, Redacted))
+    after
+        exit(Pid, kill)
     end.
 
 binary_memory_is_explicit_and_refs_do_not_escape_test() ->
@@ -2920,7 +2958,60 @@ processes_duration_supports_all_window_sorts_test() ->
         ]
     ).
 
+process_window_keeps_rank_when_context_disappears_test() ->
+    Pid = spawn(fun process_fixture/0),
+    try
+        Source = (process_source([Pid], fun(_ItemPid, Keys) ->
+            case Keys of
+                [memory] ->
+                    Sample =
+                        case get(disappearing_process_sample) of
+                            undefined -> 1;
+                            Value -> Value
+                        end,
+                    put(disappearing_process_sample, Sample + 1),
+                    [{memory, Sample * 10}];
+                _ ->
+                    undefined
+            end
+        end))#{
+            label_fun => fun(_ItemPid) -> erlang:error(badarg) end,
+            monotonic_fun => fun() ->
+                Sample =
+                    case get(disappearing_process_clock) of
+                        undefined -> 0;
+                        Value -> Value
+                    end,
+                put(disappearing_process_clock, Sample + 250),
+                Sample
+            end
+        },
+        Response = inspection_include(processes, #{
+            sort => memory, limit => 1, duration_ms => 250, test_process_source => Source
+        }),
+        [Item] = maps:get(<<"items">>, maps:get(<<"data">>, Response)),
+        ?assertEqual(list_to_binary(pid_to_list(Pid)), maps:get(<<"pid">>, Item)),
+        ?assertEqual(10, maps:get(<<"memory_delta">>, Item)),
+        lists:foreach(
+            fun(Key) -> ?assertEqual(null, maps:get(Key, Item)) end,
+            [
+                <<"registered_name">>,
+                <<"label">>,
+                <<"initial_call">>,
+                <<"current_function">>,
+                <<"memory_bytes">>,
+                <<"reductions">>,
+                <<"message_queue_len">>
+            ]
+        )
+    after
+        exit(Pid, kill),
+        erase(disappearing_process_sample),
+        erase(disappearing_process_clock)
+    end.
+
 assert_process_window_sort(Sort, Factor) ->
+    Parent = self(),
     Pids = [spawn(fun process_fixture/0) || _ <- lists:seq(1, 5)],
     [Stable, LateHot, Reset, Dead, Born] = Pids,
     Key = process_window_key(Sort, delta),
@@ -2943,7 +3034,8 @@ assert_process_window_sort(Sort, Factor) ->
                         end,
                     lists:foldl(Fun, Acc, Current)
                 end},
-            info_fun => fun(Pid, _Keys) ->
+            info_fun => fun(Pid, Keys) ->
+                Parent ! {process_window_keys, Sort, Pid, Keys},
                 Sample = get({process_window_sort, Sort}),
                 Values0 = #{
                     Stable => 10,
@@ -2967,11 +3059,13 @@ assert_process_window_sort(Sort, Factor) ->
                             2 -> Values1
                         end
                     ),
-                case Sort of
-                    binary_memory ->
+                case Keys of
+                    [binary] ->
                         [{binary, [{erlang:make_ref(), Value, 1}]}];
+                    [Sort] ->
+                        [{Sort, Value}];
                     _ ->
-                        [{Sort, Value}]
+                        process_info_fixture(Pid, Keys, Value)
                 end
             end,
             sleep_fun => fun(_Duration) -> ok end,
@@ -2996,11 +3090,44 @@ assert_process_window_sort(Sort, Factor) ->
         ?assertEqual(list_to_binary(pid_to_list(LateHot)), maps:get(<<"pid">>, Item)),
         ?assertEqual(Delta, maps:get(Key, Item)),
         ?assertEqual(Delta * 1000 / 250, maps:get(RateKey, Item)),
+        ?assertEqual(1010, maps:get(<<"memory_bytes">>, Item)),
+        ?assertEqual(1010, maps:get(<<"reductions">>, Item)),
+        ?assertEqual(1010, maps:get(<<"message_queue_len">>, Item)),
+        ?assertMatch(
+            #{<<"module">> := _, <<"function">> := _, <<"arity">> := 0},
+            maps:get(<<"current_function">>, Item)
+        ),
+        ?assertEqual(null, maps:get(<<"label">>, Item)),
         ?assertEqual(4, maps:get(<<"baseline_count">>, Data)),
         ?assertEqual(1, maps:get(<<"born_count">>, Data)),
         ?assertEqual(1, maps:get(<<"dead_count">>, Data)),
         ?assertEqual(1, maps:get(<<"reset_count">>, Data)),
-        ?assertEqual(2, maps:get(<<"retained_sample_count">>, Data))
+        ?assertEqual(1, maps:get(<<"tracked_field_count">>, Data)),
+        ?assertEqual(2, maps:get(<<"retained_sample_count">>, Data)),
+        Calls = [
+            receive
+                {process_window_keys, Sort, Pid, Keys} -> {Pid, Keys}
+            end
+         || _ <- lists:seq(1, 9)
+        ],
+        ContextKeys = [
+            registered_name,
+            current_function,
+            initial_call,
+            memory,
+            message_queue_len,
+            reductions
+        ],
+        ?assertEqual([{LateHot, ContextKeys}], [
+            Call
+         || {_Pid, Keys} = Call <- Calls, Keys =:= ContextKeys
+        ]),
+        SampleKeys =
+            case Sort of
+                binary_memory -> [binary];
+                _ -> [Sort]
+            end,
+        ?assertEqual(8, length([ok || {_Pid, Keys} <- Calls, Keys =:= SampleKeys]))
     after
         lists:foreach(fun(Pid) -> exit(Pid, kill) end, Pids),
         erase({process_window_sort, Sort}),

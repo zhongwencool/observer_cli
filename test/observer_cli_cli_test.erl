@@ -946,6 +946,10 @@ encoder_cap_and_text_escaping_test() ->
         {error, #{category => schema, exit_code => 4, reason => response_too_large}},
         observer_cli_cli:encode(term, Oversized)
     ),
+    ?assertEqual(
+        {error, #{category => schema, exit_code => 4, reason => response_too_large}},
+        observer_cli_cli:encode(text, Oversized)
+    ),
     Dynamic = <<"safe", 27, "]0;title", 7, 10>>,
     ?assertEqual(<<"safe\\x1B]0;title\\x07\\x0A">>, observer_cli_cli:escape_text(Dynamic)),
     TextResponse = observer_cli_cli:envelope(
@@ -954,6 +958,91 @@ encoder_cap_and_text_escaping_test() ->
     {ok, Text} = observer_cli_cli:encode(text, TextResponse),
     ?assertEqual(nomatch, binary:match(Text, <<27>>)),
     ?assertEqual(nomatch, binary:match(Text, <<7>>)).
+
+health_command_text_reports_test() ->
+    Response = observer_cli_cli:envelope(
+        diagnose,
+        #{<<"node">> => <<"node-1">>, <<"otp_release">> => <<"29">>},
+        #{
+            <<"status">> => <<"complete">>,
+            <<"duration_ms">> => 1500,
+            <<"probes">> => [
+                #{
+                    <<"id">> => <<"core_limits">>,
+                    <<"status">> => <<"ok">>,
+                    <<"reason_code">> => null,
+                    <<"required">> => true,
+                    <<"samples">> => 2,
+                    <<"coverage">> => [<<"process_count_limit">>, <<"port_count_limit">>]
+                }
+            ]
+        },
+        #{
+            <<"summary">> => <<"Quick diagnostics completed with no limit findings.">>,
+            <<"sampling_plan">> => #{<<"mode">> => <<"quick">>},
+            <<"findings">> => [],
+            <<"context">> => #{<<"snapshot">> => #{<<"runtime_samples">> => []}},
+            <<"skipped">> => [
+                #{
+                    <<"id">> => <<"memory_growth_suspects">>,
+                    <<"reason_code">> => <<"ruleset_not_calibrated">>
+                }
+            ]
+        },
+        [],
+        []
+    ),
+    {ok, Text} = observer_cli_cli:encode(text, Response),
+    ?assertEqual(
+        <<
+            "observer_cli diagnose\n"
+            "schema: observer_cli.cli/v1\n"
+            "command: diagnose\n"
+            "target:\n"
+            "  node: node-1\n"
+            "  otp_release: 29\n"
+            "capture:\n"
+            "  status: complete\n"
+            "  duration_ms: 1500\n"
+            "  probes:\n"
+            "    [0]:\n"
+            "      id: core_limits\n"
+            "      status: ok\n"
+            "      reason_code: null\n"
+            "      required: true\n"
+            "      coverage:\n"
+            "        [0]: process_count_limit\n"
+            "        [1]: port_count_limit\n"
+            "      samples: 2\n"
+            "data:\n"
+            "  summary: Quick diagnostics completed with no limit findings.\n"
+            "  context:\n"
+            "    snapshot:\n"
+            "      runtime_samples: []\n"
+            "  findings: []\n"
+            "  sampling_plan:\n"
+            "    mode: quick\n"
+            "  skipped:\n"
+            "    [0]:\n"
+            "      id: memory_growth_suspects\n"
+            "      reason_code: ruleset_not_calibrated\n"
+            "warnings: []\n"
+            "errors: []\n"
+        >>,
+        Text
+    ),
+    ?assertEqual(nomatch, binary:match(Text, <<"#{">>)),
+    lists:foreach(
+        fun(Command) ->
+            HealthResponse = Response#{<<"command">> := atom_to_binary(Command)},
+            {ok, HealthText} = observer_cli_cli:encode(text, HealthResponse),
+            ?assertMatch(<<"observer_cli ", _/binary>>, HealthText)
+        end,
+        [diagnose, snapshot, memory, schedulers, distribution, network]
+    ),
+    OtherResponse = Response#{<<"command">> := <<"processes">>},
+    {ok, OtherText} = observer_cli_cli:encode(text, OtherResponse),
+    ?assertNotEqual(nomatch, binary:match(OtherText, <<"#{">>)).
 
 command_text_and_error_encoding_test() ->
     lists:foreach(

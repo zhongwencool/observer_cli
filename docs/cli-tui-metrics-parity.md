@@ -168,9 +168,9 @@ CLI 深度快照还实测得到：
 | sort by message queue len | `--sort message_queue_len` | 已覆盖 | |
 | memory/reductions/binary/heap/msgq 窗口排序 | memory、binary、heap、msgq、reductions 均支持 `--duration` | 已覆盖 | 统一使用窗口 delta 排名与 `*_delta`/`*_per_second` |
 | PID | `pid` | 已覆盖 | |
-| name/label/initial call | name + initial call | 部分覆盖 | CLI 没有 proc label；name 和 initial call 已有 |
+| name/label/initial call | `registered_name` + `label` + `initial_call` | 已覆盖 | label 仅为最终 Top N 有界读取；OTP 不支持、无 label 或进程已退出时为 `null` |
 | current function | `current_function` | 已覆盖 | |
-| memory、reductions、msgq 同行展示 | 只保证返回当前 sort 所需字段 | 部分覆盖 | 例如 `--sort memory` 行没有 reductions/msgq |
+| memory、reductions、msgq 同行展示 | `memory_bytes` + `reductions` + `message_queue_len` | 已覆盖 | duration 排名后只为最终 Top N 补读当前上下文 |
 | 分页浏览全部 Top N | `--limit 1..200` | 等价替代 | CLI 无交互分页，使用 limit |
 
 ## 5. Process 详情逐项对比

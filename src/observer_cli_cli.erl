@@ -1210,6 +1210,19 @@ encode(text, #{
     <<"data">> := #{<<"node">> := Node, <<"disconnected">> := true}
 }) ->
     capped(iolist_to_binary([<<"Disconnected ">>, escape_text(Node), <<".\n">>]));
+encode(text, #{<<"command">> := Command} = Response) when
+    Command =:= <<"diagnose">>;
+    Command =:= <<"snapshot">>;
+    Command =:= <<"memory">>;
+    Command =:= <<"schedulers">>;
+    Command =:= <<"distribution">>;
+    Command =:= <<"network">>
+->
+    capped(
+        iolist_to_binary([
+            <<"observer_cli ">>, escape_text(Command), <<"\n">>, render_text_map(Response, 0, root)
+        ])
+    );
 encode(text, Response) ->
     capped(iolist_to_binary(io_lib:format("~tp~n", [Response])));
 encode(term, Response) ->
@@ -1227,6 +1240,101 @@ encode(json, Response) ->
     end;
 encode(_Format, _Response) ->
     {error, controller_error(format, unsupported_format)}.
+
+render_text_map(Map, Indent, Order) ->
+    [render_text_field(Key, maps:get(Key, Map), Indent) || Key <- text_map_keys(Map, Order)].
+
+render_text_field(Key, Value, Indent) when is_map(Value), map_size(Value) =:= 0 ->
+    [text_indent(Indent), text_scalar(Key), <<": {}\n">>];
+render_text_field(Key, Value, Indent) when is_map(Value) ->
+    [
+        text_indent(Indent),
+        text_scalar(Key),
+        <<":\n">>,
+        render_text_map(Value, Indent + 2, nested)
+    ];
+render_text_field(Key, [], Indent) ->
+    [text_indent(Indent), text_scalar(Key), <<": []\n">>];
+render_text_field(Key, Value, Indent) when is_list(Value) ->
+    [text_indent(Indent), text_scalar(Key), <<":\n">>, render_text_list(Value, Indent + 2, 0)];
+render_text_field(Key, Value, Indent) ->
+    [text_indent(Indent), text_scalar(Key), <<": ">>, text_scalar(Value), <<"\n">>].
+
+render_text_list([], _Indent, _Index) ->
+    [];
+render_text_list([Value | Rest], Indent, Index) ->
+    [
+        render_text_item(Value, Indent, Index),
+        render_text_list(Rest, Indent, Index + 1)
+    ].
+
+render_text_item(Value, Indent, Index) when is_map(Value), map_size(Value) =:= 0 ->
+    [text_indent(Indent), <<"[">>, integer_to_binary(Index), <<"]: {}\n">>];
+render_text_item(Value, Indent, Index) when is_map(Value) ->
+    [
+        text_indent(Indent),
+        <<"[">>,
+        integer_to_binary(Index),
+        <<"]:\n">>,
+        render_text_map(Value, Indent + 2, nested)
+    ];
+render_text_item([], Indent, Index) ->
+    [text_indent(Indent), <<"[">>, integer_to_binary(Index), <<"]: []\n">>];
+render_text_item(Value, Indent, Index) when is_list(Value) ->
+    [
+        text_indent(Indent),
+        <<"[">>,
+        integer_to_binary(Index),
+        <<"]:\n">>,
+        render_text_list(Value, Indent + 2, 0)
+    ];
+render_text_item(Value, Indent, Index) ->
+    [
+        text_indent(Indent),
+        <<"[">>,
+        integer_to_binary(Index),
+        <<"]: ">>,
+        text_scalar(Value),
+        <<"\n">>
+    ].
+
+text_map_keys(Map, root) ->
+    ordered_text_keys(
+        Map,
+        [
+            <<"schema">>,
+            <<"command">>,
+            <<"target">>,
+            <<"capture">>,
+            <<"data">>,
+            <<"warnings">>,
+            <<"errors">>
+        ]
+    );
+text_map_keys(Map, nested) ->
+    ordered_text_keys(
+        Map, [<<"summary">>, <<"id">>, <<"status">>, <<"reason_code">>, <<"required">>]
+    ).
+
+ordered_text_keys(Map, Priority) ->
+    Present = [Key || Key <- Priority, maps:is_key(Key, Map)],
+    Present ++ lists:sort(maps:keys(maps:without(Priority, Map))).
+
+text_indent(Width) ->
+    binary:copy(<<" ">>, Width).
+
+text_scalar(<<>>) ->
+    <<"\"\"">>;
+text_scalar(Value) when is_binary(Value) ->
+    escape_text(Value);
+text_scalar(Value) when is_atom(Value) ->
+    atom_to_binary(Value);
+text_scalar(Value) when is_integer(Value) ->
+    integer_to_binary(Value);
+text_scalar(Value) when is_float(Value) ->
+    float_to_binary(Value, [short]);
+text_scalar(Value) ->
+    iolist_to_binary(io_lib:format("~tp", [Value])).
 
 -spec exit_code(atom() | map()) -> 0..4.
 exit_code(#{category := Category}) ->

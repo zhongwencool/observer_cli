@@ -373,7 +373,7 @@ Top N 在 target 侧使用 `{metric, canonical_raw_id}` 作为选择 key，再�
 
 `--info` 是默认模式，可保留为显式可读别名。v1 使用明确的 `process_info/2` key list，不调用当前 `observer_cli_process:collect_process_info/1` 或 `recon:info/1`。默认不请求 messages、dictionary、current stacktrace、binary refs、links、monitors、suspending 或 arbitrary state。
 
-`process --info` allowlist 固定为 `registered_name|status|current_function|initial_call|memory|message_queue_len|reductions|heap_size|total_heap_size|stack_size|group_leader|garbage_collection_info`；GC info 再做 fixed numeric/boolean field allowlist。process inventory 只请求当前 sort/输出需要的上述子集和 application attribution 的 `group_leader`；只有显式 `--sort binary_memory` 才额外读取 binary refs，并只在 target 求和后立即丢弃 ref 列表。
+`process --info` allowlist 固定为 `registered_name|status|current_function|initial_call|memory|message_queue_len|reductions|heap_size|total_heap_size|stack_size|group_leader|garbage_collection_info`；GC info 再做 fixed numeric/boolean field allowlist。单点 process inventory 为每个候选读取 TUI Top N 行需要的 `registered_name|current_function|initial_call|memory|message_queue_len|reductions` 和当前 sort；只有显式 `--sort binary_memory` 才额外读取 binary refs，并只在 target 求和后立即丢弃 ref 列表。duration inventory 的两个全量样本仍只读取 sort 字段，排名后再为最终 Top N 补读上述当前上下文。OTP 27+ 的 process label 同样只为最终 Top N 读取并有界化；旧版本、无 label 或进程已退出时返回 `null`。
 
 目标解析在目标 VM 内完成：
 

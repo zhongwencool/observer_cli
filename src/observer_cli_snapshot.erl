@@ -180,6 +180,7 @@
 -define(SOCKET_SCAN_BUDGET, 100000).
 -define(WORKING_SET_BYTES_PER_FIELD, 64).
 -define(MAX_WORKING_SET_BYTES, 64 * 1024 * 1024).
+-define(PROCESS_LABEL_CHARS_LIMIT, 256).
 
 -spec capabilities() -> #{protocol_version := pos_integer()}.
 capabilities() ->
@@ -1185,7 +1186,11 @@ capture_processes(Request, Context) when is_map(Request) ->
                     undefined -> 1;
                     _ -> 2
                 end,
-            Keys = process_inventory_keys(Sort),
+            Keys =
+                case Duration of
+                    undefined -> process_inventory_keys(Sort);
+                    _ -> process_sample_keys(Sort)
+                end,
             Retained =
                 case Duration of
                     undefined -> {top, Limit};
@@ -1967,9 +1972,12 @@ default_counter_sort(network) -> oct;
 default_counter_sort(sockets) -> io.
 
 process_inventory_keys(binary_memory) ->
-    [registered_name, current_function, initial_call, memory, binary];
+    lists:usort([binary | process_context_keys()]);
 process_inventory_keys(Sort) ->
-    lists:usort([registered_name, current_function, initial_call, memory, Sort]).
+    lists:usort([Sort | process_context_keys()]).
+
+process_context_keys() ->
+    [registered_name, current_function, initial_call, memory, message_queue_len, reductions].
 
 application_process_keys() ->
     [memory, message_queue_len, reductions, group_leader].
@@ -2045,7 +2053,10 @@ collect_processes(Source, Sort, Limit, undefined, Context, Admission) ->
         Initial
     ),
     Finished = erlang:monotonic_time(millisecond),
-    Items = [public_process_item(Item) || Item <- maps:get(top, Acc)],
+    Items = [
+        public_process_item(add_process_label(Item, Source))
+     || Item <- maps:get(top, Acc)
+    ],
     Eligible = maps:get(eligible, Acc),
     Data = (audit_inventory(Acc, length(Items), Started, Finished))#{
         items => Items,
@@ -2072,7 +2083,10 @@ collect_processes(Source, Sort, Limit, Duration, Context, Admission) ->
         maps:get(values, First), maps:get(values, Second), Interval
     ),
     Ranked = rank_window(maps:get(stable, Window), Limit),
-    Items = [window_process_item(Pid, Sort, Delta, Interval) || {Pid, Delta} <- Ranked],
+    Items = [
+        public_process_item(window_process_item(Pid, Sort, Delta, Interval, Source))
+     || {Pid, Delta} <- Ranked
+    ],
     FirstAudit = maps:get(audit, First),
     SecondAudit = maps:get(audit, Second),
     Data = (audit_inventory(SecondAudit, length(Items), Started, Finished))#{
@@ -2445,12 +2459,60 @@ rank_window(Values, Limit) ->
         )
     ].
 
-window_process_item(Pid, Sort, Delta, Interval) ->
-    #{
+window_process_item(Pid, Sort, Delta, Interval, Source) ->
+    Context = process_context(Pid, Source),
+    (add_process_label(Context, Source))#{
         pid => {identifier, pid, Pid},
         process_window_field_key(Sort, delta) => Delta,
         process_window_field_key(Sort, per_second) => Delta * 1000 / Interval
     }.
+
+process_context(Pid, Source) ->
+    Empty = #{
+        raw_pid => Pid,
+        pid => {identifier, pid, Pid},
+        registered_name => null,
+        current_function => null,
+        initial_call => null,
+        memory_bytes => null,
+        message_queue_len => null,
+        reductions => null
+    },
+    try (maps:get(info_fun, Source))(Pid, process_context_keys()) of
+        Info when is_list(Info) -> maps:merge(Empty, process_item(Pid, Info));
+        _ -> Empty
+    catch
+        _:_ -> Empty
+    end.
+
+add_process_label(Item, Source) ->
+    Item#{label => process_label(maps:get(raw_pid, Item), Source)}.
+
+process_label(Pid, Source) ->
+    LabelFun = maps:get(label_fun, Source, fun default_process_label/1),
+    try LabelFun(Pid) of
+        undefined ->
+            null;
+        false ->
+            null;
+        Label ->
+            Text = unicode:characters_to_binary(
+                io_lib:write(Label, [
+                    {chars_limit, ?PROCESS_LABEL_CHARS_LIMIT},
+                    {depth, 8},
+                    {encoding, unicode}
+                ])
+            ),
+            {identifier, label, Text}
+    catch
+        _:_ -> null
+    end.
+
+default_process_label(Pid) ->
+    case erlang:function_exported(proc_lib, get_label, 1) of
+        true -> erlang:apply(proc_lib, get_label, [Pid]);
+        false -> undefined
+    end.
 
 process_window_field_key(Sort, delta) ->
     maps:get(Sort, #{
@@ -5049,7 +5111,8 @@ identifier_binary(Type, Value) when
     Type =:= interface;
     Type =:= netns;
     Type =:= table;
-    Type =:= application
+    Type =:= application;
+    Type =:= label
 ->
     identifier_text(Value);
 identifier_binary(_Type, _Value) ->

@@ -289,7 +289,7 @@ command_help("distribution") ->
 command_help("processes") ->
     remote_help(
         "processes [--sort KEY] [--limit N] [--duration DURATION]",
-        "List top processes using bounded explicit-key inspection.",
+        "List top processes with TUI-style context using bounded explicit-key inspection.",
         "  --sort KEY           memory (default), message_queue_len, reductions,\n"
         "                       binary_memory, or total_heap_size\n"
         "  --limit N            1..200; 20 by default\n"
