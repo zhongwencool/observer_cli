@@ -1,0 +1,1248 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/zhongwencool/observer_cli/v2.0.0/priv/schema/observer_cli.cli.v1.schema.json",
+  "title": "observer_cli CLI response",
+  "description": "Public structured response contract for observer_cli term and JSON output.",
+  "type": "object",
+  "required": [
+    "schema",
+    "command",
+    "outcome",
+    "data",
+    "meta",
+    "issues"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "observer_cli.cli/v1"
+    },
+    "command": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "outcome": {
+      "enum": [
+        "complete",
+        "partial",
+        "error"
+      ]
+    },
+    "data": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "meta": {
+      "$ref": "#/$defs/meta"
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/issue"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "enum": [
+              "complete",
+              "partial"
+            ]
+          }
+        },
+        "required": [
+          "outcome"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "complete"
+          }
+        },
+        "required": [
+          "outcome"
+        ]
+      },
+      "then": {
+        "properties": {
+          "issues": {
+            "not": {
+              "contains": {
+                "type": "object",
+                "required": [
+                  "severity"
+                ],
+                "properties": {
+                  "severity": {
+                    "const": "error"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "partial"
+          }
+        },
+        "required": [
+          "outcome"
+        ]
+      },
+      "then": {
+        "properties": {
+          "meta": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "$ref": "#/$defs/target"
+              },
+              "capture": {
+                "$ref": "#/$defs/capture"
+              }
+            }
+          },
+          "issues": {
+            "not": {
+              "contains": {
+                "type": "object",
+                "required": [
+                  "severity"
+                ],
+                "properties": {
+                  "severity": {
+                    "const": "error"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "error"
+          },
+          "data": {
+            "type": "null"
+          }
+        },
+        "required": [
+          "outcome",
+          "data"
+        ]
+      },
+      "then": {
+        "properties": {
+          "issues": {
+            "contains": {
+              "type": "object",
+              "required": [
+                "severity"
+              ],
+              "properties": {
+                "severity": {
+                  "const": "error"
+                }
+              }
+            },
+            "minContains": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "error"
+          },
+          "data": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "outcome",
+          "data"
+        ]
+      },
+      "then": {
+        "properties": {
+          "meta": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "$ref": "#/$defs/target"
+              },
+              "capture": {
+                "$ref": "#/$defs/capture"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "enum": [
+              "snapshot",
+              "diagnose",
+              "memory",
+              "schedulers",
+              "distribution",
+              "processes",
+              "applications",
+              "ets",
+              "mnesia",
+              "network",
+              "ports",
+              "sockets",
+              "process",
+              "port",
+              "otp_state",
+              "supervision_tree",
+              "trace_call",
+              "trace_stop_all"
+            ]
+          },
+          "data": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "data"
+        ]
+      },
+      "then": {
+        "properties": {
+          "meta": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "$ref": "#/$defs/target"
+              },
+              "capture": {
+                "$ref": "#/$defs/capture"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "oneOf": [
+    {
+      "$ref": "#/$defs/contextCommand"
+    },
+    {
+      "$ref": "#/$defs/snapshotDiagnosticCommand"
+    },
+    {
+      "$ref": "#/$defs/vmHealthCommand"
+    },
+    {
+      "$ref": "#/$defs/resourceListCommand"
+    },
+    {
+      "$ref": "#/$defs/resourceDetailCommand"
+    },
+    {
+      "$ref": "#/$defs/traceCommand"
+    },
+    {
+      "$ref": "#/$defs/preCommandError"
+    }
+  ],
+  "$defs": {
+    "meta": {
+      "type": "object",
+      "required": [
+        "target",
+        "capture"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/target"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "capture": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/capture"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "required": [
+        "node",
+        "otp_release"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "node": {
+          "type": "string",
+          "minLength": 1
+        },
+        "otp_release": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$"
+        }
+      }
+    },
+    "capture": {
+      "type": "object",
+      "required": [
+        "started_at",
+        "finished_at",
+        "duration_ms",
+        "probes",
+        "observer_effects"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finished_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "probes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/probe"
+          }
+        },
+        "observer_effects": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "probe": {
+      "type": "object",
+      "required": [
+        "id",
+        "required",
+        "status",
+        "reason_code",
+        "duration_ms",
+        "samples",
+        "coverage"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "unavailable",
+            "timeout",
+            "error"
+          ]
+        },
+        "reason_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "samples": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "coverage": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "status": {
+              "const": "ok"
+            },
+            "reason_code": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "properties": {
+            "status": {
+              "enum": [
+                "unavailable",
+                "timeout",
+                "error"
+              ]
+            },
+            "reason_code": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ]
+    },
+    "issue": {
+      "type": "object",
+      "required": [
+        "severity",
+        "class",
+        "reason_code",
+        "message"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "severity": {
+          "enum": [
+            "warning",
+            "error"
+          ]
+        },
+        "class": {
+          "enum": [
+            "argument",
+            "format",
+            "capability",
+            "safety_refusal",
+            "controller",
+            "distribution",
+            "connection",
+            "cleanup",
+            "schema",
+            "internal",
+            "required_probe",
+            "partial"
+          ]
+        },
+        "reason_code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "contextCommand": {
+      "oneOf": [
+        {
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "const": "connect"
+            },
+            "data": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/contextData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "data": {
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "data"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "outcome": {
+                    "const": "complete"
+                  },
+                  "meta": {
+                    "type": "object",
+                    "properties": {
+                      "target": {
+                        "$ref": "#/$defs/target"
+                      },
+                      "capture": {
+                        "type": "null"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "const": "status"
+            },
+            "data": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/contextData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "data": {
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "data"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "outcome": {
+                    "const": "complete"
+                  },
+                  "meta": {
+                    "type": "object",
+                    "properties": {
+                      "target": {
+                        "$ref": "#/$defs/target"
+                      },
+                      "capture": {
+                        "type": "null"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "const": "disconnect"
+            },
+            "data": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/disconnectData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "data": {
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "data"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "outcome": {
+                    "const": "complete"
+                  },
+                  "meta": {
+                    "type": "object",
+                    "properties": {
+                      "target": {
+                        "type": "null"
+                      },
+                      "capture": {
+                        "type": "null"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "snapshotDiagnosticCommand": {
+      "oneOf": [
+        {
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "const": "snapshot"
+            },
+            "data": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/snapshotData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "const": "diagnose"
+            },
+            "data": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/diagnoseData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "vmHealthCommand": {
+      "oneOf": [
+        {
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "const": "memory"
+            },
+            "data": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/memoryData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "const": "schedulers"
+            },
+            "data": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/statusData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "const": "distribution"
+            },
+            "data": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/distributionData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "resourceListCommand": {
+      "oneOf": [
+        {
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "const": "processes"
+            },
+            "data": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/statusData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "const": "applications"
+            },
+            "data": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/statusData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "const": "ets"
+            },
+            "data": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/statusData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "const": "mnesia"
+            },
+            "data": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/statusData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "const": "network"
+            },
+            "data": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/statusData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "const": "ports"
+            },
+            "data": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/statusData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "const": "sockets"
+            },
+            "data": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/statusData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "resourceDetailCommand": {
+      "oneOf": [
+        {
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "const": "process"
+            },
+            "data": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/statusData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "const": "port"
+            },
+            "data": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/statusData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "const": "otp_state"
+            },
+            "data": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/supervisionTreeData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "const": "supervision_tree"
+            },
+            "data": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/supervisionTreeData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "traceCommand": {
+      "oneOf": [
+        {
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "const": "trace_call"
+            },
+            "data": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/traceData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "const": "trace_stop_all"
+            },
+            "data": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/traceData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "preCommandError": {
+      "required": [
+        "command",
+        "outcome",
+        "data",
+        "meta",
+        "issues"
+      ],
+      "properties": {
+        "command": {
+          "type": "null"
+        },
+        "outcome": {
+          "const": "error"
+        },
+        "data": {
+          "type": "null"
+        },
+        "meta": {
+          "type": "object",
+          "properties": {
+            "target": {
+              "type": "null"
+            },
+            "capture": {
+              "type": "null"
+            }
+          }
+        },
+        "issues": {
+          "type": "array",
+          "contains": {
+            "type": "object",
+            "required": [
+              "severity"
+            ],
+            "properties": {
+              "severity": {
+                "const": "error"
+              }
+            }
+          },
+          "minContains": 1
+        }
+      }
+    },
+    "contextData": {
+      "type": "object",
+      "required": [
+        "node",
+        "name_mode",
+        "cookie_source",
+        "probe",
+        "diagnostics_module",
+        "expected_capabilities",
+        "observed_capabilities",
+        "persistent_connection"
+      ],
+      "properties": {
+        "node": {
+          "type": "string"
+        },
+        "name_mode": {
+          "type": "string"
+        },
+        "cookie_source": {
+          "type": "object"
+        },
+        "probe": {
+          "type": "string"
+        },
+        "diagnostics_module": {
+          "type": "string"
+        },
+        "expected_capabilities": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "observed_capabilities": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "persistent_connection": {
+          "type": "boolean"
+        }
+      }
+    },
+    "disconnectData": {
+      "type": "object",
+      "required": [
+        "node",
+        "disconnected"
+      ],
+      "properties": {
+        "node": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "disconnected": {
+          "const": true
+        },
+        "recovered_invalid_context": {
+          "type": "boolean"
+        }
+      }
+    },
+    "snapshotData": {
+      "type": "object"
+    },
+    "diagnoseData": {
+      "type": "object",
+      "required": [
+        "findings",
+        "context",
+        "skipped"
+      ],
+      "properties": {
+        "findings": {
+          "type": "array"
+        },
+        "context": {
+          "type": "object"
+        },
+        "skipped": {
+          "type": "array"
+        }
+      }
+    },
+    "memoryData": {
+      "type": "object",
+      "required": [
+        "runtime",
+        "memory"
+      ],
+      "properties": {
+        "runtime": {
+          "type": "object"
+        },
+        "memory": {
+          "type": "object"
+        }
+      }
+    },
+    "statusData": {
+      "type": "object",
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "distributionData": {
+      "type": "object",
+      "required": [
+        "connected_peers",
+        "returned_peer_count",
+        "truncated"
+      ],
+      "properties": {
+        "connected_peers": {
+          "type": "array"
+        },
+        "returned_peer_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      }
+    },
+    "supervisionTreeData": {
+      "type": "object",
+      "required": [
+        "status",
+        "risk_level"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "risk_level": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "traceData": {
+      "type": "object",
+      "required": [
+        "reason",
+        "trace"
+      ],
+      "properties": {
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "trace": {
+          "type": "object"
+        }
+      }
+    }
+  }
+}

@@ -9,6 +9,7 @@
         "LICENSE*",
         "mix.exs",
         "mix.lock",
+        "priv",
         "README.md",
         "docs/*",
         "rebar.config",
