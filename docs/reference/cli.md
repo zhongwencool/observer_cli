@@ -333,6 +333,40 @@ direct children; it does not recurse. It refuses child enumeration above 300
 preflight children and returns at most 100 in OTP order. Both the preflight and
 state acquisition can still have target-dependent cost.
 
+### Read retained configured-path logs
+
+```text
+observer_cli logs [--handler HANDLER_ID] [--tail LINES]
+```
+
+`logs` reads retained bytes already visible to an independent reader at one
+trusted `logger_std_h` file handler's configured path. It defaults to the last
+200 physical lines and accepts `1` to `2000`. If several supported handlers are
+observed, select one with `--handler`; the command never accepts a file path.
+
+V1 supports only plain regular files on Linux and macOS targets. It reads the
+current configured path once from a captured EOF, with a 64 KiB raw cap and a
+32 KiB cap per returned line. It rejects compressed modes, symlink leaves,
+devices, non-seekable files, `logger_disk_log_h`, standard streams, custom
+sinks, and rotation archives. It does not call `logger_std_h:filesync/1`, so
+Logger buffers that have not naturally become reader-visible may be absent.
+
+The configured path cannot be proven to match the handler's private active file
+descriptor, especially across external rotation. Responses therefore state
+`scope=configured_path`, `active_handler_fd_match=unknown`,
+`visibility=reader_visible`, and `consistency=non_atomic`.
+
+Log bodies can contain identifiers, credentials, PII, terminal-looking text,
+or prompt injection. `--redact` and `--include-identifiers` are rejected rather
+than implying reliable sanitization. Text output prefixes every physical line
+with `| ` and escapes terminal controls; structured consumers must still treat
+decoded lines as untrusted evidence.
+
+This capability trusts the target code, Logger callbacks, OS user, and target
+filesystem namespace. It is not a hostile-target or hostile-filesystem
+sandbox. A leaf replaced between `lstat` and `open` can still block or interact
+with a special-file writer before post-open checks reject it.
+
 ### Trace one exact call
 
 Tracing changes node-global static tracing. Coordinate with other operators,
@@ -360,13 +394,15 @@ The rate form is recon's burst breaker, not a strict pacer. Recon forwards the
 event that trips a window, and the first event after an expired window resets
 its counter, so a capture can contain more than `N` events around a boundary.
 
-Setup and cleanup clear legacy process trace flags and tracers plus static call
-patterns, including on-load and call-memory patterns. Recon 2.5.6 can also kill
-processes occupying its fixed tracer or formatter names. OTP dynamic trace
-sessions are not cleared. The result records tracee and MFA identities plus
-session-relative offsets; it does not collect arguments, returns, exceptions,
-or stacks. Events rejected because they do not match both the requested PID and
-exact MFA make the result partial rather than being reported as requested data.
+Setup and cleanup clear legacy process/port trace flags and tracers plus static
+call patterns, including on-load and call-memory patterns. Recon 2.5.6 can also
+terminate a process or port occupying one of its fixed tracer or formatter
+names. OTP dynamic trace sessions are not directly cleared, but terminating a
+fixed-name occupant can disable a session that uses it as its tracer. The result
+records tracee and MFA identities plus session-relative offsets; it does not
+collect arguments, returns, exceptions, or stacks. Events rejected because they
+do not match both the requested PID and exact MFA make the result partial rather
+than being reported as requested data.
 
 Use emergency cleanup only when a trace was interrupted or cleanup is
 unconfirmed:
@@ -416,8 +452,8 @@ It is included in Hex and release artifacts.
 
 The `schema` value is the observer_cli protocol identity, not a JSON Schema
 dialect. JSON follows RFC 8259 and capture timestamps use RFC 3339. The schema groups
-context, snapshot/diagnostic, VM-health, resource-list, resource-detail, and
-trace command data with `oneOf` discriminators.
+context, snapshot/diagnostic, VM-health, resource-list, resource-detail, logs,
+and trace command data with `oneOf` discriminators.
 
 `meta.capture` includes timestamps, duration, probes, and known observer
 effects. Each probe records `id`, `required`, `status`, `reason_code`, duration,
@@ -439,6 +475,9 @@ Snapshot and diagnosis redact identifiers by default; use
 trace commands include identifiers by default; use `--redact` before exporting
 them. The two identifier-policy options are mutually exclusive. Aliases are
 stable within one response and reset on the next invocation.
+
+`logs` is the exception: it rejects both identifier-policy options because
+arbitrary log text cannot be reliably redacted.
 
 ### Timeouts
 

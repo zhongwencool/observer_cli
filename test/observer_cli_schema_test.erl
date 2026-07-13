@@ -74,7 +74,22 @@ schema_contract() ->
         fun(Name) ->
             ?assertEqual(false, maps:get(<<"additionalProperties">>, maps:get(Name, Definitions)))
         end,
-        [<<"meta">>, <<"target">>, <<"capture">>, <<"probe">>, <<"issue">>]
+        [
+            <<"meta">>,
+            <<"target">>,
+            <<"capture">>,
+            <<"probe">>,
+            <<"issue">>,
+            <<"logsData">>,
+            <<"logSource">>,
+            <<"selectedLogSource">>,
+            <<"logTail">>,
+            <<"logsCapture">>,
+            <<"diagnosticsWorkerEffect">>,
+            <<"moduleLoadEffect">>,
+            <<"distributionControllerEffect">>,
+            <<"configuredLogReadEffect">>
+        ]
     ),
     lists:foreach(
         fun(Name) ->
@@ -95,7 +110,8 @@ schema_contract() ->
             <<"vmHealthCommand">>,
             <<"resourceListCommand">>,
             <<"resourceDetailCommand">>,
-            <<"traceCommand">>
+            <<"traceCommand">>,
+            <<"logsCommand">>
         ]
     ),
     PreCommand = maps:get(<<"preCommandError">>, Definitions),
@@ -117,7 +133,8 @@ schema_commands(Definitions) ->
                 <<"vmHealthCommand">>,
                 <<"resourceListCommand">>,
                 <<"resourceDetailCommand">>,
-                <<"traceCommand">>
+                <<"traceCommand">>,
+                <<"logsCommand">>
             ]
         ])
     ).
@@ -148,7 +165,8 @@ cli_response_commands() ->
         "process",
         "port",
         "otp-state",
-        "supervision-tree"
+        "supervision-tree",
+        "logs"
     ],
     lists:sort(
         [

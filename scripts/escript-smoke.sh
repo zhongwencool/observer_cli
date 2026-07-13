@@ -61,12 +61,16 @@ check "top-level help" 0 "Usage:" empty --help
 check "no-argument help" 0 "Usage:" empty
 check "short help" 0 "Usage:" empty -h
 check "otp-state help" 0 "observer_cli otp-state" empty otp-state --help
+check "logs help" 0 "observer_cli logs" empty logs --help
 check "trace call help" 0 "observer_cli trace call" empty trace call --help
 check "version" 0 "observer_cli 2.0.0" empty --version
 check "unknown option" 2 empty "observer_cli --help" --bogus
 check "removed positional TUI shorthand" 2 empty "unknown command: target@host" target@host
 check "removed gen-server-state command" 2 empty "unknown command: gen-server-state" gen-server-state init
 check "malformed process command" 2 empty "observer_cli process:" process --bogus
+check "logs reject redaction" 2 empty "observer_cli logs:" logs --redact
+check "logs reject invalid tail" 2 empty "observer_cli logs:" logs --tail 0
+check "logs reject arbitrary path" 2 empty "unknown option: --file" logs --file /tmp/app.log
 check \
     "malformed process term" \
     2 \

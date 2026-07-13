@@ -44,6 +44,7 @@
 -define(MAX_EVENTS, 1000).
 -define(ACK_TIMEOUT_MS, 1000).
 -define(STOP_TIMEOUT_MS, 2000).
+-define(CLEAR_RESULT_KEY, observer_cli_trace_clear_result).
 
 -spec call(pid(), map()) -> map().
 call(Controller, Request) when is_pid(Controller), is_map(Request) ->
@@ -371,6 +372,10 @@ entered_trace(State) ->
                     case {maps:get(tracer, Recon), maps:get(formatter, Recon)} of
                         {Tracer, Formatter} when is_pid(Tracer), is_pid(Formatter) ->
                             wait_trace(State, Recon, deadline(State));
+                        {undefined, Formatter} when is_pid(Formatter) ->
+                            wait_formatter(State, Recon, deadline(State));
+                        {_Tracer, undefined} ->
+                            completed_before_attach(State);
                         _ ->
                             setup_failure_outcome(State)
                     end
@@ -433,6 +438,7 @@ start_recon(State) ->
     Formatter = fun(Message) ->
         format_event(Message, ExpectedPid, ExpectedMFA, Collector, Session, Started)
     end,
+    ok = clear_fixed_name_ports(),
     clear_extended_patterns(),
     recon_trace:calls(
         ExpectedMFA,
@@ -469,11 +475,13 @@ wait_trace(State, Recon, Deadline) ->
     Ref = maps:get(ref, State),
     receive
         {'DOWN', TracerMon, process, Tracer, normal} when is_reference(TracerMon) ->
+            wait_formatter(State, Recon#{tracer_exit_reason => normal}, Deadline);
+        {'DOWN', TracerMon, process, Tracer, noproc} when is_reference(TracerMon) ->
             wait_formatter(State, Recon, Deadline);
         {'DOWN', TracerMon, process, Tracer, _Reason} when is_reference(TracerMon) ->
             {forced, internal, capture_internal_error};
-        {'EXIT', Tracer, _Reason} when is_pid(Tracer) ->
-            wait_trace(State, Recon, Deadline);
+        {'EXIT', Tracer, Reason} when is_pid(Tracer) ->
+            wait_trace(State, Recon#{tracer_exit_reason => Reason}, Deadline);
         {stop_request, Stopper, StopRef} ->
             Stopper ! {StopRef, armed, self()},
             {forced, success, stopped, {Stopper, StopRef}};
@@ -491,11 +499,15 @@ wait_formatter(State, Recon, Deadline) ->
     StateRef = maps:get(ref, State),
     case FormatterMon of
         undefined ->
-            final_drain(State);
+            completed_before_attach(State, maps:get(tracer_exit_reason, Recon, unknown));
         _ ->
             receive
                 {'DOWN', FormatterMon, process, Formatter, normal} ->
-                    final_drain(State);
+                    completed_before_attach(State, normal);
+                {'DOWN', FormatterMon, process, Formatter, noproc} ->
+                    completed_before_attach(
+                        State, maps:get(tracer_exit_reason, Recon, unknown)
+                    );
                 {'DOWN', FormatterMon, process, Formatter, _Reason} ->
                     {forced, internal, capture_internal_error};
                 {stop_request, Stopper, StopRef} ->
@@ -524,6 +536,52 @@ final_drain(State) ->
     after ?ACK_TIMEOUT_MS ->
         {forced, internal, capture_internal_error}
     end.
+
+completed_before_attach(State) ->
+    completed_before_attach(State, unknown).
+
+completed_before_attach(State, ExitReason) ->
+    case final_drain(State) of
+        {natural, _Reason, Events, _Truncated, Dropped, Rejected} = Natural ->
+            Forwarded = length(Events) + Dropped + Rejected,
+            case
+                natural_completion_confirmed(
+                    maps:get(max, State), Forwarded, State, ExitReason
+                )
+            of
+                true -> Natural;
+                false -> with_forced_payload(setup_failure_outcome(State), Events, Rejected)
+            end;
+        Failure ->
+            Failure
+    end.
+
+natural_threshold_reached(Max, Forwarded) when is_integer(Max) ->
+    Forwarded >= Max;
+natural_threshold_reached({Max, _Window}, Forwarded) ->
+    Forwarded >= Max + 1.
+
+natural_completion_confirmed(Max, Forwarded, _State, _ExitReason) when is_integer(Max) ->
+    natural_threshold_reached(Max, Forwarded);
+natural_completion_confirmed(Max, Forwarded, State, ExitReason) ->
+    natural_threshold_reached(Max, Forwarded) andalso
+        recon_exit_reason(State, ExitReason) =:= normal.
+
+recon_exit_reason(_State, Reason) when Reason =/= unknown ->
+    Reason;
+recon_exit_reason(State, unknown) ->
+    Collector = maps:get(collector, State),
+    SilentIO = maps:get(silent_io, State, undefined),
+    receive
+        {'EXIT', Pid, Reason} when Pid =/= Collector, Pid =/= SilentIO -> Reason
+    after ?ACK_TIMEOUT_MS ->
+        unknown
+    end.
+
+with_forced_payload({forced, Category, Reason}, Events, Rejected) ->
+    {forced, Category, Reason, Events, Rejected};
+with_forced_payload(Outcome, _Events, _Rejected) ->
+    Outcome.
 
 drain_forced(State, {forced, Category, Reason}) ->
     case final_drain(State) of
@@ -604,7 +662,7 @@ owner_result(State, Outcome, ok) ->
     Partial = EndMd5 =/= maps:get(module_md5, State),
     case Outcome of
         {natural, Reason, Events, Truncated, Dropped, Rejected} ->
-            Incomplete = Partial orelse Rejected > 0,
+            Incomplete = Partial orelse Truncated orelse Dropped > 0 orelse Rejected > 0,
             Capture = #{
                 status =>
                     case Incomplete of
@@ -692,16 +750,21 @@ notify_stopper(_Outcome, _Result) ->
     ok.
 
 verify_cleanup(State) ->
-    case wait_fixed_names() of
-        ok ->
-            Pid = maps:get(pid, State),
-            MFA = maps:get(mfa, State),
-            case {call_flag_off(Pid), trace_pattern_off(MFA)} of
-                {true, true} -> ok;
-                _ -> {error, cleanup_unconfirmed}
-            end;
-        Error ->
-            Error
+    case get(?CLEAR_RESULT_KEY) of
+        {error, _Reason} = Error ->
+            Error;
+        _ ->
+            case wait_fixed_names() of
+                ok ->
+                    Pid = maps:get(pid, State),
+                    MFA = maps:get(mfa, State),
+                    case {call_flag_off(Pid), trace_pattern_off(MFA)} of
+                        {true, true} -> ok;
+                        _ -> {error, cleanup_unconfirmed}
+                    end;
+                Error ->
+                    Error
+            end
     end.
 
 wait_fixed_names() ->
@@ -950,15 +1013,79 @@ global_warning() ->
     #{
         code => global_trace_replacement,
         message => <<
-            "This command clears legacy process trace flags/tracers and static call patterns, ",
-            "including on-load and call-memory patterns; recon 2.5.6 may also kill processes ",
-            "occupying its fixed tracer or formatter names. Dynamic trace sessions remain."
+            "This command clears legacy process/port trace flags and tracers plus static call ",
+            "patterns, including on-load and call-memory patterns; recon 2.5.6 may also kill ",
+            "processes or ports occupying its fixed tracer or formatter names. Dynamic trace ",
+            "sessions are not directly cleared, but killing such an occupant can disable one."
         >>
     }.
 
 clear_trace() ->
-    recon_trace:clear(),
-    clear_extended_patterns().
+    PortResult = clear_fixed_name_ports(),
+    LegacyResult =
+        case PortResult of
+            ok ->
+                try recon_trace:clear() of
+                    ok -> ok;
+                    _ -> {error, cleanup_unconfirmed}
+                catch
+                    _:_ -> {error, cleanup_unconfirmed}
+                end;
+            PortError ->
+                PortError
+        end,
+    ExtendedResult =
+        try clear_extended_patterns() of
+            ok -> ok
+        catch
+            _:_ -> {error, cleanup_unconfirmed}
+        end,
+    ClearResult =
+        case {LegacyResult, ExtendedResult} of
+            {ok, ok} -> ok;
+            _ -> {error, cleanup_unconfirmed}
+        end,
+    case ClearResult of
+        ok -> erase(?CLEAR_RESULT_KEY);
+        ClearError -> put(?CLEAR_RESULT_KEY, ClearError)
+    end,
+    ClearResult.
+
+clear_fixed_name_ports() ->
+    case
+        {
+            clear_fixed_name_port(recon_trace_tracer),
+            clear_fixed_name_port(recon_trace_formatter)
+        }
+    of
+        {ok, ok} -> ok;
+        _ -> {error, cleanup_unconfirmed}
+    end.
+
+clear_fixed_name_port(Name) ->
+    case whereis(Name) of
+        Port when is_port(Port) ->
+            _ =
+                try
+                    erlang:port_close(Port)
+                catch
+                    _:_ -> false
+                end,
+            wait_fixed_name_port(Name, Port, 100);
+        _ ->
+            ok
+    end.
+
+wait_fixed_name_port(_Name, _Port, 0) ->
+    {error, cleanup_unconfirmed};
+wait_fixed_name_port(Name, Port, Attempts) ->
+    case {whereis(Name), erlang:port_info(Port)} of
+        {Current, undefined} when Current =/= Port ->
+            ok;
+        _ ->
+            timer:sleep(10),
+            wait_fixed_name_port(Name, Port, Attempts - 1)
+    end.
 
 clear_extended_patterns() ->
     _ = erlang:trace_pattern(

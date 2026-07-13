@@ -81,6 +81,7 @@
     capabilities/2,
     compatible_capabilities/1,
     validated_response/5,
+    validate_logs_response/3,
     run_snapshot/4,
     run_dispatch/5,
     run_diagnose/3,
@@ -244,6 +245,7 @@ usage() ->
         "Diagnostics:\n"
         "  diagnose            Detect likely VM problems and report evidence\n"
         "  snapshot            Collect a point-in-time VM fact bundle\n"
+        "  logs                Read bounded retained logs from one configured file\n"
         "\n"
         "VM health:\n"
         "  memory              Show VM memory and allocator usage\n"
@@ -485,6 +487,8 @@ command_help("supervision-tree") ->
         "  --app APP  Application name; required\n",
         "  observer_cli supervision-tree --app my_app\n"
     );
+command_help("logs") ->
+    logs_help();
 command_help("trace") ->
     io:put_chars(
         "Usage:\n"
@@ -493,17 +497,48 @@ command_help("trace") ->
         "  observer_cli trace stop --all\n"
         "    [TARGET OPTIONS] [OUTPUT OPTIONS]\n"
         "\n"
-        "Run or stop bounded node-global call tracing. Calls match one live\n"
-        "target-local PID and one loaded, exported MFA. Events contain identity\n"
-        "and relative timing, never arguments, returns, exceptions, or stacks.\n"
-        "Both operations may clear legacy process trace flags and unrelated\n"
-        "static call patterns. Dynamic trace sessions are not cleared.\n"
+        "Run or stop bounded node-global call tracing. Calls cover external/global\n"
+        "calls only for one live target-local PID and one loaded, exported MFA;\n"
+        "local intra-module calls are excluded. Events contain identity and\n"
+        "relative timing, never arguments, returns, exceptions, or stacks.\n"
+        "Trace setup and cleanup clear node-wide legacy process/port trace flags\n"
+        "and tracers plus static call patterns without restoring prior state.\n"
+        "Recon 2.5.6 may terminate processes or ports occupying its fixed\n"
+        "tracer/formatter names. Dynamic trace sessions are not directly cleared,\n"
+        "but killing such a fixed-name occupant can disable one.\n"
         "\n"
         "Run 'observer_cli trace call --help' or\n"
         "'observer_cli trace stop --help' for the exact safety contract.\n"
     );
 command_help(_Command) ->
     root_error(unknown_command).
+
+logs_help() ->
+    io:put_chars(
+        "Usage:\n"
+        "  observer_cli logs [--handler HANDLER_ID] [--tail LINES]\n"
+        "    [TARGET OPTIONS] [OUTPUT OPTIONS]\n"
+        "\n"
+        "Read retained bytes visible at one trusted logger_std_h file handler's\n"
+        "configured path. This does not flush Logger buffers, prove a match with\n"
+        "the handler's active file descriptor, or read rotation archives.\n"
+        "Log text is sensitive and untrusted; --redact and --include-identifiers\n"
+        "are rejected rather than implying that arbitrary text can be sanitized.\n"
+        "\n"
+        "Options:\n"
+        "  --handler HANDLER_ID  Select one handler; required when several qualify\n"
+        "  --tail LINES          1..2000 physical lines; 200 by default\n"
+        "  --timeout DURATION    Command deadline, up to 120s\n"
+        "  --format text|term|json\n"
+        "  --json\n"
+        "\n"
+        "Only plain regular files on Linux and macOS targets are supported.\n"
+        "The command reads at most 64 KiB and retains at most 32 KiB per line.\n"
+        "\n"
+        "Examples:\n"
+        "  observer_cli logs\n"
+        "  observer_cli logs --handler app_file --tail 500\n"
+    ).
 
 tui_help() ->
     io:put_chars(
@@ -522,24 +557,35 @@ trace_call_help() ->
     remote_help(
         "trace call MFA --pid PID --replace-existing-trace [OPTIONS]",
         "Run a bounded call-only trace for one loaded, exported MFA and one live\n"
-        "target-local PID. MFA syntax is module:function/arity.\n"
-        "Setup clears legacy process trace flags and static call patterns,\n"
-        "including on-load and call-memory patterns; the acknowledgement flag\n"
-        "is therefore required. Dynamic trace sessions remain. An explicit\n"
-        "overall timeout must cover the duration plus seven seconds.\n"
+        "target-local PID. MFA syntax is module:function/arity. Only external/global\n"
+        "calls are captured; local intra-module calls are excluded.\n"
+        "Setup and teardown clear node-wide legacy process/port trace flags,\n"
+        "tracers, and all static call patterns, including on-load and call-memory.\n"
+        "Prior state is not restored. Recon 2.5.6 may terminate a process or port\n"
+        "occupying a fixed tracer or formatter name.\n"
+        "Dynamic trace sessions are not directly cleared, but killing such an\n"
+        "occupant can disable one.\n"
+        "The acknowledgement flag is therefore required. An explicit overall\n"
+        "timeout must cover the duration plus seven seconds.\n"
         "Events contain only tracee, MFA, and session-relative offset; arguments,\n"
         "returns, exceptions, and stacks are never collected. Identifiers are\n"
         "included by default; use --redact before exporting output.\n"
-        "data.trace.trace_complete is true only after a clean limit or rate stop.\n"
-        "Duration expiry, manual stop, reload, interference, or unconfirmed\n"
-        "cleanup produces a partial capture; the command itself may complete.",
+        "data.trace.trace_complete=true means normal lifecycle completion with no\n"
+        "detected loss, module change, or interference.\n"
+        "At most 1000 events are returned; inspect status, truncated, and\n"
+        "dropped_count. Duration expiry, manual stop, response-cap loss, a detected\n"
+        "module change or rejected interference can still return\n"
+        "outcome=complete and exit 0 with data.trace.status=partial.\n"
+        "cleanup_unconfirmed is outcome=error/exit 4 and may omit trace data;\n"
+        "target tracing may remain, so retry trace stop --all and verify it.",
         "  --pid PID                 Live target-local tracee PID; required\n"
         "  --duration DURATION       100ms..60s; 10s by default\n"
         "  --limit N                 1..1000 events; 100 by default\n"
         "  --rate N/s                Recon burst breaker, not a pacer; 1..200/s;\n"
-        "                            trip event included; an expired window resets\n"
-        "                            on its first event, so capture may exceed N;\n"
-        "                            conflicts with --limit\n"
+        "                            trip event included; the first event after an\n"
+        "                            expired window is forwarded and resets the\n"
+        "                            counter to zero; total capture may exceed N\n"
+        "                            across windows; conflicts with --limit\n"
         "  --replace-existing-trace  Acknowledge node-global replacement\n",
         "  observer_cli trace call my_mod:my_fun/2 --pid \"<0.123.0>\" \\\n"
         "    --duration 30s --limit 200 --replace-existing-trace\n"
@@ -549,13 +595,17 @@ trace_stop_help() ->
     remote_help(
         "trace stop --all",
         "Stop an active observer_cli trace or perform emergency cleanup. This\n"
-        "clears legacy process trace flags and static call patterns, including\n"
-        "on-load and call-memory patterns. With recon 2.5.6, fixed-name tracer\n"
-        "or formatter processes may also be terminated; dynamic trace sessions\n"
-        "remain. --all acknowledges that scope. Explicit timeout minimum: 5s.\n"
-        "The public stop response never returns captured events; read the matching\n"
-        "trace call response instead. With no owned observer_cli trace, cleanup\n"
-        "still runs but reports cleanup_unconfirmed.",
+        "clears node-wide legacy process/port trace flags, tracers, and all static\n"
+        "call patterns, including on-load and call-memory, without restoring prior\n"
+        "state. With recon 2.5.6, a process or port occupying a fixed tracer or\n"
+        "formatter name may be terminated. Dynamic trace sessions are not directly\n"
+        "cleared, but killing such an occupant can disable one. --all acknowledges\n"
+        "that scope. Explicit timeout minimum: 5s. When trace data is present, the\n"
+        "public stop response has events=[]; captured events are returned only by\n"
+        "the original waiting trace call invocation. With no owned observer_cli\n"
+        "trace, cleanup still runs but reports cleanup_unconfirmed. This is\n"
+        "outcome=error, exit 4. Retry stop and verify target trace state whenever\n"
+        "cleanup is unconfirmed.",
         "  --all  Acknowledge node-global trace cleanup; required\n",
         "  observer_cli trace stop --all\n"
     ).
@@ -658,6 +708,15 @@ command_request(otp_state, [Target], Options) ->
     end;
 command_request(supervision_tree, [], Options) ->
     (request_options(Options))#{app => maps:get(app, Options)};
+command_request(logs, [], Options) ->
+    #{
+        handler =>
+            case maps:find(handler, Options) of
+                {ok, Handler} -> unicode:characters_to_binary(Handler);
+                error -> null
+            end,
+        tail => list_to_integer(maps:get(tail, Options, "200"))
+    };
 command_request(schedulers, _Arguments, Options) ->
     {ok, Duration} = observer_cli_cli:duration(Options),
     #{duration_ms => Duration};
@@ -903,18 +962,31 @@ run_dispatch(Target, Command, Request, Options, Remaining) ->
         end,
     case target_dispatch(Target, Command, Request, Options, Policy, Remaining) of
         {ok, Response} ->
-            validated_response(
-                response_command(Command, Request),
-                Policy,
-                Target,
-                Response,
-                fun dispatch_response/1
-            );
+            validate_dispatched_response(Command, Request, Policy, Target, Response);
         invalid ->
             {error, schema, invalid_command_response};
         Error ->
             Error
     end.
+
+validate_dispatched_response(logs, Request, Policy, Target, Response) ->
+    case validate_response(logs, Policy, Target, Response) of
+        ok ->
+            case validate_logs_response(Request, Response, atom_to_binary(Target)) of
+                true -> dispatch_response(Response);
+                false -> {error, schema, invalid_command_response}
+            end;
+        {error, Reason} ->
+            {error, schema, Reason}
+    end;
+validate_dispatched_response(Command, Request, Policy, Target, Response) ->
+    validated_response(
+        response_command(Command, Request),
+        Policy,
+        Target,
+        Response,
+        fun dispatch_response/1
+    ).
 
 dispatch_response(#{<<"outcome">> := Outcome} = Response) when
     Outcome =:= <<"complete">>; Outcome =:= <<"partial">>; Outcome =:= <<"error">>
@@ -975,6 +1047,15 @@ probe_exit_code(#{<<"reason_code">> := Reason}) ->
         <<"capability_unavailable">> -> 2;
         <<"mfa_unavailable">> -> 2;
         <<"mfa_not_traceable">> -> 2;
+        <<"log_source_unavailable">> -> 2;
+        <<"log_handler_required">> -> 2;
+        <<"log_handler_not_found">> -> 2;
+        <<"unsupported_log_handler">> -> 2;
+        <<"unsupported_file_modes">> -> 2;
+        <<"unsupported_log_file_type">> -> 2;
+        <<"log_path_unrepresentable">> -> 2;
+        <<"invalid_log_handler_config">> -> 2;
+        <<"unsupported_target_platform">> -> 2;
         <<"cleanup_unconfirmed">> -> 4;
         <<"invalid_schema">> -> 4;
         <<"internal_error">> -> 4;
@@ -1353,8 +1434,8 @@ validate_response_map(Command, Policy, Target, Response) ->
     ],
     Checks = [
         lists:sort(maps:keys(Response)) =:= ExpectedKeys,
-        maps:get(<<"schema">>, Response) =:= <<"observer_cli.cli/v1">>,
-        maps:get(<<"command">>, Response) =:= atom_to_binary(Command),
+        maps:get(<<"schema">>, Response, undefined) =:= <<"observer_cli.cli/v1">>,
+        maps:get(<<"command">>, Response, undefined) =:= atom_to_binary(Command),
         public_value(Response, 0),
         erlang:external_size(Response) =< ?MAX_RESPONSE_BYTES,
         valid_envelope(Response, Policy, atom_to_binary(Target)),
@@ -1365,6 +1446,622 @@ validate_response_map(Command, Policy, Target, Response) ->
         true -> ok;
         false -> {error, invalid_command_response}
     end.
+
+validate_logs_response(
+    Request,
+    #{
+        <<"command">> := <<"logs">>,
+        <<"outcome">> := Outcome,
+        <<"data">> := Data,
+        <<"meta">> := #{<<"target">> := Target, <<"capture">> := Capture},
+        <<"issues">> := []
+    },
+    ExpectedTarget
+) ->
+    valid_log_request(Request) andalso is_map(Data) andalso
+        valid_log_target(Target, ExpectedTarget) andalso
+        valid_log_data(Request, Data) andalso
+        valid_log_capture(Request, Outcome, Data, Capture);
+validate_logs_response(_Request, _Response, _ExpectedTarget) ->
+    false.
+
+valid_log_request(#{handler := Handler, tail := Tail} = Request) ->
+    map_size(Request) =:= 2 andalso
+        (Handler =:= null orelse
+            (is_binary(Handler) andalso observer_cli_log:addressable_handler_id(Handler))) andalso
+        is_integer(Tail) andalso Tail >= 1 andalso Tail =< 2000;
+valid_log_request(_Request) ->
+    false.
+
+valid_log_target(
+    #{<<"node">> := ExpectedTarget, <<"otp_release">> := OtpRelease} = Target,
+    ExpectedTarget
+) when is_binary(OtpRelease) ->
+    map_size(Target) =:= 2 andalso byte_size(OtpRelease) =< 16;
+valid_log_target(_Target, _ExpectedTarget) ->
+    false.
+
+valid_log_data(
+    #{handler := Handler, tail := Requested},
+    #{<<"sources">> := Sources, <<"selected_source">> := Selected, <<"tail">> := Tail} = Data
+) ->
+    map_size(Data) =:= 3 andalso valid_log_sources(Sources) andalso
+        valid_log_selected(Selected, Sources) andalso
+        valid_log_request_binding(Handler, Sources, Selected) andalso
+        (Tail =:= null orelse valid_log_tail(Tail, Requested));
+valid_log_data(_Request, _Data) ->
+    false.
+
+valid_log_sources(Sources) when is_list(Sources), length(Sources) =< 64 ->
+    Ids = [maps:get(<<"id">>, Source, undefined) || Source <- Sources],
+    lists:all(fun valid_log_source/1, Sources) andalso
+        length(Ids) =:= length(lists:usort(Ids)) andalso
+        lists:sum([byte_size(Id) || Id <- Ids, is_binary(Id)]) =< 64 * 1024;
+valid_log_sources(_Sources) ->
+    false.
+
+valid_log_source(
+    #{
+        <<"id">> := Id,
+        <<"addressable">> := Addressable,
+        <<"handler_kind">> := Kind,
+        <<"supported">> := Supported,
+        <<"reason_code">> := Reason
+    } = Source
+) ->
+    map_size(Source) =:= 5 andalso valid_log_id(Id) andalso is_boolean(Addressable) andalso
+        Addressable =:= observer_cli_log:addressable_handler_id(Id) andalso
+        lists:member(Kind, [<<"logger_std_h_file">>, <<"other">>]) andalso
+        is_boolean(Supported) andalso
+        valid_log_source_relation(
+            Addressable, Kind, Supported, Reason
+        );
+valid_log_source(_Source) ->
+    false.
+
+valid_log_id(Id) when is_binary(Id), byte_size(Id) >= 1, byte_size(Id) =< 1024 ->
+    case unicode:characters_to_list(Id) of
+        Codepoints when is_list(Codepoints) -> length(Codepoints) =< 255;
+        _ -> false
+    end;
+valid_log_id(_Id) ->
+    false.
+
+valid_log_source_relation(true, <<"logger_std_h_file">>, true, null) ->
+    true;
+valid_log_source_relation(
+    false, <<"logger_std_h_file">>, true, <<"unaddressable_handler_id">>
+) ->
+    true;
+valid_log_source_relation(_Addressable, <<"other">>, false, <<"unsupported_log_handler">>) ->
+    true;
+valid_log_source_relation(
+    _Addressable, <<"logger_std_h_file">>, false, <<"unsupported_file_modes">>
+) ->
+    true;
+valid_log_source_relation(
+    _Addressable, <<"logger_std_h_file">>, false, <<"log_path_unrepresentable">>
+) ->
+    true;
+valid_log_source_relation(
+    _Addressable, Kind, false, <<"invalid_log_handler_config">>
+) ->
+    Kind =:= <<"logger_std_h_file">> orelse Kind =:= <<"other">>;
+valid_log_source_relation(_Addressable, _Kind, _Supported, _Reason) ->
+    false.
+
+log_config_reasons() ->
+    [
+        <<"unsupported_log_handler">>,
+        <<"unsupported_file_modes">>,
+        <<"log_path_unrepresentable">>,
+        <<"invalid_log_handler_config">>
+    ].
+
+valid_log_selected(null, _Sources) ->
+    true;
+valid_log_selected(
+    #{
+        <<"configured_path">> := Path,
+        <<"active_handler_fd_match">> := <<"unknown">>
+    } = Selected,
+    Sources
+) ->
+    map_size(Selected) =:= 7 andalso valid_log_path(Path) andalso
+        maps:get(<<"supported">>, Selected, false) andalso
+        maps:get(<<"handler_kind">>, Selected, undefined) =:= <<"logger_std_h_file">> andalso
+        lists:member(
+            maps:without([<<"configured_path">>, <<"active_handler_fd_match">>], Selected),
+            Sources
+        );
+valid_log_selected(_Selected, _Sources) ->
+    false.
+
+valid_log_path(<<"/", _/binary>> = Path) when byte_size(Path) =< 4096 ->
+    unicode:characters_to_binary(Path) =:= Path;
+valid_log_path(_Path) ->
+    false.
+
+valid_log_request_binding(null, _Sources, _Selected) ->
+    true;
+valid_log_request_binding(Handler, Sources, Selected) ->
+    lists:all(fun(Source) -> maps:get(<<"id">>, Source) =:= Handler end, Sources) andalso
+        case Selected of
+            null -> true;
+            _ -> maps:get(<<"id">>, Selected) =:= Handler
+        end.
+
+valid_log_tail(
+    #{
+        <<"scope">> := <<"configured_path">>,
+        <<"active_handler_fd_match">> := <<"unknown">>,
+        <<"visibility">> := <<"reader_visible">>,
+        <<"command_filesync_requested">> := false,
+        <<"consistency">> := <<"non_atomic">>,
+        <<"content_trust">> := <<"untrusted">>,
+        <<"requested_lines">> := Requested,
+        <<"returned_lines">> := Returned,
+        <<"captured_eof_bytes">> := CapturedEof,
+        <<"bytes_read">> := BytesRead,
+        <<"has_more">> := HasMore,
+        <<"content_truncated">> := ContentTruncated,
+        <<"truncation_reasons">> := Reasons,
+        <<"truncated_line_indexes">> := Indexes,
+        <<"lines">> := Lines
+    } = Tail,
+    Requested
+) ->
+    map_size(Tail) =:= 15 andalso is_integer(Requested) andalso Requested >= 1 andalso
+        Requested =< 2000 andalso is_integer(Returned) andalso Returned >= 0 andalso
+        Returned =< Requested andalso is_integer(CapturedEof) andalso CapturedEof >= 0 andalso
+        CapturedEof =< 16#7FFFFFFFFFFFFFFF andalso is_integer(BytesRead) andalso
+        BytesRead =:= min(CapturedEof, 64 * 1024) andalso is_boolean(HasMore) andalso
+        is_boolean(ContentTruncated) andalso
+        valid_log_lines(
+            Lines,
+            Returned,
+            BytesRead,
+            CapturedEof,
+            Requested,
+            HasMore,
+            ContentTruncated,
+            Reasons,
+            Indexes
+        );
+valid_log_tail(_Tail, _Requested) ->
+    false.
+
+valid_log_lines(
+    Lines,
+    Returned,
+    BytesRead,
+    CapturedEof,
+    Requested,
+    HasMore,
+    ContentTruncated,
+    Reasons,
+    Indexes
+) when is_list(Lines), length(Lines) =:= Returned ->
+    case decoded_log_lines(Lines, []) of
+        {ok, Decoded} ->
+            Sizes = [byte_size(Line) || Line <- Decoded],
+            Total = lists:sum(Sizes),
+            valid_log_reason_order(Reasons) andalso valid_log_indexes(Indexes, Returned) andalso
+                lists:all(fun(Size) -> Size =< 32 * 1024 end, Sizes) andalso
+                Total =< BytesRead andalso
+                max(Returned, Total + max(0, Returned - 1)) =< BytesRead andalso
+                ((Returned =:= 0) =:= (CapturedEof =:= 0)) andalso
+                valid_log_truncation(
+                    ContentTruncated, Reasons, Indexes, Sizes, CapturedEof, BytesRead, HasMore
+                ) andalso
+                (CapturedEof =< BytesRead orelse HasMore) andalso
+                valid_log_empty(CapturedEof, Returned, HasMore, ContentTruncated) andalso
+                valid_log_exhausted_tail(
+                    CapturedEof,
+                    BytesRead,
+                    Returned,
+                    Requested,
+                    Reasons,
+                    HasMore
+                );
+        error ->
+            false
+    end;
+valid_log_lines(
+    _Lines,
+    _Returned,
+    _BytesRead,
+    _CapturedEof,
+    _Requested,
+    _HasMore,
+    _ContentTruncated,
+    _Reasons,
+    _Indexes
+) ->
+    false.
+
+decoded_log_lines([], Acc) ->
+    {ok, lists:reverse(Acc)};
+decoded_log_lines([Line | Rest], Acc) when is_binary(Line) ->
+    case unicode:characters_to_binary(Line) of
+        Line -> decoded_log_lines(Rest, [Line | Acc]);
+        _ -> error
+    end;
+decoded_log_lines(
+    [
+        #{<<"encoding">> := <<"base64">>, <<"data">> := Encoded} = Line | Rest
+    ],
+    Acc
+) when map_size(Line) =:= 2, is_binary(Encoded) ->
+    try base64:decode(Encoded) of
+        Decoded ->
+            case
+                base64:encode(Decoded) =:= Encoded andalso
+                    unicode:characters_to_binary(Decoded) =/= Decoded
+            of
+                true -> decoded_log_lines(Rest, [Decoded | Acc]);
+                false -> error
+            end
+    catch
+        _:_ -> error
+    end;
+decoded_log_lines(_Lines, _Acc) ->
+    error.
+
+valid_log_reason_order([]) -> true;
+valid_log_reason_order([<<"byte_cap">>]) -> true;
+valid_log_reason_order([<<"line_cap">>]) -> true;
+valid_log_reason_order([<<"byte_cap">>, <<"line_cap">>]) -> true;
+valid_log_reason_order(_Reasons) -> false.
+
+valid_log_indexes(Indexes, Returned) when is_list(Indexes) ->
+    valid_log_indexes(Indexes, Returned, -1);
+valid_log_indexes(_Indexes, _Returned) ->
+    false.
+
+valid_log_indexes([], _Returned, _Previous) ->
+    true;
+valid_log_indexes([Index | Rest], Returned, Previous) when
+    is_integer(Index), Index > Previous, Index >= 0, Index < Returned
+->
+    valid_log_indexes(Rest, Returned, Index);
+valid_log_indexes(_Indexes, _Returned, _Previous) ->
+    false.
+
+valid_log_truncation(false, [], [], _Sizes, _CapturedEof, _BytesRead, _HasMore) ->
+    true;
+valid_log_truncation(true, [<<"byte_cap">>], [0], _Sizes, CapturedEof, 65536, true) ->
+    CapturedEof > 65536;
+valid_log_truncation(true, [<<"line_cap">>], Indexes, Sizes, _CapturedEof, BytesRead, true) ->
+    Indexes =/= [] andalso BytesRead > 32768 andalso
+        lists:all(fun(Index) -> line_cap_size(lists:nth(Index + 1, Sizes)) end, Indexes);
+valid_log_truncation(
+    true,
+    [<<"byte_cap">>, <<"line_cap">>],
+    Indexes,
+    Sizes,
+    CapturedEof,
+    65536,
+    true
+) ->
+    CapturedEof > 65536 andalso lists:member(0, Indexes) andalso
+        lists:all(
+            fun
+                (0) -> true;
+                (Index) -> line_cap_size(lists:nth(Index + 1, Sizes))
+            end,
+            Indexes
+        ) andalso
+        lists:any(fun(Index) -> line_cap_size(lists:nth(Index + 1, Sizes)) end, Indexes);
+valid_log_truncation(
+    _ContentTruncated, _Reasons, _Indexes, _Sizes, _CapturedEof, _BytesRead, _HasMore
+) ->
+    false.
+
+line_cap_size(Size) -> Size >= 32765 andalso Size =< 32768.
+
+valid_log_empty(0, 0, false, false) ->
+    true;
+valid_log_empty(CapturedEof, Returned, _HasMore, _ContentTruncated) ->
+    CapturedEof > 0 andalso Returned > 0.
+
+valid_log_exhausted_tail(
+    CapturedEof, BytesRead, Returned, Requested, [], HasMore
+) when CapturedEof =:= BytesRead, Returned < Requested ->
+    not HasMore;
+valid_log_exhausted_tail(
+    _CapturedEof, _BytesRead, _Returned, _Requested, _Reasons, _HasMore
+) ->
+    true.
+
+valid_log_capture(
+    Request,
+    Outcome,
+    #{<<"sources">> := Sources, <<"selected_source">> := Selected, <<"tail">> := Tail},
+    #{
+        <<"started_at">> := Started,
+        <<"finished_at">> := Finished,
+        <<"duration_ms">> := Duration,
+        <<"probes">> := [Probe],
+        <<"observer_effects">> := Effects
+    } = Capture
+) ->
+    map_size(Capture) =:= 5 andalso is_binary(Started) andalso is_binary(Finished) andalso
+        byte_size(Started) =< 64 andalso
+        byte_size(Finished) =< 64 andalso is_integer(Duration) andalso Duration >= 0 andalso
+        Duration =< 16#7FFFFFFFFFFFFFFF andalso valid_log_probe(Probe, Duration) andalso
+        valid_log_effects(Effects) andalso
+        valid_log_matrix(Request, Outcome, Sources, Selected, Tail, Probe, lists:last(Effects));
+valid_log_capture(_Request, _Outcome, _Data, _Capture) ->
+    false.
+
+valid_log_probe(
+    #{
+        <<"id">> := <<"log_file_tail">>,
+        <<"required">> := true,
+        <<"status">> := Status,
+        <<"reason_code">> := Reason,
+        <<"duration_ms">> := Duration,
+        <<"samples">> := 1,
+        <<"coverage">> := Coverage
+    } = Probe,
+    Duration
+) ->
+    map_size(Probe) =:= 7 andalso
+        lists:member(Status, [<<"ok">>, <<"unavailable">>, <<"error">>]) andalso
+        valid_probe_reason(Status, Reason) andalso valid_log_coverage(Coverage);
+valid_log_probe(_Probe, _Duration) ->
+    false.
+
+valid_log_coverage(Coverage) when is_list(Coverage) ->
+    Stages = [
+        <<"source_classification_complete">>,
+        <<"source_selected">>,
+        <<"path_prechecked">>,
+        <<"fd_identity_verified">>,
+        <<"bytes_captured">>,
+        <<"post_read_verified">>
+    ],
+    lists:prefix(Coverage, Stages);
+valid_log_coverage(_Coverage) ->
+    false.
+
+valid_log_effects([Diagnostics, ModuleLoad, LogRead]) ->
+    valid_log_diagnostics_effect(Diagnostics) andalso valid_log_module_effect(ModuleLoad) andalso
+        valid_configured_log_effect(LogRead);
+valid_log_effects([Diagnostics, ModuleLoad, Distribution, LogRead]) ->
+    valid_log_diagnostics_effect(Diagnostics) andalso valid_log_module_effect(ModuleLoad) andalso
+        valid_log_distribution_effect(Distribution) andalso valid_configured_log_effect(LogRead);
+valid_log_effects(_Effects) ->
+    false.
+
+valid_log_diagnostics_effect(
+    #{
+        <<"id">> := <<"diagnostics_worker">>,
+        <<"affected_facts">> := [
+            <<"process_count">>,
+            <<"port_count">>,
+            <<"memory">>,
+            <<"io">>,
+            <<"garbage_collection">>
+        ]
+    } = Effect
+) ->
+    map_size(Effect) =:= 2;
+valid_log_diagnostics_effect(_Effect) ->
+    false.
+
+valid_log_module_effect(
+    #{<<"id">> := <<"module_load">>, <<"module_loaded_before_sample">> := Loaded} = Effect
+) ->
+    map_size(Effect) =:= 2 andalso is_boolean(Loaded);
+valid_log_module_effect(_Effect) ->
+    false.
+
+valid_log_distribution_effect(
+    #{
+        <<"id">> := <<"distribution_controller">>,
+        <<"controller_peer">> := Peer,
+        <<"dynamic_controller_name_atom">> := true
+    } = Effect
+) ->
+    map_size(Effect) =:= 3 andalso is_binary(Peer) andalso byte_size(Peer) > 0;
+valid_log_distribution_effect(_Effect) ->
+    false.
+
+valid_configured_log_effect(
+    #{
+        <<"id">> := <<"configured_log_read">>,
+        <<"handler_ids_enumerated">> := Enumerated,
+        <<"handler_config_lookups">> := Lookups,
+        <<"read_attempts">> := Attempts,
+        <<"raw_read_cap_bytes">> := 65536,
+        <<"atime_may_change">> := true,
+        <<"consistency">> := <<"non_atomic">>,
+        <<"command_filesync_attempted">> := false
+    } = Effect
+) ->
+    map_size(Effect) =:= 8 andalso is_boolean(Enumerated) andalso is_integer(Lookups) andalso
+        Lookups >= 0 andalso Lookups =< 66 andalso is_integer(Attempts) andalso Attempts >= 0 andalso
+        Attempts =< 2;
+valid_configured_log_effect(_Effect) ->
+    false.
+
+valid_log_matrix(
+    #{handler := Handler},
+    Outcome,
+    Sources,
+    Selected,
+    Tail,
+    #{<<"status">> := Status, <<"reason_code">> := Reason, <<"coverage">> := Coverage},
+    #{
+        <<"handler_ids_enumerated">> := Enumerated,
+        <<"handler_config_lookups">> := Lookups,
+        <<"read_attempts">> := Attempts
+    }
+) ->
+    Mode =
+        case Handler of
+            null -> auto;
+            _ -> explicit
+        end,
+    valid_log_effect_relations(
+        Mode, Reason, Sources, Selected, Coverage, Enumerated, Lookups, Attempts
+    ) andalso
+        valid_log_count_matrix(Mode, Outcome, Reason, Lookups, Attempts) andalso
+        valid_log_outcome_matrix(Mode, Handler, Outcome, Status, Reason, Sources, Selected, Tail) andalso
+        valid_log_outcome_coverage(Outcome, Reason, Selected, Coverage);
+valid_log_matrix(
+    _Request, _Outcome, _Sources, _Selected, _Tail, _Probe, _Effect
+) ->
+    false.
+
+valid_log_effect_relations(
+    Mode, Reason, Sources, Selected, Coverage, Enumerated, Lookups, Attempts
+) ->
+    Enumerated =:= (Mode =:= auto andalso Reason =/= <<"unsupported_target_platform">>) andalso
+        Lookups >= length(Sources) andalso
+        (Mode =:= auto orelse Lookups =< 3) andalso
+        ((Selected =:= null) =:= (Attempts =:= 0)) andalso
+        lists:member(<<"source_selected">>, Coverage) =:= (Selected =/= null) andalso
+        (not lists:member(<<"path_prechecked">>, Coverage) orelse Attempts >= 1) andalso
+        (Selected =:= null orelse Lookups >= 1) andalso
+        valid_log_zero_work(Reason, Lookups, Attempts).
+
+valid_log_zero_work(Reason, Lookups, Attempts) when
+    Reason =:= <<"unsupported_target_platform">>; Reason =:= <<"scan_budget_exceeded">>
+->
+    Lookups =:= 0 andalso Attempts =:= 0;
+valid_log_zero_work(_Reason, _Lookups, _Attempts) ->
+    true.
+
+valid_log_count_matrix(explicit, Outcome, _Reason, Lookups, Attempts) when
+    Outcome =:= <<"complete">>; Outcome =:= <<"partial">>
+->
+    lists:member(Lookups, [2, 3]) andalso lists:member(Attempts, [1, 2]);
+valid_log_count_matrix(explicit, <<"error">>, <<"log_handler_not_found">>, Lookups, 0) ->
+    lists:member(Lookups, [0, 1]);
+valid_log_count_matrix(explicit, <<"error">>, Reason, 1, 0) ->
+    lists:member(Reason, log_config_reasons());
+valid_log_count_matrix(_Mode, _Outcome, _Reason, _Lookups, _Attempts) ->
+    true.
+
+valid_log_outcome_matrix(
+    Mode, Handler, <<"complete">>, <<"ok">>, null, Sources, Selected, Tail
+) ->
+    Selected =/= null andalso Tail =/= null andalso
+        not maps:get(<<"content_truncated">>, Tail) andalso
+        valid_log_selected_sources(Mode, Handler, Sources, Selected) andalso
+        valid_log_success_counts(Mode, Handler, Sources, Selected, Tail);
+valid_log_outcome_matrix(
+    Mode, Handler, <<"partial">>, <<"error">>, Reason, Sources, Selected, Tail
+) ->
+    Selected =/= null andalso Tail =/= null andalso
+        maps:get(<<"content_truncated">>, Tail) andalso
+        Reason =:= log_tail_reason(Tail) andalso
+        valid_log_selected_sources(Mode, Handler, Sources, Selected) andalso
+        valid_log_success_counts(Mode, Handler, Sources, Selected, Tail);
+valid_log_outcome_matrix(
+    Mode, Handler, <<"error">>, <<"unavailable">>, Reason, Sources, Selected, null
+) ->
+    valid_log_error_matrix(Mode, Handler, Reason, Sources, Selected);
+valid_log_outcome_matrix(
+    _Mode, _Handler, _Outcome, _Status, _Reason, _Sources, _Selected, _Tail
+) ->
+    false.
+
+valid_log_success_counts(auto, _Handler, Sources, Selected, _Tail) ->
+    log_supported_count(Sources) =:= 1 andalso
+        selected_projection(Selected) =:=
+            hd([Source || #{<<"supported">> := true} = Source <- Sources]);
+valid_log_success_counts(explicit, Handler, [Source], Selected, _Tail) ->
+    maps:get(<<"id">>, Source) =:= Handler andalso
+        maps:get(<<"supported">>, Source) andalso
+        maps:get(<<"addressable">>, Source) andalso
+        selected_projection(Selected) =:= Source;
+valid_log_success_counts(_Mode, _Handler, _Sources, _Selected, _Tail) ->
+    false.
+
+valid_log_selected_sources(auto, _Handler, Sources, Selected) ->
+    log_supported_count(Sources) =:= 1 andalso lists:member(selected_projection(Selected), Sources);
+valid_log_selected_sources(explicit, Handler, [Source], Selected) ->
+    maps:get(<<"id">>, Source) =:= Handler andalso
+        maps:get(<<"supported">>, Source) andalso
+        maps:get(<<"addressable">>, Source) andalso
+        selected_projection(Selected) =:= Source;
+valid_log_selected_sources(_Mode, _Handler, _Sources, _Selected) ->
+    false.
+
+selected_projection(Selected) ->
+    maps:without([<<"configured_path">>, <<"active_handler_fd_match">>], Selected).
+
+log_supported_count(Sources) ->
+    length([ok || #{<<"supported">> := true} <- Sources]).
+
+log_tail_reason(#{<<"truncation_reasons">> := [<<"byte_cap">> | _]}) ->
+    <<"log_byte_cap_reached">>;
+log_tail_reason(#{<<"truncation_reasons">> := [<<"line_cap">>]}) ->
+    <<"log_line_cap_reached">>;
+log_tail_reason(_Tail) ->
+    invalid.
+
+valid_log_error_matrix(auto, _Handler, <<"unsupported_target_platform">>, [], null) ->
+    true;
+valid_log_error_matrix(explicit, _Handler, <<"unsupported_target_platform">>, [], null) ->
+    true;
+valid_log_error_matrix(auto, _Handler, <<"scan_budget_exceeded">>, [], null) ->
+    true;
+valid_log_error_matrix(auto, _Handler, <<"log_handler_required">>, Sources, null) ->
+    length(Sources) >= 2 andalso log_supported_count(Sources) >= 2;
+valid_log_error_matrix(auto, _Handler, <<"log_source_unavailable">>, Sources, null) ->
+    log_supported_count(Sources) =:= 0;
+valid_log_error_matrix(explicit, _Handler, <<"log_handler_not_found">>, [], null) ->
+    true;
+valid_log_error_matrix(explicit, Handler, Reason, [Source], null) ->
+    case lists:member(Reason, log_config_reasons()) of
+        true ->
+            maps:get(<<"id">>, Source) =:= Handler andalso
+                not maps:get(<<"supported">>, Source) andalso
+                maps:get(<<"reason_code">>, Source) =:= Reason;
+        false ->
+            false
+    end;
+valid_log_error_matrix(Mode, Handler, Reason, Sources, Selected) ->
+    lists:member(Reason, log_selected_file_reasons()) andalso Selected =/= null andalso
+        valid_log_selected_sources(Mode, Handler, Sources, Selected).
+
+log_selected_file_reasons() ->
+    [
+        <<"unsupported_log_file_type">>,
+        <<"log_file_identity_unavailable">>,
+        <<"log_source_changed">>,
+        <<"log_file_unavailable">>,
+        <<"log_file_read_failed">>
+    ].
+
+valid_log_outcome_coverage(Outcome, _Reason, _Selected, Coverage) when
+    Outcome =:= <<"complete">>; Outcome =:= <<"partial">>
+->
+    Coverage =:=
+        [
+            <<"source_classification_complete">>,
+            <<"source_selected">>,
+            <<"path_prechecked">>,
+            <<"fd_identity_verified">>,
+            <<"bytes_captured">>,
+            <<"post_read_verified">>
+        ];
+valid_log_outcome_coverage(
+    <<"error">>, Reason, null, Coverage
+) when Reason =:= <<"unsupported_target_platform">>; Reason =:= <<"scan_budget_exceeded">> ->
+    Coverage =:= [];
+valid_log_outcome_coverage(<<"error">>, _Reason, null, Coverage) ->
+    Coverage =:= [<<"source_classification_complete">>];
+valid_log_outcome_coverage(<<"error">>, _Reason, _Selected, Coverage) ->
+    length(Coverage) >= 2 andalso
+        not lists:member(<<"post_read_verified">>, Coverage);
+valid_log_outcome_coverage(_Outcome, _Reason, _Selected, _Coverage) ->
+    false.
 
 valid_policy_response(_Command, include, _Response) ->
     true;
@@ -1481,6 +2178,7 @@ direct_probe_command(Command) ->
         <<"sockets">>,
         <<"otp_state">>,
         <<"supervision_tree">>,
+        <<"logs">>,
         <<"trace_call">>,
         <<"trace_stop_all">>
     ]).
@@ -1641,8 +2339,11 @@ valid_issue_class(Class, Reason) when is_binary(Reason) ->
 valid_issue_class(_Class, _Reason) ->
     false.
 
-valid_command_data(Command, #{<<"meta">> := #{<<"capture">> := null}}) ->
-    lists:member(Command, [trace_call, trace_stop_all]);
+valid_command_data(
+    Command,
+    #{<<"meta">> := #{<<"capture">> := null}} = Response
+) when Command =:= trace_call; Command =:= trace_stop_all ->
+    valid_null_trace_response(Command, Response);
 valid_command_data(
     Command,
     #{
@@ -1654,6 +2355,55 @@ valid_command_data(
         valid_resource_wrappers(Response) andalso valid_command_payload(Command, Response, Probes);
 valid_command_data(_Command, _Response) ->
     false.
+
+valid_null_trace_response(
+    Command,
+    #{<<"outcome">> := <<"error">>, <<"data">> := null, <<"issues">> := Issues}
+) when is_list(Issues) ->
+    Errors = [
+        {Class, Reason}
+     || #{
+            <<"severity">> := <<"error">>,
+            <<"class">> := Class,
+            <<"reason_code">> := Reason
+        } <- Issues
+    ],
+    Warnings = [
+        {Class, Reason}
+     || #{
+            <<"severity">> := <<"warning">>,
+            <<"class">> := Class,
+            <<"reason_code">> := Reason
+        } <- Issues
+    ],
+    case Errors of
+        [{Class, Reason}] ->
+            valid_null_trace_error(Command, Class, Reason) andalso
+                lists:member(Warnings, [
+                    [], [{<<"safety_refusal">>, <<"global_trace_replacement">>}]
+                ]);
+        _ ->
+            false
+    end;
+valid_null_trace_response(_Command, _Response) ->
+    false.
+
+valid_null_trace_error(trace_call, Class, Reason) ->
+    lists:member({Class, Reason}, [
+        {<<"argument">>, <<"invalid_mfa">>},
+        {<<"capability">>, <<"capability_unavailable">>},
+        {<<"capability">>, <<"mfa_unavailable">>},
+        {<<"capability">>, <<"mfa_not_traceable">>},
+        {<<"safety_refusal">>, <<"invalid_trace_pid">>},
+        {<<"safety_refusal">>, <<"trace_busy">>},
+        {<<"internal">>, <<"helper_setup_failed">>},
+        {<<"cleanup">>, <<"cleanup_unconfirmed">>}
+    ]);
+valid_null_trace_error(trace_stop_all, Class, Reason) ->
+    lists:member({Class, Reason}, [
+        {<<"capability">>, <<"capability_unavailable">>},
+        {<<"cleanup">>, <<"cleanup_unconfirmed">>}
+    ]).
 
 valid_command_payload(Command, #{<<"data">> := Data} = Response, Probes) ->
     case Command of
@@ -1675,13 +2425,17 @@ valid_command_payload(Command, #{<<"data">> := Data} = Response, Probes) ->
             valid_otp_state_payload(Response, Probes);
         supervision_tree ->
             valid_supervision_tree_data(Data);
+        logs ->
+            is_map(Data);
         trace_call ->
-            valid_trace_data(trace_call, Data);
+            valid_trace_response(trace_call, Response, Probes);
         trace_stop_all ->
-            valid_trace_data(trace_stop_all, Data);
+            valid_trace_response(trace_stop_all, Response, Probes);
         _ ->
             valid_list_command_payload(Command, Data, Probes)
-    end.
+    end;
+valid_command_payload(_Command, _Response, _Probes) ->
+    false.
 
 valid_status_data(#{<<"status">> := Status}) ->
     is_binary(Status) andalso byte_size(Status) > 0;
@@ -1710,6 +2464,129 @@ valid_trace_data(Command, #{<<"reason">> := Reason, <<"trace">> := Trace}) ->
 valid_trace_data(_Command, _Data) ->
     false.
 
+valid_trace_response(
+    Command,
+    #{<<"outcome">> := Outcome, <<"data">> := Data} = Response,
+    [Probe]
+) ->
+    valid_trace_contract(Response, Probe) andalso valid_trace_data(Command, Data) andalso
+        valid_trace_outcome(Command, Outcome, Data, Probe);
+valid_trace_response(_Command, _Response, _Probes) ->
+    false.
+
+valid_trace_contract(
+    #{
+        <<"issues">> := [
+            #{
+                <<"severity">> := <<"warning">>,
+                <<"class">> := <<"safety_refusal">>,
+                <<"reason_code">> := <<"global_trace_replacement">>,
+                <<"message">> := Message
+            } = Issue
+        ],
+        <<"meta">> := #{
+            <<"capture">> := #{
+                <<"duration_ms">> := Duration,
+                <<"observer_effects">> := [
+                    #{
+                        <<"id">> := <<"global_trace_replacement">>,
+                        <<"controller">> := Controller
+                    } = Effect
+                ]
+            }
+        }
+    },
+    #{
+        <<"id">> := <<"trace">>,
+        <<"duration_ms">> := Duration,
+        <<"samples">> := 1,
+        <<"coverage">> := [<<"recon_2_5_6">>, <<"external_global_calls_only">>]
+    }
+) ->
+    map_size(Issue) =:= 4 andalso is_binary(Message) andalso byte_size(Message) > 0 andalso
+        map_size(Effect) =:= 2 andalso is_binary(Controller) andalso byte_size(Controller) > 0;
+valid_trace_contract(_Response, _Probe) ->
+    false.
+
+valid_trace_outcome(
+    Command,
+    <<"complete">>,
+    #{<<"reason">> := Reason, <<"trace">> := Trace},
+    #{<<"status">> := <<"ok">>, <<"reason_code">> := null}
+) ->
+    maps:get(<<"cleanup_confirmed">>, Trace) =:= true andalso
+        valid_trace_reason(Command, complete, Reason) andalso
+        valid_trace_reason_shape(Command, complete, Reason, Trace);
+valid_trace_outcome(
+    Command,
+    <<"error">>,
+    #{<<"reason">> := Reason, <<"trace">> := Trace},
+    #{<<"status">> := <<"error">>, <<"reason_code">> := Reason}
+) ->
+    Cleanup = maps:get(<<"cleanup_confirmed">>, Trace),
+    valid_trace_reason(Command, error, Reason) andalso
+        valid_trace_reason_shape(Command, error, Reason, Trace) andalso
+        (Reason =:= <<"cleanup_unconfirmed">>) =:= (Cleanup =:= false);
+valid_trace_outcome(_Command, _Outcome, _Data, _Probe) ->
+    false.
+
+valid_trace_reason(trace_call, complete, Reason) ->
+    lists:member(Reason, [
+        <<"limit_reached">>, <<"rate_exceeded">>, <<"duration_elapsed">>, <<"stopped">>
+    ]);
+valid_trace_reason(trace_stop_all, complete, <<"stopped">>) ->
+    true;
+valid_trace_reason(trace_call, error, Reason) ->
+    lists:member(Reason, [
+        <<"capture_internal_error">>,
+        <<"dispatcher_disconnected">>,
+        <<"controller_disconnected">>,
+        <<"tracee_exited">>,
+        <<"cleanup_unconfirmed">>
+    ]);
+valid_trace_reason(trace_stop_all, error, Reason) ->
+    lists:member(Reason, [<<"capture_internal_error">>, <<"cleanup_unconfirmed">>]);
+valid_trace_reason(_Command, _Outcome, _Reason) ->
+    false.
+
+valid_trace_reason_shape(trace_call, complete, Reason, Trace) when
+    Reason =:= <<"limit_reached">>; Reason =:= <<"rate_exceeded">>
+->
+    valid_natural_trace_shape(Trace);
+valid_trace_reason_shape(_Command, complete, _Reason, Trace) ->
+    valid_forced_trace_shape(Trace);
+valid_trace_reason_shape(_Command, error, _Reason, Trace) ->
+    valid_forced_trace_shape(Trace).
+
+valid_natural_trace_shape(#{
+    <<"trace_complete">> := Complete,
+    <<"dropped_count">> := Dropped,
+    <<"module_reloaded">> := Reloaded,
+    <<"interference_detected">> := Interference
+}) ->
+    case Complete of
+        true ->
+            Reloaded =:= false andalso Interference =:= false;
+        false ->
+            (Reloaded orelse Interference orelse
+                (is_integer(Dropped) andalso Dropped > 0)) andalso
+                (Dropped =/= null orelse Interference)
+    end;
+valid_natural_trace_shape(_Trace) ->
+    false.
+
+valid_forced_trace_shape(
+    #{
+        <<"status">> := <<"partial">>,
+        <<"trace_complete">> := false,
+        <<"truncated">> := true,
+        <<"dropped_count">> := null
+    } = Trace
+) ->
+    not is_map_key(<<"module_reloaded">>, Trace);
+valid_forced_trace_shape(_Trace) ->
+    false.
+
 valid_trace_capture(
     Command,
     #{
@@ -1731,7 +2608,7 @@ valid_trace_capture(
         lists:all(fun valid_trace_event/1, Events) andalso is_boolean(Cleanup) andalso
         valid_trace_cleanup(Cleanup, Complete) andalso valid_trace_reload(Trace) andalso
         is_boolean(Interference) andalso valid_trace_interference(Interference, Trace) andalso
-        valid_trace_selector(Command, Trace) andalso valid_trace_event_selectors(Trace, Events);
+        valid_trace_selector(Command, Trace) andalso valid_trace_events(Command, Trace, Events);
 valid_trace_capture(_Command, _Trace) ->
     false.
 
@@ -1757,7 +2634,6 @@ valid_trace_status(<<"partial">>, false) -> true;
 valid_trace_status(_Status, _Complete) -> false.
 
 valid_trace_loss(true, false, 0) -> true;
-valid_trace_loss(true, true, Dropped) -> nonnegative_integer(Dropped) andalso Dropped > 0;
 valid_trace_loss(false, false, 0) -> true;
 valid_trace_loss(false, true, null) -> true;
 valid_trace_loss(false, true, Dropped) -> nonnegative_integer(Dropped) andalso Dropped > 0;
@@ -1809,6 +2685,11 @@ valid_trace_event_selectors(#{<<"tracee">> := Tracee, <<"mfa">> := MFA}, Events)
         Events
     );
 valid_trace_event_selectors(_Trace, Events) ->
+    Events =:= [].
+
+valid_trace_events(trace_call, Trace, Events) ->
+    valid_trace_event_selectors(Trace, Events);
+valid_trace_events(trace_stop_all, _Trace, Events) ->
     Events =:= [].
 
 valid_trace_mfa(
@@ -2365,6 +3246,7 @@ required_probe_id(ports) -> <<"port_inventory">>;
 required_probe_id(sockets) -> <<"socket_inventory">>;
 required_probe_id(otp_state) -> <<"otp_state">>;
 required_probe_id(supervision_tree) -> <<"supervision_tree">>;
+required_probe_id(logs) -> <<"log_file_tail">>;
 required_probe_id(trace_call) -> <<"trace">>;
 required_probe_id(trace_stop_all) -> <<"trace">>;
 required_probe_id(_Command) -> undefined.

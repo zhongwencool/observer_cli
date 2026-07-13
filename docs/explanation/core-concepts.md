@@ -239,13 +239,21 @@ to the process. `supervision-tree` is limited to one application root and
 direct children, but its preflight and supervisor calls can still be linear,
 blocking, and non-atomic.
 
+**Retained logs.** `logs` is a bounded configured-path file read, not a Logger
+event ledger. It neither flushes Logger nor proves that the configured path is
+the handler's active file descriptor. The command trusts target code, handler
+callbacks, and the target filesystem namespace; regular-file identity checks
+are correctness guardrails, not a hostile-filesystem sandbox. Returned text is
+sensitive and untrusted, so identifier redaction is deliberately unavailable.
+
 **Tracing.** `trace call` changes node-global static tracing and requires one
 exact MFA, one target-local PID, bounded duration and event rate, plus
 `--replace-existing-trace`. The rate form is recon's burst breaker rather than
-a strict pacer. Setup and cleanup clear legacy process trace flags and tracers,
-static call patterns (including on-load and call-memory), and fixed-name recon
-helpers. OTP dynamic trace sessions remain. `trace stop --all` has the same
-global scope.
+a strict pacer. Setup and cleanup clear legacy process/port trace flags and
+tracers, static call patterns (including on-load and call-memory), and fixed-name
+recon helpers. OTP dynamic trace sessions are not directly cleared, but
+terminating a fixed-name occupant can disable a session that uses it as its
+tracer. `trace stop --all` has the same global scope.
 
 ### Sampling changes the sample
 
@@ -276,6 +284,10 @@ trace arguments, trace returns, or arbitrary operator expressions.
 The `process` command includes a bounded normalized stacktrace. `otp-state` is
 the deliberate high-risk exception: it acquires full state and returns only
 bounded behavior-aware shapes.
+
+`logs` is a separate explicit sensitive-content exception. It can return up to
+64 KiB retained from one admitted configured file path and is never included in
+default `snapshot`, `diagnose`, or TUI collection.
 
 The TUI has explicit process subviews for messages, dictionary, stack, and
 state. Opening one reads and renders that selected data. Treat the terminal and

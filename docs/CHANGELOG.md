@@ -4,6 +4,14 @@ Release and maintenance changes, newest first.
 
 ## 2.0.0 (release candidate)
 
+- Added `observer_cli logs` for bounded retained evidence from one trusted plain
+  `logger_std_h` configured file path, with strict source, file-identity, tail,
+  response, and output-encoding limits.
+- Kept logs separate from default snapshot, diagnosis, and TUI flows; the
+  command does not flush Logger, read archives, accept arbitrary paths, or
+  claim reliable redaction of arbitrary log text.
+- Hardened shared text, term, and JSON output against raw terminal control and
+  bidirectional-control codepoints while preserving ordinary Unicode.
 - Added a command-first interface for production diagnostics, automation, and
   AI agents, covering health checks, snapshots, resource inspection, OTP state,
   and bounded call tracing.

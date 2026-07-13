@@ -85,6 +85,16 @@ command_request_converts_validated_cli_values_test() ->
         observer_cli_escriptize:command_request(snapshot, [], #{deep => true, limit => "20"})
     ),
     ?assertEqual(
+        #{handler => null, tail => 200},
+        observer_cli_escriptize:command_request(logs, [], #{})
+    ),
+    ?assertEqual(
+        #{handler => <<"app file">>, tail => 500},
+        observer_cli_escriptize:command_request(
+            logs, [], #{handler => "app file", tail => "500"}
+        )
+    ),
+    ?assertEqual(
         #{observe => "5s", app => "kernel"},
         observer_cli_escriptize:command_request(
             diagnose, [], #{observe => "5s", app => "kernel", limit => "20"}
@@ -126,6 +136,7 @@ controller_boundary_helpers_test() ->
             {sockets, <<"socket_inventory">>},
             {otp_state, <<"otp_state">>},
             {supervision_tree, <<"supervision_tree">>},
+            {logs, <<"log_file_tail">>},
             {trace_call, <<"trace">>},
             {trace_stop_all, <<"trace">>},
             {unknown, undefined}
@@ -566,6 +577,503 @@ parse_args_test() ->
         ])
     ).
 
+logs_real_response_and_validator_test() ->
+    Dir = temporary_directory("observer_cli_logs_validator"),
+    Path = filename:join(Dir, "app.log"),
+    Handler = observer_cli_logs_validator,
+    Request = #{handler => <<"observer_cli_logs_validator">>, tail => 200},
+    try
+        ok = file:write_file(Path, <<"before\nvalidator marker\n">>),
+        ok = logger:add_handler(Handler, logger_std_h, #{
+            config => #{type => file, file => Path, modes => [append, raw]}
+        }),
+        Response = dispatch_logs(Request),
+        ?assertEqual(
+            ok, observer_cli_escriptize:validate_response(logs, include, node(), Response)
+        ),
+        ?assert(
+            observer_cli_escriptize:validate_logs_response(
+                Request, Response, atom_to_binary(node())
+            )
+        ),
+        ?assertEqual({ok, Response, 0}, observer_cli_escriptize:dispatch_response(Response)),
+        assert_log_response_mutations_rejected(Request, Response)
+    after
+        _ = logger:remove_handler(Handler),
+        file:del_dir_r(Dir)
+    end.
+
+logs_partial_and_error_rows_validate_test() ->
+    Dir = temporary_directory("observer_cli_logs_rows"),
+    Path = filename:join(Dir, "large.log"),
+    Handler = observer_cli_logs_rows,
+    Request = #{handler => <<"observer_cli_logs_rows">>, tail => 200},
+    try
+        ok = file:write_file(Path, binary:copy(<<"x">>, 40000)),
+        ok = logger:add_handler(Handler, logger_std_h, #{
+            config => #{type => file, file => Path, modes => [append, raw]}
+        }),
+        Partial = dispatch_logs(Request),
+        ?assertMatch(#{<<"outcome">> := <<"partial">>}, Partial),
+        ?assert(
+            observer_cli_escriptize:validate_logs_response(
+                Request, Partial, atom_to_binary(node())
+            )
+        ),
+        ?assertEqual({ok, Partial, 3}, observer_cli_escriptize:dispatch_response(Partial)),
+        ok = logger:remove_handler(Handler),
+        UnsupportedRequest = #{handler => <<"default">>, tail => 200},
+        Unsupported = dispatch_logs(UnsupportedRequest),
+        ?assertMatch(
+            #{
+                <<"outcome">> := <<"error">>,
+                <<"meta">> := #{
+                    <<"capture">> := #{
+                        <<"probes">> := [#{<<"reason_code">> := <<"unsupported_log_handler">>}]
+                    }
+                }
+            },
+            Unsupported
+        ),
+        ?assert(
+            observer_cli_escriptize:validate_logs_response(
+                UnsupportedRequest, Unsupported, atom_to_binary(node())
+            )
+        ),
+        ?assertEqual({ok, Unsupported, 2}, observer_cli_escriptize:dispatch_response(Unsupported))
+    after
+        _ = logger:remove_handler(Handler),
+        file:del_dir_r(Dir)
+    end.
+
+logs_reason_matrix_accepts_valid_rows_test() ->
+    Target = atom_to_binary(node()),
+    Auto = #{handler => null, tail => 200},
+    Handler = <<"matrix_handler">>,
+    Explicit = #{handler => Handler, tail => 200},
+    Supported = log_source_summary(Handler, <<"logger_std_h_file">>, true, null),
+    Selected = Supported#{
+        <<"configured_path">> => <<"/tmp/matrix.log">>,
+        <<"active_handler_fd_match">> => <<"unknown">>
+    },
+    Unsupported = log_source_summary(
+        <<"console">>, <<"other">>, false, <<"unsupported_log_handler">>
+    ),
+    Rows =
+        [
+            {Auto,
+                log_error_response(
+                    Target, <<"unsupported_target_platform">>, [], null, [], false, 0, 0
+                )},
+            {Auto,
+                log_error_response(
+                    Target, <<"scan_budget_exceeded">>, [], null, [], true, 0, 0
+                )},
+            {Auto,
+                log_error_response(
+                    Target,
+                    <<"log_handler_required">>,
+                    [
+                        log_source_summary(<<"first">>, <<"logger_std_h_file">>, true, null),
+                        log_source_summary(<<"second">>, <<"logger_std_h_file">>, true, null)
+                    ],
+                    null,
+                    [<<"source_classification_complete">>],
+                    true,
+                    2,
+                    0
+                )},
+            {Auto,
+                log_error_response(
+                    Target,
+                    <<"log_source_unavailable">>,
+                    [Unsupported],
+                    null,
+                    [<<"source_classification_complete">>],
+                    true,
+                    1,
+                    0
+                )},
+            {Explicit,
+                log_error_response(
+                    Target,
+                    <<"log_handler_not_found">>,
+                    [],
+                    null,
+                    [<<"source_classification_complete">>],
+                    false,
+                    0,
+                    0
+                )},
+            {Explicit,
+                log_error_response(
+                    Target,
+                    <<"log_handler_not_found">>,
+                    [],
+                    null,
+                    [<<"source_classification_complete">>],
+                    false,
+                    1,
+                    0
+                )},
+            {Explicit,
+                log_error_response(
+                    Target,
+                    <<"log_file_unavailable">>,
+                    [Supported],
+                    Selected,
+                    [<<"source_classification_complete">>, <<"source_selected">>],
+                    false,
+                    1,
+                    1
+                )},
+            {Explicit, log_byte_partial_response(Target, Supported, Selected)}
+        ] ++
+            [
+                {Explicit,
+                    log_error_response(
+                        Target,
+                        Reason,
+                        [log_source_summary(Handler, Kind, false, Reason)],
+                        null,
+                        [<<"source_classification_complete">>],
+                        false,
+                        1,
+                        0
+                    )}
+             || {Reason, Kind} <- [
+                    {<<"unsupported_log_handler">>, <<"other">>},
+                    {<<"unsupported_file_modes">>, <<"logger_std_h_file">>},
+                    {<<"log_path_unrepresentable">>, <<"logger_std_h_file">>},
+                    {<<"invalid_log_handler_config">>, <<"other">>}
+                ]
+            ],
+    lists:foreach(
+        fun({Request, Response}) ->
+            ?assert(observer_cli_escriptize:validate_logs_response(Request, Response, Target))
+        end,
+        Rows
+    ),
+    ?assertNot(
+        observer_cli_escriptize:validate_logs_response(
+            Explicit,
+            log_error_response(
+                Target,
+                <<"unsupported_file_modes">>,
+                [
+                    log_source_summary(
+                        Handler, <<"other">>, false, <<"unsupported_file_modes">>
+                    )
+                ],
+                null,
+                [<<"source_classification_complete">>],
+                false,
+                1,
+                0
+            ),
+            Target
+        )
+    ).
+
+logs_peer_historical_marker_test_() ->
+    {timeout, 30, fun logs_peer_historical_marker/0}.
+
+logs_peer_historical_marker() ->
+    with_distribution(fun(_Cookie) ->
+        {ok, Peer, Node} = peer:start_link(#{name => peer:random_name("observer_cli_logs")}),
+        Dir = temporary_directory("observer_cli_logs_peer"),
+        Path = filename:join(Dir, "app.log"),
+        Archive = filename:join(Dir, "app.log.1"),
+        Handler = observer_cli_logs_peer,
+        Request = #{handler => <<"observer_cli_logs_peer">>, tail => 20},
+        try
+            ok = observer_cli_escriptize:remote_load(Node),
+            ok = erpc:call(Node, logger, add_handler, [
+                Handler,
+                logger_std_h,
+                #{config => #{type => file, file => Path, modes => [write, raw]}}
+            ]),
+            ok = erpc:call(Node, logger, notice, ["observer-cli pre-connect marker"]),
+            ok = erpc:call(Node, logger_std_h, filesync, [Handler]),
+            BeforeIds = erpc:call(Node, logger, get_handler_ids, []),
+            BeforeConfig = erpc:call(Node, logger, get_handler_config, [Handler]),
+            {ok, Response, 0} = observer_cli_escriptize:run_dispatch(
+                Node, logs, Request, #{}, 10000
+            ),
+            Lines = maps:get(
+                <<"lines">>, maps:get(<<"tail">>, maps:get(<<"data">>, Response))
+            ),
+            ?assert(
+                lists:any(
+                    fun(Line) -> binary:match(Line, <<"pre-connect marker">>) =/= nomatch end,
+                    Lines
+                )
+            ),
+            ?assertEqual(BeforeIds, erpc:call(Node, logger, get_handler_ids, [])),
+            ?assertEqual(BeforeConfig, erpc:call(Node, logger, get_handler_config, [Handler])),
+            ok = file:rename(Path, Archive),
+            {ok, Missing, 3} = observer_cli_escriptize:run_dispatch(
+                Node, logs, Request, #{}, 10000
+            ),
+            ?assertMatch(
+                #{
+                    <<"outcome">> := <<"error">>,
+                    <<"meta">> := #{
+                        <<"capture">> := #{
+                            <<"probes">> := [
+                                #{<<"reason_code">> := <<"log_file_unavailable">>}
+                            ]
+                        }
+                    }
+                },
+                Missing
+            ),
+            ?assertEqual(false, filelib:is_file(Path)),
+            ?assertEqual(BeforeIds, erpc:call(Node, logger, get_handler_ids, [])),
+            ?assertEqual(BeforeConfig, erpc:call(Node, logger, get_handler_config, [Handler]))
+        after
+            _ = erpc:call(Node, logger, remove_handler, [Handler]),
+            peer:stop(Peer),
+            file:del_dir_r(Dir)
+        end
+    end).
+
+dispatch_logs(Request) ->
+    #{<<"status">> := <<"ok">>, <<"result">> := Response} =
+        observer_cli_snapshot:dispatch(
+            self(), logs, Request, #{timeout_ms => 5000, identifier_policy => include}
+        ),
+    Response.
+
+log_error_response(Target, Reason, Sources, Selected, Coverage, Enumerated, Lookups, Attempts) ->
+    observer_cli_cli:response(
+        logs,
+        error,
+        #{<<"node">> => Target, <<"otp_release">> => <<"29">>},
+        log_capture(
+            <<"unavailable">>, Reason, Coverage, Enumerated, Lookups, Attempts
+        ),
+        #{<<"sources">> => Sources, <<"selected_source">> => Selected, <<"tail">> => null},
+        []
+    ).
+
+log_byte_partial_response(Target, Source, Selected) ->
+    observer_cli_cli:response(
+        logs,
+        partial,
+        #{<<"node">> => Target, <<"otp_release">> => <<"29">>},
+        log_capture(
+            <<"error">>,
+            <<"log_byte_cap_reached">>,
+            [
+                <<"source_classification_complete">>,
+                <<"source_selected">>,
+                <<"path_prechecked">>,
+                <<"fd_identity_verified">>,
+                <<"bytes_captured">>,
+                <<"post_read_verified">>
+            ],
+            false,
+            2,
+            1
+        ),
+        #{
+            <<"sources">> => [Source],
+            <<"selected_source">> => Selected,
+            <<"tail">> => #{
+                <<"scope">> => <<"configured_path">>,
+                <<"active_handler_fd_match">> => <<"unknown">>,
+                <<"visibility">> => <<"reader_visible">>,
+                <<"command_filesync_requested">> => false,
+                <<"consistency">> => <<"non_atomic">>,
+                <<"content_trust">> => <<"untrusted">>,
+                <<"requested_lines">> => 200,
+                <<"returned_lines">> => 1,
+                <<"captured_eof_bytes">> => 65537,
+                <<"bytes_read">> => 65536,
+                <<"has_more">> => true,
+                <<"content_truncated">> => true,
+                <<"truncation_reasons">> => [<<"byte_cap">>],
+                <<"truncated_line_indexes">> => [0],
+                <<"lines">> => [<<"retained fragment">>]
+            }
+        },
+        []
+    ).
+
+log_source_summary(Id, Kind, Supported, Reason) ->
+    #{
+        <<"id">> => Id,
+        <<"addressable">> => true,
+        <<"handler_kind">> => Kind,
+        <<"supported">> => Supported,
+        <<"reason_code">> => Reason
+    }.
+
+log_capture(Status, Reason, Coverage, Enumerated, Lookups, Attempts) ->
+    #{
+        <<"started_at">> => <<"2026-07-13T00:00:00.000Z">>,
+        <<"finished_at">> => <<"2026-07-13T00:00:00.000Z">>,
+        <<"duration_ms">> => 0,
+        <<"probes">> => [
+            #{
+                <<"id">> => <<"log_file_tail">>,
+                <<"required">> => true,
+                <<"status">> => Status,
+                <<"reason_code">> => Reason,
+                <<"duration_ms">> => 0,
+                <<"samples">> => 1,
+                <<"coverage">> => Coverage
+            }
+        ],
+        <<"observer_effects">> => [
+            #{
+                <<"id">> => <<"diagnostics_worker">>,
+                <<"affected_facts">> => [
+                    <<"process_count">>,
+                    <<"port_count">>,
+                    <<"memory">>,
+                    <<"io">>,
+                    <<"garbage_collection">>
+                ]
+            },
+            #{
+                <<"id">> => <<"module_load">>,
+                <<"module_loaded_before_sample">> => true
+            },
+            #{
+                <<"id">> => <<"configured_log_read">>,
+                <<"handler_ids_enumerated">> => Enumerated,
+                <<"handler_config_lookups">> => Lookups,
+                <<"read_attempts">> => Attempts,
+                <<"raw_read_cap_bytes">> => 65536,
+                <<"atime_may_change">> => true,
+                <<"consistency">> => <<"non_atomic">>,
+                <<"command_filesync_attempted">> => false
+            }
+        ]
+    }.
+
+assert_log_response_mutations_rejected(Request, Response) ->
+    Data = maps:get(<<"data">>, Response),
+    Tail = maps:get(<<"tail">>, Data),
+    Selected = maps:get(<<"selected_source">>, Data),
+    Capture = response_capture(Response),
+    [Probe] = maps:get(<<"probes">>, Capture),
+    Effects = maps:get(<<"observer_effects">>, Capture),
+    LogEffect = lists:last(Effects),
+    Mutations = [
+        Response#{
+            <<"issues">> := [
+                #{
+                    <<"severity">> => <<"warning">>,
+                    <<"class">> => <<"partial">>,
+                    <<"reason_code">> => <<"unexpected">>,
+                    <<"message">> => null
+                }
+            ]
+        },
+        Response#{
+            <<"data">> := Data#{
+                <<"selected_source">> := Selected#{
+                    <<"configured_path">> := <<"relative.log">>
+                }
+            }
+        },
+        Response#{
+            <<"data">> := Data#{
+                <<"selected_source">> := Selected#{
+                    <<"supported">> := false
+                }
+            }
+        },
+        Response#{
+            <<"data">> := Data#{
+                <<"sources">> := maps:get(<<"sources">>, Data) ++
+                    maps:get(<<"sources">>, Data)
+            }
+        },
+        Response#{
+            <<"data">> := Data#{
+                <<"tail">> := Tail#{
+                    <<"requested_lines">> := 199
+                }
+            }
+        },
+        Response#{
+            <<"data">> := Data#{
+                <<"tail">> := Tail#{
+                    <<"returned_lines">> := maps:get(<<"returned_lines">>, Tail) + 1
+                }
+            }
+        },
+        Response#{
+            <<"data">> := Data#{
+                <<"tail">> := Tail#{
+                    <<"bytes_read">> := maps:get(<<"bytes_read">>, Tail) + 1
+                }
+            }
+        },
+        Response#{
+            <<"data">> := Data#{
+                <<"tail">> := Tail#{
+                    <<"content_truncated">> := true,
+                    <<"truncation_reasons">> := [<<"line_cap">>],
+                    <<"truncated_line_indexes">> := [0]
+                }
+            }
+        },
+        replace_capture(Response, Capture#{<<"duration_ms">> := 2}),
+        replace_capture(Response, Capture#{
+            <<"probes">> := [
+                Probe#{
+                    <<"coverage">> := [<<"source_selected">>, <<"source_classification_complete">>]
+                }
+            ]
+        }),
+        replace_capture(Response, Capture#{
+            <<"probes">> := [
+                Probe#{
+                    <<"status">> := <<"error">>, <<"reason_code">> := <<"log_line_cap_reached">>
+                }
+            ]
+        }),
+        replace_capture(Response, Capture#{<<"observer_effects">> := Effects ++ [LogEffect]}),
+        replace_capture(Response, Capture#{
+            <<"observer_effects">> :=
+                lists:sublist(Effects, length(Effects) - 1) ++
+                [
+                    LogEffect#{
+                        <<"handler_config_lookups">> := 67
+                    }
+                ]
+        }),
+        replace_capture(Response, Capture#{
+            <<"observer_effects">> :=
+                lists:sublist(Effects, length(Effects) - 1) ++
+                [
+                    LogEffect#{
+                        <<"read_attempts">> := 0
+                    }
+                ]
+        })
+    ],
+    lists:foreach(
+        fun(Malformed) ->
+            ?assertNot(
+                observer_cli_escriptize:validate_logs_response(
+                    Request, Malformed, atom_to_binary(node())
+                )
+            )
+        end,
+        Mutations
+    ),
+    ?assertNot(
+        observer_cli_escriptize:validate_logs_response(
+            Request#{tail := 199}, Response, atom_to_binary(node())
+        )
+    ).
+
 run_args_test() ->
     ?assertEqual(
         {ok, "target@host", test_cookie, 2000},
@@ -706,9 +1214,17 @@ command_help_test() ->
     ),
     observer_cli_test_io:assert_stable_fragments(TraceHelp, [
         "node-global",
+        "external/global",
         "loaded, exported MFA",
+        "local intra-module calls are excluded",
         "never arguments, returns, exceptions, or stacks",
-        "Dynamic trace sessions are not cleared",
+        "legacy process/port trace flags",
+        "and tracers plus static call patterns",
+        "without restoring prior state",
+        "processes or ports occupying its fixed",
+        "tracer/formatter names",
+        "not directly cleared",
+        "fixed-name occupant can disable one",
         "trace call",
         "trace stop --all"
     ]),
@@ -724,25 +1240,64 @@ command_help_test() ->
             {["tui", "--help"], ["REFRESH_MS", "positional COOKIE"]},
             {["trace", "call", "--help"], [
                 "module:function/arity",
+                "Only external/global",
+                "local intra-module calls are excluded",
+                "Setup and teardown clear node-wide",
+                "process/port trace flags",
+                "on-load and call-memory",
+                "Prior state is not restored",
+                "process or port",
+                "occupying a",
+                "fixed tracer or formatter name",
+                "not directly",
+                "occupant can disable one",
                 "Live target-local tracee PID; required",
                 "duration plus seven seconds",
                 "returns, exceptions, and stacks are never collected",
                 "included by default; use --redact",
-                "data.trace.trace_complete",
+                "data.trace.trace_complete=true",
+                "loss, module change, or interference",
+                "At most 1000 events are returned",
+                "response-cap",
+                "outcome=complete and exit 0",
+                "cleanup_unconfirmed is outcome=error/exit 4",
+                "may omit trace data",
+                "100ms..60s; 10s by default",
+                "1..1000 events; 100 by default",
                 "Recon burst breaker, not a pacer",
-                "trip event included; an expired window resets",
-                "capture may exceed N",
+                "trip event included; the first event after an",
+                "expired window is forwarded and resets the",
+                "total capture may exceed N",
+                "across windows; conflicts with --limit",
                 "--replace-existing-trace"
             ]},
             {["trace", "stop", "--help"], [
+                "node-wide legacy process/port trace flags",
                 "call-memory",
-                "fixed-name tracer",
-                "dynamic trace sessions",
-                "remain. --all acknowledges",
+                "process or port occupying a fixed tracer",
+                "not directly",
+                "occupant can disable one",
+                "--all acknowledges",
                 "Explicit timeout minimum: 5s",
-                "never returns captured events",
+                "When trace data is present",
+                "public stop response has events=[]",
+                "original waiting",
+                "With no owned observer_cli",
+                "trace, cleanup still runs",
                 "cleanup_unconfirmed",
+                "outcome=error, exit 4",
+                "verify target trace state",
                 "--all"
+            ]},
+            {["logs", "--help"], [
+                "configured path",
+                "does not flush Logger buffers",
+                "sensitive and untrusted",
+                "--redact and --include-identifiers",
+                "--handler HANDLER_ID",
+                "--tail LINES",
+                "64 KiB",
+                "32 KiB"
             ]},
             {["snapshot", "--deep", "--help"], ["snapshot", "--deep"]}
         ]
@@ -1015,20 +1570,27 @@ probe_failure_is_not_duplicated_test() ->
 
 trace_incomplete_data_is_complete_test() ->
     Base = valid_controller_response(trace_call, atom_to_binary(node())),
-    PartialTrace = (fixture_trace_capture())#{
-        <<"status">> := <<"partial">>,
-        <<"reason">> := <<"duration_elapsed">>,
-        <<"trace_complete">> := false,
-        <<"truncated">> := true,
-        <<"dropped_count">> := null
-    },
+    PartialTrace = maps:remove(
+        <<"module_reloaded">>,
+        (fixture_trace_capture())#{
+            <<"status">> := <<"partial">>,
+            <<"trace_complete">> := false,
+            <<"truncated">> := true,
+            <<"dropped_count">> := null
+        }
+    ),
     lists:foreach(
         fun(Command) ->
+            Reason =
+                case Command of
+                    trace_call -> <<"duration_elapsed">>;
+                    trace_stop_all -> <<"stopped">>
+                end,
             Response = Base#{
                 <<"command">> := atom_to_binary(Command),
                 <<"data">> := #{
-                    <<"reason">> => <<"duration_elapsed">>,
-                    <<"trace">> => PartialTrace
+                    <<"reason">> => Reason,
+                    <<"trace">> => PartialTrace#{<<"reason">> := Reason}
                 }
             },
             ?assertEqual(
@@ -1052,9 +1614,56 @@ trace_payload_mutations_are_rejected_test() ->
         <<"mfa">> => maps:get(<<"mfa">>, Trace),
         <<"offset_ms">> => 0
     },
+    lists:foreach(
+        fun(ValidTrace) ->
+            Data0 = maps:get(<<"data">>, Base),
+            ?assertEqual(
+                ok,
+                observer_cli_escriptize:validate_response(
+                    trace_call,
+                    include,
+                    node(),
+                    Base#{<<"data">> := Data0#{<<"trace">> := ValidTrace}}
+                )
+            )
+        end,
+        [
+            Trace#{
+                <<"status">> := <<"partial">>,
+                <<"trace_complete">> := false,
+                <<"truncated">> := true,
+                <<"dropped_count">> := 1
+            },
+            Trace#{
+                <<"status">> := <<"partial">>,
+                <<"trace_complete">> := false,
+                <<"module_reloaded">> := true
+            },
+            Trace#{
+                <<"status">> := <<"partial">>,
+                <<"trace_complete">> := false,
+                <<"truncated">> := true,
+                <<"dropped_count">> := null,
+                <<"interference_detected">> := true
+            }
+        ]
+    ),
     Mutations = [
         Trace#{<<"trace_complete">> := false},
         Trace#{<<"truncated">> := false, <<"dropped_count">> := 1},
+        Trace#{<<"truncated">> := true, <<"dropped_count">> := 1},
+        Trace#{
+            <<"status">> := <<"partial">>,
+            <<"trace_complete">> := false,
+            <<"module_reloaded">> := false
+        },
+        Trace#{
+            <<"status">> := <<"partial">>,
+            <<"trace_complete">> := false,
+            <<"truncated">> := true,
+            <<"dropped_count">> := null,
+            <<"module_reloaded">> := true
+        },
         Trace#{<<"interference_detected">> := true},
         Trace#{<<"events">> := [Event#{<<"tracee">> := 42}]},
         Trace#{<<"events">> := [Event#{<<"tracee">> := <<"<0.2.0>">>}]},
@@ -1089,6 +1698,272 @@ trace_payload_mutations_are_rejected_test() ->
         observer_cli_escriptize:validate_response(trace_call, include, node(), ReasonMismatch)
     ).
 
+trace_envelope_mutations_are_rejected_test() ->
+    Base = valid_controller_response(trace_call, atom_to_binary(node())),
+    ?assertEqual(
+        ok,
+        observer_cli_escriptize:validate_response(trace_call, include, node(), Base)
+    ),
+    [Issue] = maps:get(<<"issues">>, Base),
+    Capture = response_capture(Base),
+    [Probe] = maps:get(<<"probes">>, Capture),
+    [Effect] = maps:get(<<"observer_effects">>, Capture),
+    ReplaceProbes = fun(Probes) ->
+        replace_capture(Base, Capture#{<<"probes">> := Probes})
+    end,
+    ReplaceEffects = fun(Effects) ->
+        replace_capture(Base, Capture#{<<"observer_effects">> := Effects})
+    end,
+    Mutations = [
+        Base#{<<"issues">> := []},
+        Base#{<<"issues">> := [Issue#{<<"reason_code">> := <<"totally_unrelated">>}]},
+        Base#{<<"issues">> := [Issue#{<<"class">> := <<"capability">>}]},
+        Base#{<<"issues">> := [Issue#{<<"message">> := null}]},
+        Base#{<<"issues">> := [Issue, Issue]},
+        ReplaceEffects([]),
+        ReplaceEffects([#{<<"id">> => <<"bogus">>}]),
+        ReplaceEffects([Effect, Effect]),
+        ReplaceEffects([Effect#{<<"extra">> => true}]),
+        ReplaceEffects([Effect#{<<"controller">> := <<>>}]),
+        ReplaceProbes([Probe#{<<"coverage">> := []}]),
+        ReplaceProbes([Probe#{<<"coverage">> := [<<"bogus">>]}]),
+        ReplaceProbes([Probe#{<<"samples">> := 2}]),
+        ReplaceProbes([Probe#{<<"duration_ms">> := 999}])
+    ],
+    lists:foreach(
+        fun(Response) ->
+            ?assertEqual(
+                {error, invalid_command_response},
+                observer_cli_escriptize:validate_response(
+                    trace_call, include, node(), Response
+                )
+            )
+        end,
+        Mutations
+    ).
+
+trace_cleanup_outcome_mismatches_are_rejected_test() ->
+    Base = valid_controller_response(trace_call, atom_to_binary(node())),
+    Trace = maps:remove(
+        <<"module_reloaded">>,
+        (fixture_trace_capture())#{
+            <<"status">> := <<"partial">>,
+            <<"reason">> := <<"cleanup_unconfirmed">>,
+            <<"trace_complete">> := false,
+            <<"truncated">> := true,
+            <<"dropped_count">> := null,
+            <<"cleanup_confirmed">> := false
+        }
+    ),
+    Data = #{<<"reason">> => <<"cleanup_unconfirmed">>, <<"trace">> => Trace},
+    ?assertEqual(
+        {error, invalid_command_response},
+        observer_cli_escriptize:validate_response(
+            trace_call, include, node(), Base#{<<"data">> := Data}
+        )
+    ),
+    [Probe] = maps:get(<<"probes">>, response_capture(Base)),
+    ErrorProbe = Probe#{
+        <<"status">> := <<"error">>, <<"reason_code">> := <<"cleanup_unconfirmed">>
+    },
+    ErrorCapture = (response_capture(Base))#{<<"probes">> := [ErrorProbe]},
+    ValidError = replace_capture(
+        Base#{<<"outcome">> := <<"error">>, <<"data">> := Data}, ErrorCapture
+    ),
+    ?assertEqual(
+        ok,
+        observer_cli_escriptize:validate_response(trace_call, include, node(), ValidError)
+    ),
+    CleanupClaimed = Trace#{<<"cleanup_confirmed">> := true},
+    ?assertEqual(
+        {error, invalid_command_response},
+        observer_cli_escriptize:validate_response(
+            trace_call,
+            include,
+            node(),
+            ValidError#{
+                <<"data">> := Data#{<<"trace">> := CleanupClaimed}
+            }
+        )
+    ),
+    OtherReason = <<"capture_internal_error">>,
+    OtherProbe = ErrorProbe#{<<"reason_code">> := OtherReason},
+    OtherTrace = Trace#{<<"reason">> := OtherReason},
+    ?assertEqual(
+        {error, invalid_command_response},
+        observer_cli_escriptize:validate_response(
+            trace_call,
+            include,
+            node(),
+            replace_capture(
+                ValidError#{
+                    <<"data">> := #{<<"reason">> => OtherReason, <<"trace">> => OtherTrace}
+                },
+                ErrorCapture#{<<"probes">> := [OtherProbe]}
+            )
+        )
+    ).
+
+trace_reason_outcome_mismatches_are_rejected_test() ->
+    Call = valid_controller_response(trace_call, atom_to_binary(node())),
+    CallData = maps:get(<<"data">>, Call),
+    CallTrace = maps:get(<<"trace">>, CallData),
+    FailureReason = <<"capture_internal_error">>,
+    ?assertEqual(
+        {error, invalid_command_response},
+        observer_cli_escriptize:validate_response(
+            trace_call,
+            include,
+            node(),
+            Call#{
+                <<"data">> := #{
+                    <<"reason">> => FailureReason,
+                    <<"trace">> => CallTrace#{<<"reason">> := FailureReason}
+                }
+            }
+        )
+    ),
+    DurationReason = <<"duration_elapsed">>,
+    ?assertEqual(
+        {error, invalid_command_response},
+        observer_cli_escriptize:validate_response(
+            trace_call,
+            include,
+            node(),
+            Call#{
+                <<"data">> := #{
+                    <<"reason">> => DurationReason,
+                    <<"trace">> => CallTrace#{<<"reason">> := DurationReason}
+                }
+            }
+        )
+    ),
+    Stop = valid_controller_response(trace_stop_all, atom_to_binary(node())),
+    StopData = maps:get(<<"data">>, Stop),
+    StopTrace = maps:get(<<"trace">>, StopData),
+    ?assertEqual(
+        {error, invalid_command_response},
+        observer_cli_escriptize:validate_response(
+            trace_stop_all,
+            include,
+            node(),
+            Stop#{
+                <<"data">> := #{
+                    <<"reason">> => <<"limit_reached">>,
+                    <<"trace">> => StopTrace#{<<"reason">> := <<"limit_reached">>}
+                }
+            }
+        )
+    ),
+    ?assertEqual(
+        {error, invalid_command_response},
+        observer_cli_escriptize:validate_response(
+            trace_stop_all,
+            include,
+            node(),
+            Stop#{
+                <<"data">> := #{
+                    <<"reason">> => <<"stopped">>,
+                    <<"trace">> => CallTrace#{<<"reason">> := <<"stopped">>}
+                }
+            }
+        )
+    ),
+    [Probe] = maps:get(<<"probes">>, response_capture(Call)),
+    ErrorTrace = maps:remove(
+        <<"module_reloaded">>,
+        CallTrace#{
+            <<"status">> := <<"partial">>,
+            <<"reason">> := FailureReason,
+            <<"trace_complete">> := false,
+            <<"truncated">> := true,
+            <<"dropped_count">> := null
+        }
+    ),
+    ErrorResponse = replace_capture(
+        Call#{
+            <<"outcome">> := <<"error">>,
+            <<"data">> := #{<<"reason">> => FailureReason, <<"trace">> => ErrorTrace}
+        },
+        (response_capture(Call))#{
+            <<"probes">> := [
+                Probe#{<<"status">> := <<"error">>, <<"reason_code">> := FailureReason}
+            ]
+        }
+    ),
+    ?assertEqual(
+        ok,
+        observer_cli_escriptize:validate_response(trace_call, include, node(), ErrorResponse)
+    ),
+    ?assertEqual(
+        {error, invalid_command_response},
+        observer_cli_escriptize:validate_response(
+            trace_call,
+            include,
+            node(),
+            ErrorResponse#{
+                <<"data">> := #{
+                    <<"reason">> => FailureReason,
+                    <<"trace">> => ErrorTrace#{<<"module_reloaded">> => false}
+                }
+            }
+        )
+    ),
+    ?assertEqual(
+        {error, invalid_command_response},
+        observer_cli_escriptize:validate_response(
+            trace_call,
+            include,
+            node(),
+            ErrorResponse#{
+                <<"data">> := #{
+                    <<"reason">> => FailureReason,
+                    <<"trace">> => CallTrace#{<<"reason">> := FailureReason}
+                }
+            }
+        )
+    ),
+    SuccessReason = <<"limit_reached">>,
+    [ErrorProbe] = maps:get(<<"probes">>, response_capture(ErrorResponse)),
+    ?assertEqual(
+        {error, invalid_command_response},
+        observer_cli_escriptize:validate_response(
+            trace_call,
+            include,
+            node(),
+            replace_capture(
+                ErrorResponse#{
+                    <<"data">> := #{
+                        <<"reason">> => SuccessReason,
+                        <<"trace">> => ErrorTrace#{<<"reason">> := SuccessReason}
+                    }
+                },
+                (response_capture(ErrorResponse))#{
+                    <<"probes">> := [ErrorProbe#{<<"reason_code">> := SuccessReason}]
+                }
+            )
+        )
+    ).
+
+trace_stop_events_are_rejected_test() ->
+    Base = valid_controller_response(trace_stop_all, atom_to_binary(node())),
+    Data = maps:get(<<"data">>, Base),
+    Trace = maps:get(<<"trace">>, Data),
+    Event = #{
+        <<"tracee">> => maps:get(<<"tracee">>, Trace),
+        <<"mfa">> => maps:get(<<"mfa">>, Trace),
+        <<"offset_ms">> => 0
+    },
+    ?assertEqual(
+        {error, invalid_command_response},
+        observer_cli_escriptize:validate_response(
+            trace_stop_all,
+            include,
+            node(),
+            Base#{<<"data">> := Data#{<<"trace">> := Trace#{<<"events">> := [Event]}}}
+        )
+    ).
+
 controller_validates_real_trace_responses_test_() ->
     {timeout, 5, fun controller_validates_real_trace_responses/0}.
 
@@ -1121,6 +1996,38 @@ controller_validates_real_trace_responses() ->
         ok,
         observer_cli_escriptize:validate_response(trace_call, include, node(), Missing)
     ),
+    lists:foreach(
+        fun(Response) ->
+            ?assertEqual(
+                {error, invalid_command_response},
+                observer_cli_escriptize:validate_response(
+                    trace_call, include, node(), Response
+                )
+            )
+        end,
+        [#{}, maps:remove(<<"schema">>, Missing), maps:remove(<<"command">>, Missing)]
+    ),
+    ?assertEqual(
+        {error, invalid_command_response},
+        observer_cli_escriptize:validate_response(
+            trace_call,
+            include,
+            node(),
+            Missing#{<<"issues">> := not_a_list}
+        )
+    ),
+    [MissingIssue] = maps:get(<<"issues">>, Missing),
+    ?assertEqual(
+        {error, invalid_command_response},
+        observer_cli_escriptize:validate_response(
+            trace_call,
+            include,
+            node(),
+            Missing#{
+                <<"issues">> := [MissingIssue#{<<"reason_code">> := <<"totally_unrelated">>}]
+            }
+        )
+    ),
     #{<<"status">> := <<"ok">>, <<"result">> := Partial} =
         observer_cli_snapshot:dispatch(
             self(),
@@ -1142,6 +2049,12 @@ controller_validates_real_trace_responses() ->
     ?assertEqual(
         ok,
         observer_cli_escriptize:validate_response(trace_call, include, node(), Partial)
+    ),
+    ?assertEqual(
+        {error, invalid_command_response},
+        observer_cli_escriptize:validate_response(
+            trace_call, include, node(), maps:remove(<<"data">>, Partial)
+        )
     ),
     ?assertEqual({ok, Partial, 0}, observer_cli_escriptize:dispatch_response(Partial)).
 
@@ -1643,10 +2556,10 @@ valid_controller_response(Command, Node) ->
                 <<"finished_at">> => <<"2026-07-11T00:00:01Z">>,
                 <<"duration_ms">> => 1000,
                 <<"probes">> => fixture_probes(Command),
-                <<"observer_effects">> => []
+                <<"observer_effects">> => fixture_effects(Command)
             }
         },
-        <<"issues">> => []
+        <<"issues">> => fixture_issues(Command)
     }.
 
 response_capture(Response) ->
@@ -1680,10 +2593,37 @@ fixture_probes(diagnose) ->
     [fixture_probe(<<"core_limits">>)];
 fixture_probes(memory) ->
     [fixture_probe(Id) || Id <- [<<"memory">>, <<"allocator">>]];
-fixture_probes(trace_call) ->
-    [fixture_probe(<<"trace">>)];
+fixture_probes(Command) when Command =:= trace_call; Command =:= trace_stop_all ->
+    [
+        (fixture_probe(<<"trace">>))#{
+            <<"duration_ms">> := 1000,
+            <<"coverage">> := [<<"recon_2_5_6">>, <<"external_global_calls_only">>]
+        }
+    ];
 fixture_probes(Command) ->
     [fixture_probe(atom_to_binary(Command))].
+
+fixture_effects(Command) when Command =:= trace_call; Command =:= trace_stop_all ->
+    [
+        #{
+            <<"id">> => <<"global_trace_replacement">>,
+            <<"controller">> => <<"<0.1.0>">>
+        }
+    ];
+fixture_effects(_Command) ->
+    [].
+
+fixture_issues(Command) when Command =:= trace_call; Command =:= trace_stop_all ->
+    [
+        #{
+            <<"severity">> => <<"warning">>,
+            <<"class">> => <<"safety_refusal">>,
+            <<"reason_code">> => <<"global_trace_replacement">>,
+            <<"message">> => <<"fixture warning">>
+        }
+    ];
+fixture_issues(_Command) ->
+    [].
 
 fixture_probe(Id) ->
     #{
@@ -1703,7 +2643,17 @@ fixture_data(otp_state) ->
 fixture_data(trace_call) ->
     #{<<"reason">> => <<"limit_reached">>, <<"trace">> => fixture_trace_capture()};
 fixture_data(trace_stop_all) ->
-    #{<<"reason">> => <<"limit_reached">>, <<"trace">> => fixture_trace_capture()};
+    StopTrace = maps:remove(
+        <<"module_reloaded">>,
+        (fixture_trace_capture())#{
+            <<"status">> := <<"partial">>,
+            <<"reason">> := <<"stopped">>,
+            <<"trace_complete">> := false,
+            <<"truncated">> := true,
+            <<"dropped_count">> := null
+        }
+    ),
+    #{<<"reason">> => <<"stopped">>, <<"trace">> => StopTrace};
 fixture_data(_Command) ->
     #{}.
 
@@ -1715,6 +2665,7 @@ fixture_trace_capture() ->
         <<"truncated">> => false,
         <<"dropped_count">> => 0,
         <<"events">> => [],
+        <<"module_reloaded">> => false,
         <<"interference_detected">> => false,
         <<"coverage">> => <<"external_global_calls_only">>,
         <<"cleanup_confirmed">> => true,
@@ -3046,7 +3997,7 @@ validation_payload_contract(Probe) ->
         fun({Command, Data}) ->
             ?assert(
                 observer_cli_escriptize:valid_command_payload(
-                    Command, #{<<"data">> => Data}, [Probe]
+                    Command, #{<<"outcome">> => <<"complete">>, <<"data">> => Data}, [Probe]
                 )
             )
         end,
@@ -3062,12 +4013,6 @@ validation_payload_contract(Probe) ->
             {port, #{<<"status">> => <<"ok">>}},
             {supervision_tree, #{
                 <<"status">> => <<"ok">>, <<"risk_level">> => <<"low">>
-            }},
-            {trace_call, #{
-                <<"reason">> => <<"limit_reached">>, <<"trace">> => fixture_trace_capture()
-            }},
-            {trace_stop_all, #{
-                <<"reason">> => <<"limit_reached">>, <<"trace">> => fixture_trace_capture()
             }}
         ]
     ),
@@ -3075,7 +4020,7 @@ validation_payload_contract(Probe) ->
         fun({Command, Data}) ->
             ?assertNot(
                 observer_cli_escriptize:valid_command_payload(
-                    Command, #{<<"data">> => Data}, [Probe]
+                    Command, #{<<"outcome">> => <<"complete">>, <<"data">> => Data}, [Probe]
                 )
             )
         end,

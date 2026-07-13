@@ -137,6 +137,20 @@ owner_init_timeout_is_bounded() ->
         error(owner_init_timeout)
     end.
 
+monitor_attachment_noproc_contract_test() ->
+    ?assertEqual(
+        {natural, limit_reached, [event], false, 0, 0},
+        monitor_attachment_outcome(1, [event], 1, unknown)
+    ),
+    ?assertEqual(
+        {natural, rate_exceeded, [event, event], false, 0, 0},
+        monitor_attachment_outcome({1, 1000}, [event, event], 2, normal)
+    ),
+    ?assertEqual(
+        {forced, internal, capture_internal_error, [event], 0},
+        monitor_attachment_outcome(2, [event], 1, unknown)
+    ).
+
 trace_cleanup_helper_contract() ->
     ?assertEqual({ok, self()}, observer_cli_trace:parse_pid(pid_to_list(self()))),
     ?assertEqual({ok, self()}, observer_cli_trace:parse_pid(list_to_binary(pid_to_list(self())))),
@@ -170,9 +184,9 @@ trace_cleanup_helper_contract() ->
             max => 1
         })
     ),
-    RateCollector = spawn(fun final_collector/0),
+    RateCollector = spawn(fun() -> final_collector([event, event], 2, 0, false) end),
     ?assertEqual(
-        {natural, rate_exceeded, [event], false, 0, 0},
+        {natural, rate_exceeded, [event, event], false, 0, 0},
         observer_cli_trace:wait_formatter(
             #{
                 collector => RateCollector,
@@ -180,7 +194,7 @@ trace_cleanup_helper_contract() ->
                 max => {1, 1000},
                 ref => make_ref()
             },
-            #{formatter => undefined, formatter_mon => undefined},
+            #{formatter => undefined, formatter_mon => undefined, tracer_exit_reason => normal},
             erlang:monotonic_time(millisecond) + 1000
         )
     ),
@@ -716,12 +730,62 @@ formatter_collector(_Parent) ->
     end.
 
 final_collector() ->
+    final_collector([event], 1, 0, false).
+
+final_collector(Events, Count, Rejected, Truncated) ->
     receive
         {final, Owner, Ref} ->
-            Owner ! {Ref, [event], 1, 0, false},
-            final_collector();
+            Owner ! {Ref, Events, Count, Rejected, Truncated},
+            final_collector(Events, Count, Rejected, Truncated);
         stop ->
             ok
+    end.
+
+monitor_attachment_outcome(Max, Events, Count, ExitReason) ->
+    Tracer = dead_process(),
+    Formatter = dead_process(),
+    TracerMon = erlang:monitor(process, Tracer),
+    FormatterMon = erlang:monitor(process, Formatter),
+    Collector = spawn(fun() -> final_collector(Events, Count, 0, false) end),
+    CollectorMon = erlang:monitor(process, Collector),
+    State = #{
+        collector => Collector,
+        collector_mon => CollectorMon,
+        max => Max,
+        ref => make_ref(),
+        controller_mon => make_ref(),
+        dispatcher_mon => make_ref(),
+        tracee_mon => make_ref()
+    },
+    Recon = #{
+        tracer => Tracer,
+        tracer_mon => TracerMon,
+        formatter => Formatter,
+        formatter_mon => FormatterMon
+    },
+    case ExitReason of
+        unknown -> ok;
+        _ -> self() ! {'EXIT', Tracer, ExitReason}
+    end,
+    try
+        observer_cli_trace:wait_trace(
+            State, Recon, erlang:monotonic_time(millisecond) + 1000
+        )
+    after
+        Collector ! stop,
+        receive
+            {'DOWN', CollectorMon, process, Collector, _Reason} -> ok
+        after 1000 ->
+            error(collector_down_timeout)
+        end
+    end.
+
+dead_process() ->
+    {Pid, Mon} = spawn_monitor(fun() -> ok end),
+    receive
+        {'DOWN', Mon, process, Pid, normal} -> Pid
+    after 1000 ->
+        error(dead_process_timeout)
     end.
 
 checked_helper() ->
@@ -793,6 +857,18 @@ setup_replaces_global_trace_and_fixed_collision_test_() ->
      || Name <- [recon_trace_tracer, recon_trace_formatter]
     ]}.
 
+fixed_name_port_collision_test_() ->
+    {timeout, 15, [
+        {atom_to_list(Name), fun() -> fixed_name_port_collision(Name) end}
+     || Name <- [recon_trace_tracer, recon_trace_formatter]
+    ]}.
+
+fixed_name_port_stop_is_structured_test_() ->
+    {timeout, 10, [
+        {atom_to_list(Name), fun() -> fixed_name_port_stop_is_structured(Name) end}
+     || Name <- [recon_trace_tracer, recon_trace_formatter]
+    ]}.
+
 setup_replaces_global_trace_and_fixed_collision(Name) ->
     cleanup(),
     Tracee = tracee(),
@@ -815,8 +891,89 @@ setup_replaces_global_trace_and_fixed_collision(Name) ->
     assert_clean(Tracee),
     Tracee ! stop.
 
+fixed_name_port_collision(Name) ->
+    cleanup(),
+    Tracee = tracee(),
+    {PortOwner, PortOwnerMon, Port} = start_fixed_name_port_owner(Name),
+    try
+        {Caller, Ref} = start_call(self(), request(Tracee)),
+        wait_trace_active(Tracee, {?MODULE, fixture, 0}),
+        ?assertEqual(undefined, erlang:port_info(Port)),
+        ?assert(is_process_alive(PortOwner)),
+        Tracee ! {call, self(), 1},
+        receive
+            called -> ok
+        after 1000 -> error(tracee_timeout)
+        end,
+        Result = receive_result(Caller, Ref),
+        ?assertEqual(ok, maps:get(status, Result)),
+        [Warning] = maps:get(warnings, Result),
+        ?assertNotEqual(
+            nomatch, binary:match(maps:get(message, Warning), <<"processes or ports">>)
+        ),
+        assert_clean(Tracee)
+    after
+        stop_fixed_name_port_owner(PortOwner, PortOwnerMon),
+        Tracee ! stop
+    end.
+
+fixed_name_port_stop_is_structured(Name) ->
+    cleanup(),
+    {PortOwner, PortOwnerMon, Port} = start_fixed_name_port_owner(Name),
+    try
+        Result = observer_cli_trace:stop_all(),
+        ?assertEqual(error, maps:get(status, Result)),
+        ?assertEqual(cleanup_unconfirmed, maps:get(reason, Result)),
+        ?assertEqual(false, maps:get(cleanup_confirmed, maps:get(capture, Result))),
+        ?assertEqual(undefined, whereis(Name)),
+        ?assertEqual(undefined, erlang:port_info(Port)),
+        ?assert(is_process_alive(PortOwner))
+    after
+        stop_fixed_name_port_owner(PortOwner, PortOwnerMon)
+    end.
+
+start_fixed_name_port_owner(Name) ->
+    Parent = self(),
+    {Owner, Mon} = spawn_monitor(fun() ->
+        Port = open_port({spawn, "cat"}, []),
+        true = register(Name, Port),
+        Parent ! {self(), fixed_name_port, Port},
+        receive
+            stop ->
+                _ =
+                    try
+                        port_close(Port)
+                    catch
+                        _:_ -> false
+                    end,
+                ok
+        end
+    end),
+    receive
+        {Owner, fixed_name_port, Port} -> {Owner, Mon, Port};
+        {'DOWN', Mon, process, Owner, Reason} -> error({port_owner_down, Reason})
+    after 1000 ->
+        error(port_owner_timeout)
+    end.
+
+stop_fixed_name_port_owner(Owner, Mon) ->
+    Owner ! stop,
+    receive
+        {'DOWN', Mon, process, Owner, normal} -> ok;
+        {'DOWN', Mon, process, Owner, Reason} -> error({port_owner_down, Reason})
+    after 1000 ->
+        exit(Owner, kill),
+        receive
+            {'DOWN', Mon, process, Owner, _Reason} -> ok
+        end,
+        error(port_owner_timeout)
+    end.
+
 response_cap_continues_natural_drain_test_() ->
     {timeout, 10, fun response_cap_continues_natural_drain/0}.
+
+response_cap_marks_rate_capture_partial_test_() ->
+    {timeout, 10, fun response_cap_marks_rate_capture_partial/0}.
 
 helper_finalize_failure_is_not_complete_test_() ->
     [
@@ -893,6 +1050,16 @@ preexisting_on_load_cannot_pollute_capture_test_() ->
 recon_rate_breaker_boundary_test_() ->
     {timeout, 12, fun recon_rate_breaker_boundary/0}.
 
+completion_before_monitor_attachment_test_() ->
+    {timeout, 15, [
+        {"count limit", fun() -> completion_before_monitor_attachment(1, 1, limit_reached) end},
+        {"rate breaker", fun() ->
+            completion_before_monitor_attachment({1, 1000}, 2, rate_exceeded)
+        end},
+        {"insufficient events", fun insufficient_completion_before_monitor_attachment/0},
+        {"rate across windows", fun rate_across_windows_is_not_inferred_complete/0}
+    ]}.
+
 actual_module_reload_marks_capture_partial_test_() ->
     {timeout, 10, fun actual_module_reload_marks_capture_partial/0}.
 
@@ -967,9 +1134,35 @@ response_cap_continues_natural_drain() ->
     end,
     Result = receive_result(Caller, Ref),
     Capture = maps:get(capture, Result),
-    ?assertEqual(true, maps:get(trace_complete, Capture)),
+    ?assertEqual(partial, maps:get(status, Capture)),
+    ?assertEqual(false, maps:get(trace_complete, Capture)),
     ?assertEqual(true, maps:get(truncated, Capture)),
     ?assertEqual(2, length(maps:get(events, Capture))),
+    ?assertEqual(1, maps:get(dropped_count, Capture)),
+    assert_clean(Tracee),
+    Tracee ! stop.
+
+response_cap_marks_rate_capture_partial() ->
+    cleanup(),
+    Tracee = tracee(),
+    Request = (request(Tracee))#{
+        max => {1, 1000}, test_event_cap => 1, duration_ms => 3000
+    },
+    {Caller, Ref} = start_call(self(), Request),
+    wait_trace_active(Tracee, {?MODULE, fixture, 0}),
+    Tracee ! {call, self(), 2},
+    receive
+        called -> ok
+    after 1000 ->
+        error(tracee_timeout)
+    end,
+    Result = receive_result(Caller, Ref),
+    ?assertEqual(rate_exceeded, maps:get(reason, Result)),
+    Capture = maps:get(capture, Result),
+    ?assertEqual(partial, maps:get(status, Capture)),
+    ?assertEqual(false, maps:get(trace_complete, Capture)),
+    ?assertEqual(true, maps:get(truncated, Capture)),
+    ?assertEqual(1, length(maps:get(events, Capture))),
     ?assertEqual(1, maps:get(dropped_count, Capture)),
     assert_clean(Tracee),
     Tracee ! stop.
@@ -1388,7 +1581,9 @@ extended_patterns_and_legacy_flags_are_cleared() ->
     Tracee = tracee(),
     Victim = tracee(),
     DummyTracer = spawn(fun stubborn_helper/0),
+    VictimPort = open_port({spawn, "cat"}, []),
     1 = erlang:trace(Victim, true, [send, {tracer, DummyTracer}]),
+    1 = erlang:trace(VictimPort, true, [ports, {tracer, DummyTracer}]),
     0 = erlang:trace_pattern(on_load, true, [local, call_memory]),
     1 = erlang:trace_pattern({erlang, node, 0}, true, [call_memory]),
     {Caller, Ref} = start_call(self(), (request(Tracee))#{duration_ms => 3000}),
@@ -1397,6 +1592,8 @@ extended_patterns_and_legacy_flags_are_cleared() ->
     ?assertEqual({call_memory, false}, erlang:trace_info({erlang, node, 0}, call_memory)),
     {flags, VictimFlags} = erlang:trace_info(Victim, flags),
     ?assertEqual(false, lists:member(send, VictimFlags)),
+    ?assertEqual({flags, []}, erlang:trace_info(VictimPort, flags)),
+    ?assertEqual({tracer, []}, erlang:trace_info(VictimPort, tracer)),
     Tracee ! {call, self(), 1},
     receive
         called -> ok
@@ -1409,6 +1606,7 @@ extended_patterns_and_legacy_flags_are_cleared() ->
     ?assertEqual({traced, global}, erlang:trace_info(on_load, traced)),
     observer_cli_trace:clear_trace(),
     ?assertEqual({all, false}, erlang:trace_info(on_load, all)),
+    true = port_close(VictimPort),
     Victim ! stop,
     DummyTracer ! stop,
     Tracee ! stop.
@@ -1500,6 +1698,91 @@ recon_rate_breaker_boundary() ->
     Result = receive_result(Caller, Ref),
     ?assertEqual(rate_exceeded, maps:get(reason, Result)),
     ?assertEqual(4, length(maps:get(events, maps:get(capture, Result)))),
+    assert_clean(Tracee),
+    Tracee ! stop.
+
+completion_before_monitor_attachment(Max, Calls, Reason) ->
+    cleanup(),
+    Tracee = tracee(),
+    AfterCalls = fun() ->
+        Tracee ! {call, self(), Calls},
+        receive
+            called -> ok
+        after 1000 ->
+            error(tracee_timeout)
+        end,
+        wait_until(fun() ->
+            whereis(recon_trace_tracer) =:= undefined andalso
+                whereis(recon_trace_formatter) =:= undefined
+        end)
+    end,
+    Result = observer_cli_trace:call(
+        self(),
+        (request(Tracee))#{max => Max, duration_ms => 3000, test_after_calls => AfterCalls}
+    ),
+    ?assertEqual(ok, maps:get(status, Result)),
+    ?assertEqual(Reason, maps:get(reason, Result)),
+    Capture = maps:get(capture, Result),
+    ?assertEqual(complete, maps:get(status, Capture)),
+    ?assertEqual(true, maps:get(trace_complete, Capture)),
+    ?assertEqual(Calls, length(maps:get(events, Capture))),
+    assert_clean(Tracee),
+    Tracee ! stop.
+
+insufficient_completion_before_monitor_attachment() ->
+    cleanup(),
+    Tracee = tracee(),
+    AfterCalls = fun() ->
+        recon_trace:clear(),
+        wait_until(fun() ->
+            whereis(recon_trace_tracer) =:= undefined andalso
+                whereis(recon_trace_formatter) =:= undefined
+        end)
+    end,
+    Result = observer_cli_trace:call(
+        self(),
+        (request(Tracee))#{max => 2, duration_ms => 3000, test_after_calls => AfterCalls}
+    ),
+    ?assertEqual(error, maps:get(status, Result)),
+    ?assertEqual(capture_internal_error, maps:get(reason, Result)),
+    ?assertEqual([], maps:get(events, maps:get(capture, Result))),
+    assert_forced(Result),
+    assert_clean(Tracee),
+    Tracee ! stop.
+
+rate_across_windows_is_not_inferred_complete() ->
+    cleanup(),
+    Tracee = tracee(),
+    AfterCalls = fun() ->
+        Tracee ! {call, self(), 1},
+        receive
+            called -> ok
+        after 1000 ->
+            error(tracee_timeout)
+        end,
+        timer:sleep(1100),
+        Tracee ! {call, self(), 1},
+        receive
+            called -> ok
+        after 1000 ->
+            error(tracee_timeout)
+        end,
+        recon_trace:clear(),
+        wait_until(fun() ->
+            whereis(recon_trace_tracer) =:= undefined andalso
+                whereis(recon_trace_formatter) =:= undefined
+        end)
+    end,
+    Result = observer_cli_trace:call(
+        self(),
+        (request(Tracee))#{
+            max => {1, 1000}, duration_ms => 3000, test_after_calls => AfterCalls
+        }
+    ),
+    ?assertEqual(error, maps:get(status, Result)),
+    ?assertEqual(capture_internal_error, maps:get(reason, Result)),
+    ?assertEqual(2, length(maps:get(events, maps:get(capture, Result)))),
+    assert_forced(Result),
     assert_clean(Tracee),
     Tracee ! stop.
 

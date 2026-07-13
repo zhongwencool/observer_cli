@@ -228,6 +228,7 @@
               "port",
               "otp_state",
               "supervision_tree",
+              "logs",
               "trace_call",
               "trace_stop_all"
             ]
@@ -276,6 +277,9 @@
     },
     {
       "$ref": "#/$defs/traceCommand"
+    },
+    {
+      "$ref": "#/$defs/logsCommand"
     },
     {
       "$ref": "#/$defs/preCommandError"
@@ -1241,6 +1245,488 @@
         },
         "trace": {
           "type": "object"
+        }
+      }
+    },
+    "logsCommand": {
+      "oneOf": [
+        {
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "const": "logs"
+            },
+            "data": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/logsData"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "data": {
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "data"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "meta": {
+                    "type": "object",
+                    "properties": {
+                      "target": {
+                        "$ref": "#/$defs/target"
+                      },
+                      "capture": {
+                        "$ref": "#/$defs/logsCapture"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "logsData": {
+      "type": "object",
+      "required": [
+        "sources",
+        "selected_source",
+        "tail"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "sources": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/logSource"
+          }
+        },
+        "selected_source": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/selectedLogSource"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tail": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/logTail"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "logSource": {
+      "type": "object",
+      "required": [
+        "id",
+        "addressable",
+        "handler_kind",
+        "supported",
+        "reason_code"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "addressable": {
+          "type": "boolean"
+        },
+        "handler_kind": {
+          "enum": [
+            "logger_std_h_file",
+            "other"
+          ]
+        },
+        "supported": {
+          "type": "boolean"
+        },
+        "reason_code": {
+          "enum": [
+            null,
+            "unaddressable_handler_id",
+            "unsupported_log_handler",
+            "unsupported_file_modes",
+            "log_path_unrepresentable",
+            "invalid_log_handler_config"
+          ]
+        }
+      }
+    },
+    "selectedLogSource": {
+      "type": "object",
+      "required": [
+        "id",
+        "addressable",
+        "handler_kind",
+        "supported",
+        "reason_code",
+        "configured_path",
+        "active_handler_fd_match"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "addressable": {
+          "type": "boolean"
+        },
+        "handler_kind": {
+          "enum": [
+            "logger_std_h_file",
+            "other"
+          ]
+        },
+        "supported": {
+          "type": "boolean"
+        },
+        "reason_code": {
+          "enum": [
+            null,
+            "unaddressable_handler_id",
+            "unsupported_log_handler",
+            "unsupported_file_modes",
+            "log_path_unrepresentable",
+            "invalid_log_handler_config"
+          ]
+        },
+        "configured_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^/"
+        },
+        "active_handler_fd_match": {
+          "const": "unknown"
+        }
+      }
+    },
+    "logTail": {
+      "type": "object",
+      "required": [
+        "scope",
+        "active_handler_fd_match",
+        "visibility",
+        "command_filesync_requested",
+        "consistency",
+        "content_trust",
+        "requested_lines",
+        "returned_lines",
+        "captured_eof_bytes",
+        "bytes_read",
+        "has_more",
+        "content_truncated",
+        "truncation_reasons",
+        "truncated_line_indexes",
+        "lines"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "scope": {
+          "const": "configured_path"
+        },
+        "active_handler_fd_match": {
+          "const": "unknown"
+        },
+        "visibility": {
+          "const": "reader_visible"
+        },
+        "command_filesync_requested": {
+          "const": false
+        },
+        "consistency": {
+          "const": "non_atomic"
+        },
+        "content_trust": {
+          "const": "untrusted"
+        },
+        "requested_lines": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000
+        },
+        "returned_lines": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2000
+        },
+        "captured_eof_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "bytes_read": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65536
+        },
+        "has_more": {
+          "type": "boolean"
+        },
+        "content_truncated": {
+          "type": "boolean"
+        },
+        "truncation_reasons": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "byte_cap",
+              "line_cap"
+            ]
+          }
+        },
+        "truncated_line_indexes": {
+          "type": "array",
+          "maxItems": 2000,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1999
+          }
+        },
+        "lines": {
+          "type": "array",
+          "maxItems": 2000,
+          "items": {
+            "$ref": "#/$defs/logLine"
+          }
+        }
+      }
+    },
+    "logLine": {
+      "oneOf": [
+        {
+          "type": "string",
+          "maxLength": 32768
+        },
+        {
+          "type": "object",
+          "required": [
+            "encoding",
+            "data"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "encoding": {
+              "const": "base64"
+            },
+            "data": {
+              "type": "string",
+              "contentEncoding": "base64"
+            }
+          }
+        }
+      ]
+    },
+    "logsCapture": {
+      "type": "object",
+      "required": [
+        "started_at",
+        "finished_at",
+        "duration_ms",
+        "probes",
+        "observer_effects"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "started_at": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 64
+        },
+        "finished_at": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 64
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "probes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "$ref": "#/$defs/probe"
+          }
+        },
+        "observer_effects": {
+          "oneOf": [
+            {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/diagnosticsWorkerEffect"
+                },
+                {
+                  "$ref": "#/$defs/moduleLoadEffect"
+                },
+                {
+                  "$ref": "#/$defs/configuredLogReadEffect"
+                }
+              ],
+              "items": false
+            },
+            {
+              "type": "array",
+              "minItems": 4,
+              "maxItems": 4,
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/diagnosticsWorkerEffect"
+                },
+                {
+                  "$ref": "#/$defs/moduleLoadEffect"
+                },
+                {
+                  "$ref": "#/$defs/distributionControllerEffect"
+                },
+                {
+                  "$ref": "#/$defs/configuredLogReadEffect"
+                }
+              ],
+              "items": false
+            }
+          ]
+        }
+      }
+    },
+    "diagnosticsWorkerEffect": {
+      "type": "object",
+      "required": [
+        "id",
+        "affected_facts"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "const": "diagnostics_worker"
+        },
+        "affected_facts": {
+          "const": [
+            "process_count",
+            "port_count",
+            "memory",
+            "io",
+            "garbage_collection"
+          ]
+        }
+      }
+    },
+    "moduleLoadEffect": {
+      "type": "object",
+      "required": [
+        "id",
+        "module_loaded_before_sample"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "const": "module_load"
+        },
+        "module_loaded_before_sample": {
+          "type": "boolean"
+        }
+      }
+    },
+    "distributionControllerEffect": {
+      "type": "object",
+      "required": [
+        "id",
+        "controller_peer",
+        "dynamic_controller_name_atom"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "const": "distribution_controller"
+        },
+        "controller_peer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dynamic_controller_name_atom": {
+          "const": true
+        }
+      }
+    },
+    "configuredLogReadEffect": {
+      "type": "object",
+      "required": [
+        "id",
+        "handler_ids_enumerated",
+        "handler_config_lookups",
+        "read_attempts",
+        "raw_read_cap_bytes",
+        "atime_may_change",
+        "consistency",
+        "command_filesync_attempted"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "const": "configured_log_read"
+        },
+        "handler_ids_enumerated": {
+          "type": "boolean"
+        },
+        "handler_config_lookups": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 66
+        },
+        "read_attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "raw_read_cap_bytes": {
+          "const": 65536
+        },
+        "atime_may_change": {
+          "const": true
+        },
+        "consistency": {
+          "const": "non_atomic"
+        },
+        "command_filesync_attempted": {
+          "const": false
         }
       }
     }

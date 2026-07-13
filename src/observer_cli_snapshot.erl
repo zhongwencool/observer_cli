@@ -126,6 +126,7 @@
     finish_deep_probe/4,
     coordinate/5,
     finish_worker/6,
+    capture_logs/2,
     capture_trace/2,
     trace_response/3,
     collect_root_children/4,
@@ -445,6 +446,8 @@ probe(otp_state, Request, Context) ->
     capture_otp_state(Request, Context);
 probe(supervision_tree, Request, Context) ->
     capture_supervision_tree(Request, Context);
+probe(logs, Request, Context) ->
+    capture_logs_test(Request, Context);
 probe(trace, Request, Context) ->
     capture_trace(Request, Context);
 probe(_Command, _Request, _Context) ->
@@ -482,6 +485,8 @@ probe(otp_state, Request, Context) ->
     capture_otp_state(Request, Context);
 probe(supervision_tree, Request, Context) ->
     capture_supervision_tree(Request, Context);
+probe(logs, Request, Context) ->
+    capture_logs(Request, Context);
 probe(trace, Request, Context) ->
     capture_trace(Request, Context);
 probe(_Command, _Request, _Context) ->
@@ -498,6 +503,30 @@ capture_trace(#{action := stop_all, all := true}, Context) ->
     trace_response(trace_stop_all, fun observer_cli_trace:stop_all/0, Context);
 capture_trace(_Request, _Context) ->
     {probe_error, invalid_request}.
+
+-ifdef(TEST).
+capture_logs_test(#{test_log_env := Env} = RawRequest, Context) when is_map(Env) ->
+    Request = maps:remove(test_log_env, RawRequest),
+    case observer_cli_log:valid_request(Request) of
+        true ->
+            capture_scan_inspection(logs, log_file_tail, 1, Context, fun() ->
+                observer_cli_log:capture(Request, Env)
+            end);
+        false ->
+            {probe_error, invalid_request}
+    end;
+capture_logs_test(Request, Context) ->
+    capture_logs(Request, Context).
+-endif.
+capture_logs(Request, Context) ->
+    case observer_cli_log:valid_request(Request) of
+        true ->
+            capture_scan_inspection(logs, log_file_tail, 1, Context, fun() ->
+                observer_cli_log:capture(Request)
+            end);
+        false ->
+            {probe_error, invalid_request}
+    end.
 
 trace_response(Command, Fun, #{controller := Controller}) ->
     StartedAt = erlang:system_time(millisecond),
@@ -2204,11 +2233,20 @@ capture_scan_inspection(Command, ProbeId, Samples, #{controller := Controller}, 
     StartedMonotonic = erlang:monotonic_time(millisecond),
     ModuleLoaded = module_loaded(),
     Outcome = OutcomeFun(),
-    {Status, Reason, Data, Coverage} =
+    {Status, Reason, Data, Coverage, ExtraEffects} =
         case Outcome of
-            {ok, Value, Covered} -> {ok, null, Value, Covered};
-            {unavailable, Why, Details} -> {unavailable, Why, Details, [admission_only]};
-            {error, Why, Details} -> {error, Why, Details, []}
+            {ok, Value, Covered} ->
+                {ok, null, Value, Covered, []};
+            {unavailable, Why, Details} ->
+                {unavailable, Why, Details, [admission_only], []};
+            {error, Why, Details} ->
+                {error, Why, Details, [], []};
+            {ok, Value, Covered, Effects} ->
+                {ok, null, Value, Covered, Effects};
+            {unavailable, Why, Details, Covered, Effects} ->
+                {unavailable, Why, Details, Covered, Effects};
+            {error, Why, Details, Covered, Effects} ->
+                {error, Why, Details, Covered, Effects}
         end,
     FinishedMonotonic = erlang:monotonic_time(millisecond),
     FinishedAt = erlang:system_time(millisecond),
@@ -2236,7 +2274,7 @@ capture_scan_inspection(Command, ProbeId, Samples, #{controller := Controller}, 
                     Coverage
                 )
             ],
-            observer_effects => observer_effects(ModuleLoaded, Controller)
+            observer_effects => observer_effects(ModuleLoaded, Controller) ++ ExtraEffects
         },
         Data,
         []

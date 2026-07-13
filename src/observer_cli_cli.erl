@@ -342,6 +342,11 @@ validate_runtime_options(supervision_tree, #{app := App} = Options) ->
     end;
 validate_runtime_options(supervision_tree, _Options) ->
     {error, application_required};
+validate_runtime_options(logs, Options) ->
+    case only_options(logs, Options, [handler, tail]) of
+        true -> validate_logs_options(Options);
+        false -> {error, unsupported_command_option}
+    end;
 validate_runtime_options(trace, #{all := true} = Options) ->
     case only_options(trace, Options, [all]) of
         true -> validate_target_options(Options);
@@ -357,6 +362,25 @@ validate_target_options(Command, Options, CommandOptions) ->
         true -> validate_target_options(Options);
         false -> {error, unsupported_command_option}
     end.
+
+validate_logs_options(Options) ->
+    case maps:find(handler, Options) of
+        {ok, Handler} ->
+            case observer_cli_log:addressable_handler_id(Handler) of
+                true -> validate_logs_tail(Options);
+                false -> {error, unaddressable_handler_id}
+            end;
+        error ->
+            validate_logs_tail(Options)
+    end.
+
+validate_logs_tail(#{tail := Text} = Options) ->
+    case positive_integer(Text) of
+        Tail when is_integer(Tail), Tail =< 2000 -> validate_target_options(Options);
+        _ -> {error, invalid_tail}
+    end;
+validate_logs_tail(Options) ->
+    validate_target_options(Options).
 
 validate_trace_options(Options) ->
     case only_options(trace, Options, [pid, limit, rate, duration, replace_existing_trace, all]) of
@@ -423,6 +447,8 @@ global_options(status) ->
     [format, json, timeout];
 global_options(disconnect) ->
     [format, json];
+global_options(logs) ->
+    remote_options();
 global_options(_Command) ->
     remote_options() ++ [redact, include_identifiers].
 
@@ -1182,6 +1208,8 @@ option("--rate") -> {value, rate};
 option("--replace-existing-trace") -> {flag, replace_existing_trace};
 option("--all") -> {flag, all};
 option("--behavior") -> {value, behavior};
+option("--handler") -> {value, handler};
+option("--tail") -> {value, tail};
 option([$-, $- | _]) -> unknown;
 option(_Argument) -> positional.
 
@@ -1204,6 +1232,7 @@ command("port") -> port;
 command("sockets") -> sockets;
 command("otp-state") -> otp_state;
 command("supervision-tree") -> supervision_tree;
+command("logs") -> logs;
 command("trace") -> trace;
 command("diagnose") -> diagnose;
 command(_Argument) -> undefined.
@@ -1320,6 +1349,10 @@ encode(text, #{
             <<"Removed saved target context for ">>, escape_text(Node), <<".\n">>
         ])
     );
+encode(text, #{<<"command">> := <<"logs">>, <<"data">> := Data} = Response) when
+    is_map(Data)
+->
+    capped(iolist_to_binary(logs_text(Response, Data)));
 encode(text, #{<<"command">> := Command} = Response) ->
     capped(
         iolist_to_binary([
@@ -1330,11 +1363,15 @@ encode(text, #{<<"command">> := Command} = Response) ->
         ])
     );
 encode(term, Response) ->
-    capped(iolist_to_binary(io_lib:format("~tp.~n", [Response])));
+    Body = iolist_to_binary(io_lib:format("~0tp.", [Response])),
+    capped(iolist_to_binary([harden_term(Body), <<"\n">>]));
 encode(json, Response) ->
     case code:ensure_loaded(json) of
         {module, json} ->
-            try capped(iolist_to_binary([erlang:apply(json, encode, [Response]), <<"\n">>])) of
+            try
+                Body = iolist_to_binary(erlang:apply(json, encode, [Response])),
+                capped(iolist_to_binary([harden_json(Body), <<"\n">>]))
+            of
                 Result -> Result
             catch
                 _:_ -> encoder_error(json_encoding_failed)
@@ -1348,6 +1385,129 @@ encode(_Format, _Response) ->
 text_command(<<"trace_call">>) -> <<"trace call">>;
 text_command(<<"trace_stop_all">>) -> <<"trace stop">>;
 text_command(Command) -> escape_text(Command).
+
+logs_text(Response, Data) ->
+    Meta = maps:get(<<"meta">>, Response),
+    Target = maps:get(<<"target">>, Meta),
+    Sources = maps:get(<<"sources">>, Data),
+    Selected = maps:get(<<"selected_source">>, Data),
+    Tail = maps:get(<<"tail">>, Data),
+    [
+        <<"observer_cli logs\n">>,
+        logs_target_text(Target),
+        logs_source_text(Selected, Sources),
+        logs_tail_text(Tail),
+        logs_failure_text(Response, Tail)
+    ].
+
+logs_target_text(#{<<"node">> := Node, <<"otp_release">> := Otp}) ->
+    [<<"target=">>, escape_text(Node), <<" otp=">>, escape_text(Otp), <<"\n">>];
+logs_target_text(_Target) ->
+    [].
+
+logs_source_text(null, Sources) ->
+    [logs_summary_text(Source) || Source <- Sources];
+logs_source_text(
+    #{
+        <<"id">> := Id,
+        <<"handler_kind">> := Kind,
+        <<"configured_path">> := Path
+    },
+    _Sources
+) ->
+    [
+        <<"handler=">>,
+        escape_text(Id),
+        <<" handler_kind=">>,
+        escape_text(Kind),
+        <<"\nconfigured_path=">>,
+        escape_text(Path),
+        <<"\n">>
+    ].
+
+logs_summary_text(#{
+    <<"id">> := Id,
+    <<"addressable">> := Addressable,
+    <<"supported">> := Supported,
+    <<"reason_code">> := Reason
+}) ->
+    [
+        <<"source=">>,
+        escape_text(Id),
+        <<" addressable=">>,
+        text_scalar(Addressable),
+        <<" supported=">>,
+        text_scalar(Supported),
+        <<" reason=">>,
+        text_scalar(Reason),
+        <<"\n">>
+    ].
+
+logs_tail_text(null) ->
+    [];
+logs_tail_text(Tail) ->
+    Lines = maps:get(<<"lines">>, Tail),
+    Truncated = maps:get(<<"truncated_line_indexes">>, Tail),
+    [
+        <<"scope=">>,
+        escape_text(maps:get(<<"scope">>, Tail)),
+        <<" active_handler_fd_match=">>,
+        escape_text(maps:get(<<"active_handler_fd_match">>, Tail)),
+        <<"\nvisibility=">>,
+        escape_text(maps:get(<<"visibility">>, Tail)),
+        <<" command_filesync_requested=">>,
+        text_scalar(maps:get(<<"command_filesync_requested">>, Tail)),
+        <<" consistency=">>,
+        escape_text(maps:get(<<"consistency">>, Tail)),
+        <<"\nrequested_lines=">>,
+        text_scalar(maps:get(<<"requested_lines">>, Tail)),
+        <<" returned_lines=">>,
+        text_scalar(maps:get(<<"returned_lines">>, Tail)),
+        <<" bytes_read=">>,
+        text_scalar(maps:get(<<"bytes_read">>, Tail)),
+        <<" has_more=">>,
+        text_scalar(maps:get(<<"has_more">>, Tail)),
+        <<"\n--- UNTRUSTED LOG CONTENT ---\n">>,
+        logs_lines_text(Lines, Truncated, 0)
+    ].
+
+logs_lines_text([], _Truncated, _Index) ->
+    [];
+logs_lines_text([Line | Rest], Truncated, Index) ->
+    Omitted =
+        case lists:member(Index, Truncated) of
+            true -> <<"[earlier bytes omitted] ">>;
+            false -> <<>>
+        end,
+    [
+        <<"| ">>,
+        Omitted,
+        logs_line_text(Line),
+        <<"\n">>,
+        logs_lines_text(Rest, Truncated, Index + 1)
+    ].
+
+logs_line_text(Line) when is_binary(Line) ->
+    escape_text(Line);
+logs_line_text(#{<<"encoding">> := <<"base64">>, <<"data">> := Data}) ->
+    <<"base64:", Data/binary>>.
+
+logs_failure_text(_Response, Tail) when Tail =/= null ->
+    [];
+logs_failure_text(Response, null) ->
+    Capture = maps:get(<<"capture">>, maps:get(<<"meta">>, Response)),
+    Reason =
+        case Capture of
+            #{<<"probes">> := [#{<<"reason_code">> := ProbeReason}]} -> ProbeReason;
+            _ -> null
+        end,
+    [
+        <<"outcome=">>,
+        escape_text(maps:get(<<"outcome">>, Response)),
+        <<" reason=">>,
+        text_scalar(Reason),
+        <<"\n">>
+    ].
 
 cookie_source_text(#{<<"type">> := <<"env">>, <<"name">> := Name}) ->
     [<<"env:">>, escape_text(Name)];
@@ -1545,13 +1705,80 @@ exit_code(_Unknown) ->
 
 -spec escape_text(unicode:chardata()) -> binary().
 escape_text(Text) ->
-    case unicode:characters_to_binary(Text) of
-        Binary when is_binary(Binary) ->
-            iolist_to_binary([escape_byte(Byte) || <<Byte>> <= Binary]);
-        {_Error, Valid, Rest} ->
-            Raw = iolist_to_binary([Valid, Rest]),
+    case unicode:characters_to_list(Text) of
+        Codepoints when is_list(Codepoints) ->
+            iolist_to_binary([escape_codepoint(Codepoint) || Codepoint <- Codepoints]);
+        _Invalid ->
+            Raw = raw_text(Text),
             <<"base64:", (base64:encode(Raw))/binary>>
     end.
+
+raw_text(Text) when is_binary(Text) ->
+    Text;
+raw_text(Text) ->
+    try iolist_to_binary(Text) of
+        Binary -> Binary
+    catch
+        _:_ -> term_to_binary(Text)
+    end.
+
+escape_codepoint(Codepoint) when
+    Codepoint < 16#20;
+    Codepoint >= 16#7F, Codepoint =< 16#9F
+->
+    io_lib:format("\\x~2.16.0B", [Codepoint]);
+escape_codepoint(Codepoint) ->
+    case bidi_or_separator(Codepoint) of
+        true -> io_lib:format("\\u{~.16B}", [Codepoint]);
+        false -> unicode:characters_to_binary([Codepoint])
+    end.
+
+harden_term(Binary) ->
+    harden_unicode(Binary, fun term_codepoint/1).
+
+term_codepoint(Codepoint) when
+    Codepoint < 16#20;
+    Codepoint >= 16#7F, Codepoint =< 16#9F
+->
+    io_lib:format("\\x~2.16.0B", [Codepoint]);
+term_codepoint(Codepoint) ->
+    case bidi_or_separator(Codepoint) of
+        true -> io_lib:format("\\x{~.16B}", [Codepoint]);
+        false -> unicode:characters_to_binary([Codepoint])
+    end.
+
+harden_json(Binary) ->
+    harden_unicode(Binary, fun json_codepoint/1).
+
+json_codepoint(Codepoint) when Codepoint < 16#20 ->
+    json_unicode_escape(Codepoint);
+json_codepoint(Codepoint) when Codepoint >= 16#7F, Codepoint =< 16#9F ->
+    json_unicode_escape(Codepoint);
+json_codepoint(Codepoint) ->
+    case bidi_or_separator(Codepoint) of
+        true -> json_unicode_escape(Codepoint);
+        false -> unicode:characters_to_binary([Codepoint])
+    end.
+
+json_unicode_escape(Codepoint) ->
+    io_lib:format("\\u~4.16.0B", [Codepoint]).
+
+harden_unicode(Binary, Fun) ->
+    case unicode:characters_to_list(Binary) of
+        Codepoints when is_list(Codepoints) ->
+            iolist_to_binary([Fun(Codepoint) || Codepoint <- Codepoints]);
+        _Invalid ->
+            Binary
+    end.
+
+bidi_or_separator(16#061C) -> true;
+bidi_or_separator(16#200E) -> true;
+bidi_or_separator(16#200F) -> true;
+bidi_or_separator(16#2028) -> true;
+bidi_or_separator(16#2029) -> true;
+bidi_or_separator(Codepoint) when Codepoint >= 16#202A, Codepoint =< 16#202E -> true;
+bidi_or_separator(Codepoint) when Codepoint >= 16#2066, Codepoint =< 16#2069 -> true;
+bidi_or_separator(_Codepoint) -> false.
 
 command_binary(null) ->
     null;
@@ -1636,6 +1863,10 @@ reason_message(trace_stop_timeout_too_short) ->
     <<"trace stop --timeout must be at least five seconds">>;
 reason_message(otp_state_timeout_too_short) ->
     <<"--timeout must be at least 10s for otp-state">>;
+reason_message(unaddressable_handler_id) ->
+    <<"--handler must be 1..255 safe Unicode characters and must not start with --">>;
+reason_message(invalid_tail) ->
+    <<"--tail must be an integer from 1 to 2000">>;
 reason_message(invalid_refresh_interval) ->
     <<"REFRESH_MS must be an integer of at least 1000">>;
 reason_message(connection_failed) ->
@@ -1671,8 +1902,3 @@ encoder_error(Reason) ->
 
 controller_error(Category, Reason) ->
     #{category => Category, exit_code => exit_code(Category), reason => Reason}.
-
-escape_byte(Byte) when Byte < 16#20; Byte >= 16#7F, Byte =< 16#9F ->
-    io_lib:format("\\x~2.16.0B", [Byte]);
-escape_byte(Byte) ->
-    Byte.

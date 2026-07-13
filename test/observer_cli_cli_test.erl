@@ -25,6 +25,7 @@ reserved_command_words_test() ->
         {"sockets", sockets},
         {"otp-state", otp_state},
         {"supervision-tree", supervision_tree},
+        {"logs", logs},
         {"trace", trace},
         {"diagnose", diagnose}
     ],
@@ -119,6 +120,35 @@ command_options_test() ->
             "<0.123.0>",
             "--replace-existing-trace"
         ])
+    ).
+
+logs_command_contract_test() ->
+    ?assertMatch(
+        {ok, #{command := logs, arguments := [], options := #{}}},
+        observer_cli_cli:parse(["logs"])
+    ),
+    ?assertMatch(
+        {ok, #{
+            command := logs,
+            arguments := [],
+            options := #{handler := "app file", tail := "2000"}
+        }},
+        observer_cli_cli:parse(["logs", "--handler", "app file", "--tail", "2000"])
+    ),
+    lists:foreach(
+        fun({Reason, Arguments}) ->
+            assert_argument_error(Reason, observer_cli_cli:parse(Arguments))
+        end,
+        [
+            {invalid_tail, ["logs", "--tail", "0"]},
+            {invalid_tail, ["logs", "--tail", "2001"]},
+            {invalid_tail, ["logs", "--tail", "many"]},
+            {unaddressable_handler_id, ["logs", "--handler", "bad\nhandler"]},
+            {{unknown_option, "--file"}, ["logs", "--file", "/tmp/app.log"]},
+            {unsupported_command_option, ["logs", "--redact"]},
+            {unsupported_command_option, ["logs", "--include-identifiers"]},
+            {invalid_arguments, ["logs", "extra"]}
+        ]
     ).
 
 trace_command_contract_test() ->
@@ -1100,6 +1130,12 @@ encoder_cap_and_text_escaping_test() ->
     ),
     Dynamic = <<"safe", 27, "]0;title", 7, 10>>,
     ?assertEqual(<<"safe\\x1B]0;title\\x07\\x0A">>, observer_cli_cli:escape_text(Dynamic)),
+    Unicode = <<"中文 😀"/utf8>>,
+    ?assertEqual(Unicode, observer_cli_cli:escape_text(Unicode)),
+    ?assertEqual(<<"\\x9B">>, observer_cli_cli:escape_text(<<16#C2, 16#9B>>)),
+    ?assertEqual(
+        <<"\\u{202E}">>, observer_cli_cli:escape_text(<<16#E2, 16#80, 16#AE>>)
+    ),
     TextResponse = observer_cli_cli:response(
         memory,
         error,
@@ -1113,6 +1149,76 @@ encoder_cap_and_text_escaping_test() ->
     ?assertEqual(nomatch, binary:match(Text, <<7>>)),
     ?assertEqual(nomatch, binary:match(Text, <<"schema:">>)),
     ?assertEqual(nomatch, binary:match(Text, <<"meta:">>)).
+
+logs_text_encoder_isolates_untrusted_lines_test() ->
+    Response = log_response([
+        <<"normal 中文"/utf8>>,
+        <<"heading\r", 27, "]52;secret", 7>>,
+        #{<<"encoding">> => <<"base64">>, <<"data">> => <<"/w==">>}
+    ]),
+    {ok, Text} = observer_cli_cli:encode(text, Response),
+    ?assertNotEqual(nomatch, binary:match(Text, <<"--- UNTRUSTED LOG CONTENT ---">>)),
+    ?assertNotEqual(nomatch, binary:match(Text, <<"| normal 中文"/utf8>>)),
+    ?assertNotEqual(nomatch, binary:match(Text, <<"| heading\\x0D\\x1B]52;secret\\x07">>)),
+    ?assertNotEqual(nomatch, binary:match(Text, <<"| base64:/w==">>)),
+    ?assertEqual(nomatch, binary:match(Text, <<27>>)),
+    ?assertEqual(nomatch, binary:match(Text, <<7>>)),
+    Content = binary:split(Text, <<"--- UNTRUSTED LOG CONTENT ---\n">>),
+    [_Header, Body] = Content,
+    lists:foreach(
+        fun(Line) ->
+            case Line of
+                <<>> -> ok;
+                <<"| ", _/binary>> -> ok
+            end
+        end,
+        binary:split(Body, <<"\n">>, [global])
+    ).
+
+structured_encoders_harden_terminal_codepoints_test() ->
+    Dangerous = <<0, 27, 16#C2, 16#9B, 16#E2, 16#80, 16#AE, 16#E2, 16#80, 16#A8>>,
+    Response = log_response([Dangerous]),
+    {ok, Term} = observer_cli_cli:encode(term, Response),
+    ?assertEqual(nomatch, binary:match(Term, <<0>>)),
+    ?assertEqual(nomatch, binary:match(Term, <<27>>)),
+    ?assertEqual(nomatch, binary:match(Term, <<16#C2, 16#9B>>)),
+    ?assertEqual(nomatch, binary:match(Term, <<16#E2, 16#80, 16#AE>>)),
+    ?assertEqual(nomatch, binary:match(Term, <<16#E2, 16#80, 16#A8>>)),
+    ?assertEqual(1, byte_count(Term, $\n)),
+    {ok, Tokens, _EndLocation} = erl_scan:string(binary_to_list(Term)),
+    ?assertEqual({ok, Response}, erl_parse:parse_term(Tokens)),
+    case code:ensure_loaded(json) of
+        {module, json} ->
+            {ok, Json} = observer_cli_cli:encode(json, Response),
+            ?assertEqual(nomatch, binary:match(Json, <<0>>)),
+            ?assertEqual(nomatch, binary:match(Json, <<27>>)),
+            ?assertEqual(nomatch, binary:match(Json, <<16#C2, 16#9B>>)),
+            ?assertEqual(nomatch, binary:match(Json, <<16#E2, 16#80, 16#AE>>)),
+            ?assertEqual(nomatch, binary:match(Json, <<16#E2, 16#80, 16#A8>>)),
+            ?assertEqual(1, byte_count(Json, $\n)),
+            ?assertEqual(Response, erlang:apply(json, decode, [Json]));
+        {error, _} ->
+            ok
+    end.
+
+logs_maximum_envelope_stays_within_encoder_cap_test() ->
+    {Request, Target, Response} = maximum_log_response(),
+    ?assert(observer_cli_escriptize:validate_logs_response(Request, Response, Target)),
+    ?assert(erlang:external_size(Response) < 1024 * 1024),
+    {ok, EncodedText} = observer_cli_cli:encode(text, Response),
+    ?assert(byte_size(EncodedText) < 1024 * 1024),
+    {ok, EncodedTerm} = observer_cli_cli:encode(term, Response),
+    ?assert(byte_size(EncodedTerm) < 1024 * 1024),
+    {ok, Tokens, _EndLocation} = erl_scan:string(binary_to_list(EncodedTerm)),
+    ?assertEqual({ok, Response}, erl_parse:parse_term(Tokens)),
+    case code:ensure_loaded(json) of
+        {module, json} ->
+            {ok, EncodedJson} = observer_cli_cli:encode(json, Response),
+            ?assert(byte_size(EncodedJson) < 1024 * 1024),
+            ?assertEqual(Response, erlang:apply(json, decode, [EncodedJson]));
+        {error, _} ->
+            ok
+    end.
 
 health_command_text_reports_test() ->
     Response = observer_cli_cli:response(
@@ -1614,6 +1720,180 @@ context_filesystem_boundary_test() ->
     after
         file:del_dir_r(Root)
     end.
+
+log_response(Lines) ->
+    Bytes = lists:sum([
+        case Line of
+            Binary when is_binary(Binary) -> byte_size(Binary);
+            #{<<"data">> := Encoded} -> byte_size(base64:decode(Encoded))
+        end
+     || Line <- Lines
+    ]),
+    Source = #{
+        <<"id">> => <<"app_file">>,
+        <<"addressable">> => true,
+        <<"handler_kind">> => <<"logger_std_h_file">>,
+        <<"supported">> => true,
+        <<"reason_code">> => null
+    },
+    observer_cli_cli:response(
+        logs,
+        complete,
+        #{<<"node">> => <<"app@host">>, <<"otp_release">> => <<"29">>},
+        #{
+            <<"started_at">> => <<"2026-07-13T00:00:00.000Z">>,
+            <<"finished_at">> => <<"2026-07-13T00:00:00.001Z">>,
+            <<"duration_ms">> => 1,
+            <<"probes">> => [],
+            <<"observer_effects">> => []
+        },
+        #{
+            <<"sources">> => [Source],
+            <<"selected_source">> => Source#{
+                <<"configured_path">> => <<"/tmp/app.log">>,
+                <<"active_handler_fd_match">> => <<"unknown">>
+            },
+            <<"tail">> => #{
+                <<"scope">> => <<"configured_path">>,
+                <<"active_handler_fd_match">> => <<"unknown">>,
+                <<"visibility">> => <<"reader_visible">>,
+                <<"command_filesync_requested">> => false,
+                <<"consistency">> => <<"non_atomic">>,
+                <<"content_trust">> => <<"untrusted">>,
+                <<"requested_lines">> => 200,
+                <<"returned_lines">> => length(Lines),
+                <<"captured_eof_bytes">> => Bytes,
+                <<"bytes_read">> => Bytes,
+                <<"has_more">> => false,
+                <<"content_truncated">> => false,
+                <<"truncation_reasons">> => [],
+                <<"truncated_line_indexes">> => [],
+                <<"lines">> => Lines
+            }
+        },
+        []
+    ).
+
+maximum_log_response() ->
+    Ids = [
+        unicode:characters_to_binary([
+            lists:duplicate(253, 16#1F600), io_lib:format("~2.16.0B", [Index])
+        ])
+     || Index <- lists:seq(0, 63)
+    ],
+    [SelectedId | UnsupportedIds] = Ids,
+    Source = log_source(SelectedId, true, <<"logger_std_h_file">>, true, null),
+    Sources =
+        [Source] ++
+            [
+                log_source(Id, true, <<"other">>, false, <<"unsupported_log_handler">>)
+             || Id <- UnsupportedIds
+            ],
+    Selected = Source#{
+        <<"configured_path">> => <<"/", (binary:copy(<<"p">>, 4095))/binary>>,
+        <<"active_handler_fd_match">> => <<"unknown">>
+    },
+    Lines = [
+        binary:copy(<<16#C2, 16#80>>, 16384),
+        binary:copy(<<0, 1, 9, $", $\\>>, 6553),
+        #{<<"encoding">> => <<"base64">>, <<"data">> => <<"/w==">>}
+    ],
+    Target = binary:copy(<<"n">>, 255),
+    Request = #{handler => null, tail => 2000},
+    Response = observer_cli_cli:response(
+        logs,
+        complete,
+        #{<<"node">> => Target, <<"otp_release">> => <<"1234567890123456">>},
+        #{
+            <<"started_at">> => <<"2026-07-13T00:00:00.000Z">>,
+            <<"finished_at">> => <<"2026-07-13T00:00:00.001Z">>,
+            <<"duration_ms">> => 16#7FFFFFFFFFFFFFFF,
+            <<"probes">> => [
+                #{
+                    <<"id">> => <<"log_file_tail">>,
+                    <<"required">> => true,
+                    <<"status">> => <<"ok">>,
+                    <<"reason_code">> => null,
+                    <<"duration_ms">> => 16#7FFFFFFFFFFFFFFF,
+                    <<"samples">> => 1,
+                    <<"coverage">> => [
+                        <<"source_classification_complete">>,
+                        <<"source_selected">>,
+                        <<"path_prechecked">>,
+                        <<"fd_identity_verified">>,
+                        <<"bytes_captured">>,
+                        <<"post_read_verified">>
+                    ]
+                }
+            ],
+            <<"observer_effects">> => [
+                #{
+                    <<"id">> => <<"diagnostics_worker">>,
+                    <<"affected_facts">> => [
+                        <<"process_count">>,
+                        <<"port_count">>,
+                        <<"memory">>,
+                        <<"io">>,
+                        <<"garbage_collection">>
+                    ]
+                },
+                #{
+                    <<"id">> => <<"module_load">>,
+                    <<"module_loaded_before_sample">> => false
+                },
+                #{
+                    <<"id">> => <<"distribution_controller">>,
+                    <<"controller_peer">> => Target,
+                    <<"dynamic_controller_name_atom">> => true
+                },
+                #{
+                    <<"id">> => <<"configured_log_read">>,
+                    <<"handler_ids_enumerated">> => true,
+                    <<"handler_config_lookups">> => 65,
+                    <<"read_attempts">> => 1,
+                    <<"raw_read_cap_bytes">> => 65536,
+                    <<"atime_may_change">> => true,
+                    <<"consistency">> => <<"non_atomic">>,
+                    <<"command_filesync_attempted">> => false
+                }
+            ]
+        },
+        #{
+            <<"sources">> => Sources,
+            <<"selected_source">> => Selected,
+            <<"tail">> => #{
+                <<"scope">> => <<"configured_path">>,
+                <<"active_handler_fd_match">> => <<"unknown">>,
+                <<"visibility">> => <<"reader_visible">>,
+                <<"command_filesync_requested">> => false,
+                <<"consistency">> => <<"non_atomic">>,
+                <<"content_trust">> => <<"untrusted">>,
+                <<"requested_lines">> => 2000,
+                <<"returned_lines">> => 3,
+                <<"captured_eof_bytes">> => 65536,
+                <<"bytes_read">> => 65536,
+                <<"has_more">> => false,
+                <<"content_truncated">> => false,
+                <<"truncation_reasons">> => [],
+                <<"truncated_line_indexes">> => [],
+                <<"lines">> => Lines
+            }
+        },
+        []
+    ),
+    {Request, Target, Response}.
+
+log_source(Id, Addressable, Kind, Supported, Reason) ->
+    #{
+        <<"id">> => Id,
+        <<"addressable">> => Addressable,
+        <<"handler_kind">> => Kind,
+        <<"supported">> => Supported,
+        <<"reason_code">> => Reason
+    }.
+
+byte_count(Binary, Byte) ->
+    length(binary:matches(Binary, <<Byte>>)).
 
 assert_argument_error(Reason, Result) ->
     ?assertEqual(

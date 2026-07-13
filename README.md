@@ -98,6 +98,8 @@ the response, and stops the controller before returning.
 - Inspect memory, allocators, schedulers, distribution, and network activity.
 - Rank processes, applications, ETS tables, Mnesia tables, ports, and sockets.
 - Inspect one process, Erlang port, supervision tree, or bounded OTP state.
+- Read a bounded tail from one trusted plain `logger_std_h` configured file
+  without flushing Logger or accepting an arbitrary path.
 - Capture one exact, bounded function trace with explicit node-global consent.
 - Feed automation and agents a versioned `observer_cli.cli/v1` envelope with
   stable exit statuses.
@@ -118,6 +120,10 @@ missing diagnostic code. The TUI can load its matching interactive bundle on a
 trusted target before starting. The old bare
 `observer_cli NODE [COOKIE REFRESH_MS]` form is not supported; use the explicit
 `tui` command.
+
+`observer_cli logs` returns sensitive, untrusted retained text. It reads only a
+selected handler's configured path, not the handler's private file descriptor
+or rotation archives, and deliberately rejects redaction flags.
 
 ## Next steps
 
