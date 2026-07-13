@@ -179,10 +179,8 @@ flowchart TD
     I -->|handle with configured handler| K[Configured row handler]
 ```
 
-<!-- TODO(screenshot): Capture the example Runtime plugin in a 180x50 terminal
-with `./scripts/docs-screenshots.sh tui-plugin`. Save it as
-`docs/assets/tui-plugin-runtime.png` and add it here with alt text that names
-the attribute row, sortable columns, and selectable worker row. -->
+![Runtime plugin page showing BEAM memory and sortable worker, process, and port
+rows](assets/tui-plugin-runtime.png)
 
 ## Tables, sorting, and pagination
 

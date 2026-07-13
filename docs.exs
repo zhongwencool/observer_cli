@@ -9,6 +9,7 @@
     {"LICENSE", title: "License"}
   ],
   logo: "./docs/favicon.png",
+  assets: %{"./docs/assets" => "assets"},
   authors: [
     "Zhongwen Deng <zhongwencool@gmail.com>"
   ],

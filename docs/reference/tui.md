@@ -16,10 +16,8 @@ rebar3 escriptize
 Press `D` for the built-in shortcut page and `q` to quit. The old bare
 `observer_cli NODE [COOKIE REFRESH_MS]` form is not supported.
 
-<!-- TODO(screenshot): Capture the Home overview in a 180x50 terminal with
-`./scripts/docs-screenshots.sh tui-home`. Save it as
-`docs/assets/tui-home.png` and add it here with alt text that names the VM
-summary, memory/IO blocks, and ranked process table. -->
+![Observer CLI Home page showing the VM summary, memory and IO statistics, and
+processes ranked by memory](assets/tui-home.png)
 
 ## Start forms
 
@@ -359,10 +357,8 @@ A row number opens socket detail; `K` returns to the Sockets list. Counter
 sorting uses deltas after the first refresh. Identity sorting uses current
 metadata.
 
-<!-- TODO(screenshot): Capture the populated Sockets list in a 180x50 terminal
-with `./scripts/docs-screenshots.sh tui-sockets`. Save it as
-`docs/assets/tui-sockets.png` and add it here with alt text that names the
-General block, endpoints, kinds, states, and counter columns. -->
+![Sockets page showing registry totals, endpoints, socket states, and IO
+counters](assets/tui-sockets.png)
 
 ### General socket fields
 
@@ -583,10 +579,8 @@ Home rows and plugin PID rows without a configured handler open Process detail.
 integer at least `1000` changes the detail refresh interval. State is a static
 capture in the built-in pager.
 
-<!-- TODO(screenshot): Capture Process Info in a 180x50 terminal with
-`./scripts/docs-screenshots.sh tui-process`. Save it as
-`docs/assets/tui-process-info.png` and add it here with alt text that names the
-metadata, signal relationships, and history blocks. -->
+![Process Info page showing process metadata, memory, garbage collection,
+links, and history](assets/tui-process-info.png)
 
 ### Process Info fields
 

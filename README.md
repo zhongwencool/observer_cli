@@ -18,6 +18,9 @@ provides a live terminal workspace for interactive exploration.
 Both interfaces use Erlang distribution. Connect only to trusted nodes over a
 trusted network: a distribution cookie is not a read-only credential.
 
+![Observer CLI Home page showing live VM health, memory and IO statistics, and
+process rankings](assets/tui-home.png)
+
 ## Installation
 
 Install `observer_cli` in the target release so command diagnostics can run
