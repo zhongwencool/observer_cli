@@ -579,9 +579,7 @@ recon_exit_reason(State, unknown) ->
     end.
 
 with_forced_payload({forced, Category, Reason}, Events, Rejected) ->
-    {forced, Category, Reason, Events, Rejected};
-with_forced_payload(Outcome, _Events, _Rejected) ->
-    Outcome.
+    {forced, Category, Reason, Events, Rejected}.
 
 drain_forced(State, {forced, Category, Reason}) ->
     case final_drain(State) of
@@ -1025,9 +1023,8 @@ clear_trace() ->
     LegacyResult =
         case PortResult of
             ok ->
-                try recon_trace:clear() of
-                    ok -> ok;
-                    _ -> {error, cleanup_unconfirmed}
+                try
+                    recon_trace:clear()
                 catch
                     _:_ -> {error, cleanup_unconfirmed}
                 end;
