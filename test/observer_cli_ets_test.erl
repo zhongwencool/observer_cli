@@ -252,7 +252,9 @@ diagnostic_ets(Request) ->
     Response.
 
 table_probe(Response) ->
-    [Probe] = maps:get(<<"probes">>, maps:get(<<"capture">>, Response)),
+    [Probe] = maps:get(
+        <<"probes">>, maps:get(<<"capture">>, maps:get(<<"meta">>, Response))
+    ),
     Probe.
 
 receive_ets_info_keys(0, Acc) ->

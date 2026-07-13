@@ -100,7 +100,9 @@ snapshot_internal_contract_test() ->
     Probe = #{status => ok, reason_code => null, samples => 1, coverage => [covered]},
     ?assertEqual(
         {ok, null, data, 1, [covered]},
-        observer_cli_snapshot:composed_probe(#{capture => #{probes => [Probe]}, data => data})
+        observer_cli_snapshot:composed_probe(#{
+            <<"meta">> => #{<<"capture">> => #{probes => [Probe]}}, <<"data">> => data
+        })
     ),
     ?assertEqual({error, invalid_probe_result}, observer_cli_snapshot:composed_probe(#{})),
     lists:foreach(
@@ -1150,7 +1152,9 @@ snapshot_capture_boundary_contract_test() ->
         end,
         #{controller => self()}
     ),
-    ?assertEqual(null, maps:get(capture, NullTrace)),
+    assert_cli_envelope(NullTrace),
+    ?assertEqual(<<"error">>, maps:get(<<"outcome">>, NullTrace)),
+    ?assertEqual(null, response_capture(NullTrace)),
     CompleteTrace = observer_cli_snapshot:trace_response(
         trace_call,
         fun() ->
@@ -1158,13 +1162,19 @@ snapshot_capture_boundary_contract_test() ->
                 status => ok,
                 category => success,
                 reason => complete,
-                capture => #{status => complete},
+                capture => #{status => partial, trace_complete => false},
                 warnings => []
             }
         end,
         #{controller => self()}
     ),
-    ?assertEqual(complete, maps:get(status, maps:get(capture, CompleteTrace))),
+    assert_cli_envelope(CompleteTrace),
+    ?assertEqual(<<"complete">>, maps:get(<<"outcome">>, CompleteTrace)),
+    ?assertEqual(
+        false,
+        maps:get(trace_complete, maps:get(trace, maps:get(<<"data">>, CompleteTrace)))
+    ),
+    ?assertNot(is_map_key(status, response_capture(CompleteTrace))),
     PartialTrace = observer_cli_snapshot:trace_response(
         trace_call,
         fun() ->
@@ -1178,7 +1188,8 @@ snapshot_capture_boundary_contract_test() ->
         end,
         #{controller => self()}
     ),
-    ?assertEqual(partial, maps:get(status, maps:get(capture, PartialTrace))),
+    ?assertEqual(<<"error">>, maps:get(<<"outcome">>, PartialTrace)),
+    ?assertNot(is_map_key(status, response_capture(PartialTrace))),
     RootSource = #{count_children_fun => fun(_) -> invalid end},
     ?assertMatch(
         {error, supervisor_count_failed, _},
@@ -1714,7 +1725,7 @@ snapshot_rare_branch_contract_test() ->
         {test_worker, _} -> ok
     end,
     ?assertMatch(
-        #{command := trace_stop_all},
+        #{<<"command">> := <<"trace_stop_all">>},
         observer_cli_snapshot:capture_trace(
             #{action => stop_all}, #{controller => self()}
         )
@@ -1883,7 +1894,9 @@ allocator_data_test() ->
 memory_command_includes_allocator_metrics_test() ->
     #{<<"status">> := <<"ok">>, <<"result">> := Response} =
         observer_cli_snapshot:dispatch(self(), memory, #{}, options(5000, include)),
-    Capture = maps:get(<<"capture">>, Response),
+    assert_cli_envelope(Response),
+    ?assertEqual(<<"complete">>, maps:get(<<"outcome">>, Response)),
+    Capture = response_capture(Response),
     assert_probe(<<"memory">>, true, <<"ok">>, Capture),
     assert_probe(<<"allocator">>, true, <<"ok">>, Capture),
     Allocator = maps:get(<<"allocator">>, maps:get(<<"memory">>, maps:get(<<"data">>, Response))),
@@ -1895,13 +1908,17 @@ memory_command_keeps_beam_data_when_allocator_fails_test() ->
     Request = #{test_probe_outcomes => #{allocator => {error, probe_failed}}},
     #{<<"status">> := <<"ok">>, <<"result">> := Response} =
         observer_cli_snapshot:dispatch(self(), memory, Request, options(5000, include)),
-    ?assertEqual(<<"partial">>, maps:get(<<"status">>, maps:get(<<"capture">>, Response))),
+    ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, Response)),
     Memory = maps:get(<<"memory">>, maps:get(<<"data">>, Response)),
     ?assert(is_map(maps:get(<<"beam">>, Memory))),
     ?assertEqual(null, maps:get(<<"allocator">>, Memory)),
-    [Error] = maps:get(<<"errors">>, Response),
-    ?assertEqual(<<"allocator">>, maps:get(<<"probe">>, Error)),
-    ?assertEqual(<<"probe_failed">>, maps:get(<<"reason_code">>, Error)).
+    ?assertEqual([], maps:get(<<"issues">>, Response)),
+    [AllocatorProbe] = [
+        Probe
+     || #{<<"id">> := <<"allocator">>} = Probe <- maps:get(<<"probes">>, response_capture(Response))
+    ],
+    ?assertEqual(<<"error">>, maps:get(<<"status">>, AllocatorProbe)),
+    ?assertEqual(<<"probe_failed">>, maps:get(<<"reason_code">>, AllocatorProbe)).
 
 tui_resource_counts_match_snapshot_window_test() ->
     Tui = maps:get(
@@ -1931,13 +1948,15 @@ trace_dispatch_uses_cli_envelope_test() ->
             self(), trace, #{action => call}, options(2000, include)
         ),
     ?assertEqual(<<"observer_cli.cli/v1">>, maps:get(<<"schema">>, Response)),
-    ?assertEqual(null, maps:get(<<"capture">>, Response)),
+    assert_cli_envelope(Response),
+    ?assertEqual(<<"error">>, maps:get(<<"outcome">>, Response)),
+    ?assertEqual(null, response_capture(Response)),
     ?assertEqual(null, maps:get(<<"data">>, Response)),
-    [Error] = maps:get(<<"errors">>, Response),
+    [Error] = maps:get(<<"issues">>, Response),
     ?assertEqual(<<"argument">>, maps:get(<<"class">>, Error)),
     ?assertEqual(<<"replace_existing_trace_required">>, maps:get(<<"reason_code">>, Error)).
 
-forced_trace_dispatch_marks_outer_capture_partial_test() ->
+forced_trace_dispatch_keeps_completed_command_outcome_test() ->
     Request = #{
         action => call,
         mfa => <<"erlang:node/0">>,
@@ -1948,20 +1967,23 @@ forced_trace_dispatch_marks_outer_capture_partial_test() ->
     },
     #{<<"status">> := <<"ok">>, <<"result">> := Response} =
         observer_cli_snapshot:dispatch(self(), trace, Request, options(2000, include)),
-    ?assertEqual(<<"partial">>, maps:get(<<"status">>, maps:get(<<"capture">>, Response))),
+    ?assertEqual(<<"complete">>, maps:get(<<"outcome">>, Response)),
+    ?assertNot(is_map_key(<<"status">>, response_capture(Response))),
     Trace = maps:get(<<"trace">>, maps:get(<<"data">>, Response)),
     ?assertEqual(<<"partial">>, maps:get(<<"status">>, Trace)),
     ?assertEqual(false, maps:get(<<"trace_complete">>, Trace)).
 
 default_snapshot_is_scan_free_fact_package_test() ->
     Response = snapshot(#{}),
+    assert_cli_envelope(Response),
     ?assertEqual(<<"snapshot">>, maps:get(<<"command">>, Response)),
+    ?assertEqual(<<"complete">>, maps:get(<<"outcome">>, Response)),
     ?assertMatch(
         #{<<"node">> := <<"node-1">>, <<"otp_release">> := _},
-        maps:get(<<"target">>, Response)
+        response_target(Response)
     ),
-    Capture = maps:get(<<"capture">>, Response),
-    ?assertEqual(<<"complete">>, maps:get(<<"status">>, Capture)),
+    Capture = response_capture(Response),
+    ?assertNot(is_map_key(<<"status">>, Capture)),
     ?assert(is_binary(maps:get(<<"started_at">>, Capture))),
     ?assert(is_binary(maps:get(<<"finished_at">>, Capture))),
     ?assert(maps:get(<<"duration_ms">>, Capture) >= 0),
@@ -2008,8 +2030,7 @@ default_snapshot_is_scan_free_fact_package_test() ->
             maps:get(<<"observer_effects">>, Capture)
     ],
     ?assertEqual(true, maps:get(<<"module_loaded_before_sample">>, ModuleEffect)),
-    ?assertEqual([], maps:get(<<"errors">>, Response)),
-    ?assertEqual([], maps:get(<<"warnings">>, Response)),
+    ?assertEqual([], maps:get(<<"issues">>, Response)),
     ?assertEqual(
         nomatch,
         binary:match(term_to_binary(Response), atom_to_binary(node()))
@@ -2270,7 +2291,7 @@ otp_state_behavior_mismatch_fails_closed_test() ->
             ?assertEqual(<<"error">>, maps:get(<<"status">>, Data)),
             ?assertEqual(<<"failed">>, maps:get(<<"structural_validation">>, Data)),
             ?assertEqual(<<"behavior_shape_mismatch">>, maps:get(<<"reason_code">>, Data)),
-            ?assertEqual(<<"partial">>, maps:get(<<"status">>, maps:get(<<"capture">>, Response)))
+            ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, Response))
         end,
         [
             {gen_statem, not_a_state_pair},
@@ -2300,8 +2321,20 @@ otp_state_limits_are_global_and_truncation_is_success() ->
     ?assertEqual(0, maps:get(<<"shape_budget_exhausted_count">>, Limited)),
     ?assertEqual(true, maps:get(<<"truncated">>, Limited)),
     ?assertEqual(<<"output_cap">>, maps:get(<<"truncation_reason">>, Limited)),
-    ?assertEqual(<<"complete">>, maps:get(<<"status">>, maps:get(<<"capture">>, LimitedResponse))),
-    ?assertEqual([], maps:get(<<"errors">>, LimitedResponse)),
+    ?assertEqual(<<"complete">>, maps:get(<<"outcome">>, LimitedResponse)),
+    RiskIssues = maps:get(<<"issues">>, LimitedResponse),
+    ?assert(
+        lists:all(
+            fun(#{<<"severity">> := <<"warning">>, <<"class">> := <<"safety_refusal">>}) ->
+                true
+            end,
+            RiskIssues
+        )
+    ),
+    ?assertEqual(
+        [<<"sys_get_state_copies_full_state">>, <<"timeout_does_not_retract_delivered_request">>],
+        lists:sort([maps:get(<<"reason_code">>, Issue) || Issue <- RiskIssues])
+    ),
 
     TwentyOne = [{?MODULE, Id, Id} || Id <- lists:seq(1, 21)],
     DefaultLimit = maps:get(
@@ -2321,7 +2354,7 @@ otp_state_limits_are_global_and_truncation_is_success() ->
     ?assertEqual(1, maps:get(<<"returned_count">>, NodeData)),
     ?assertEqual(3, maps:get(<<"shape_budget_exhausted_count">>, NodeData)),
     ?assertEqual(<<"node_cap">>, maps:get(<<"truncation_reason">>, NodeData)),
-    ?assertEqual(<<"complete">>, maps:get(<<"status">>, maps:get(<<"capture">>, NodeResponse))),
+    ?assertEqual(<<"complete">>, maps:get(<<"outcome">>, NodeResponse)),
 
     Tree = lists:foldl(fun(_, Acc) -> {Acc, Acc} end, leaf, lists:seq(1, 6)),
     ByteHandlers = [{?MODULE, Id, Tree} || Id <- lists:seq(1, 50)],
@@ -2335,7 +2368,7 @@ otp_state_limits_are_global_and_truncation_is_success() ->
      || Handler <- maps:get(<<"handlers">>, ByteData)
     ]),
     ?assert(ShapeBytes =< 64 * 1024),
-    ?assertEqual(<<"complete">>, maps:get(<<"status">>, maps:get(<<"capture">>, ByteResponse))).
+    ?assertEqual(<<"complete">>, maps:get(<<"outcome">>, ByteResponse)).
 
 otp_state_depth_and_node_caps_test() ->
     lists:foreach(
@@ -2389,7 +2422,7 @@ otp_state_timeout_crash_and_heap_are_redacted() ->
             TimeoutData = maps:get(<<"data">>, TimeoutResponse),
             ?assertEqual(<<"state_timeout">>, maps:get(<<"reason_code">>, TimeoutData)),
             ?assertEqual(
-                <<"partial">>, maps:get(<<"status">>, maps:get(<<"capture">>, TimeoutResponse))
+                <<"partial">>, maps:get(<<"outcome">>, TimeoutResponse)
             ),
             {messages, PendingSystemRequests} = process_info(Server, messages),
             ?assertNotEqual([], PendingSystemRequests),
@@ -2432,42 +2465,32 @@ snapshot_probe_failure_semantics_test() ->
     Unavailable = snapshot(#{
         test_probe_outcomes => #{schedulers => {unavailable, capability_unavailable}}
     }),
-    UnavailableCapture = maps:get(<<"capture">>, Unavailable),
-    ?assertEqual(<<"complete">>, maps:get(<<"status">>, UnavailableCapture)),
+    assert_cli_envelope(Unavailable),
+    UnavailableCapture = response_capture(Unavailable),
+    ?assertEqual(<<"complete">>, maps:get(<<"outcome">>, Unavailable)),
     assert_probe(<<"schedulers">>, false, <<"unavailable">>, UnavailableCapture),
     ?assertNot(is_map_key(<<"schedulers">>, maps:get(<<"data">>, Unavailable))),
-    ?assertMatch(
-        [#{<<"probe">> := <<"schedulers">>, <<"reason_code">> := <<"capability_unavailable">>}],
-        maps:get(<<"warnings">>, Unavailable)
-    ),
+    ?assertNot(is_map_key(<<"skipped">>, maps:get(<<"data">>, Unavailable))),
+    ?assertEqual([], maps:get(<<"issues">>, Unavailable)),
     OptionalTimeout = snapshot(#{
         test_probe_outcomes => #{schedulers => {timeout, target_timeout}}
     }),
-    ?assertEqual(
-        <<"partial">>,
-        maps:get(<<"status">>, maps:get(<<"capture">>, OptionalTimeout))
-    ),
-    ?assertMatch(
-        [#{<<"class">> := <<"partial">>, <<"probe">> := <<"schedulers">>}],
-        maps:get(<<"errors">>, OptionalTimeout)
-    ),
+    ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, OptionalTimeout)),
+    assert_probe(<<"schedulers">>, false, <<"timeout">>, response_capture(OptionalTimeout)),
+    ?assertEqual([], maps:get(<<"issues">>, OptionalTimeout)),
     RequiredError = snapshot(#{
         test_probe_outcomes => #{resources => {error, probe_failed}}
     }),
-    ?assertEqual(
-        <<"partial">>, maps:get(<<"status">>, maps:get(<<"capture">>, RequiredError))
-    ),
+    ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, RequiredError)),
     ?assertNot(is_map_key(<<"resources">>, maps:get(<<"data">>, RequiredError))),
     ?assert(is_map_key(<<"memory">>, maps:get(<<"data">>, RequiredError))),
-    ?assertMatch(
-        [#{<<"class">> := <<"required_probe">>, <<"probe">> := <<"resources">>}],
-        maps:get(<<"errors">>, RequiredError)
-    ).
+    assert_probe(<<"resources">>, true, <<"error">>, response_capture(RequiredError)),
+    ?assertEqual([], maps:get(<<"issues">>, RequiredError)).
 
 deep_snapshot_composes_narrow_probe_defaults_test() ->
     Response = snapshot(#{deep => true}),
-    Capture = maps:get(<<"capture">>, Response),
-    ?assertEqual(<<"complete">>, maps:get(<<"status">>, Capture)),
+    Capture = response_capture(Response),
+    ?assertEqual(<<"complete">>, maps:get(<<"outcome">>, Response)),
     lists:foreach(
         fun(Id) -> assert_probe(Id, false, <<"ok">>, Capture) end,
         [
@@ -2557,22 +2580,21 @@ deep_snapshot_refusal_and_started_failure_contract_test() ->
                     ]}
         }
     }),
-    ?assertEqual(<<"complete">>, maps:get(<<"status">>, maps:get(<<"capture">>, Refused))),
-    [Skipped] = maps:get(<<"skipped">>, maps:get(<<"data">>, Refused)),
-    ?assertEqual(<<"ets">>, maps:get(<<"probe">>, Skipped)),
-    ?assertEqual(
-        100001,
-        maps:get(
-            <<"observed_table_count">>, maps:get(<<"admission_evidence">>, Skipped)
-        )
-    ),
+    ?assertEqual(<<"complete">>, maps:get(<<"outcome">>, Refused)),
+    ?assertNot(is_map_key(<<"skipped">>, maps:get(<<"data">>, Refused))),
+    [RefusedProbe] = [
+        Probe
+     || #{<<"id">> := <<"ets">>} = Probe <- maps:get(<<"probes">>, response_capture(Refused))
+    ],
+    ?assertEqual(<<"unavailable">>, maps:get(<<"status">>, RefusedProbe)),
+    ?assertEqual(<<"scan_budget_exceeded">>, maps:get(<<"reason_code">>, RefusedProbe)),
+    ?assertEqual([], maps:get(<<"issues">>, Refused)),
     lists:foreach(
         fun({Probe, Outcome}) ->
             Response = snapshot(#{
                 deep => true, test_deep_probe_outcomes => #{Probe => Outcome}
             }),
-            Capture = maps:get(<<"capture">>, Response),
-            ?assertEqual(<<"partial">>, maps:get(<<"status">>, Capture)),
+            ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, Response)),
             ?assertNot(is_map_key(atom_to_binary(Probe), maps:get(<<"data">>, Response)))
         end,
         [
@@ -2612,8 +2634,8 @@ deep_snapshot_heap_boundary_is_partial_test() ->
             {deep_heap_worker, Pid} -> Pid
         end,
     ?assertNot(is_process_alive(Worker)),
-    Capture = maps:get(<<"capture">>, Response),
-    ?assertEqual(<<"partial">>, maps:get(<<"status">>, Capture)),
+    Capture = response_capture(Response),
+    ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, Response)),
     [ProcessProbe] = [
         Probe
      || #{<<"id">> := <<"processes">>} = Probe <- maps:get(<<"probes">>, Capture)
@@ -2643,8 +2665,8 @@ deep_snapshot_started_timeout_cleans_probe_worker_test() ->
             {deep_timeout_worker, Pid} -> Pid
         end,
     ?assertNot(is_process_alive(Worker)),
-    Capture = maps:get(<<"capture">>, Response),
-    ?assertEqual(<<"partial">>, maps:get(<<"status">>, Capture)),
+    Capture = response_capture(Response),
+    ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, Response)),
     [ProcessProbe] = [
         Probe
      || #{<<"id">> := <<"processes">>} = Probe <- maps:get(<<"probes">>, Capture)
@@ -2688,7 +2710,10 @@ deep_snapshot_controller_disconnect_cleans_probe_worker_test() ->
 local_snapshot_text_and_term_envelopes_test() ->
     Response = snapshot(#{}),
     {ok, Text} = observer_cli_cli:encode(text, Response),
-    ?assertNotEqual(nomatch, binary:match(Text, <<"observer_cli.cli/v1">>)),
+    ?assertMatch(<<"observer_cli snapshot\n", _/binary>>, Text),
+    ?assertNotEqual(nomatch, binary:match(Text, <<"snapshot_version: 1">>)),
+    ?assertEqual(nomatch, binary:match(Text, <<"observer_cli.cli/v1">>)),
+    ?assertEqual(nomatch, binary:match(Text, <<"issues:">>)),
     {ok, Term} = observer_cli_cli:encode(term, Response),
     {ok, Tokens, _EndLocation} = erl_scan:string(binary_to_list(Term)),
     ?assertEqual({ok, Response}, erl_parse:parse_term(Tokens)).
@@ -3508,9 +3533,10 @@ process_scan_admission_refuses_before_enumeration_test() ->
         scanned -> ?assert(false)
     after 50 -> ok
     end,
-    [Probe] = maps:get(<<"probes">>, maps:get(<<"capture">>, Response)),
+    [Probe] = maps:get(<<"probes">>, response_capture(Response)),
     ?assertEqual(<<"unavailable">>, maps:get(<<"status">>, Probe)),
-    ?assertEqual(<<"complete">>, maps:get(<<"status">>, maps:get(<<"capture">>, Response))).
+    ?assertEqual(<<"error">>, maps:get(<<"outcome">>, Response)),
+    ?assertEqual([], maps:get(<<"issues">>, Response)).
 
 scheduler_window_invalidates_unsafe_samples_test() ->
     First = scheduler_sample_fixture(#{1 => {10, 20}, 3 => {5, 10}}, 0),
@@ -4154,6 +4180,21 @@ assert_error(ReasonCode, Result) ->
         },
         Result
     ).
+
+assert_cli_envelope(Response) ->
+    ?assertEqual(
+        [<<"command">>, <<"data">>, <<"issues">>, <<"meta">>, <<"outcome">>, <<"schema">>],
+        lists:sort(maps:keys(Response))
+    ),
+    ?assertEqual(
+        [<<"capture">>, <<"target">>], lists:sort(maps:keys(maps:get(<<"meta">>, Response)))
+    ).
+
+response_capture(Response) ->
+    maps:get(<<"capture">>, maps:get(<<"meta">>, Response)).
+
+response_target(Response) ->
+    maps:get(<<"target">>, maps:get(<<"meta">>, Response)).
 
 assert_json_safe(Map) when is_map(Map) ->
     lists:foreach(

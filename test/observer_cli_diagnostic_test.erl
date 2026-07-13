@@ -178,19 +178,7 @@ diagnostic_series_helper_contract_test() ->
     ?assert(observer_cli_diagnostic:valid_limit(Limit)),
     ?assert(observer_cli_diagnostic:valid_limit(#{observed_count => 1, limit => 10})),
     ?assertNot(observer_cli_diagnostic:valid_limit(#{})),
-    ?assert(is_list(observer_cli_diagnostic:skipped_checks([]))),
-    ?assertEqual(
-        [
-            #{
-                class => required_probe,
-                probe => core_limits,
-                reason_code => required_coverage_incomplete
-            }
-        ],
-        observer_cli_diagnostic:capture_errors(false, ok, ok)
-    ),
-    ?assertEqual(2, length(observer_cli_diagnostic:capture_errors(true, error, error))),
-    ?assertEqual([], observer_cli_diagnostic:capture_errors(true, ok, ok)).
+    ?assert(is_list(observer_cli_diagnostic:skipped_checks([]))).
 
 diagnostic_error_boundary_test() ->
     ?assertEqual({probe_error, invalid_request}, observer_cli_diagnostic:capture(#{}, #{})),
@@ -275,8 +263,8 @@ real_deep_observation() ->
             #{observe => "5s", deep => true},
             #{timeout_ms => 12000, identifier_policy => redact}
         ),
-    Capture = maps:get(<<"capture">>, Result),
-    ?assert(lists:member(maps:get(<<"status">>, Capture), [<<"complete">>, <<"partial">>])),
+    ?assert(lists:member(maps:get(<<"outcome">>, Result), [<<"complete">>, <<"partial">>])),
+    ?assertNot(is_map_key(<<"status">>, report_capture(Result))),
     Data = maps:get(<<"data">>, Result),
     Context = maps:get(<<"context">>, Data),
     Trends = maps:get(<<"trends">>, Context),
@@ -361,7 +349,7 @@ quick_reductions_rate_uses_inventory_midpoints_test() ->
             timing(),
             #{}
         ),
-        Context = maps:get(hot_processes_by_reductions, maps:get(context, maps:get(data, Report))),
+        Context = maps:get(hot_processes_by_reductions, maps:get(context, report_data(Report))),
         [Item] = maps:get(items, Context),
         ?assertEqual(2100, maps:get(interval_ms, Context)),
         ?assertEqual(10.0, maps:get(reductions_per_second, Item))
@@ -389,25 +377,29 @@ required_gap_suppresses_findings_and_optional_refusal_stays_complete_test() ->
     Partial = observer_cli_diagnostic:build_report(
         [High, High#{status := error}], [0, 1500], Timing, #{}
     ),
-    ?assertEqual(partial, maps:get(status, maps:get(capture, Partial))),
-    ?assertEqual([], maps:get(findings, maps:get(data, Partial))),
+    assert_cli_envelope(Partial),
+    ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, Partial)),
+    ?assertEqual([], maps:get(findings, report_data(Partial))),
+    ?assertEqual([], maps:get(<<"issues">>, Partial)),
     Complete = observer_cli_diagnostic:build_report(
         [High, sample(1, resources(10, 100), unavailable_inventory())],
         [0, 1500],
         Timing,
         #{}
     ),
-    ?assertEqual(complete, maps:get(status, maps:get(capture, Complete))),
-    ?assertEqual(1, length(maps:get(findings, maps:get(data, Complete)))),
-    ?assert(
+    ?assertEqual(<<"complete">>, maps:get(<<"outcome">>, Complete)),
+    ?assertEqual(1, length(maps:get(findings, report_data(Complete)))),
+    ?assertEqual([], maps:get(<<"issues">>, Complete)),
+    [ProcessProbe] = [
+        Probe
+     || #{id := process_inventory} = Probe <- maps:get(probes, report_capture(Complete))
+    ],
+    ?assertEqual(unavailable, maps:get(status, ProcessProbe)),
+    ?assertEqual(scan_budget_exceeded, maps:get(reason_code, ProcessProbe)),
+    ?assertNot(
         lists:any(
-            fun
-                (#{id := Id, reason_code := Reason}) ->
-                    Id =:= hot_processes_by_reductions andalso Reason =:= scan_budget_exceeded;
-                (_) ->
-                    false
-            end,
-            maps:get(skipped, maps:get(data, Complete))
+            fun(#{reason_code := Reason}) -> Reason =:= scan_budget_exceeded end,
+            maps:get(skipped, report_data(Complete))
         )
     ).
 
@@ -432,7 +424,8 @@ dispatch_validates_evidence_and_redacts_context_test() ->
             ),
         ?assertMatch(
             #{
-                <<"capture">> := #{<<"status">> := <<"complete">>},
+                <<"outcome">> := <<"complete">>,
+                <<"meta">> := #{<<"capture">> := #{<<"probes">> := [_ | _]}},
                 <<"data">> := #{
                     <<"ruleset">> := <<"observer_cli.quick">>,
                     <<"ruleset_version">> := 1,
@@ -578,17 +571,19 @@ application_scan_budget_refusal_is_retained() ->
     Report = observer_cli_diagnostic:observation_report(
         application, Samples, Plan, unavailable_holder(), timing(), #{}
     ),
-    ?assertEqual(partial, maps:get(status, maps:get(capture, Report))),
-    Data = maps:get(data, Report),
+    ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, Report)),
+    Data = report_data(Report),
     ?assertEqual(
         scan_budget_exceeded,
         maps:get(reason_code, maps:get(application, maps:get(context, Data)))
     ),
-    ?assert(
-        lists:member(
-            #{id => application, reason_code => scan_budget_exceeded}, maps:get(skipped, Data)
+    ?assertNot(
+        lists:any(
+            fun(#{reason_code := Reason}) -> Reason =:= scan_budget_exceeded end,
+            maps:get(skipped, Data)
         )
     ),
+    ?assertEqual([], maps:get(<<"issues">>, Report)),
     receive
         count_children -> ok
     after 1000 ->
@@ -601,19 +596,20 @@ application_scan_budget_refusal_is_retained() ->
         ok
     end.
 
-observation_required_sets_optional_outcomes_and_exit_precedence_test() ->
+observation_required_sets_optional_outcomes_test() ->
     Plan5 = lists:seq(0, 4000, 1000),
     CompleteSamples = [observation_sample(Index, unavailable) || Index <- lists:seq(0, 4)],
     Complete = observer_cli_diagnostic:observation_report(
         observation, CompleteSamples, Plan5, unavailable_holder(), timing(), #{}
     ),
-    ?assertEqual(complete, maps:get(status, maps:get(capture, Complete))),
-    ?assertEqual(1, length(maps:get(findings, maps:get(data, Complete)))),
+    ?assertEqual(<<"complete">>, maps:get(<<"outcome">>, Complete)),
+    ?assertEqual(1, length(maps:get(findings, report_data(Complete)))),
     StartedFailureSamples = [observation_sample(0, error) | tl(CompleteSamples)],
     StartedFailure = observer_cli_diagnostic:observation_report(
         observation, StartedFailureSamples, Plan5, unavailable_holder(), timing(), #{}
     ),
-    ?assertEqual(partial, maps:get(status, maps:get(capture, StartedFailure))),
+    ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, StartedFailure)),
+    ?assertEqual([], maps:get(<<"issues">>, StartedFailure)),
     GapSamples = [
         observation_sample(0, unavailable),
         #{
@@ -625,11 +621,11 @@ observation_required_sets_optional_outcomes_and_exit_precedence_test() ->
     Gap = observer_cli_diagnostic:observation_report(
         observation, GapSamples, Plan5, unavailable_holder(), timing(), #{}
     ),
-    ?assertEqual(partial, maps:get(status, maps:get(capture, Gap))),
-    ?assertEqual([], maps:get(findings, maps:get(data, Gap))),
+    ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, Gap)),
+    ?assertEqual([], maps:get(findings, report_data(Gap))),
     ?assertMatch(
         #{status := invalid, reason_code := sampling_gap},
-        maps:get(trends, maps:get(context, maps:get(data, Gap)))
+        maps:get(trends, maps:get(context, report_data(Gap)))
     ),
     Plan7 = lists:seq(0, 6000, 1000),
     Deep = observer_cli_diagnostic:observation_report(
@@ -640,7 +636,7 @@ observation_required_sets_optional_outcomes_and_exit_precedence_test() ->
         timing(),
         #{}
     ),
-    ?assertEqual(complete, maps:get(status, maps:get(capture, Deep))),
+    ?assertEqual(<<"complete">>, maps:get(<<"outcome">>, Deep)),
     App = observer_cli_diagnostic:observation_report(
         application,
         [
@@ -652,7 +648,7 @@ observation_required_sets_optional_outcomes_and_exit_precedence_test() ->
         timing(),
         #{}
     ),
-    ?assertEqual(complete, maps:get(status, maps:get(capture, App))).
+    ?assertEqual(<<"complete">>, maps:get(<<"outcome">>, App)).
 
 observation_trends_keep_hot_item_past_raw_id_limit_test() ->
     Pids = [spawn(fun wait/0) || _ <- lists:seq(1, 21)],
@@ -687,7 +683,7 @@ observation_trends_keep_hot_item_past_raw_id_limit_test() ->
             timing(),
             #{}
         ),
-        Trends = maps:get(trends, maps:get(context, maps:get(data, Report))),
+        Trends = maps:get(trends, maps:get(context, report_data(Report))),
         Processes = maps:get(processes, Trends),
         ?assertEqual(message_queue_len, maps:get(sort_metric, Processes)),
         ?assertEqual(20, length(maps:get(items, Processes))),
@@ -710,13 +706,20 @@ invalid_scheduler_windows_make_report_partial_with_reason_test() ->
         timing(),
         #{}
     ),
-    ?assertEqual(partial, maps:get(status, maps:get(capture, Report))),
+    ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, Report)),
     Scheduler = hd([
         Probe
-     || #{id := scheduler_pressure} = Probe <- maps:get(probes, maps:get(capture, Report))
+     || #{id := scheduler_pressure} = Probe <- maps:get(probes, report_capture(Report))
     ]),
     ?assertEqual(error, maps:get(status, Scheduler)),
-    ?assertEqual(sampling_gap, maps:get(reason_code, Scheduler)).
+    ?assertEqual(sampling_gap, maps:get(reason_code, Scheduler)),
+    ?assertEqual([], maps:get(<<"issues">>, Report)),
+    ?assertNot(
+        lists:any(
+            fun(#{id := Id}) -> Id =:= scheduler_pressure end,
+            maps:get(skipped, report_data(Report))
+        )
+    ).
 
 quick_current_context_and_preenabled_scheduler_test() ->
     Table = make_ref(),
@@ -739,19 +742,19 @@ quick_current_context_and_preenabled_scheduler_test() ->
             quick_scheduler_sample => observation_scheduler_sample(1)
         },
         Report = observer_cli_diagnostic:build_report([First, Second], [0, 1500], timing(), #{}),
-        Context = maps:get(context, maps:get(data, Report)),
+        Context = maps:get(context, report_data(Report)),
         ?assertMatch(#{status := ok, items := [_]}, maps:get(ets, Context)),
         ?assertMatch(#{status := ok, items := [_]}, maps:get(ports, Context)),
         ?assertEqual(valid, maps:get(status, maps:get(scheduler, Context))),
         ?assertEqual([], [
             S
-         || #{id := scheduler_pressure} = S <- maps:get(skipped, maps:get(data, Report))
+         || #{id := scheduler_pressure} = S <- maps:get(skipped, report_data(Report))
         ])
     after
         port_close(Port)
     end.
 
-quick_disabled_scheduler_is_skipped_test() ->
+quick_disabled_scheduler_is_reported_only_by_probe_test() ->
     Base = sample(0, resources(10, 100), unavailable_inventory()),
     Disabled = #{
         topology => #{}, wall_time => undefined, run_queue_lengths => [], monotonic_ms => 0
@@ -762,10 +765,18 @@ quick_disabled_scheduler_is_skipped_test() ->
         timing(),
         #{}
     ),
-    ?assertMatch(
-        [#{reason_code := scheduler_wall_time_not_enabled}],
-        [S || #{id := scheduler_pressure} = S <- maps:get(skipped, maps:get(data, Report))]
-    ).
+    ?assertEqual(<<"complete">>, maps:get(<<"outcome">>, Report)),
+    [Scheduler] = [
+        Probe
+     || #{id := scheduler_pressure} = Probe <- maps:get(probes, report_capture(Report))
+    ],
+    ?assertEqual(unavailable, maps:get(status, Scheduler)),
+    ?assertEqual(scheduler_wall_time_not_enabled, maps:get(reason_code, Scheduler)),
+    ?assertEqual([], maps:get(<<"issues">>, Report)),
+    ?assertEqual([], [
+        S
+     || #{id := scheduler_pressure} = S <- maps:get(skipped, report_data(Report))
+    ]).
 
 quick_current_context_refusal_and_error_test() ->
     Base = sample(0, resources(10, 100), unavailable_inventory()),
@@ -783,10 +794,17 @@ quick_current_context_refusal_and_error_test() ->
         quick_scheduler_sample => Disabled
     },
     Report = observer_cli_diagnostic:build_report([First, Second], [0, 1500], timing(), #{}),
-    Context = maps:get(context, maps:get(data, Report)),
+    Context = maps:get(context, report_data(Report)),
     ?assertEqual(scan_budget_exceeded, maps:get(reason_code, maps:get(ets, Context))),
     ?assertEqual(port_inventory_failed, maps:get(reason_code, maps:get(ports, Context))),
-    ?assertEqual(partial, maps:get(status, maps:get(capture, Report))).
+    ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, Report)),
+    ?assertEqual([], maps:get(<<"issues">>, Report)),
+    [PortProbe] = [
+        Probe
+     || #{id := port_inventory} = Probe <- maps:get(probes, report_capture(Report))
+    ],
+    ?assertEqual(error, maps:get(status, PortProbe)),
+    ?assertEqual(port_inventory_failed, maps:get(reason_code, PortProbe)).
 
 field_gap_is_invalid_and_ets_generation_is_replaced_test() ->
     Key = named_table,
@@ -819,8 +837,8 @@ field_gap_is_invalid_and_ets_generation_is_replaced_test() ->
     Report = observer_cli_diagnostic:observation_report(
         observation, Samples, lists:seq(0, 4000, 1000), unavailable_holder(), timing(), #{}
     ),
-    Trends = maps:get(trends, maps:get(context, maps:get(data, Report))),
-    ?assertEqual(partial, maps:get(status, maps:get(capture, Report))),
+    Trends = maps:get(trends, maps:get(context, report_data(Report))),
+    ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, Report)),
     ?assertMatch(#{status := invalid, reason_code := sampling_gap}, maps:get(sockets, Trends)),
     Ets = maps:get(ets, Trends),
     ?assertEqual(1, maps:get(replaced_count, Ets)),
@@ -856,7 +874,7 @@ port_trend_uses_inventory_midpoints_and_detects_intermediate_reset_test() ->
             timing(),
             #{}
         ),
-        Trends = maps:get(trends, maps:get(context, maps:get(data, Report))),
+        Trends = maps:get(trends, maps:get(context, report_data(Report))),
         Ports = maps:get(ports, Trends),
         [Item] = maps:get(items, Ports),
         ?assertEqual(4800, maps:get(interval_ms, Ports)),
@@ -1008,6 +1026,21 @@ timing() ->
 
 item_for(Pid, Items) ->
     hd([Item || #{pid := {identifier, pid, ItemPid}} = Item <- Items, ItemPid =:= Pid]).
+
+assert_cli_envelope(Response) ->
+    ?assertEqual(
+        [<<"command">>, <<"data">>, <<"issues">>, <<"meta">>, <<"outcome">>, <<"schema">>],
+        lists:sort(maps:keys(Response))
+    ),
+    ?assertEqual(
+        [<<"capture">>, <<"target">>], lists:sort(maps:keys(maps:get(<<"meta">>, Response)))
+    ).
+
+report_data(Response) ->
+    maps:get(<<"data">>, Response).
+
+report_capture(Response) ->
+    maps:get(<<"capture">>, maps:get(<<"meta">>, Response)).
 
 wait() ->
     receive

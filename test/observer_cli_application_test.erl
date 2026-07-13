@@ -554,7 +554,7 @@ supervision_tree_preflight_and_soft_output_cap_test() ->
         WarningReasons = [
             maps:get(<<"reason_code">>, Warning)
          || Warning <-
-                maps:get(<<"warnings">>, CappedResponse)
+                maps:get(<<"issues">>, CappedResponse)
         ],
         ?assert(lists:member(<<"supervisor_snapshot_is_non_atomic">>, WarningReasons)),
         ?assert(lists:member(<<"deadline_does_not_retract_infinity_calls">>, WarningReasons))
@@ -680,7 +680,7 @@ supervision_tree_public_outcome_normalization_test() ->
             observer_cli_goal13_fixture,
             Base#{supervisor_fun => fun(_App) -> {error, <<"fixture-supervisor-secret">>} end}
         ),
-        ?assertEqual(<<"partial">>, maps:get(<<"status">>, maps:get(<<"capture">>, Failed))),
+        ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, Failed)),
         ?assertEqual(
             nomatch, binary:match(term_to_binary(Failed), <<"fixture-supervisor-secret">>)
         ),
@@ -688,8 +688,9 @@ supervision_tree_public_outcome_normalization_test() ->
             observer_cli_goal13_fixture,
             Base#{supervisor_fun => fun(_App) -> exit(fixture_supervisor_exit) end}
         ),
-        [ExitError] = maps:get(<<"errors">>, Exited),
-        ?assertEqual(<<"supervisor_resolution_failed">>, maps:get(<<"reason_code">>, ExitError)),
+        ?assertEqual(
+            <<"supervisor_resolution_failed">>, response_probe_reason(Exited)
+        ),
         Dead = spawn(fun() -> ok end),
         DeadRef = monitor(process, Dead),
         receive
@@ -703,8 +704,7 @@ supervision_tree_public_outcome_normalization_test() ->
             observer_cli_goal13_fixture,
             Base#{supervisor_fun => fun(_App) -> {ok, remote_pid_fixture()} end}
         ),
-        [RemoteError] = maps:get(<<"errors">>, RemoteRoot),
-        ?assertEqual(<<"remote_supervisor_root">>, maps:get(<<"reason_code">>, RemoteError))
+        ?assertEqual(<<"remote_supervisor_root">>, response_probe_reason(RemoteRoot))
     after
         exit(Root, kill)
     end.
@@ -772,6 +772,10 @@ supervision_tree_response(App, Source, Policy) ->
             #{timeout_ms => 3000, identifier_policy => Policy}
         ),
     Response.
+
+response_probe_reason(Response) ->
+    #{<<"meta">> := #{<<"capture">> := #{<<"probes">> := [Probe]}}} = Response,
+    maps:get(<<"reason_code">>, Probe).
 
 supervision_source(Root, Children, Parent) ->
     #{

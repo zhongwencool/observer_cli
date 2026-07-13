@@ -16,7 +16,7 @@
     save_context/1,
     load_context/0,
     delete_context/0,
-    envelope/6,
+    response/6,
     error/2,
     encode/2,
     exit_code/1,
@@ -1200,22 +1200,29 @@ schema() -> ?SCHEMA.
 argument_error(Reason) ->
     {error, #{category => argument, exit_code => 2, reason => Reason}}.
 
--spec envelope(atom() | binary(), null | map(), null | map(), null | map(), [term()], [term()]) ->
+-spec response(
+    atom() | binary(),
+    complete | partial | error | binary(),
+    null | map(),
+    null | map(),
+    null | map(),
+    [term()]
+) ->
     map().
-envelope(Command, Target, Capture, Data, Warnings, Errors) ->
+response(Command, Outcome, Target, Capture, Data, Issues) ->
     #{
         <<"schema">> => ?SCHEMA,
         <<"command">> => command_binary(Command),
-        <<"target">> => Target,
-        <<"capture">> => Capture,
+        <<"outcome">> => outcome_binary(Outcome),
         <<"data">> => Data,
-        <<"warnings">> => Warnings,
-        <<"errors">> => Errors
+        <<"meta">> => #{<<"target">> => Target, <<"capture">> => Capture},
+        <<"issues">> => Issues
     }.
 
 -spec error(atom(), term()) -> map().
 error(Category, Reason) ->
     #{
+        <<"severity">> => <<"error">>,
         <<"class">> => atom_to_binary(Category),
         <<"reason_code">> => reason_code(Reason),
         <<"message">> => reason_message(Reason)
@@ -1233,7 +1240,7 @@ encode(text, #{
         <<"expected_capabilities">> := Expected,
         <<"observed_capabilities">> := Observed
     },
-    <<"target">> := #{<<"otp_release">> := OtpRelease}
+    <<"meta">> := #{<<"target">> := #{<<"otp_release">> := OtpRelease}}
 }) when Command =:= <<"connect">>; Command =:= <<"status">> ->
     Prefix =
         case Command of
@@ -1302,7 +1309,10 @@ encode(text, #{
 encode(text, #{<<"command">> := Command} = Response) ->
     capped(
         iolist_to_binary([
-            <<"observer_cli ">>, escape_text(Command), <<"\n">>, render_text_map(Response, 0, root)
+            <<"observer_cli ">>,
+            escape_text(Command),
+            <<"\n">>,
+            render_text_map(text_response(Response), 0, root)
         ])
     );
 encode(term, Response) ->
@@ -1399,23 +1409,73 @@ text_map_keys(Map, root) ->
     ordered_text_keys(
         Map,
         [
-            <<"schema">>,
-            <<"command">>,
             <<"target">>,
             <<"data">>,
-            <<"warnings">>,
-            <<"errors">>,
-            <<"capture">>
+            <<"capture">>,
+            <<"issues">>,
+            <<"outcome">>
         ]
     );
 text_map_keys(Map, nested) ->
     ordered_text_keys(
-        Map, [<<"summary">>, <<"id">>, <<"status">>, <<"reason_code">>, <<"required">>]
+        Map,
+        [
+            <<"summary">>,
+            <<"id">>,
+            <<"severity">>,
+            <<"class">>,
+            <<"status">>,
+            <<"reason_code">>,
+            <<"message">>,
+            <<"required">>
+        ]
     ).
 
 ordered_text_keys(Map, Priority) ->
     Present = [Key || Key <- Priority, maps:is_key(Key, Map)],
     Present ++ lists:sort(maps:keys(maps:without(Priority, Map))).
+
+text_response(Response) ->
+    Data = maps:get(<<"data">>, Response, null),
+    Meta = maps:get(<<"meta">>, Response, #{}),
+    Target = maps:get(<<"target">>, Meta, null),
+    Capture = text_capture(maps:get(<<"capture">>, Meta, null)),
+    Issues = maps:get(<<"issues">>, Response, []),
+    Outcome = maps:get(<<"outcome">>, Response, <<"error">>),
+    maps:filter(
+        fun
+            (_Key, null) -> false;
+            (<<"issues">>, []) -> false;
+            (<<"outcome">>, <<"complete">>) -> false;
+            (_Key, _Value) -> true
+        end,
+        #{
+            <<"target">> => Target,
+            <<"data">> => Data,
+            <<"capture">> => Capture,
+            <<"issues">> => Issues,
+            <<"outcome">> => Outcome
+        }
+    ).
+
+text_capture(null) ->
+    null;
+text_capture(Capture) ->
+    Probes = [
+        Probe
+     || #{<<"status">> := Status} = Probe <- maps:get(<<"probes">>, Capture), Status =/= <<"ok">>
+    ],
+    maps:filter(
+        fun
+            (_Key, []) -> false;
+            (_Key, _Value) -> true
+        end,
+        #{
+            <<"duration_ms">> => maps:get(<<"duration_ms">>, Capture),
+            <<"probes">> => Probes,
+            <<"observer_effects">> => maps:get(<<"observer_effects">>, Capture)
+        }
+    ).
 
 text_indent(Width) ->
     binary:copy(<<" ">>, Width).
@@ -1436,10 +1496,6 @@ text_scalar(Value) ->
 -spec exit_code(atom() | map()) -> 0..4.
 exit_code(#{category := Category}) ->
     exit_code(Category);
-exit_code(success) ->
-    0;
-exit_code(diagnose_findings) ->
-    1;
 exit_code(argument) ->
     2;
 exit_code(format) ->
@@ -1479,10 +1535,17 @@ escape_text(Text) ->
             <<"base64:", (base64:encode(Raw))/binary>>
     end.
 
+command_binary(null) ->
+    null;
 command_binary(Command) when is_atom(Command) ->
     atom_to_binary(Command);
 command_binary(Command) when is_binary(Command) ->
     Command.
+
+outcome_binary(Outcome) when is_atom(Outcome) ->
+    atom_to_binary(Outcome);
+outcome_binary(Outcome) when is_binary(Outcome) ->
+    Outcome.
 
 reason_code({Code, _Detail}) when is_atom(Code) ->
     atom_to_binary(Code);
@@ -1557,6 +1620,13 @@ reason_message(connection_failed) ->
     <<"target connection failed; check node name, name mode, EPMD, network, and cookie">>;
 reason_message(tui_start_failed) ->
     <<"interactive TUI startup failed; check target reachability, cookie, and bundle compatibility">>;
+reason_message(Reason) when
+    Reason =:= invalid_command_response;
+    Reason =:= invalid_snapshot_response;
+    Reason =:= invalid_diagnose_response;
+    Reason =:= invalid_schema
+->
+    <<"target response schema is incompatible; install the same observer_cli build on the controller and target">>;
 reason_message(response_too_large) ->
     <<"encoded response exceeds one MiB">>;
 reason_message(Reason) when is_binary(Reason) ->

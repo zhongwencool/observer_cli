@@ -36,13 +36,13 @@
     capability_error/2,
     probe_response/5,
     command_output/3,
+    command_output_device/2,
     response_command/2,
     valid_probe_reason/2,
     required_probe_id/1,
     pointer_exists/2,
     public_value/2,
     public_text/1,
-    response_class_priority/1,
     command_format/1,
     command_identity/2,
     command_display/1,
@@ -52,15 +52,14 @@
     command_error/4,
     output_encode_error/1,
     output_command_encode_error/3,
-    apply_error_priority/2,
     valid_target/3,
     valid_otp_release/1,
     valid_rfc3339/1,
     valid_probe/1,
-    valid_errors/1,
-    valid_error_class/2,
+    valid_issues/1,
+    valid_issue_class/2,
+    response_exit_code/1,
     valid_command_payload/3,
-    valid_map_fields/2,
     valid_list_command_payload/3,
     valid_required_probes/3,
     valid_findings/1,
@@ -69,14 +68,12 @@
     valid_redacted_identifier_field/2,
     identifier_field_prefix/1,
     valid_stable_identifier/2,
-    response_errors_exit_code/2,
     command_from_arguments/1,
     maybe_set_target_cookie/2,
     cookie_atom/1,
     stop_controller/1,
     request_options/1,
     snapshot_response/1,
-    unavailable_exit_code/1,
     diagnose_response/1,
     active_options/1,
     random_cookie/1,
@@ -745,7 +742,7 @@ run_disconnect_ready() ->
     end.
 
 ensure_output_format(Command, Options) ->
-    Response = observer_cli_cli:envelope(Command, null, null, #{}, [], []),
+    Response = observer_cli_cli:response(Command, complete, null, null, #{}, []),
     case observer_cli_cli:encode(command_format(Options), Response) of
         {ok, _Output} ->
             ok;
@@ -772,10 +769,11 @@ probe_response(Command, ContextOptions, CapabilityResult, OtpRelease) ->
     {DiagnosticsModule, Observed, Warnings} = capability_status(CapabilityResult),
     Expected = public_capabilities(observer_cli_snapshot:capabilities()),
     NodeBinary = public_text(Node),
-    Response = observer_cli_cli:envelope(
+    Response = observer_cli_cli:response(
         Command,
+        complete,
         #{<<"node">> => NodeBinary, <<"otp_release">> => OtpRelease},
-        #{<<"status">> => <<"complete">>},
+        null,
         #{
             <<"node">> => NodeBinary,
             <<"name_mode">> => public_text(NameMode),
@@ -786,21 +784,23 @@ probe_response(Command, ContextOptions, CapabilityResult, OtpRelease) ->
             <<"observed_capabilities">> => Observed,
             <<"persistent_connection">> => false
         },
-        Warnings,
-        []
+        Warnings
     ),
-    {ok, Response, observer_cli_cli:exit_code(success)}.
+    {ok, Response, response_exit_code(Response)}.
 
 capability_status({ok, Capabilities}) ->
     {<<"compatible">>, public_capabilities(Capabilities), []};
 capability_status({error, capability, diagnostics_missing}) ->
-    {<<"missing">>, null, [observer_cli_cli:error(capability, diagnostics_missing)]};
+    {<<"missing">>, null, [warning(capability, diagnostics_missing)]};
 capability_status({error, capability, {diagnostics_incompatible, Observed}}) ->
     {
         <<"incompatible">>,
         public_capabilities(Observed),
-        [observer_cli_cli:error(capability, diagnostics_incompatible)]
+        [warning(capability, diagnostics_incompatible)]
     }.
+
+warning(Category, Reason) ->
+    (observer_cli_cli:error(Category, Reason))#{<<"severity">> => <<"warning">>}.
 
 public_capabilities(Capabilities) when is_map(Capabilities) ->
     #{
@@ -833,19 +833,20 @@ public_binary_text(Binary) ->
     end.
 
 disconnect_response(Node) ->
-    Response = observer_cli_cli:envelope(
+    Response = observer_cli_cli:response(
         disconnect,
+        complete,
         null,
         null,
         #{<<"node">> => Node, <<"disconnected">> => true},
-        [],
         []
     ),
-    {ok, Response, observer_cli_cli:exit_code(success)}.
+    {ok, Response, response_exit_code(Response)}.
 
 recovered_disconnect_response() ->
-    Response = observer_cli_cli:envelope(
+    Response = observer_cli_cli:response(
         disconnect,
+        complete,
         null,
         null,
         #{
@@ -853,10 +854,9 @@ recovered_disconnect_response() ->
             <<"disconnected">> => true,
             <<"recovered_invalid_context">> => true
         },
-        [],
         []
     ),
-    {ok, Response, observer_cli_cli:exit_code(success)}.
+    {ok, Response, response_exit_code(Response)}.
 
 run_snapshot(Target, Options, Request, Remaining) ->
     Policy =
@@ -873,12 +873,8 @@ run_snapshot(Target, Options, Request, Remaining) ->
             Error
     end.
 
-snapshot_response(#{<<"capture">> := #{<<"status">> := <<"complete">>}} = Response) ->
-    {ok, Response, observer_cli_cli:exit_code(success)};
-snapshot_response(#{<<"capture">> := #{<<"status">> := <<"partial">>}} = Response) ->
-    {ok, Response, observer_cli_cli:exit_code(partial)};
-snapshot_response(_Invalid) ->
-    {error, schema, invalid_snapshot_response}.
+snapshot_response(Response) ->
+    dispatch_response(Response).
 
 run_dispatch(Target, Command, Request, Options, Remaining) ->
     Policy =
@@ -901,45 +897,72 @@ run_dispatch(Target, Command, Request, Options, Remaining) ->
             Error
     end.
 
-dispatch_response(
-    #{
-        <<"command">> := Command,
-        <<"errors">> := [],
-        <<"capture">> := #{
-            <<"status">> := <<"partial">>,
-            <<"probes">> := [#{<<"id">> := <<"trace">>, <<"status">> := <<"ok">>}]
-        }
-    } = Response
-) when Command =:= <<"trace_call">>; Command =:= <<"trace_stop_all">> ->
-    {ok, Response, observer_cli_cli:exit_code(success)};
-dispatch_response(
-    #{<<"errors">> := Errors} = Response
-) when Errors =/= [] ->
-    {ok, Response, response_errors_exit_code(Response, Errors)};
-dispatch_response(#{<<"capture">> := #{<<"status">> := <<"partial">>}} = Response) ->
-    {ok, Response, observer_cli_cli:exit_code(partial)};
-dispatch_response(#{<<"capture">> := #{<<"probes">> := Probes}} = Response) ->
-    case unavailable_exit_code(Probes) of
-        none -> {ok, Response, observer_cli_cli:exit_code(success)};
-        ExitCode -> {ok, Response, ExitCode}
-    end;
+dispatch_response(#{<<"outcome">> := Outcome} = Response) when
+    Outcome =:= <<"complete">>; Outcome =:= <<"partial">>; Outcome =:= <<"error">>
+->
+    {ok, Response, response_exit_code(Response)};
 dispatch_response(_Invalid) ->
     {error, schema, invalid_command_response}.
 
-unavailable_exit_code(Probes) ->
-    Reasons = [
-        Reason
-     || #{<<"status">> := <<"unavailable">>, <<"reason_code">> := Reason} <- Probes
+response_exit_code(#{
+    <<"outcome">> := <<"complete">>, <<"command">> := <<"diagnose">>, <<"data">> := Data
+}) ->
+    case maps:get(<<"findings">>, Data, []) of
+        [] -> 0;
+        [_ | _] -> 1
+    end;
+response_exit_code(#{<<"outcome">> := <<"complete">>}) ->
+    0;
+response_exit_code(#{<<"outcome">> := <<"partial">>}) ->
+    3;
+response_exit_code(#{<<"outcome">> := <<"error">>, <<"issues">> := Issues} = Response) ->
+    ProbeCodes =
+        case Response of
+            #{<<"meta">> := #{<<"capture">> := #{<<"probes">> := Probes}}} ->
+                [probe_exit_code(Probe) || Probe <- Probes, probe_failed(Probe)];
+            _ ->
+                []
+        end,
+    ErrorCodes = [
+        issue_exit_code(Issue)
+     || #{<<"severity">> := <<"error">>} = Issue <- Issues
     ],
-    case lists:member(<<"scan_budget_exceeded">>, Reasons) of
-        true ->
-            observer_cli_cli:exit_code(scan_budget_exceeded);
-        false ->
-            case lists:member(<<"capability_unavailable">>, Reasons) of
-                true -> observer_cli_cli:exit_code(capability);
-                false when Reasons =/= [] -> observer_cli_cli:exit_code(required_probe);
-                false -> none
-            end
+    case ErrorCodes ++ ProbeCodes of
+        [] -> 4;
+        Codes -> lists:max(Codes)
+    end.
+
+issue_exit_code(#{<<"class">> := Class}) ->
+    case Class of
+        <<"argument">> -> 2;
+        <<"format">> -> 2;
+        <<"capability">> -> 2;
+        <<"safety_refusal">> -> 3;
+        <<"controller">> -> 3;
+        <<"distribution">> -> 3;
+        <<"connection">> -> 3;
+        <<"required_probe">> -> 3;
+        <<"partial">> -> 3;
+        _ -> 4
+    end;
+issue_exit_code(_Issue) ->
+    4.
+
+probe_failed(#{<<"status">> := Status}) ->
+    Status =/= <<"ok">>.
+
+probe_exit_code(#{<<"reason_code">> := Reason}) ->
+    case Reason of
+        <<"capability_unavailable">> -> 2;
+        <<"mfa_unavailable">> -> 2;
+        <<"mfa_not_traceable">> -> 2;
+        <<"cleanup_unconfirmed">> -> 4;
+        <<"invalid_schema">> -> 4;
+        <<"internal_error">> -> 4;
+        <<"capture_internal_error">> -> 4;
+        <<"dispatcher_disconnected">> -> 4;
+        <<"helper_setup_failed">> -> 4;
+        _ -> 3
     end.
 
 run_diagnose(Target, Options, Remaining) ->
@@ -996,28 +1019,8 @@ target_dispatch(Target, Command, Request, Options, Policy, Remaining) ->
             {error, required_probe, Reason}
     end.
 
-diagnose_response(
-    #{
-        <<"capture">> := #{<<"status">> := <<"complete">>},
-        <<"data">> := #{
-            <<"findings">> := []
-        }
-    } = Response
-) ->
-    {ok, Response, observer_cli_cli:exit_code(success)};
-diagnose_response(
-    #{
-        <<"capture">> := #{<<"status">> := <<"complete">>},
-        <<"data">> := #{
-            <<"findings">> := [_ | _]
-        }
-    } = Response
-) ->
-    {ok, Response, observer_cli_cli:exit_code(diagnose_findings)};
-diagnose_response(#{<<"capture">> := #{<<"status">> := <<"partial">>}} = Response) ->
-    {ok, Response, observer_cli_cli:exit_code(partial)};
-diagnose_response(_Invalid) ->
-    {error, schema, invalid_diagnose_response}.
+diagnose_response(Response) ->
+    dispatch_response(Response).
 
 with_target(Options, Fun) ->
     case node() of
@@ -1303,18 +1306,9 @@ command_timeout(_Options, _Remaining) ->
 
 validated_response(Command, Policy, Target, Response, Fun) ->
     case validate_response(Command, Policy, Target, Response) of
-        ok -> apply_error_priority(Response, Fun(Response));
+        ok -> Fun(Response);
         {error, Reason} -> {error, schema, Reason}
     end.
-
-apply_error_priority(#{<<"errors">> := []}, Outcome) ->
-    Outcome;
-apply_error_priority(
-    #{<<"errors">> := Errors} = Response, {ok, Response, ExitCode}
-) ->
-    {ok, Response, max(ExitCode, response_errors_exit_code(Response, Errors))};
-apply_error_priority(_Response, Outcome) ->
-    Outcome.
 
 response_command(trace, #{action := call}) -> trace_call;
 response_command(trace, #{action := stop_all}) -> trace_stop_all;
@@ -1329,13 +1323,12 @@ validate_response(_Command, _Policy, _Target, _Response) ->
 
 validate_response_map(Command, Policy, Target, Response) ->
     ExpectedKeys = [
-        <<"capture">>,
         <<"command">>,
         <<"data">>,
-        <<"errors">>,
-        <<"schema">>,
-        <<"target">>,
-        <<"warnings">>
+        <<"issues">>,
+        <<"meta">>,
+        <<"outcome">>,
+        <<"schema">>
     ],
     Checks = [
         lists:sort(maps:keys(Response)) =:= ExpectedKeys,
@@ -1361,31 +1354,139 @@ valid_policy_response(_Command, redact, Response) ->
 
 valid_envelope(
     #{
-        <<"capture">> := null,
-        <<"target">> := Target,
+        <<"command">> := Command,
+        <<"outcome">> := <<"error">>,
+        <<"meta">> := #{<<"target">> := Target, <<"capture">> := Capture} = Meta,
         <<"data">> := null,
-        <<"warnings">> := Warnings,
-        <<"errors">> := Errors
+        <<"issues">> := Issues
     },
     Policy,
     ExpectedTarget
 ) ->
-    (Target =:= null orelse valid_target(Target, Policy, ExpectedTarget)) andalso
-        is_list(Warnings) andalso valid_errors(Errors) andalso Errors =/= [];
+    map_size(Meta) =:= 2 andalso
+        (Target =:= null orelse valid_target(Target, Policy, ExpectedTarget)) andalso
+        (Capture =:= null orelse valid_capture(Capture)) andalso
+        valid_issues(Issues) andalso valid_outcome(Command, <<"error">>, Capture, Issues) andalso
+        unique_probe_facts(null, Capture, Issues);
 valid_envelope(
     #{
-        <<"capture">> := Capture,
-        <<"target">> := Target,
+        <<"command">> := Command,
+        <<"outcome">> := Outcome,
+        <<"meta">> := #{<<"target">> := Target, <<"capture">> := Capture} = Meta,
         <<"data">> := Data,
-        <<"warnings">> := Warnings,
-        <<"errors">> := Errors
+        <<"issues">> := Issues
     },
     Policy,
     ExpectedTarget
 ) ->
-    valid_target(Target, Policy, ExpectedTarget) andalso is_map(Data) andalso
-        is_list(Warnings) andalso
-        valid_errors(Errors) andalso valid_capture(Capture).
+    map_size(Meta) =:= 2 andalso valid_target(Target, Policy, ExpectedTarget) andalso
+        is_map(Data) andalso valid_issues(Issues) andalso valid_capture(Capture) andalso
+        valid_outcome(Command, Outcome, Capture, Issues) andalso
+        unique_probe_facts(Data, Capture, Issues);
+valid_envelope(_Response, _Policy, _ExpectedTarget) ->
+    false.
+
+valid_outcome(_Command, <<"complete">>, Capture, Issues) ->
+    not has_error_issue(Issues) andalso capture_matches_outcome(complete, Capture);
+valid_outcome(_Command, <<"partial">>, Capture, Issues) ->
+    not has_error_issue(Issues) andalso capture_matches_outcome(partial, Capture);
+valid_outcome(_Command, <<"error">>, null, Issues) ->
+    has_error_issue(Issues);
+valid_outcome(Command, <<"error">>, Capture, Issues) ->
+    has_error_issue(Issues) orelse probe_only_error(Command, Capture);
+valid_outcome(_Command, _Outcome, _Capture, _Issues) ->
+    false.
+
+has_error_issue(Issues) ->
+    lists:any(
+        fun
+            (#{<<"severity">> := <<"error">>}) -> true;
+            (_) -> false
+        end,
+        Issues
+    ).
+
+capture_matches_outcome(complete, #{<<"probes">> := Probes}) ->
+    lists:all(
+        fun
+            (#{<<"required">> := true, <<"status">> := Status}) ->
+                Status =:= <<"ok">>;
+            (#{<<"required">> := false, <<"status">> := Status}) ->
+                Status =:= <<"ok">> orelse Status =:= <<"unavailable">>
+        end,
+        Probes
+    );
+capture_matches_outcome(partial, #{<<"probes">> := Probes}) ->
+    lists:any(
+        fun
+            (#{<<"required">> := true, <<"status">> := Status}) ->
+                Status =/= <<"ok">>;
+            (#{<<"required">> := false, <<"status">> := Status}) ->
+                Status =:= <<"timeout">> orelse Status =:= <<"error">>
+        end,
+        Probes
+    ).
+
+probe_only_error(Command, #{<<"probes">> := Probes}) ->
+    AllowedStatus =
+        case Command of
+            <<"trace_call">> -> [<<"unavailable">>, <<"timeout">>, <<"error">>];
+            <<"trace_stop_all">> -> [<<"unavailable">>, <<"timeout">>, <<"error">>];
+            _ -> [<<"unavailable">>]
+        end,
+    direct_probe_command(Command) andalso
+        lists:any(
+            fun
+                (#{<<"required">> := true, <<"status">> := Status}) ->
+                    lists:member(Status, AllowedStatus);
+                (_) ->
+                    false
+            end,
+            Probes
+        ).
+
+direct_probe_command(Command) ->
+    lists:member(Command, [
+        <<"schedulers">>,
+        <<"distribution">>,
+        <<"processes">>,
+        <<"process">>,
+        <<"applications">>,
+        <<"ets">>,
+        <<"mnesia">>,
+        <<"network">>,
+        <<"ports">>,
+        <<"port">>,
+        <<"sockets">>,
+        <<"otp_state">>,
+        <<"supervision_tree">>,
+        <<"trace_call">>,
+        <<"trace_stop_all">>
+    ]).
+
+unique_probe_facts(Data, #{<<"probes">> := Probes}, Issues) ->
+    ProbeReasons = [
+        Reason
+     || #{<<"status">> := Status, <<"reason_code">> := Reason} <- Probes,
+        Status =/= <<"ok">>
+    ],
+    IssueReasons = [maps:get(<<"reason_code">>, Issue) || Issue <- Issues],
+    SkippedReasons =
+        case Data of
+            #{<<"skipped">> := Skipped} when is_list(Skipped) ->
+                [
+                    Reason
+                 || #{<<"reason_code">> := Reason} <- Skipped
+                ];
+            _ ->
+                []
+        end,
+    not lists:any(
+        fun(Reason) -> lists:member(Reason, IssueReasons ++ SkippedReasons) end,
+        ProbeReasons
+    );
+unique_probe_facts(_Data, null, _Issues) ->
+    true.
 
 valid_target(
     #{<<"node">> := Node, <<"otp_release">> := OtpRelease} = Target,
@@ -1421,7 +1522,6 @@ valid_otp_release(_OtpRelease) ->
 
 valid_capture(
     #{
-        <<"status">> := Status,
         <<"started_at">> := Started,
         <<"finished_at">> := Finished,
         <<"duration_ms">> := Duration,
@@ -1429,11 +1529,11 @@ valid_capture(
         <<"observer_effects">> := Effects
     } = Capture
 ) ->
-    map_size(Capture) =:= 6 andalso
-        (Status =:= <<"complete">> orelse Status =:= <<"partial">>) andalso
+    map_size(Capture) =:= 5 andalso
         valid_rfc3339(Started) andalso valid_rfc3339(Finished) andalso
         is_integer(Duration) andalso Duration >= 0 andalso
-        is_list(Probes) andalso lists:all(fun valid_probe/1, Probes) andalso is_list(Effects);
+        is_list(Probes) andalso lists:all(fun valid_probe/1, Probes) andalso is_list(Effects) andalso
+        lists:all(fun erlang:is_map/1, Effects);
 valid_capture(_Capture) ->
     false.
 
@@ -1462,96 +1562,74 @@ valid_probe(
         <<"coverage">> := Coverage
     } = Probe
 ) ->
-    map_size(Probe) =:= 7 andalso is_binary(Id) andalso is_boolean(Required) andalso
+    map_size(Probe) =:= 7 andalso is_binary(Id) andalso byte_size(Id) > 0 andalso
+        is_boolean(Required) andalso
         lists:member(Status, [<<"ok">>, <<"unavailable">>, <<"timeout">>, <<"error">>]) andalso
         valid_probe_reason(Status, Reason) andalso
         is_integer(Duration) andalso Duration >= 0 andalso
-        is_integer(Samples) andalso Samples >= 0 andalso is_list(Coverage);
+        is_integer(Samples) andalso Samples >= 0 andalso is_list(Coverage) andalso
+        lists:all(fun erlang:is_binary/1, Coverage);
 valid_probe(_Probe) ->
     false.
 
-valid_probe_reason(<<"ok">>, null) -> true;
-valid_probe_reason(Status, Reason) when Status =/= <<"ok">> -> is_binary(Reason);
-valid_probe_reason(_Status, _Reason) -> false.
+valid_probe_reason(<<"ok">>, null) ->
+    true;
+valid_probe_reason(Status, Reason) when Status =/= <<"ok">> ->
+    is_binary(Reason) andalso byte_size(Reason) > 0;
+valid_probe_reason(_Status, _Reason) ->
+    false.
 
-valid_errors(Errors) when is_list(Errors) ->
+valid_issues(Issues) when is_list(Issues) ->
     lists:all(
         fun
-            (#{<<"class">> := Class, <<"reason_code">> := Reason} = Error) ->
-                valid_error_keys(Error) andalso valid_error_class(Class, Reason);
+            (
+                #{
+                    <<"severity">> := Severity,
+                    <<"class">> := Class,
+                    <<"reason_code">> := Reason,
+                    <<"message">> := Message
+                } = Issue
+            ) ->
+                map_size(Issue) =:= 4 andalso
+                    (Severity =:= <<"warning">> orelse Severity =:= <<"error">>) andalso
+                    valid_issue_class(Class, Reason) andalso byte_size(Reason) > 0 andalso
+                    (Message =:= null orelse is_binary(Message));
             (_) ->
                 false
         end,
-        Errors
+        Issues
     );
-valid_errors(_Errors) ->
+valid_issues(_Issues) ->
     false.
 
-valid_error_keys(Error) ->
-    Keys = lists:sort(maps:keys(Error)),
-    lists:member(Keys, [
-        [<<"class">>, <<"reason_code">>],
-        [<<"class">>, <<"probe">>, <<"reason_code">>]
-    ]).
-
-valid_error_class(<<"cleanup">>, <<"cleanup_unconfirmed">>) ->
-    true;
-valid_error_class(<<"internal">>, Reason) ->
-    lists:member(Reason, [
-        <<"internal_error">>,
-        <<"capture_internal_error">>,
-        <<"dispatcher_disconnected">>,
-        <<"helper_setup_failed">>
+valid_issue_class(Class, Reason) when is_binary(Reason) ->
+    lists:member(Class, [
+        <<"argument">>,
+        <<"format">>,
+        <<"capability">>,
+        <<"safety_refusal">>,
+        <<"controller">>,
+        <<"distribution">>,
+        <<"connection">>,
+        <<"cleanup">>,
+        <<"schema">>,
+        <<"internal">>,
+        <<"required_probe">>,
+        <<"partial">>
     ]);
-valid_error_class(<<"schema">>, Reason) ->
-    lists:member(Reason, [
-        <<"field_too_large">>,
-        <<"invalid_evidence_pointer">>,
-        <<"invalid_identifier">>,
-        <<"invalid_identifier_policy">>,
-        <<"invalid_request">>,
-        <<"invalid_schema">>,
-        <<"response_too_deep">>,
-        <<"response_too_large">>
-    ]);
-valid_error_class(<<"capability">>, Reason) ->
-    lists:member(Reason, [
-        <<"capability_unavailable">>, <<"mfa_unavailable">>, <<"mfa_not_traceable">>
-    ]);
-valid_error_class(<<"required_probe">>, <<"capability_unavailable">>) ->
-    true;
-valid_error_class(Class, Reason) when is_binary(Reason) ->
-    not lists:member(Reason, [
-        <<"capability_unavailable">>,
-        <<"capture_internal_error">>,
-        <<"cleanup_unconfirmed">>,
-        <<"field_too_large">>,
-        <<"internal_error">>,
-        <<"invalid_evidence_pointer">>,
-        <<"invalid_identifier">>,
-        <<"invalid_identifier_policy">>,
-        <<"invalid_request">>,
-        <<"invalid_schema">>,
-        <<"response_too_deep">>,
-        <<"response_too_large">>
-    ]) andalso
-        lists:member(Class, [
-            <<"argument">>,
-            <<"connection">>,
-            <<"partial">>,
-            <<"required_probe">>,
-            <<"safety_refusal">>
-        ]);
-valid_error_class(_Class, _Reason) ->
+valid_issue_class(_Class, _Reason) ->
     false.
 
-valid_command_data(Command, #{<<"capture">> := null}) ->
+valid_command_data(Command, #{<<"meta">> := #{<<"capture">> := null}}) ->
     lists:member(Command, [trace_call, trace_stop_all]);
 valid_command_data(
     Command,
-    #{<<"capture">> := #{<<"status">> := Status, <<"probes">> := Probes}} = Response
+    #{
+        <<"outcome">> := Outcome,
+        <<"meta">> := #{<<"capture">> := #{<<"probes">> := Probes}}
+    } = Response
 ) ->
-    valid_required_probes(Command, Status, Probes) andalso
+    valid_required_probes(Command, Outcome, Probes) andalso
         valid_resource_wrappers(Response) andalso valid_command_payload(Command, Response, Probes);
 valid_command_data(_Command, _Response) ->
     false.
@@ -1565,30 +1643,48 @@ valid_command_payload(Command, #{<<"data">> := Data} = Response, Probes) ->
         memory ->
             valid_memory_data(Data);
         schedulers ->
-            valid_map_fields(Data, [<<"status">>]);
+            valid_status_data(Data);
         distribution ->
-            valid_map_fields(Data, [
-                <<"connected_peers">>, <<"returned_peer_count">>, <<"truncated">>
-            ]);
+            valid_distribution_data(Data);
         process ->
-            valid_map_fields(Data, [<<"status">>]);
+            valid_status_data(Data);
         port ->
-            valid_map_fields(Data, [<<"status">>]);
+            valid_status_data(Data);
         otp_state ->
             valid_otp_state_payload(Response, Probes);
         supervision_tree ->
-            valid_map_fields(Data, [<<"status">>, <<"risk_level">>]);
+            valid_supervision_tree_data(Data);
         trace_call ->
-            valid_map_fields(Data, [<<"reason">>, <<"trace">>]);
+            valid_trace_data(Data);
         trace_stop_all ->
-            valid_map_fields(Data, [<<"reason">>, <<"trace">>]);
+            valid_trace_data(Data);
         _ ->
             valid_list_command_payload(Command, Data, Probes)
     end.
 
-valid_map_fields(Data, Fields) when is_map(Data) ->
-    lists:all(fun(Field) -> maps:is_key(Field, Data) end, Fields);
-valid_map_fields(_Data, _Fields) ->
+valid_status_data(#{<<"status">> := Status}) ->
+    is_binary(Status) andalso byte_size(Status) > 0;
+valid_status_data(_Data) ->
+    false.
+
+valid_distribution_data(#{
+    <<"connected_peers">> := Peers,
+    <<"returned_peer_count">> := Count,
+    <<"truncated">> := Truncated
+}) ->
+    is_list(Peers) andalso nonnegative_integer(Count) andalso is_boolean(Truncated);
+valid_distribution_data(_Data) ->
+    false.
+
+valid_supervision_tree_data(#{<<"status">> := Status, <<"risk_level">> := Risk}) ->
+    is_binary(Status) andalso byte_size(Status) > 0 andalso
+        is_binary(Risk) andalso byte_size(Risk) > 0;
+valid_supervision_tree_data(_Data) ->
+    false.
+
+valid_trace_data(#{<<"reason">> := Reason, <<"trace">> := Trace}) ->
+    (Reason =:= null orelse is_binary(Reason)) andalso is_map(Trace);
+valid_trace_data(_Data) ->
     false.
 
 valid_otp_state_payload(#{<<"data">> := Data} = Response, Probes) ->
@@ -1596,7 +1692,7 @@ valid_otp_state_payload(#{<<"data">> := Data} = Response, Probes) ->
 
 valid_otp_state_outcome(
     #{<<"status">> := Status},
-    #{<<"capture">> := #{<<"status">> := <<"complete">>}, <<"errors">> := []},
+    #{<<"outcome">> := <<"complete">>},
     [
         #{
             <<"id">> := <<"otp_state">>,
@@ -1609,16 +1705,7 @@ valid_otp_state_outcome(
     true;
 valid_otp_state_outcome(
     #{<<"status">> := <<"error">>, <<"reason_code">> := Reason},
-    #{
-        <<"capture">> := #{<<"status">> := <<"partial">>},
-        <<"errors">> := [
-            #{
-                <<"class">> := <<"required_probe">>,
-                <<"probe">> := <<"otp_state">>,
-                <<"reason_code">> := Reason
-            }
-        ]
-    },
+    #{<<"outcome">> := <<"partial">>},
     [
         #{
             <<"id">> := <<"otp_state">>,
@@ -2100,69 +2187,32 @@ valid_list_command_payload(Command, Data, [Probe]) when
 ->
     case maps:get(<<"status">>, Probe) of
         <<"ok">> -> valid_complete_resource_wrapper(Data);
-        _ -> is_map(Data)
+        _ -> valid_status_data(Data)
     end;
 valid_list_command_payload(_Command, _Data, _Probes) ->
     false.
 
-valid_required_probes(snapshot, Status, Probes) ->
+valid_required_probes(snapshot, _Outcome, Probes) ->
     Required = [Probe || #{<<"required">> := true} = Probe <- Probes],
     lists:sort([maps:get(<<"id">>, Probe) || Probe <- Required]) =:=
-        [<<"memory">>, <<"resources">>, <<"runtime">>] andalso
-        probe_statuses_match_capture(Status, Required, Probes);
-valid_required_probes(diagnose, Status, Probes) ->
+        [<<"memory">>, <<"resources">>, <<"runtime">>];
+valid_required_probes(diagnose, _Outcome, Probes) ->
     Required = [Probe || #{<<"required">> := true} = Probe <- Probes],
     lists:member([maps:get(<<"id">>, Probe) || Probe <- Required], [
         [<<"core_limits">>], [<<"core_limits_and_memory">>]
-    ]) andalso
-        probe_statuses_match_capture(Status, Required, Probes);
-valid_required_probes(memory, Status, Probes) ->
+    ]);
+valid_required_probes(memory, _Outcome, Probes) ->
     Required = [Probe || #{<<"required">> := true} = Probe <- Probes],
     lists:sort([maps:get(<<"id">>, Probe) || Probe <- Required]) =:=
-        [<<"allocator">>, <<"memory">>] andalso
-        probe_statuses_match_capture(Status, Required, Probes);
-valid_required_probes(Command, <<"partial">>, [
-    #{<<"required">> := true, <<"id">> := <<"trace">>, <<"status">> := <<"ok">>}
-]) when Command =:= trace_call; Command =:= trace_stop_all ->
-    true;
-valid_required_probes(Command, Status, Probes) ->
+        [<<"allocator">>, <<"memory">>];
+valid_required_probes(Command, _Outcome, Probes) ->
     RequiredId = required_probe_id(Command),
     case Probes of
-        [#{<<"required">> := true, <<"id">> := RequiredId} = Probe] ->
-            direct_probe_statuses_match_capture(Status, [Probe], Probes);
+        [#{<<"required">> := true, <<"id">> := RequiredId}] ->
+            true;
         _ ->
             false
     end.
-
-probe_statuses_match_capture(<<"complete">>, Required, Probes) ->
-    lists:all(
-        fun(Probe) -> maps:get(<<"status">>, Probe) =:= <<"ok">> end,
-        Required
-    ) andalso
-        not lists:any(fun probe_started_failure/1, Probes);
-probe_statuses_match_capture(<<"partial">>, Required, Probes) ->
-    lists:any(fun probe_started_failure/1, Probes) orelse
-        lists:any(
-            fun
-                (#{<<"status">> := <<"unavailable">>}) -> true;
-                (_) -> false
-            end,
-            Required
-        ).
-
-direct_probe_statuses_match_capture(<<"complete">>, Required, Probes) ->
-    lists:all(
-        fun(Probe) ->
-            lists:member(maps:get(<<"status">>, Probe), [<<"ok">>, <<"unavailable">>])
-        end,
-        Required
-    ) andalso
-        not lists:any(fun probe_started_failure/1, Probes);
-direct_probe_statuses_match_capture(<<"partial">>, _Required, Probes) ->
-    lists:any(fun probe_started_failure/1, Probes).
-
-probe_started_failure(#{<<"status">> := Status}) ->
-    lists:member(Status, [<<"timeout">>, <<"error">>]).
 
 required_probe_id(memory) -> <<"memory">>;
 required_probe_id(schedulers) -> <<"scheduler_wall_time">>;
@@ -2454,31 +2504,6 @@ target_dispatch_error(<<"worker_heap_limit_exceeded">>) ->
 target_dispatch_error(Reason) ->
     {error, required_probe, Reason}.
 
-response_errors_exit_code(Response, Errors) ->
-    CaptureCode =
-        case Response of
-            #{<<"capture">> := #{<<"status">> := <<"partial">>}} -> 3;
-            _ -> 0
-        end,
-    lists:max([
-        CaptureCode
-        | [
-            response_class_priority(maps:get(<<"class">>, Error, <<"schema">>))
-         || Error <- Errors, is_map(Error)
-        ]
-    ]).
-
-response_class_priority(<<"cleanup">>) -> 4;
-response_class_priority(<<"schema">>) -> 4;
-response_class_priority(<<"internal">>) -> 4;
-response_class_priority(<<"safety_refusal">>) -> 3;
-response_class_priority(<<"connection">>) -> 3;
-response_class_priority(<<"required_probe">>) -> 3;
-response_class_priority(<<"partial">>) -> 3;
-response_class_priority(<<"capability">>) -> 2;
-response_class_priority(<<"argument">>) -> 2;
-response_class_priority(_Class) -> 4.
-
 cleanup_outcome(_Outcome, {error, cleanup_unconfirmed}) ->
     {error, cleanup, cleanup_unconfirmed};
 cleanup_outcome(Outcome, ok) ->
@@ -2530,13 +2555,16 @@ command_output(Options, Response, ExitCode) ->
     Format = command_format(Options),
     case observer_cli_cli:encode(Format, Response) of
         {ok, Output} ->
-            output_put_chars(standard_io, Output),
+            output_put_chars(command_output_device(Format, Response), Output),
             exit_with_code(ExitCode);
         {error, EncodeError} ->
             output_command_encode_error(
                 maps:get(<<"command">>, Response, <<"unknown">>), Format, EncodeError
             )
     end.
+
+command_output_device(text, #{<<"outcome">> := <<"error">>}) -> standard_error;
+command_output_device(_Format, _Response) -> standard_io.
 
 -spec command_error(atom(), map() | atom(), atom(), term()) -> no_return().
 command_error(Command, Options, Category, Reason) when is_map(Options) ->
@@ -2548,7 +2576,7 @@ command_error(unknown, text, Category, Reason) ->
         observer_cli_cli:escape_text(Message)
     ]),
     output_format(standard_error, "Run 'observer_cli --help' for usage.~n", []),
-    exit_with_code(observer_cli_cli:exit_code(Category));
+    exit_with_code(error_exit_code(unknown, Category, Reason));
 command_error(Command, text, Category, Reason) ->
     Message = maps:get(<<"message">>, observer_cli_cli:error(Category, Reason)),
     output_format(standard_error, "observer_cli ~ts: ~ts~n", [
@@ -2560,14 +2588,13 @@ command_error(Command, text, Category, Reason) ->
         _ ->
             ok
     end,
-    exit_with_code(observer_cli_cli:exit_code(Category));
+    exit_with_code(error_exit_code(Command, Category, Reason));
 command_error(Command, Format, Category, Reason) ->
-    Error = observer_cli_cli:error(Category, Reason),
-    Response = observer_cli_cli:envelope(Command, null, null, null, [], [Error]),
+    Response = error_response(Command, Category, Reason),
     case observer_cli_cli:encode(Format, Response) of
         {ok, Output} ->
             output_put_chars(standard_io, Output),
-            exit_with_code(observer_cli_cli:exit_code(Category));
+            exit_with_code(response_exit_code(Response));
         {error, EncodeError} ->
             output_encode_error(EncodeError)
     end.
@@ -2576,6 +2603,17 @@ command_display(trace_call) -> <<"trace call">>;
 command_display(trace_stop_all) -> <<"trace stop">>;
 command_display(otp_state) -> <<"otp-state">>;
 command_display(Command) -> atom_to_binary(Command).
+
+response_command_name(unknown) -> null;
+response_command_name(Command) -> Command.
+
+error_exit_code(Command, Category, Reason) ->
+    response_exit_code(error_response(Command, Category, Reason)).
+
+error_response(Command, Category, Reason) ->
+    observer_cli_cli:response(response_command_name(Command), error, null, null, null, [
+        observer_cli_cli:error(Category, Reason)
+    ]).
 
 command_help_command(unknown) -> <<"observer_cli --help">>;
 command_help_command(tui) -> <<"observer_cli tui --help">>;
@@ -2599,7 +2637,9 @@ output_encode_error(EncodeError) ->
     output_format(standard_error, "observer_cli: ~ts~n", [
         observer_cli_cli:escape_text(Message)
     ]),
-    exit_with_code(observer_cli_cli:exit_code(EncodeError)).
+    exit_with_code(
+        error_exit_code(null, maps:get(category, EncodeError), EncodeReason)
+    ).
 
 -spec output_command_encode_error(binary() | atom(), text | term | json, map()) -> no_return().
 output_command_encode_error(_Command, json, #{reason := json_unavailable} = EncodeError) ->
@@ -2607,12 +2647,11 @@ output_command_encode_error(_Command, json, #{reason := json_unavailable} = Enco
 output_command_encode_error(Command, Format, EncodeError) when Format =:= term; Format =:= json ->
     Category = maps:get(category, EncodeError),
     Reason = maps:get(reason, EncodeError),
-    Error = observer_cli_cli:error(Category, Reason),
-    Response = observer_cli_cli:envelope(Command, null, null, null, [], [Error]),
+    Response = error_response(Command, Category, Reason),
     case observer_cli_cli:encode(Format, Response) of
         {ok, Output} ->
             output_put_chars(standard_io, Output),
-            exit_with_code(observer_cli_cli:exit_code(EncodeError));
+            exit_with_code(response_exit_code(Response));
         {error, _RetryError} ->
             output_encode_error(EncodeError)
     end;

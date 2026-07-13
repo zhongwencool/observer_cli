@@ -92,7 +92,7 @@ diagnostic_socket_enumeration_error_test() ->
         #{test_socket_source => Source},
         #{timeout_ms => 5000, identifier_policy => include}
     ),
-    ?assertEqual(<<"partial">>, maps:get(<<"status">>, maps:get(<<"capture">>, Result))),
+    ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, Result)),
     ?assertEqual(
         <<"enumeration_error">>, maps:get(<<"reason_code">>, maps:get(<<"data">>, Result))
     ).
@@ -484,7 +484,7 @@ diagnostic_socket_data(Request) ->
     Data.
 
 diagnostic_socket_capture(Request) ->
-    #{<<"capture">> := Capture} = diagnostic_socket_result(Request),
+    #{<<"meta">> := #{<<"capture">> := Capture}} = diagnostic_socket_result(Request),
     Capture.
 
 diagnostic_socket_result(Request) ->

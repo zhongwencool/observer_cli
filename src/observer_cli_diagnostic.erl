@@ -36,7 +36,6 @@
     required_complete/1,
     valid_limit/1,
     skipped_checks/1,
-    capture_errors/3,
     capture_observation_samples/6,
     capture_samples/3
 ]).
@@ -268,15 +267,14 @@ build_report(Samples, Plan, Timing, Distribution) ->
         end,
     ProcessContext = process_context(Samples),
     Skipped = skipped_checks(Samples),
-    #{
-        schema => <<"observer_cli.cli/v1">>,
-        command => diagnose,
-        target => #{
+    observer_cli_cli:response(
+        diagnose,
+        Status,
+        #{
             node => {identifier, node, node()},
             otp_release => unicode:characters_to_binary(erlang:system_info(otp_release))
         },
-        capture => #{
-            status => Status,
+        #{
             started_at => maps:get(started_at, Timing),
             finished_at => maps:get(finished_at, Timing),
             duration_ms => maps:get(duration_ms, Timing),
@@ -284,7 +282,7 @@ build_report(Samples, Plan, Timing, Distribution) ->
                 quick_context_probes(EtsContext, PortContext, SchedulerContext),
             observer_effects => observer_effects(Timing)
         },
-        data => #{
+        #{
             ruleset => ?RULESET,
             ruleset_version => ?RULESET_VERSION,
             sampling_plan => sampling_plan(Plan, Samples),
@@ -301,10 +299,8 @@ build_report(Samples, Plan, Timing, Distribution) ->
             skipped => Skipped,
             summary => summary(Status, Findings)
         },
-        warnings => [],
-        errors => capture_errors(RequiredComplete, ProcessStatus, DistributionStatus) ++
-            quick_context_errors(EtsContext, PortContext, SchedulerContext)
-    }.
+        []
+    ).
 
 quick_context_status(#{status := Status}) when Status =:= error; Status =:= invalid -> error;
 quick_context_status(#{status := Status}) when Status =:= ok; Status =:= valid -> ok;
@@ -333,21 +329,6 @@ quick_context_probe(Id, Context) ->
             end,
         coverage => [current_context_only]
     }.
-
-quick_context_errors(Ets, Ports, Scheduler) ->
-    [
-        #{
-            class => partial,
-            probe => Id,
-            reason_code => maps:get(reason_code, Context, sampling_gap)
-        }
-     || {Id, Context} <- [
-            {ets_inventory, Ets},
-            {port_inventory, Ports},
-            {scheduler_pressure, Scheduler}
-        ],
-        quick_context_status(Context) =:= error
-    ].
 
 current_entity_context(Samples, Field, Metrics) ->
     case
@@ -404,15 +385,14 @@ observation_report(Mode, Samples, Plan, Holder, Timing, Distribution) ->
             true -> limit_findings(RuntimeSamples) ++ scheduler_findings(Windows);
             false -> []
         end,
-    #{
-        schema => <<"observer_cli.cli/v1">>,
-        command => diagnose,
-        target => #{
+    observer_cli_cli:response(
+        diagnose,
+        Status,
+        #{
             node => {identifier, node, node()},
             otp_release => unicode:characters_to_binary(erlang:system_info(otp_release))
         },
-        capture => #{
-            status => Status,
+        #{
             started_at => maps:get(started_at, Timing),
             finished_at => maps:get(finished_at, Timing),
             duration_ms => maps:get(duration_ms, Timing),
@@ -426,7 +406,7 @@ observation_report(Mode, Samples, Plan, Holder, Timing, Distribution) ->
                 | observer_effects(Timing)
             ]
         },
-        data => #{
+        #{
             ruleset => ruleset(Mode),
             ruleset_version => ?RULESET_VERSION,
             sampling_plan => observation_sampling_plan(Mode, Plan, Samples),
@@ -443,9 +423,8 @@ observation_report(Mode, Samples, Plan, Holder, Timing, Distribution) ->
             skipped => observation_skipped(Mode, Samples, Holder),
             summary => observation_summary(Mode, Status, Findings)
         },
-        warnings => [],
-        errors => observation_errors(Mode, Samples, Holder, RequiredComplete, OptionalStatuses)
-    }.
+        []
+    ).
 
 ruleset(observation) -> <<"observer_cli.observation">>;
 ruleset(deep) -> <<"observer_cli.deep_observation">>;
@@ -1056,7 +1035,7 @@ scheduler_reason(Windows) ->
         [] -> null
     end.
 
-observation_skipped(Mode, Samples, Holder) ->
+observation_skipped(Mode, _Samples, _Holder) ->
     Growth = [
         mailbox_backlog_suspects,
         memory_growth_suspects,
@@ -1069,37 +1048,8 @@ observation_skipped(Mode, Samples, Holder) ->
             deep -> [#{id => binary_retention_suspects, reason_code => ruleset_not_calibrated}];
             _ -> [#{id => binary_retention_suspects, reason_code => deep_not_requested}]
         end,
-    Refusals =
-        lists:usort([
-            #{id => Field, reason_code => maps:get(reason_code, Value)}
-         || Sample <- Samples,
-            Field <- [process_inventory, ets_inventory, port_inventory, socket_inventory],
-            Value <- [maps:get(Field, Sample, #{})],
-            maps:get(status, Value, ok) =:= unavailable
-        ]) ++
-            case maps:get(status, Holder, ok) of
-                unavailable ->
-                    [#{id => binary_holders, reason_code => maps:get(reason_code, Holder)}];
-                _ ->
-                    []
-            end,
-    ApplicationRefusals =
-        case Mode of
-            application ->
-                lists:usort([
-                    #{
-                        id => application,
-                        reason_code => maps:get(reason_code, Application, application_unavailable)
-                    }
-                 || Sample <- Samples,
-                    Application <- [maps:get(application, Sample, #{})],
-                    maps:get(status, Application, ok) =:= unavailable
-                ]);
-            _ ->
-                []
-        end,
     [#{id => Id, reason_code => ruleset_not_calibrated} || Id <- Growth] ++
-        Binary ++ Refusals ++ ApplicationRefusals.
+        Binary.
 
 observation_summary(Mode, partial, _Findings) ->
     iolist_to_binary(
@@ -1109,18 +1059,6 @@ observation_summary(Mode, complete, Findings) ->
     iolist_to_binary(
         io_lib:format("~p diagnostics completed with ~B finding(s).", [Mode, length(Findings)])
     ).
-
-observation_errors(_Mode, _Samples, _Holder, false, _Statuses) ->
-    [#{class => required_probe, probe => observation, reason_code => required_coverage_incomplete}];
-observation_errors(_Mode, _Samples, _Holder, true, Statuses) ->
-    [
-        #{
-            class => partial,
-            probe => observation_optional,
-            reason_code => started_optional_probe_failed
-        }
-     || lists:member(error, Statuses)
-    ].
 
 required_complete([_, _] = Samples) ->
     lists:all(fun valid_required_sample/1, Samples);
@@ -1482,7 +1420,7 @@ sampling_plan(Plan, Samples) ->
         ]
     }.
 
-skipped_checks(Samples) ->
+skipped_checks(_Samples) ->
     Growth = [
         mailbox_backlog_suspects,
         memory_growth_suspects,
@@ -1490,18 +1428,7 @@ skipped_checks(Samples) ->
         port_queue_backlog_suspects,
         binary_retention_suspects
     ],
-    InventorySkips = lists:usort([
-        #{id => hot_processes_by_reductions, reason_code => Reason}
-     || Sample <- Samples, {unavailable, Reason} <- [inventory(Sample)]
-    ]),
-    SchedulerSkip =
-        case quick_scheduler_context(Samples) of
-            #{status := valid} -> [];
-            #{reason_code := Reason} -> [#{id => scheduler_pressure, reason_code => Reason}];
-            _ -> [#{id => scheduler_pressure, reason_code => scheduler_window_invalid}]
-        end,
-    [#{id => Id, reason_code => ruleset_not_calibrated} || Id <- Growth] ++
-        SchedulerSkip ++ InventorySkips.
+    [#{id => Id, reason_code => ruleset_not_calibrated} || Id <- Growth].
 
 summary(partial, _Findings) ->
     <<"Quick diagnostics capture is partial; findings suppressed.">>;
@@ -1511,18 +1438,6 @@ summary(complete, Findings) ->
     iolist_to_binary(
         io_lib:format("Quick diagnostics found ~B limit finding(s).", [length(Findings)])
     ).
-
-capture_errors(false, _ProcessStatus, _DistributionStatus) ->
-    [#{class => required_probe, probe => core_limits, reason_code => required_coverage_incomplete}];
-capture_errors(true, ProcessStatus, DistributionStatus) ->
-    [
-        #{class => partial, probe => Probe, reason_code => Reason}
-     || {Probe, Status, Reason} <- [
-            {process_inventory, ProcessStatus, process_inventory_failed},
-            {distribution, DistributionStatus, distribution_probe_failed}
-        ],
-        Status =:= error
-    ].
 
 observer_effects(Timing) ->
     [

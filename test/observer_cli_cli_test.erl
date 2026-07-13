@@ -972,35 +972,59 @@ io_resource_options_test() ->
     ).
 
 response_envelope_test() ->
-    Capture = #{<<"status">> => <<"complete">>},
+    Capture = #{<<"duration_ms">> => 12, <<"probes">> => [], <<"observer_effects">> => []},
     Data = #{<<"memory_bytes">> => 42},
+    Response =
+        observer_cli_cli:response(
+            memory, complete, #{<<"node">> => <<"target@host">>}, Capture, Data, []
+        ),
     ?assertEqual(
         #{
             <<"schema">> => <<"observer_cli.cli/v1">>,
             <<"command">> => <<"memory">>,
-            <<"target">> => #{<<"node">> => <<"target@host">>},
-            <<"capture">> => Capture,
+            <<"outcome">> => <<"complete">>,
             <<"data">> => Data,
-            <<"warnings">> => [],
-            <<"errors">> => []
+            <<"meta">> => #{
+                <<"target">> => #{<<"node">> => <<"target@host">>},
+                <<"capture">> => Capture
+            },
+            <<"issues">> => []
         },
-        observer_cli_cli:envelope(
-            memory, #{<<"node">> => <<"target@host">>}, Capture, Data, [], []
-        )
+        Response
     ),
-    Error = observer_cli_cli:error(argument, invalid_arguments),
-    ?assertMatch(
-        #{<<"capture">> := null, <<"data">> := null, <<"errors">> := [_]},
-        observer_cli_cli:envelope(memory, null, null, null, [], [Error])
+    ?assertEqual(
+        [<<"command">>, <<"data">>, <<"issues">>, <<"meta">>, <<"outcome">>, <<"schema">>],
+        lists:sort(maps:keys(Response))
+    ),
+    Issue = observer_cli_cli:error(argument, invalid_arguments),
+    ?assertEqual(
+        #{
+            <<"severity">> => <<"error">>,
+            <<"class">> => <<"argument">>,
+            <<"reason_code">> => <<"invalid_arguments">>,
+            <<"message">> => <<"invalid arguments">>
+        },
+        Issue
+    ),
+    ?assertEqual(
+        #{
+            <<"schema">> => <<"observer_cli.cli/v1">>,
+            <<"command">> => null,
+            <<"outcome">> => <<"error">>,
+            <<"data">> => null,
+            <<"meta">> => #{<<"target">> => null, <<"capture">> => null},
+            <<"issues">> => [Issue]
+        },
+        observer_cli_cli:response(null, error, null, null, null, [Issue])
     ).
 
 term_encoder_round_trip_test() ->
-    Response = observer_cli_cli:envelope(
-        memory,
+    Response = observer_cli_cli:response(
+        null,
+        error,
         null,
         null,
         null,
-        [],
         [observer_cli_cli:error(argument, invalid_arguments)]
     ),
     {ok, Encoded} = observer_cli_cli:encode(term, Response),
@@ -1009,16 +1033,16 @@ term_encoder_round_trip_test() ->
     ?assertEqual({ok, Response}, erl_parse:parse_term(Tokens)).
 
 json_encoder_test() ->
-    Success = observer_cli_cli:envelope(
+    Success = observer_cli_cli:response(
         memory,
+        complete,
         #{<<"node">> => <<"target@host">>},
-        #{<<"status">> => <<"complete">>},
+        #{<<"duration_ms">> => 1, <<"probes">> => [], <<"observer_effects">> => []},
         #{},
-        [],
         []
     ),
-    Failure = observer_cli_cli:envelope(
-        memory, null, null, null, [], [observer_cli_cli:error(argument, invalid_arguments)]
+    Failure = observer_cli_cli:response(
+        null, error, null, null, null, [observer_cli_cli:error(argument, invalid_arguments)]
     ),
     case code:ensure_loaded(json) of
         {module, json} ->
@@ -1045,12 +1069,12 @@ json_encoder_test() ->
     end.
 
 encoder_cap_and_text_escaping_test() ->
-    Oversized = observer_cli_cli:envelope(
+    Oversized = observer_cli_cli:response(
         memory,
+        complete,
         #{<<"node">> => <<"target@host">>},
-        #{<<"status">> => <<"complete">>},
+        #{<<"duration_ms">> => 1, <<"probes">> => [], <<"observer_effects">> => []},
         #{<<"value">> => binary:copy(<<"x">>, 1024 * 1024)},
-        [],
         []
     ),
     ?assertEqual(
@@ -1063,19 +1087,26 @@ encoder_cap_and_text_escaping_test() ->
     ),
     Dynamic = <<"safe", 27, "]0;title", 7, 10>>,
     ?assertEqual(<<"safe\\x1B]0;title\\x07\\x0A">>, observer_cli_cli:escape_text(Dynamic)),
-    TextResponse = observer_cli_cli:envelope(
-        memory, null, null, null, [], [observer_cli_cli:error(argument, {unknown_option, Dynamic})]
+    TextResponse = observer_cli_cli:response(
+        memory,
+        error,
+        null,
+        null,
+        null,
+        [observer_cli_cli:error(argument, {unknown_option, Dynamic})]
     ),
     {ok, Text} = observer_cli_cli:encode(text, TextResponse),
     ?assertEqual(nomatch, binary:match(Text, <<27>>)),
-    ?assertEqual(nomatch, binary:match(Text, <<7>>)).
+    ?assertEqual(nomatch, binary:match(Text, <<7>>)),
+    ?assertEqual(nomatch, binary:match(Text, <<"schema:">>)),
+    ?assertEqual(nomatch, binary:match(Text, <<"meta:">>)).
 
 health_command_text_reports_test() ->
-    Response = observer_cli_cli:envelope(
+    Response = observer_cli_cli:response(
         diagnose,
+        complete,
         #{<<"node">> => <<"node-1">>, <<"otp_release">> => <<"29">>},
         #{
-            <<"status">> => <<"complete">>,
             <<"duration_ms">> => 1500,
             <<"probes">> => [
                 #{
@@ -1083,10 +1114,21 @@ health_command_text_reports_test() ->
                     <<"status">> => <<"ok">>,
                     <<"reason_code">> => null,
                     <<"required">> => true,
+                    <<"duration_ms">> => 12,
                     <<"samples">> => 2,
                     <<"coverage">> => [<<"process_count_limit">>, <<"port_count_limit">>]
+                },
+                #{
+                    <<"id">> => <<"scheduler_utilization">>,
+                    <<"status">> => <<"timeout">>,
+                    <<"reason_code">> => <<"probe_timeout">>,
+                    <<"required">> => false,
+                    <<"duration_ms">> => 1000,
+                    <<"samples">> => 0,
+                    <<"coverage">> => [<<"scheduler_utilization">>]
                 }
-            ]
+            ],
+            <<"observer_effects">> => [<<"scheduler_wall_time_enabled">>]
         },
         #{
             <<"summary">> => <<"Quick diagnostics completed with no limit findings.">>,
@@ -1100,47 +1142,31 @@ health_command_text_reports_test() ->
                 }
             ]
         },
-        [],
         []
     ),
     {ok, Text} = observer_cli_cli:encode(text, Response),
-    ?assertEqual(
-        <<
-            "observer_cli diagnose\n"
-            "schema: observer_cli.cli/v1\n"
-            "command: diagnose\n"
-            "target:\n"
-            "  node: node-1\n"
-            "  otp_release: 29\n"
-            "data:\n"
-            "  summary: Quick diagnostics completed with no limit findings.\n"
-            "  context:\n"
-            "    snapshot:\n"
-            "      runtime_samples: []\n"
-            "  findings: []\n"
-            "  sampling_plan:\n"
-            "    mode: quick\n"
-            "  skipped:\n"
-            "    [0]:\n"
-            "      id: memory_growth_suspects\n"
-            "      reason_code: ruleset_not_calibrated\n"
-            "warnings: []\n"
-            "errors: []\n"
-            "capture:\n"
-            "  status: complete\n"
-            "  duration_ms: 1500\n"
-            "  probes:\n"
-            "    [0]:\n"
-            "      id: core_limits\n"
-            "      status: ok\n"
-            "      reason_code: null\n"
-            "      required: true\n"
-            "      coverage:\n"
-            "        [0]: process_count_limit\n"
-            "        [1]: port_count_limit\n"
-            "      samples: 2\n"
-        >>,
-        Text
+    lists:foreach(
+        fun(Fragment) -> ?assertNotEqual(nomatch, binary:match(Text, Fragment)) end,
+        [
+            <<"observer_cli diagnose\n">>,
+            <<"node-1">>,
+            <<"Quick diagnostics completed with no limit findings.">>,
+            <<"memory_growth_suspects">>,
+            <<"duration_ms: 1500">>,
+            <<"scheduler_utilization">>,
+            <<"probe_timeout">>,
+            <<"scheduler_wall_time_enabled">>
+        ]
+    ),
+    lists:foreach(
+        fun(Fragment) -> ?assertEqual(nomatch, binary:match(Text, Fragment)) end,
+        [
+            <<"schema:">>,
+            <<"command: diagnose">>,
+            <<"issues: []">>,
+            <<"meta:">>,
+            <<"core_limits">>
+        ]
     ),
     ?assertEqual(nomatch, binary:match(Text, <<"#{">>)),
     lists:foreach(
@@ -1185,12 +1211,12 @@ command_text_and_error_encoding_test() ->
     },
     lists:foreach(
         fun({Command, Fragment}) ->
-            Response = observer_cli_cli:envelope(
+            Response = observer_cli_cli:response(
                 Command,
+                complete,
                 #{<<"node">> => <<"target@host">>, <<"otp_release">> => <<"29">>},
-                #{<<"status">> => <<"complete">>},
+                #{<<"duration_ms">> => 1, <<"probes">> => [], <<"observer_effects">> => []},
                 ContextData,
-                [],
                 []
             ),
             {ok, Text} = observer_cli_cli:encode(text, Response),
@@ -1203,12 +1229,12 @@ command_text_and_error_encoding_test() ->
     ),
     lists:foreach(
         fun({Node, Fragment}) ->
-            Response = observer_cli_cli:envelope(
+            Response = observer_cli_cli:response(
                 disconnect,
+                complete,
                 null,
                 null,
                 #{<<"node">> => Node, <<"disconnected">> => true},
-                [],
                 []
             ),
             {ok, Text} = observer_cli_cli:encode(text, Response),
@@ -1219,8 +1245,9 @@ command_text_and_error_encoding_test() ->
             {null, <<"No active context">>}
         ]
     ),
-    Recovery = observer_cli_cli:envelope(
+    Recovery = observer_cli_cli:response(
         disconnect,
+        complete,
         null,
         null,
         #{
@@ -1228,7 +1255,6 @@ command_text_and_error_encoding_test() ->
             <<"disconnected">> => true,
             <<"recovered_invalid_context">> => true
         },
-        [],
         []
     ),
     ?assertEqual(
@@ -1239,15 +1265,15 @@ command_text_and_error_encoding_test() ->
         {error, #{reason := unsupported_format}},
         observer_cli_cli:encode(yaml, #{})
     ),
-    Missing = observer_cli_cli:envelope(
+    Missing = observer_cli_cli:response(
         connect,
+        complete,
         #{<<"node">> => <<"target@host">>, <<"otp_release">> => <<"29">>},
-        #{<<"status">> => <<"complete">>},
+        #{<<"duration_ms">> => 1, <<"probes">> => [], <<"observer_effects">> => []},
         ContextData#{
             <<"diagnostics_module">> := <<"missing">>,
             <<"observed_capabilities">> := null
         },
-        [],
         []
     ),
     {ok, MissingText} = observer_cli_cli:encode(text, Missing),
@@ -1266,6 +1292,9 @@ command_text_and_error_encoding_test() ->
             {{unsupported_format, "yaml"}, <<"unsupported format: yaml">>},
             {json_unavailable, <<"JSON output requires OTP 27 or newer">>},
             {command_unavailable, <<"command capability is not available yet">>},
+            {invalid_command_response, <<
+                "target response schema is incompatible; install the same observer_cli build on the controller and target"
+            >>},
             {response_too_large, <<"encoded response exceeds one MiB">>},
             {<<"binary reason">>, <<"binary reason">>}
         ]
@@ -1280,8 +1309,6 @@ command_text_and_error_encoding_test() ->
     ).
 
 exit_code_classes_test() ->
-    ?assertEqual(0, observer_cli_cli:exit_code(success)),
-    ?assertEqual(1, observer_cli_cli:exit_code(diagnose_findings)),
     ?assertEqual(2, observer_cli_cli:exit_code(capability)),
     ?assertEqual(3, observer_cli_cli:exit_code(partial)),
     ?assertEqual(4, observer_cli_cli:exit_code(schema)),

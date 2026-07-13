@@ -475,6 +475,7 @@ trace_response(Command, Fun, #{controller := Controller}) ->
     Status = maps:get(status, Result),
     Category = maps:get(category, Result),
     Reason = maps:get(reason, Result),
+    Warnings = trace_issues(maps:get(warnings, Result)),
     TraceCapture = maps:get(capture, Result),
     Capture =
         case TraceCapture of
@@ -482,11 +483,6 @@ trace_response(Command, Fun, #{controller := Controller}) ->
                 null;
             _ ->
                 #{
-                    status =>
-                        case maps:get(status, TraceCapture, partial) of
-                            complete -> complete;
-                            _ -> partial
-                        end,
                     started_at => rfc3339(StartedAt),
                     finished_at => rfc3339(erlang:system_time(millisecond)),
                     duration_ms => Finished - Started,
@@ -515,23 +511,35 @@ trace_response(Command, Fun, #{controller := Controller}) ->
                     ]
                 }
         end,
-    #{
-        schema => <<"observer_cli.cli/v1">>,
-        command => Command,
-        target => target_from_runtime(Runtime),
-        capture => Capture,
-        data =>
-            case TraceCapture of
-                null -> null;
-                _ -> #{reason => Reason, trace => TraceCapture}
-            end,
-        warnings => maps:get(warnings, Result),
-        errors =>
-            case Status of
-                ok -> [];
-                _ -> [#{class => Category, reason_code => Reason}]
-            end
-    }.
+    observer_cli_cli:response(
+        Command,
+        case Status of
+            ok -> complete;
+            _ -> error
+        end,
+        target_from_runtime(Runtime),
+        Capture,
+        case TraceCapture of
+            null -> null;
+            _ -> #{reason => Reason, trace => TraceCapture}
+        end,
+        case Status of
+            ok -> Warnings;
+            _ when Capture =:= null -> [observer_cli_cli:error(Category, Reason) | Warnings];
+            _ -> Warnings
+        end
+    ).
+
+trace_issues(Warnings) ->
+    [
+        #{
+            <<"severity">> => <<"warning">>,
+            <<"class">> => <<"safety_refusal">>,
+            <<"reason_code">> => atom_to_binary(Code),
+            <<"message">> => Message
+        }
+     || #{code := Code, message := Message} <- Warnings
+    ].
 
 capture_snapshot(Request, #{deadline := Deadline, controller := Controller} = Context) when
     is_map(Request)
@@ -558,22 +566,21 @@ capture_snapshot(Request, #{deadline := Deadline, controller := Controller} = Co
     FinishedMonotonic = erlang:monotonic_time(millisecond),
     FinishedAt = erlang:system_time(millisecond),
     ProbeReports = [Report || {Report, _Data} <- Probes],
-    #{
-        schema => <<"observer_cli.cli/v1">>,
-        command => snapshot,
-        target => target_from_runtime(Runtime),
-        capture => #{
-            status => capture_status(ProbeReports),
+    Status = capture_status(ProbeReports),
+    observer_cli_cli:response(
+        snapshot,
+        Status,
+        target_from_runtime(Runtime),
+        #{
             started_at => rfc3339(StartedAt),
             finished_at => rfc3339(FinishedAt),
             duration_ms => FinishedMonotonic - StartedMonotonic,
             probes => ProbeReports,
             observer_effects => observer_effects(ModuleLoaded, Controller)
         },
-        data => snapshot_data(Probes),
-        warnings => probe_warnings(ProbeReports),
-        errors => probe_errors(ProbeReports)
-    };
+        snapshot_data(Probes),
+        []
+    );
 capture_snapshot(_Request, _Context) ->
     {probe_error, invalid_request}.
 
@@ -1016,7 +1023,9 @@ deep_probe_capture(ports, Request, Context) ->
 deep_probe_capture(sockets, Request, Context) ->
     composed_probe(capture_sockets(Request, Context)).
 
-composed_probe(#{capture := #{probes := [Probe]}, data := Data}) ->
+composed_probe(#{
+    <<"meta">> := #{<<"capture">> := #{probes := [Probe]}}, <<"data">> := Data
+}) ->
     {
         maps:get(status, Probe),
         maps:get(reason_code, Probe),
@@ -1053,22 +1062,21 @@ capture_memory(Request, #{deadline := Deadline, controller := Controller}) when 
     FinishedAt = erlang:system_time(millisecond),
     ProbeReports = [Report || {Report, _Data} <- Probes],
     MemoryData = memory_command_data(Probes, Runtime),
-    #{
-        schema => <<"observer_cli.cli/v1">>,
-        command => memory,
-        target => target_from_runtime(Runtime),
-        capture => #{
-            status => capture_status(ProbeReports),
+    Status = capture_status(ProbeReports),
+    observer_cli_cli:response(
+        memory,
+        Status,
+        target_from_runtime(Runtime),
+        #{
             started_at => rfc3339(StartedAt),
             finished_at => rfc3339(FinishedAt),
             duration_ms => FinishedMonotonic - StartedMonotonic,
             probes => ProbeReports,
             observer_effects => observer_effects(ModuleLoaded, Controller)
         },
-        data => MemoryData,
-        warnings => probe_warnings(ProbeReports),
-        errors => probe_errors(ProbeReports)
-    };
+        MemoryData,
+        []
+    );
 capture_memory(_Request, _Context) ->
     {probe_error, invalid_request}.
 
@@ -1249,21 +1257,7 @@ capture_otp_state(#{target := Target, behavior := Behavior} = Request, Context) 
                 Context,
                 fun() -> collect_otp_state(Target, Behavior, Limit, Source) end
             ),
-            Data = maps:get(data, Response),
-            Errors =
-                case maps:get(status, Data) of
-                    error ->
-                        [
-                            #{
-                                class => required_probe,
-                                probe => otp_state,
-                                reason_code => maps:get(reason_code, Data)
-                            }
-                        ];
-                    _ ->
-                        []
-                end,
-            Response#{warnings := state_risk_warnings(), errors := Errors};
+            Response#{<<"issues">> := risk_issues(state_risk_warnings())};
         error ->
             {probe_error, invalid_request}
     end;
@@ -1293,29 +1287,7 @@ capture_supervision_tree(#{app := App} = Request, Context) ->
         Context,
         fun() -> collect_supervision_tree(App, Source) end
     ),
-    Data = maps:get(data, Response),
-    Errors =
-        case maps:get(status, Data) of
-            error ->
-                [
-                    #{
-                        class => required_probe,
-                        probe => supervision_tree,
-                        reason_code => maps:get(reason_code, Data)
-                    }
-                ];
-            unavailable ->
-                [
-                    #{
-                        class => required_probe,
-                        probe => supervision_tree,
-                        reason_code => maps:get(reason_code, Data)
-                    }
-                ];
-            _ ->
-                []
-        end,
-    Response#{warnings := supervision_tree_warnings(), errors := Errors};
+    Response#{<<"issues">> := risk_issues(supervision_tree_warnings())};
 capture_supervision_tree(_Request, _Context) ->
     {probe_error, invalid_request}.
 
@@ -1641,6 +1613,17 @@ supervision_tree_warnings() ->
         #{reason_code => supervisor_snapshot_is_non_atomic},
         #{reason_code => deadline_does_not_retract_infinity_calls},
         #{reason_code => direct_child_limit_is_output_soft_cap}
+    ].
+
+risk_issues(Warnings) ->
+    [
+        #{
+            <<"severity">> => <<"warning">>,
+            <<"class">> => <<"safety_refusal">>,
+            <<"reason_code">> => atom_to_binary(Reason),
+            <<"message">> => null
+        }
+     || #{reason_code := Reason} <- Warnings
     ].
 
 collect_otp_state(Target, Behavior, Limit, Source) ->
@@ -2192,16 +2175,15 @@ capture_scan_inspection(Command, ProbeId, Samples, #{controller := Controller}, 
     FinishedMonotonic = erlang:monotonic_time(millisecond),
     FinishedAt = erlang:system_time(millisecond),
     {ok, Runtime, _} = runtime_probe(),
-    #{
-        schema => <<"observer_cli.cli/v1">>,
-        command => Command,
-        target => target_from_runtime(Runtime),
-        capture => #{
-            status =>
-                case Status of
-                    error -> partial;
-                    _ -> complete
-                end,
+    observer_cli_cli:response(
+        Command,
+        case Status of
+            ok -> complete;
+            unavailable -> error;
+            _ -> partial
+        end,
+        target_from_runtime(Runtime),
+        #{
             started_at => rfc3339(StartedAt),
             finished_at => rfc3339(FinishedAt),
             duration_ms => FinishedMonotonic - StartedMonotonic,
@@ -2218,10 +2200,9 @@ capture_scan_inspection(Command, ProbeId, Samples, #{controller := Controller}, 
             ],
             observer_effects => observer_effects(ModuleLoaded, Controller)
         },
-        data => Data,
-        warnings => [],
-        errors => []
-    }.
+        Data,
+        []
+    ).
 
 valid_process_request(Sort, Limit, Duration) ->
     lists:member(
@@ -4672,12 +4653,11 @@ capture_inspection(Command, ProbeId, Samples, #{controller := Controller}, Fun) 
     {Runtime, Data, Coverage, ExtraEffects} = Fun(),
     FinishedMonotonic = erlang:monotonic_time(millisecond),
     FinishedAt = erlang:system_time(millisecond),
-    #{
-        schema => <<"observer_cli.cli/v1">>,
-        command => Command,
-        target => target_from_runtime(Runtime),
-        capture => #{
-            status => complete,
+    observer_cli_cli:response(
+        Command,
+        complete,
+        target_from_runtime(Runtime),
+        #{
             started_at => rfc3339(StartedAt),
             finished_at => rfc3339(FinishedAt),
             duration_ms => FinishedMonotonic - StartedMonotonic,
@@ -4688,10 +4668,9 @@ capture_inspection(Command, ProbeId, Samples, #{controller := Controller}, Fun) 
             ],
             observer_effects => observer_effects(ModuleLoaded, Controller) ++ ExtraEffects
         },
-        data => Data,
-        warnings => [],
-        errors => []
-    }.
+        Data,
+        []
+    ).
 
 run_snapshot_probe(Id, Required, Fun, Request, Deadline) ->
     Started = erlang:monotonic_time(millisecond),
@@ -5171,23 +5150,14 @@ target_from_runtime(#{node := Node, otp_release := OtpRelease}) ->
     #{node => Node, otp_release => OtpRelease}.
 
 snapshot_data(Probes) ->
-    Data = lists:foldl(
+    lists:foldl(
         fun
             ({#{id := Id, status := ok}, Data}, Acc) -> Acc#{Id => Data};
             (_Probe, Acc) -> Acc
         end,
         #{snapshot_version => 1},
         Probes
-    ),
-    Skipped = [
-        #{probe => Id, reason_code => Reason, admission_evidence => Evidence}
-     || {#{id := Id, required := false, status := unavailable, reason_code := Reason}, Evidence} <-
-            Probes
-    ],
-    case Skipped of
-        [] -> Data;
-        _ -> Data#{skipped => Skipped}
-    end.
+    ).
 
 probe_data(Id, [{#{id := Id, status := ok}, Data} | _Rest]) -> Data;
 probe_data(Id, [_Probe | Rest]) -> probe_data(Id, Rest);
@@ -5203,33 +5173,6 @@ probe_makes_partial(#{required := true, status := Status}) ->
     Status =/= ok;
 probe_makes_partial(#{required := false, status := Status}) ->
     Status =:= timeout orelse Status =:= error.
-
-probe_warnings(ProbeReports) ->
-    [
-        #{probe => Id, reason_code => Reason}
-     || #{id := Id, required := false, status := unavailable, reason_code := Reason} <-
-            ProbeReports
-    ].
-
-probe_errors(ProbeReports) ->
-    [
-        #{
-            class => probe_error_class(Required),
-            probe => Id,
-            reason_code => Reason
-        }
-     || #{
-            id := Id,
-            required := Required,
-            status := Status,
-            reason_code := Reason
-        } <- ProbeReports,
-        Status =:= timeout orelse Status =:= error orelse
-            (Required andalso Status =:= unavailable)
-    ].
-
-probe_error_class(true) -> required_probe;
-probe_error_class(false) -> partial.
 
 observer_effects(ModuleLoaded, Controller) ->
     Base = [
