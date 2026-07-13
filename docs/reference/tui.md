@@ -16,6 +16,11 @@ rebar3 escriptize
 Press `D` for the built-in shortcut page and `q` to quit. The old bare
 `observer_cli NODE [COOKIE REFRESH_MS]` form is not supported.
 
+<!-- TODO(screenshot): Capture the Home overview in a 180x50 terminal with
+`./scripts/docs-screenshots.sh tui-home`. Save it as
+`docs/assets/tui-home.png` and add it here with alt text that names the VM
+summary, memory/IO blocks, and ranked process table. -->
+
 ## Start forms
 
 From the generated escript:
@@ -32,10 +37,14 @@ From an Erlang shell:
 
 ```erlang
 observer_cli:start().
-observer_cli:start(Node).
-observer_cli:start(Node, Cookie).
-observer_cli:start(Node, [{cookie, Cookie}, {interval, 2000}]).
+observer_cli:start(2000).
+observer_cli:start(RemoteNode).
+observer_cli:start(RemoteNode, Cookie).
+observer_cli:start(RemoteNode, [{cookie, Cookie}, {interval, 2000}]).
 ```
+
+The integer form sets the refresh interval for most local pages; App keeps its
+default. The options form is for a remote node.
 
 ## Main pages
 
@@ -60,7 +69,7 @@ flowchart TB
     PICK_PORT["Choose a port<br/>Network row · Ports row"]
     PICK_SOCKET["Choose a socket<br/>Sockets row"]
 
-    PROCESS["Process detail<br/>Return: H · B from plugin"]
+    PROCESS["Process detail<br/>Return: H · B to source page"]
     PORT["Port detail<br/>Return: N · O · H"]
     SOCKET["Socket detail<br/>Return: K · H"]
 
@@ -106,7 +115,9 @@ Relevant API references are the Erlang/OTP [`erlang`](https://www.erlang.org/doc
 
 ## Shared input
 
-Built-in non-plugin pages accept:
+Most built-in main and list pages use the shared input parser below. A page
+ignores actions it does not implement; detail and plugin views document their
+own inputs later in this reference.
 
 | Input | Action |
 | --- | --- |
@@ -118,7 +129,7 @@ Built-in non-plugin pages accept:
 | Positive integer below `1000` | Select that row on pages with row drill-down; otherwise ignored |
 | Enter | Open the remembered row on Home and Network; otherwise page-specific |
 
-Each page retains its own refresh interval while you navigate.
+Pages that accept interval changes retain their own value while you navigate.
 
 ## Home
 
@@ -280,7 +291,7 @@ interval.
 | `Memory` | Current runtime memory for the Port, bytes | `port_info(Port, memory)` |
 | `Parallel` | Whether the Port uses parallelism | `port_info(Port, parallelism)` |
 | `Locking` | Locking mode, such as `port_level` or `driver_level` | `port_info(Port, locking)` |
-| `Mon/By` | Outbound monitors held by the Port / entities monitoring the Port | `port_info(Port, monitors)`, `port_info(Port, monitored_by)` |
+| `Mon/By` | Count of outbound monitors held by the Port / count of entities monitoring the Port | `port_info(Port, monitors)`, `port_info(Port, monitored_by)` |
 
 The list is a current snapshot of `erlang:ports/0` and excludes Ports whose
 name or control name is `tcp_inet`, `udp_inet`, or `sctp_inet`.
@@ -347,6 +358,11 @@ an unavailable state.
 A row number opens socket detail; `K` returns to the Sockets list. Counter
 sorting uses deltas after the first refresh. Identity sorting uses current
 metadata.
+
+<!-- TODO(screenshot): Capture the populated Sockets list in a 180x50 terminal
+with `./scripts/docs-screenshots.sh tui-sockets`. Save it as
+`docs/assets/tui-sockets.png` and add it here with alt text that names the
+General block, endpoints, kinds, states, and counter columns. -->
 
 ### General socket fields
 
@@ -500,10 +516,10 @@ All values are current `ets:all/0` and `ets:info/1` metadata.
 | `Protection` | `public`, `protected`, or `private` access mode | `ets:info(Table, protection)` |
 | `KeyPos` | Tuple element used as the key | `ets:info(Table, keypos)` |
 | `Write/Read` | Write-concurrency / read-concurrency settings | `ets:info/1` |
-| `Owner Pid` | Owner PID, replaced by its registered name when present | `ets:info(Table, owner)`, `process_info/2` |
+| `Owner Pid` | Owner PID | `ets:info(Table, owner)` |
 
-A table that disappears during collection produces an `unread` metadata row.
-Sorting uses raw memory words or object count.
+If a table disappears between enumeration and metadata collection, the current
+renderer can fail that redraw. Sorting uses raw memory words or object count.
 
 ### Mnesia fields
 
@@ -563,9 +579,14 @@ Home rows and plugin PID rows without a configured handler open Process detail.
 | Current Stack | `C` | Up to 30 current stack frames |
 | State | `S` | `recon:get_state(Pid, 2500)` rendered through the configured formatter |
 
-`H` returns Home. From a plugin, `B` returns to the plugin sheet. An integer at
-least `1000` changes the detail refresh interval. State is a static capture in
-the built-in pager.
+`H` returns Home. `B` returns to the source page: Home or the plugin sheet. An
+integer at least `1000` changes the detail refresh interval. State is a static
+capture in the built-in pager.
+
+<!-- TODO(screenshot): Capture Process Info in a 180x50 terminal with
+`./scripts/docs-screenshots.sh tui-process`. Save it as
+`docs/assets/tui-process-info.png` and add it here with alt text that names the
+metadata, signal relationships, and history blocks. -->
 
 ### Process Info fields
 
@@ -650,5 +671,6 @@ Window modes first sample for the configured interval, so collection and
 rendering add to the wall-clock cycle.
 
 Home pause stops collection until resumed. Process state does not auto-refresh.
-A resource that disappears during refresh becomes a dead, missing, or
-unavailable view instead of leaving stale detail onscreen.
+Port and socket detail views render a dead or unavailable state when the
+selected resource disappears. Process detail renders a dead notice, but a
+shorter redraw can leave older rows visible.

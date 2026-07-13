@@ -16,8 +16,9 @@ Each remote command starts as a non-distributed escript, then:
 2. starts a hidden distribution controller with no listening distribution port;
 3. connects to the target and reads its diagnostics capabilities;
 4. dispatches one bounded request to the target;
-5. validates and encodes the response; and
-6. stops the controller before returning.
+5. validates the target response;
+6. stops the controller and confirms cleanup; and
+7. encodes and writes the response.
 
 ```mermaid
 sequenceDiagram
@@ -28,8 +29,9 @@ sequenceDiagram
     C->>T: connect and read capabilities
     C->>T: dispatch bounded request
     T-->>C: normalized response and cleanup status
-    C-->>CLI: validated envelope
+    C->>C: validate response
     CLI->>C: stop and confirm cleanup
+    CLI->>CLI: encode validated envelope and write output
 ```
 
 Commands have no daemon or persistent network connection. The controller must
@@ -76,7 +78,7 @@ target whose bundle is missing or incompatible, but diagnostic and inspection
 commands reject that target with a capability error.
 
 The public response contract is the JSON Schema 2020-12 document at
-[`priv/schema/observer_cli.cli.v1.schema.json`](https://raw.githubusercontent.com/zhongwencool/observer_cli/2.0.0/priv/schema/observer_cli.cli.v1.schema.json).
+[`priv/schema/observer_cli.cli.v1.schema.json`](https://raw.githubusercontent.com/zhongwencool/observer_cli/v2.0.0/priv/schema/observer_cli.cli.v1.schema.json).
 
 Bundle identity describes the deployed implementation. Protocol identity
 describes controller-to-target dispatch. Separately, the controller validates
@@ -150,9 +152,10 @@ Every structured command response has exactly six top-level fields:
 | `partial` | Usable data exists, but required coverage or an optional probe that already started did not complete. |
 | `error` | Invocation, connection, safety, schema, cleanup, or internal failure prevents success. |
 
-Each capture probe records whether it is required, its status and reason code,
-duration, sample count, and coverage. A probe entry is the only source of its
-failure; the same failure is not copied into `issues` or `data.skipped`.
+Each capture probe records whether it is required, its status and standardized
+reason code, duration, sample count, and coverage. Command `data` may retain
+domain-specific status or reason details, but probe failures are not copied into
+`issues` or diagnosis `data.skipped`.
 
 `issues` contains non-probe problems such as argument, capability, connection,
 safety, cleanup, schema, or internal errors. Machine consumers should handle
@@ -169,10 +172,10 @@ measurement for the capture and disables it during cleanup; it does not restore
 a setting another tool already enabled. Observation tracks stable resource
 identities so creation, termination, or replacement is not mistaken for growth.
 
-`--deep` takes seven samples and requests a separately admitted binary-holder
-ranking. `--app` adds application-scoped samples and child identity context.
-Ambiguous or unsafe child identities remain unavailable rather than being
-guessed.
+`--observe ... --deep` takes seven samples and requests a separately admitted
+binary-holder ranking. `--observe ... --app` adds application-scoped samples
+and child identity context. The two modes are mutually exclusive. Ambiguous or
+unsafe child identities remain unavailable rather than being guessed.
 
 Rules produce findings only when their required evidence is complete. With
 incomplete required coverage and usable data, the outcome is `partial`,
@@ -195,9 +198,10 @@ Non-null data alone does not imply success.
 ### Redaction preserves within-response correlation
 
 Diagnosis and snapshot commands redact identifiers by default. A target node,
-PID, name, application, table, port, socket, or MFA becomes a typed alias such
-as `node-1` or `pid-2`. Repeated appearances share the alias within that
-response; numbering resets for the next invocation.
+PID, name, application, table, port, socket, or MFA module/function becomes a
+typed alias such as `node-1`, `pid-2`, `module-1`, or `function-1`. Repeated
+appearances share the alias within that response; numbering resets for the next
+invocation.
 
 Use `--include-identifiers` only when the report destination may receive the
 original identities. Inspection and trace commands expose identifiers by

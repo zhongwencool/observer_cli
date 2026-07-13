@@ -101,7 +101,7 @@ the response, and stops the controller before returning.
 - Explore the same node interactively through detailed TUI pages and plugins.
 
 The normative machine-readable response contract is published as
-[`priv/schema/observer_cli.cli.v1.schema.json`](https://raw.githubusercontent.com/zhongwencool/observer_cli/2.0.0/priv/schema/observer_cli.cli.v1.schema.json).
+[`priv/schema/observer_cli.cli.v1.schema.json`](https://raw.githubusercontent.com/zhongwencool/observer_cli/v2.0.0/priv/schema/observer_cli.cli.v1.schema.json).
 
 ## Choose CLI or TUI
 

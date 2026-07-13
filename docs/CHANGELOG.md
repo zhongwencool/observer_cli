@@ -9,10 +9,14 @@ Release and maintenance changes, newest first.
   and bounded call tracing.
 - Added reusable remote-target workflows with `connect`, `status`, and
   `disconnect`, including target compatibility checks.
+- Required command targets to contain the matching diagnostics bundle; command
+  diagnostics do not upload missing code, while automatic loading remains
+  TUI-only.
 - Added structured text, Erlang term, and OTP 27+ JSON output with stable exit
   statuses and a versioned response schema.
 - Made `tui` the explicit interactive command and removed the old positional
-  launch form. Updated the TUI plugin API for 2.0.
+  launch form. Updated the TUI plugin API for 2.0; 1.x callback shapes must be
+  migrated.
 - Fixed CLI help, error, output-stream, and exit-status behavior, trace cleanup,
   and malformed saved-context removal.
 
@@ -120,6 +124,11 @@ Release and maintenance changes, newest first.
 ## 1.5.4
 
 - Upgraded `recon` to 2.5.1 for OTP 23 allocator compatibility.
+
+## 1.5.3
+
+- Made `default_row_size` configurable through the application environment.
+- Added current and maximum SBCS-to-MBCS allocator ratios to the System view.
 
 ## 1.5.2
 

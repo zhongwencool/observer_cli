@@ -14,6 +14,17 @@ Options follow the command name. A global option before the command is rejected.
 Use `observer_cli --help` and `observer_cli COMMAND --help` to inspect the built
 command surface.
 
+```mermaid
+flowchart LR
+    A[Install observer_cli<br/>in the target release] --> B[Build the controller<br/>escript]
+    B --> C[Set the target node<br/>and cookie source]
+    C --> D[Connect and check status]
+    D --> E[Run default diagnose]
+    E --> F[Run one narrow<br/>inspection command]
+    F --> G[Disconnect]
+    C -. stateless automation .-> E
+```
+
 ## 1. Install observer_cli on the target
 
 The target release must contain `observer_cli` and `recon`. Command diagnostics
@@ -65,7 +76,7 @@ distributed Erlang node before a controller can reach it.
 Build the standalone command from a 2.0.0 source checkout:
 
 ```sh
-git clone --branch 2.0.0 \
+git clone --branch v2.0.0 \
   https://github.com/zhongwencool/observer_cli.git
 cd observer_cli
 rebar3 escriptize
@@ -232,10 +243,12 @@ Read a structured diagnosis in this order:
 5. `data.skipped` names unrequested or deliberately uncalibrated rules.
 6. `issues` contains non-probe warnings and errors.
 
-Failed probes and their reason codes appear only in
-`meta.capture.probes`. Incomplete required coverage suppresses findings and
-produces a partial result. "No findings" means only that the covered rules
-found nothing; it does not certify that the node is healthy.
+`meta.capture.probes` is authoritative for probe status and standardized probe
+reason codes. Command `data` may also retain domain-specific status or reason
+details. Probe failures are not duplicated in `issues` or diagnosis
+`data.skipped`. Incomplete required coverage suppresses findings and produces a
+partial result. "No findings" means only that the covered rules found nothing;
+it does not certify that the node is healthy.
 
 ## 6. Inspect resources and trace
 
@@ -391,7 +404,7 @@ Structured responses use exactly six top-level keys:
 
 The normative machine-readable definition is the JSON Schema 2020-12 document
 at
-[`priv/schema/observer_cli.cli.v1.schema.json`](https://raw.githubusercontent.com/zhongwencool/observer_cli/2.0.0/priv/schema/observer_cli.cli.v1.schema.json).
+[`priv/schema/observer_cli.cli.v1.schema.json`](https://raw.githubusercontent.com/zhongwencool/observer_cli/v2.0.0/priv/schema/observer_cli.cli.v1.schema.json).
 It is included in Hex and release artifacts.
 
 The `schema` value is the observer_cli protocol identity, not a JSON Schema
@@ -406,9 +419,11 @@ depends on the `command` identity; consumers must validate that command family,
 not assume one universal `data` shape.
 
 Every issue has exactly `severity`, `class`, `reason_code`, and `message`.
-Probe failure reasons stay only in `meta.capture.probes`; they are not copied
-into `issues` or `data.skipped`. An optional probe unavailable before execution
-does not make a complete command partial. A trace can have
+Probe status and standardized probe reason codes are recorded in
+`meta.capture.probes`; command data may retain domain-specific failure details.
+Probe failures are not copied into `issues` or diagnosis `data.skipped`. An
+optional probe unavailable before execution does not make a complete command
+partial. A trace can have
 `data.trace.trace_complete=false` while the top-level outcome remains
 `complete` when the bounded trace command itself completed as promised.
 

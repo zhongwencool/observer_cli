@@ -45,8 +45,9 @@ sheet_body(State) ->
     }.
 ```
 
-The first callback state is `undefined`. Each callback receives the state
-returned by its preceding call.
+`attributes/1` and `sheet_body/1` keep independent state streams. Each receives
+`undefined` on its first call and the state returned by its own preceding call
+afterward.
 
 ### `attributes/1`
 
@@ -69,8 +70,8 @@ Each attribute row is a list of cells. A cell requires `content` and a positive
 ```
 
 `content` may be a string, integer, `{byte, Bytes}`, or
-`{percent, Fraction}`. If `attributes/1` is undefined, the view renders no
-attributes.
+`{percent, Fraction}`. A module that does not export `attributes/1` renders no
+attributes; returning `undefined` is invalid.
 
 ### `sheet_header/0`
 
@@ -162,11 +163,32 @@ core-module loading does not discover plugin applications.
 Press `P` in the TUI, then the configured plugin shortcut. From an Erlang shell,
 `observer_cli:start_plugin().` opens plugin mode on the current node.
 
+```mermaid
+flowchart TD
+    A[Plugin configuration] --> B[sheet_header/0]
+    B --> C[Validate columns, sort, and handler]
+    C --> D[Refresh]
+    D --> E[attributes/1]
+    D --> F[sheet_body/1]
+    E --> G[Validate callback results]
+    F --> G
+    G --> H[Sort and paginate rows]
+    H --> I[Render the sheet]
+    I -->|refresh or sort| D
+    I -->|PID handle, no handler| J[Built-in Process detail]
+    I -->|handle with configured handler| K[Configured row handler]
+```
+
+<!-- TODO(screenshot): Capture the example Runtime plugin in a 180x50 terminal
+with `./scripts/docs-screenshots.sh tui-plugin`. Save it as
+`docs/assets/tui-plugin-runtime.png` and add it here with alt text that names
+the attribute row, sortable columns, and selectable worker row. -->
+
 ## Tables, sorting, and pagination
 
-Rows are ordered by the active column using Erlang term ordering before
-pagination. Observer CLI maintains the selected row, page, and computed sheet
-width.
+Rows are ordered by the active column using descending Erlang term ordering
+before pagination. Observer CLI maintains the selected row, page, and computed
+sheet width.
 
 | Input | Action |
 | --- | --- |
@@ -178,6 +200,10 @@ width.
 | Integer at least `1000` | Change the plugin refresh interval |
 | `H` | Return Home |
 | `q` | Quit |
+
+Do not use `H`, `B`, `F`, `q`, Enter, or a positive integer as a plugin or
+column shortcut; the built-in parser consumes them first. A plugin menu shortcut
+wins when it duplicates a column shortcut.
 
 ## Add process drill-down
 
