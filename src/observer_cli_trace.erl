@@ -1,20 +1,25 @@
 -module(observer_cli_trace).
 
--export([call/2, stop_all/0]).
+-export([call/2, stop_all/0, wait_cleanup/1]).
 
 -ifdef(TEST).
 -export([
     test_helpers/0,
+    clear_trace/0,
     forced_reason/1,
     outcome_events/1,
     io_reply/1,
     module_md5/1,
     parse_pid/1,
-    format_event/4,
+    format_event/6,
     final_drain/1,
     wait_formatter/3,
     checked_helper_shutdown/3,
+    drain_forced/2,
+    outcome_payload/1,
     owner_result/3,
+    finalize_failure_result/4,
+    owner_init/0,
     verify_cleanup/1,
     wait_fixed_names/0,
     trace_pattern_off/1,
@@ -60,13 +65,13 @@ stop_all() ->
 do_stop_all(Warning) ->
     case whereis(?OWNER) of
         undefined ->
-            recon_trace:clear(),
+            clear_trace(),
             _ = wait_fixed_names(),
             response(
                 error,
                 cleanup,
                 cleanup_unconfirmed,
-                (forced_capture(stopped, []))#{cleanup_confirmed => false},
+                (forced_capture(cleanup_unconfirmed, []))#{cleanup_confirmed => false},
                 [Warning]
             );
         Owner ->
@@ -206,9 +211,10 @@ valid_max({Count, 1000}) -> is_integer(Count) andalso Count >= 1 andalso Count =
 valid_max(_Max) -> false.
 
 module_md5(Module) ->
-    case code:get_object_code(Module) of
-        {Module, Beam, _Path} -> crypto:hash(md5, Beam);
-        error -> null
+    try erlang:get_module_info(Module, md5) of
+        Md5 when is_binary(Md5) -> Md5
+    catch
+        error:badarg -> null
     end.
 
 admit(Controller, Trace) ->
@@ -252,7 +258,9 @@ await_timeout_cleanup(Owner, OwnerRef, Ref, Trace, Helpers, Entered) ->
             error,
             cleanup,
             cleanup_unconfirmed,
-            (forced_capture(dispatcher_timeout, []))#{cleanup_confirmed => false},
+            (with_selector(Trace, forced_capture(cleanup_unconfirmed, [])))#{
+                cleanup_confirmed => false
+            },
             [global_warning()]
         )
     end.
@@ -272,20 +280,27 @@ await_owner_down(Owner, OwnerRef, Ref, Result) ->
 
 fallback_cleanup(Trace, Helpers, Entered) ->
     case Entered of
-        true -> recon_trace:clear();
+        true -> clear_trace();
         false -> ok
     end,
     stop_helpers(Helpers),
-    Capture = (forced_capture(owner_failed, []))#{cleanup_confirmed => false},
     case Entered andalso verify_cleanup(Trace) =:= ok of
-        true -> response(error, internal, capture_internal_error, Capture, [global_warning()]);
-        false -> response(error, cleanup, cleanup_unconfirmed, Capture, [global_warning()])
+        true ->
+            Capture = with_selector(Trace, forced_capture(capture_internal_error, [])),
+            response(error, internal, capture_internal_error, Capture, [global_warning()]);
+        false ->
+            Capture = (with_selector(Trace, forced_capture(cleanup_unconfirmed, [])))#{
+                cleanup_confirmed => false
+            },
+            response(error, cleanup, cleanup_unconfirmed, Capture, [global_warning()])
     end.
 
 owner_init() ->
     receive
         {start, Dispatcher, Controller, Ref, Trace} ->
             owner_start(Dispatcher, Controller, Ref, Trace)
+    after ?ACK_TIMEOUT_MS ->
+        ok
     end.
 
 owner_start(Dispatcher, Controller, Ref, Trace) ->
@@ -295,28 +310,33 @@ owner_start(Dispatcher, Controller, Ref, Trace) ->
     TraceeMon = erlang:monitor(process, maps:get(pid, Trace)),
     Session = make_ref(),
     CollectorCap = maps:get(test_event_cap, Trace, ?MAX_EVENTS),
-    Collector = spawn(fun() -> collector([], 0, false, CollectorCap) end),
-    CollectorMon = erlang:monitor(process, Collector),
-    SilentIO = spawn(fun silent_io/0),
-    SilentMon = erlang:monitor(process, SilentIO),
-    true = group_leader(SilentIO, self()),
-    Manifest = #{collector => Collector, silent_io => SilentIO},
-    put(observer_cli_trace_helpers, Manifest),
-    Dispatcher ! {Ref, ready, Manifest},
-    State = Trace#{
-        dispatcher => Dispatcher,
-        dispatcher_mon => DispatcherMon,
-        controller_mon => ControllerMon,
-        tracee_mon => TraceeMon,
-        collector => Collector,
-        collector_mon => CollectorMon,
-        silent_io => SilentIO,
-        silent_mon => SilentMon,
-        session => Session,
-        ref => Ref
-    },
-    Result = run_owner(State),
-    Dispatcher ! {Ref, result, Result}.
+    Collector = spawn_link(fun() -> collector([], 0, 0, false, CollectorCap) end),
+    SilentIO = spawn_link(fun silent_io/0),
+    try
+        CollectorMon = erlang:monitor(process, Collector),
+        SilentMon = erlang:monitor(process, SilentIO),
+        true = group_leader(SilentIO, self()),
+        Manifest = #{collector => Collector, silent_io => SilentIO},
+        put(observer_cli_trace_helpers, Manifest),
+        State = Trace#{
+            dispatcher => Dispatcher,
+            dispatcher_mon => DispatcherMon,
+            controller_mon => ControllerMon,
+            tracee_mon => TraceeMon,
+            collector => Collector,
+            collector_mon => CollectorMon,
+            silent_io => SilentIO,
+            silent_mon => SilentMon,
+            session => Session,
+            ref => Ref
+        },
+        test_before_ready(State),
+        Dispatcher ! {Ref, ready, Manifest},
+        Result = run_owner(State),
+        Dispatcher ! {Ref, result, Result}
+    after
+        stop_helpers([Collector, SilentIO])
+    end.
 
 run_owner(State) ->
     Dispatcher = maps:get(dispatcher, State),
@@ -339,26 +359,28 @@ prepare_owner(State) ->
     end.
 
 entered_trace(State) ->
-    try
-        Matches = start_recon(State),
-        test_after_calls(State),
-        case Matches of
-            0 ->
-                {error, capability, mfa_not_traceable};
-            _ ->
-                Recon = recon_processes(),
-                case {maps:get(tracer, Recon), maps:get(formatter, Recon)} of
-                    {Tracer, Formatter} when is_pid(Tracer), is_pid(Formatter) ->
-                        wait_trace(State, Recon, deadline(State));
-                    _ ->
-                        setup_failure_outcome(State)
-                end
-        end
-    catch
-        _:_ -> {forced, internal, capture_internal_error}
-    after
-        recon_trace:clear()
-    end.
+    Outcome =
+        try
+            Matches = start_recon(State),
+            test_after_calls(State),
+            case Matches of
+                0 ->
+                    {error, capability, mfa_not_traceable};
+                _ ->
+                    Recon = recon_processes(),
+                    case {maps:get(tracer, Recon), maps:get(formatter, Recon)} of
+                        {Tracer, Formatter} when is_pid(Tracer), is_pid(Formatter) ->
+                            wait_trace(State, Recon, deadline(State));
+                        _ ->
+                            setup_failure_outcome(State)
+                    end
+            end
+        catch
+            _:_ -> setup_failure_outcome(State)
+        after
+            clear_trace()
+        end,
+    drain_forced(State, Outcome).
 
 setup_failure_outcome(State) ->
     receive
@@ -371,22 +393,33 @@ finish_owner_safely(State, Outcome) ->
     try finish_owner(State, Outcome) of
         Result -> Result
     catch
-        _:_ -> finalize_failure(State)
+        _:_ -> finalize_failure(State, Outcome)
     end.
 
-finalize_failure(State) ->
-    recon_trace:clear(),
+finalize_failure(State, Outcome) ->
+    clear_trace(),
     stop_helpers([maps:get(collector, State), maps:get(silent_io, State)]),
-    Capture = forced_capture(capture_internal_error, []),
-    case verify_cleanup(State) of
+    {Events, Rejected} = outcome_payload(Outcome),
+    finalize_failure_result(State, Events, Rejected, verify_cleanup(State)).
+
+finalize_failure_result(State, Events, Rejected, Verification) ->
+    case Verification of
         ok ->
+            Capture = with_selector(
+                State, forced_capture(capture_internal_error, Events, Rejected)
+            ),
             response(error, internal, capture_internal_error, Capture, [global_warning()]);
         {error, _Reason} ->
+            Capture = (with_selector(
+                State, forced_capture(cleanup_unconfirmed, Events, Rejected)
+            ))#{
+                cleanup_confirmed => false
+            },
             response(
                 error,
                 cleanup,
                 cleanup_unconfirmed,
-                Capture#{cleanup_confirmed => false},
+                Capture,
                 [global_warning()]
             )
     end.
@@ -395,12 +428,17 @@ start_recon(State) ->
     Collector = maps:get(collector, State),
     Session = maps:get(session, State),
     Started = maps:get(started_timestamp, State),
-    Formatter = fun(Message) -> format_event(Message, Collector, Session, Started) end,
+    ExpectedPid = maps:get(pid, State),
+    ExpectedMFA = maps:get(mfa, State),
+    Formatter = fun(Message) ->
+        format_event(Message, ExpectedPid, ExpectedMFA, Collector, Session, Started)
+    end,
+    clear_extended_patterns(),
     recon_trace:calls(
-        maps:get(mfa, State),
+        ExpectedMFA,
         maps:get(max, State),
         [
-            {pid, maps:get(pid, State)},
+            {pid, ExpectedPid},
             {args, arity},
             {timestamp, trace},
             {scope, global},
@@ -478,13 +516,31 @@ final_drain(State) ->
     Ref = make_ref(),
     Collector ! {final, self(), Ref},
     receive
-        {Ref, Events, Truncated} ->
-            {natural, natural_reason(maps:get(max, State)), Events, Truncated};
+        {Ref, Events, Count, Rejected, Truncated} ->
+            {natural, natural_reason(maps:get(max, State)), Events, Truncated,
+                Count - length(Events), Rejected};
         {'DOWN', CollectorMon, process, Collector, _Reason} ->
             {forced, internal, capture_internal_error}
     after ?ACK_TIMEOUT_MS ->
         {forced, internal, capture_internal_error}
     end.
+
+drain_forced(State, {forced, Category, Reason}) ->
+    case final_drain(State) of
+        {natural, _NaturalReason, Events, _Truncated, _Dropped, Rejected} ->
+            {forced, Category, Reason, Events, Rejected};
+        Failure ->
+            Failure
+    end;
+drain_forced(State, {forced, Category, Reason, Stopper}) ->
+    case final_drain(State) of
+        {natural, _NaturalReason, Events, _Truncated, _Dropped, Rejected} ->
+            {forced, Category, Reason, Events, Rejected, Stopper};
+        Failure ->
+            Failure
+    end;
+drain_forced(_State, Outcome) ->
+    Outcome.
 
 natural_reason(Max) when is_integer(Max) -> limit_reached;
 natural_reason({_Count, 1000}) -> rate_exceeded.
@@ -526,58 +582,90 @@ checked_helper_shutdown(State, Outcome, Verification) ->
         {{error, _Reason}, _, _} -> {Outcome, {error, cleanup_unconfirmed}};
         {_, cleanup_unconfirmed, _} -> {Outcome, {error, cleanup_unconfirmed}};
         {_, _, cleanup_unconfirmed} -> {Outcome, {error, cleanup_unconfirmed}};
-        {ok, helper_failed, _} -> {{forced, internal, capture_internal_error}, ok};
-        {ok, _, helper_failed} -> {{forced, internal, capture_internal_error}, ok}
+        {ok, helper_failed, _} -> {helper_failure_outcome(Outcome), ok};
+        {ok, _, helper_failed} -> {helper_failure_outcome(Outcome), ok}
     end.
+
+helper_failure_outcome(Outcome) ->
+    {Events, Rejected} = outcome_payload(Outcome),
+    {forced, internal, capture_internal_error, Events, Rejected}.
+
+outcome_payload({natural, _Reason, Events, _Truncated, _Dropped, Rejected}) ->
+    {Events, Rejected};
+outcome_payload({forced, _Category, _Reason, Events, Rejected}) ->
+    {Events, Rejected};
+outcome_payload({forced, _Category, _Reason, Events, Rejected, _Stopper}) ->
+    {Events, Rejected};
+outcome_payload(_Outcome) ->
+    {[], 0}.
 
 owner_result(State, Outcome, ok) ->
     EndMd5 = end_module_md5(State),
     Partial = EndMd5 =/= maps:get(module_md5, State),
     case Outcome of
-        {natural, Reason, Events, Truncated} ->
+        {natural, Reason, Events, Truncated, Dropped, Rejected} ->
+            Incomplete = Partial orelse Rejected > 0,
             Capture = #{
                 status =>
-                    case Partial of
+                    case Incomplete of
                         true -> partial;
                         false -> complete
                     end,
                 reason => Reason,
-                trace_complete => not Partial,
-                truncated => Truncated,
+                trace_complete => not Incomplete,
+                truncated => Truncated orelse Rejected > 0,
                 dropped_count =>
-                    case Truncated of
-                        true -> null;
-                        false -> 0
+                    case Rejected of
+                        0 -> Dropped;
+                        _ -> null
                     end,
                 events => Events,
                 module_reloaded => Partial,
+                interference_detected => Rejected > 0,
                 coverage => external_global_calls_only,
                 cleanup_confirmed => true
             },
-            response(ok, success, Reason, Capture, [global_warning()]);
-        {forced, Category, Reason} ->
-            response(forced_status(Category), Category, Reason, forced_capture(Reason, []), [
-                global_warning()
-            ]);
-        {forced, Category, Reason, _Stopper} ->
-            response(forced_status(Category), Category, Reason, forced_capture(Reason, []), [
-                global_warning()
-            ]);
+            response(ok, success, Reason, with_selector(State, Capture), [global_warning()]);
+        {forced, Category, Reason, Events, Rejected} ->
+            response(
+                forced_status(Category),
+                Category,
+                Reason,
+                with_selector(State, forced_capture(Reason, Events, Rejected)),
+                [global_warning()]
+            );
+        {forced, Category, Reason, Events, Rejected, _Stopper} ->
+            response(
+                forced_status(Category),
+                Category,
+                Reason,
+                with_selector(State, forced_capture(Reason, Events, Rejected)),
+                [global_warning()]
+            );
         {error, Category, Reason} ->
             response(error, Category, Reason, null, [global_warning()])
     end;
-owner_result(_State, Outcome, {error, _Reason}) ->
-    Events = outcome_events(Outcome),
-    Capture = (forced_capture(cleanup_unconfirmed, Events))#{cleanup_confirmed => false},
+owner_result(State, Outcome, {error, _Reason}) ->
+    {Events, Rejected} = outcome_payload(Outcome),
+    Capture = (with_selector(State, forced_capture(cleanup_unconfirmed, Events, Rejected)))#{
+        cleanup_confirmed => false
+    },
     response(error, cleanup, cleanup_unconfirmed, Capture, [global_warning()]).
 
 forced_status(success) -> ok;
 forced_status(_Category) -> error.
 
-outcome_events({natural, _Reason, Events, _Truncated}) -> Events;
+-ifdef(TEST).
+outcome_events({natural, _Reason, Events, _Truncated, _Dropped, _Rejected}) -> Events;
+outcome_events({forced, _Category, _Reason, Events, _Rejected}) -> Events;
+outcome_events({forced, _Category, _Reason, Events, _Rejected, _Stopper}) -> Events;
 outcome_events(_Outcome) -> [].
+-endif.
 
 forced_capture(Reason, Events) ->
+    forced_capture(Reason, Events, 0).
+
+forced_capture(Reason, Events, Rejected) ->
     #{
         status => partial,
         reason => Reason,
@@ -585,11 +673,20 @@ forced_capture(Reason, Events) ->
         truncated => true,
         dropped_count => null,
         events => Events,
+        interference_detected => Rejected > 0,
         coverage => external_global_calls_only,
         cleanup_confirmed => true
     }.
 
-notify_stopper({forced, _Category, _Reason, {Stopper, StopRef}}, Result) ->
+with_selector(#{mfa := {Module, Function, Arity}, pid := Pid}, Capture) ->
+    Capture#{
+        tracee => {identifier, pid, Pid},
+        mfa => {mfa, Module, Function, Arity}
+    };
+with_selector(_State, Capture) ->
+    Capture.
+
+notify_stopper({forced, _Category, _Reason, _Events, _Rejected, {Stopper, StopRef}}, Result) ->
     Stopper ! {StopRef, cleanup_ack, Result};
 notify_stopper(_Outcome, _Result) ->
     ok.
@@ -636,32 +733,38 @@ trace_pattern_off(MFA) ->
     end.
 
 format_event(
-    {trace_ts, Tracee, call, {Module, Function, Arity}, Timestamp}, Collector, Session, Started
+    {trace_ts, Tracee, call, {Module, Function, Arity} = MFA, Timestamp},
+    Tracee,
+    MFA,
+    Collector,
+    Session,
+    Started
 ) when
     is_pid(Tracee), is_atom(Module), is_atom(Function), is_integer(Arity)
 ->
     EventRef = make_ref(),
     Offset = max(0, timer:now_diff(Timestamp, Started) div 1000),
     Event = #{
-        tracee => list_to_binary(pid_to_list(Tracee)),
-        mfa => #{
-            module => atom_to_binary(Module),
-            function => atom_to_binary(Function),
-            arity => Arity
-        },
+        tracee => {identifier, pid, Tracee},
+        mfa => {mfa, Module, Function, Arity},
         offset_ms => Offset
     },
     Collector ! {event, self(), Session, EventRef, Event},
+    await_collector(Collector, Session, EventRef);
+format_event(_Message, _ExpectedPid, _ExpectedMFA, Collector, Session, _Started) ->
+    EventRef = make_ref(),
+    Collector ! {interference, self(), Session, EventRef},
+    await_collector(Collector, Session, EventRef).
+
+await_collector(Collector, Session, EventRef) ->
     receive
         {Session, EventRef, ack} -> [];
         {'DOWN', _Mon, process, Collector, _Reason} -> erlang:error(collector_down)
     after ?ACK_TIMEOUT_MS ->
         erlang:error(collector_ack_timeout)
-    end;
-format_event(_Message, _Collector, _Session, _Started) ->
-    [].
+    end.
 
-collector(Events, Count, Truncated, Cap) ->
+collector(Events, Count, Rejected, Truncated, Cap) ->
     receive
         {event, Formatter, Session, EventRef, Event} ->
             {NextEvents, NextTruncated} =
@@ -670,13 +773,16 @@ collector(Events, Count, Truncated, Cap) ->
                     false -> {Events, true}
                 end,
             Formatter ! {Session, EventRef, ack},
-            collector(NextEvents, Count + 1, NextTruncated, Cap);
+            collector(NextEvents, Count + 1, Rejected, NextTruncated, Cap);
+        {interference, Formatter, Session, EventRef} ->
+            Formatter ! {Session, EventRef, ack},
+            collector(Events, Count, Rejected + 1, Truncated, Cap);
         {final, Owner, Ref} ->
-            Owner ! {Ref, lists:reverse(Events), Truncated},
-            collector(Events, Count, Truncated, Cap);
+            Owner ! {Ref, lists:reverse(Events), Count, Rejected, Truncated},
+            collector(Events, Count, Rejected, Truncated, Cap);
         {test_count, From, Ref} ->
             From ! {Ref, Count},
-            collector(Events, Count, Truncated, Cap);
+            collector(Events, Count, Rejected, Truncated, Cap);
         {stop, Owner, Ref} ->
             Owner ! {Ref, stopping},
             ok;
@@ -727,6 +833,7 @@ stop_helpers(Pids) ->
 stop_helper_checked(Pid, Mon) ->
     case is_process_alive(Pid) of
         false ->
+            erlang:demonitor(Mon, [flush]),
             helper_failed;
         true ->
             Ref = make_ref(),
@@ -779,27 +886,27 @@ stop_owner(Owner, Warning) ->
     Owner ! {stop_request, self(), StopRef},
     receive
         {StopRef, armed, Owner} ->
-            recon_trace:clear(),
+            clear_trace(),
             await_stop_ack(Owner, OwnerMon, StopRef, Warning, undefined, false);
         {'DOWN', OwnerMon, process, Owner, _Reason} ->
-            recon_trace:clear(),
+            clear_trace(),
             _ = wait_fixed_names(),
             response(
                 error,
                 cleanup,
                 cleanup_unconfirmed,
-                (forced_capture(stopped, []))#{cleanup_confirmed => false},
+                (forced_capture(cleanup_unconfirmed, []))#{cleanup_confirmed => false},
                 [Warning]
             )
     after 500 ->
-        recon_trace:clear(),
+        clear_trace(),
         _ = wait_fixed_names(),
         erlang:demonitor(OwnerMon, [flush]),
         response(
             error,
             cleanup,
             cleanup_unconfirmed,
-            (forced_capture(stopped, []))#{cleanup_confirmed => false},
+            (forced_capture(cleanup_unconfirmed, []))#{cleanup_confirmed => false},
             [Warning]
         )
     end.
@@ -818,7 +925,7 @@ await_stop_ack(Owner, OwnerMon, StopRef, Warning, Result, Down) ->
                     error,
                     cleanup,
                     cleanup_unconfirmed,
-                    (forced_capture(stopped, []))#{cleanup_confirmed => false},
+                    (forced_capture(cleanup_unconfirmed, []))#{cleanup_confirmed => false},
                     [Warning]
                 )
             end
@@ -843,10 +950,41 @@ global_warning() ->
     #{
         code => global_trace_replacement,
         message => <<
-            "This command clears all node-static tracing and recon 2.5.6 may kill processes ",
-            "occupying its fixed tracer or formatter names."
+            "This command clears legacy process trace flags/tracers and static call patterns, ",
+            "including on-load and call-memory patterns; recon 2.5.6 may also kill processes ",
+            "occupying its fixed tracer or formatter names. Dynamic trace sessions remain."
         >>
     }.
+
+clear_trace() ->
+    recon_trace:clear(),
+    clear_extended_patterns().
+
+clear_extended_patterns() ->
+    _ = erlang:trace_pattern(
+        on_load, false, [local, meta, call_count, call_time, call_memory]
+    ),
+    _ = erlang:trace_pattern(on_load, false, []),
+    _ = erlang:trace_pattern({'_', '_', '_'}, false, [call_memory]),
+    ok.
+
+-spec wait_cleanup(non_neg_integer()) -> boolean().
+wait_cleanup(Timeout) when is_integer(Timeout), Timeout >= 0 ->
+    wait_cleanup_until(erlang:monotonic_time(millisecond) + Timeout).
+
+wait_cleanup_until(Deadline) ->
+    case {whereis(?OWNER), whereis(recon_trace_tracer), whereis(recon_trace_formatter)} of
+        {undefined, undefined, undefined} ->
+            true;
+        _ ->
+            case erlang:monotonic_time(millisecond) < Deadline of
+                true ->
+                    timer:sleep(10),
+                    wait_cleanup_until(Deadline);
+                false ->
+                    false
+            end
+    end.
 
 -ifdef(TEST).
 test_request_options(Request, Trace) ->
@@ -856,6 +994,7 @@ test_request_options(Request, Trace) ->
             [
                 test_after_calls,
                 test_before_calls,
+                test_before_ready,
                 test_before_helper_stop,
                 test_dispatch_timeout_ms,
                 test_end_module_md5,
@@ -879,6 +1018,12 @@ test_before_calls(State) ->
 
 test_after_calls(State) ->
     case maps:find(test_after_calls, State) of
+        {ok, Fun} -> Fun();
+        error -> ok
+    end.
+
+test_before_ready(State) ->
+    case maps:find(test_before_ready, State) of
         {ok, Fun} -> Fun();
         error -> ok
     end.
@@ -909,6 +1054,9 @@ test_before_calls(_State) ->
     ok.
 
 test_after_calls(_State) ->
+    ok.
+
+test_before_ready(_State) ->
     ok.
 
 test_before_helper_stop(_State) ->

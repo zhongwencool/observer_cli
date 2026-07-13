@@ -154,10 +154,10 @@ trace_command_contract_test() ->
         {ok, #{
             command := trace,
             arguments := ["stop"],
-            options := #{all := true, timeout := "1s", redact := true}
+            options := #{all := true, timeout := "5s", redact := true}
         }},
         observer_cli_cli:parse([
-            "trace", "stop", "--all", "--timeout", "1s", "--redact"
+            "trace", "stop", "--all", "--timeout", "5s", "--redact"
         ])
     ),
     ?assertMatch(
@@ -173,11 +173,17 @@ trace_command_contract_test() ->
         ])
     ),
     ?assertEqual({ok, 10000}, observer_cli_cli:trace_duration(#{})),
+    ?assertEqual({ok, 100}, observer_cli_cli:trace_duration(#{duration => "100ms"})),
+    ?assertEqual({ok, 60000}, observer_cli_cli:trace_duration(#{duration => "60s"})),
     ?assertEqual({ok, 100}, observer_cli_cli:trace_limit(#{})),
+    ?assertEqual({ok, 1}, observer_cli_cli:trace_limit(#{limit => "1"})),
+    ?assertEqual({ok, 1000}, observer_cli_cli:trace_limit(#{limit => "1000"})),
+    ?assertEqual({ok, {1, 1000}}, observer_cli_cli:trace_limit(#{rate => "1/s"})),
     ?assertEqual({ok, {20, 1000}}, observer_cli_cli:trace_limit(#{rate => "20/s"})),
-    ?assertEqual({ok, 15000}, observer_cli_cli:timeout(#{replace_existing_trace => true})),
+    ?assertEqual({ok, {200, 1000}}, observer_cli_cli:trace_limit(#{rate => "200/s"})),
+    ?assertEqual({ok, 17000}, observer_cli_cli:timeout(#{replace_existing_trace => true})),
     ?assertEqual(
-        {ok, 65000},
+        {ok, 67000},
         observer_cli_cli:timeout(#{replace_existing_trace => true, duration => "60s"})
     ),
     lists:foreach(
@@ -452,7 +458,7 @@ validation_edge_paths_test() ->
             "--all"
         ]},
         {unsupported_command_option, ["trace", "stop", "--all", "--duration", "1s"]},
-        {timeout_too_short, [
+        {trace_timeout_too_short, [
             "trace",
             "call",
             "erlang:node/0",
@@ -462,7 +468,10 @@ validation_edge_paths_test() ->
             "--duration",
             "1s",
             "--timeout",
-            "5999ms"
+            "7999ms"
+        ]},
+        {trace_stop_timeout_too_short, [
+            "trace", "stop", "--all", "--timeout", "4999ms"
         ]},
         {invalid_timeout, [
             "trace",
@@ -505,7 +514,7 @@ validation_edge_paths_test() ->
             "--duration",
             "1s",
             "--timeout",
-            "6s"
+            "8s"
         ])
     ),
     ?assertMatch(
@@ -860,17 +869,21 @@ concurrent_context_replace_test() ->
             context_term(<<"first@host">>, <<"env">>, <<"FIRST_COOKIE">>),
             context_term(<<"second@host">>, <<"env">>, <<"SECOND_COOKIE">>)
         ],
-        [
-            spawn(fun() -> Parent ! observer_cli_cli:write_context(Path, Context) end)
+        Refs = [
+            begin
+                Ref = make_ref(),
+                spawn(fun() -> Parent ! {Ref, observer_cli_cli:write_context(Path, Context)} end),
+                Ref
+            end
          || Context <- Contexts
         ],
         ?assertEqual(
             [ok, ok],
             lists:sort([
                 receive
-                    Result -> Result
+                    {Ref, Result} -> Result
                 end
-             || _ <- Contexts
+             || Ref <- Refs
             ])
         ),
         {ok, Winner} = observer_cli_cli:read_context(Path),

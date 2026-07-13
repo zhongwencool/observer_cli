@@ -63,6 +63,8 @@
 -define(MAX_COOKIE_LENGTH, 255).
 -define(MAX_CONTEXT_BYTES, 8192).
 -define(SCHEMA, <<"observer_cli.cli/v1">>).
+-define(TRACE_TIMEOUT_MARGIN_MS, 7000).
+-define(TRACE_STOP_TIMEOUT_MS, 5000).
 
 -type route() ::
     #{
@@ -193,7 +195,7 @@ validate_trace_command(["stop"] = Arguments, Options) ->
             trace_mode_keys(Options)
         }
     of
-        {ok, true, [all]} -> ok;
+        {ok, true, [all]} -> validate_trace_stop_timeout(Options);
         {ok, false, _} -> {error, trace_all_required};
         {ok, true, _} -> {error, unsupported_command_option}
     end;
@@ -370,12 +372,24 @@ validate_trace_options(Options) ->
 
 validate_trace_timeout(#{timeout := _} = Options, Duration) ->
     case timeout_value(Options) of
-        {ok, Timeout} when Timeout >= Duration + 5000 -> validate_target_options(Options);
-        {ok, _} -> {error, timeout_too_short};
-        Error -> Error
+        {ok, Timeout} when Timeout >= Duration + ?TRACE_TIMEOUT_MARGIN_MS ->
+            validate_target_options(Options);
+        {ok, _} ->
+            {error, trace_timeout_too_short};
+        Error ->
+            Error
     end;
 validate_trace_timeout(Options, _Duration) ->
     validate_target_options(Options).
+
+validate_trace_stop_timeout(#{timeout := _} = Options) ->
+    case timeout_value(Options) of
+        {ok, Timeout} when Timeout >= ?TRACE_STOP_TIMEOUT_MS -> ok;
+        {ok, _} -> {error, trace_stop_timeout_too_short};
+        Error -> Error
+    end;
+validate_trace_stop_timeout(_Options) ->
+    ok.
 
 validate_counter_list_options(Command, Options, Sorts) ->
     case only_options(Command, Options, [sort, limit, duration]) of
@@ -683,7 +697,7 @@ timeout(#{timeout := _Text} = Options) ->
     timeout_value(Options);
 timeout(#{replace_existing_trace := true} = Options) ->
     case trace_duration(Options) of
-        {ok, Duration} -> {ok, max(10000, Duration + 5000)};
+        {ok, Duration} -> {ok, max(10000, Duration + ?TRACE_TIMEOUT_MARGIN_MS)};
         {error, _Reason} -> {error, invalid_duration}
     end;
 timeout(#{duration := _Text} = Options) ->
@@ -1310,7 +1324,7 @@ encode(text, #{<<"command">> := Command} = Response) ->
     capped(
         iolist_to_binary([
             <<"observer_cli ">>,
-            escape_text(Command),
+            text_command(Command),
             <<"\n">>,
             render_text_map(text_response(Response), 0, root)
         ])
@@ -1330,6 +1344,10 @@ encode(json, Response) ->
     end;
 encode(_Format, _Response) ->
     {error, controller_error(format, unsupported_format)}.
+
+text_command(<<"trace_call">>) -> <<"trace call">>;
+text_command(<<"trace_stop_all">>) -> <<"trace stop">>;
+text_command(Command) -> escape_text(Command).
 
 cookie_source_text(#{<<"type">> := <<"env">>, <<"name">> := Name}) ->
     [<<"env:">>, escape_text(Name)];
@@ -1612,6 +1630,10 @@ reason_message(trace_all_required) ->
     <<"trace stop requires --all">>;
 reason_message(timeout_too_short) ->
     <<"--timeout must cover the sampling duration plus five seconds">>;
+reason_message(trace_timeout_too_short) ->
+    <<"trace call --timeout must cover the trace duration plus seven seconds">>;
+reason_message(trace_stop_timeout_too_short) ->
+    <<"trace stop --timeout must be at least five seconds">>;
 reason_message(otp_state_timeout_too_short) ->
     <<"--timeout must be at least 10s for otp-state">>;
 reason_message(invalid_refresh_interval) ->

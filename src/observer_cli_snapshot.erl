@@ -155,6 +155,8 @@
 -define(PROTOCOL_VERSION, 1).
 -define(BUNDLE_VERSION, <<"2.0.0">>).
 -define(TARGET_MARGIN_MS, 1000).
+-define(WORKER_DOWN_TIMEOUT_MS, 100).
+-define(TRACE_CLEANUP_TIMEOUT_MS, 250).
 -define(DEEP_FINISH_MARGIN_MS, 250).
 -define(MAX_HEAP_WORDS, 8 * 1024 * 1024).
 -define(MAX_RESPONSE_BYTES, 1024 * 1024).
@@ -265,7 +267,7 @@ run_worker(Controller, Command, Request, Policy, TargetTimeout, MaxHeapWords) ->
                 {max_heap_size, #{size => MaxHeapWords, kill => true, error_logger => false}}
             ]
         ),
-        coordinate_worker(ControllerRef, Worker, WorkerRef, RunRef, Deadline)
+        coordinate_worker(ControllerRef, Worker, WorkerRef, RunRef, Deadline, Command)
     catch
         _OuterClass:_OuterReason:_OuterStacktrace -> error_result(internal_error)
     after
@@ -273,65 +275,96 @@ run_worker(Controller, Command, Request, Policy, TargetTimeout, MaxHeapWords) ->
         process_flag(trap_exit, OldTrapExit)
     end.
 
-coordinate_worker(ControllerRef, Worker, WorkerRef, RunRef, Deadline) ->
+coordinate_worker(ControllerRef, Worker, WorkerRef, RunRef, Deadline, Command) ->
     try
-        coordinate(ControllerRef, Worker, WorkerRef, RunRef, Deadline)
+        coordinate(ControllerRef, Worker, WorkerRef, RunRef, Deadline, Command)
     catch
-        _Class:_Reason:_Stacktrace -> stop_worker(Worker, WorkerRef, internal_error)
+        _Class:_Reason:_Stacktrace -> stop_worker(Worker, WorkerRef, internal_error, Command)
     after
         drain_exit(Worker)
     end.
 
+-ifdef(TEST).
 coordinate(ControllerRef, Worker, WorkerRef, RunRef, Deadline) ->
+    coordinate(ControllerRef, Worker, WorkerRef, RunRef, Deadline, unknown).
+-endif.
+
+coordinate(ControllerRef, Worker, WorkerRef, RunRef, Deadline, Command) ->
     receive
         {'DOWN', ControllerRef, process, _Controller, _Reason} ->
-            stop_worker(Worker, WorkerRef, controller_disconnected);
+            stop_worker(Worker, WorkerRef, controller_disconnected, Command);
         {RunRef, Worker, {ok, Result}} ->
             Response = success_result(Result),
             case
                 json_safe(Response) andalso erlang:external_size(Response) =< ?MAX_RESPONSE_BYTES
             of
                 true ->
-                    finish_worker(ControllerRef, Worker, WorkerRef, RunRef, Deadline, Result);
+                    finish_worker(
+                        ControllerRef, Worker, WorkerRef, RunRef, Deadline, Result, Command
+                    );
                 false ->
-                    stop_worker(Worker, WorkerRef, invalid_schema)
+                    stop_worker(Worker, WorkerRef, invalid_schema, Command)
             end;
         {RunRef, Worker, {error, Reason}} when is_atom(Reason) ->
-            stop_worker(Worker, WorkerRef, Reason);
+            stop_worker(Worker, WorkerRef, Reason, Command);
         {'DOWN', WorkerRef, process, Worker, Reason} ->
-            worker_down(WorkerRef, Reason);
+            worker_down(WorkerRef, Reason, Command);
         {'EXIT', Worker, _Reason} ->
-            coordinate(ControllerRef, Worker, WorkerRef, RunRef, Deadline)
+            coordinate(ControllerRef, Worker, WorkerRef, RunRef, Deadline, Command)
     after remaining(Deadline) ->
-        stop_worker(Worker, WorkerRef, target_timeout)
+        stop_worker(Worker, WorkerRef, target_timeout, Command)
     end.
 
+-ifdef(TEST).
 finish_worker(ControllerRef, Worker, WorkerRef, RunRef, Deadline, Result) ->
+    finish_worker(ControllerRef, Worker, WorkerRef, RunRef, Deadline, Result, unknown).
+-endif.
+
+finish_worker(ControllerRef, Worker, WorkerRef, RunRef, Deadline, Result, Command) ->
     Worker ! {RunRef, finish},
     receive
         {'DOWN', ControllerRef, process, _Controller, _Reason} ->
-            stop_worker(Worker, WorkerRef, controller_disconnected);
+            stop_worker(Worker, WorkerRef, controller_disconnected, Command);
         {'DOWN', WorkerRef, process, Worker, normal} ->
             success_result(Result);
         {'DOWN', WorkerRef, process, Worker, _Reason} ->
             error_result(cleanup_unconfirmed);
         {'EXIT', Worker, _Reason} ->
-            finish_worker(ControllerRef, Worker, WorkerRef, RunRef, Deadline, Result)
+            finish_worker(ControllerRef, Worker, WorkerRef, RunRef, Deadline, Result, Command)
     after remaining(Deadline) ->
-        stop_worker(Worker, WorkerRef, cleanup_unconfirmed)
+        stop_worker(Worker, WorkerRef, cleanup_unconfirmed, Command)
     end.
 
+-ifdef(TEST).
 stop_worker(Worker, WorkerRef, Reason) ->
+    stop_worker(Worker, WorkerRef, Reason, unknown).
+-endif.
+
+stop_worker(Worker, WorkerRef, Reason, Command) ->
     exit(Worker, kill),
     receive
-        {'DOWN', WorkerRef, process, Worker, _WorkerReason} -> error_result(Reason)
-    after ?TARGET_MARGIN_MS ->
-        error_result(cleanup_unconfirmed)
+        {'DOWN', WorkerRef, process, Worker, _WorkerReason} -> cleanup_result(Command, Reason)
+    after ?WORKER_DOWN_TIMEOUT_MS ->
+        error_result(cleanup_unconfirmed, false)
     end.
 
+cleanup_result(trace, Reason) ->
+    case observer_cli_trace:wait_cleanup(?TRACE_CLEANUP_TIMEOUT_MS) of
+        true -> error_result(Reason);
+        false -> error_result(cleanup_unconfirmed, false)
+    end;
+cleanup_result(_Command, Reason) ->
+    error_result(Reason).
+
+-ifdef(TEST).
 worker_down(WorkerRef, Reason) ->
+    worker_down(WorkerRef, Reason, unknown).
+-endif.
+
+worker_down(WorkerRef, Reason, Command) ->
     erlang:demonitor(WorkerRef, [flush]),
-    error_result(
+    cleanup_result(
+        Command,
         case Reason of
             killed -> worker_heap_limit_exceeded;
             _ -> probe_failed
@@ -461,7 +494,7 @@ capture_trace(#{action := call} = Request, #{controller := Controller} = Context
         fun() -> observer_cli_trace:call(Controller, maps:remove(action, Request)) end,
         Context
     );
-capture_trace(#{action := stop_all}, Context) ->
+capture_trace(#{action := stop_all, all := true}, Context) ->
     trace_response(trace_stop_all, fun observer_cli_trace:stop_all/0, Context);
 capture_trace(_Request, _Context) ->
     {probe_error, invalid_request}.
@@ -476,7 +509,7 @@ trace_response(Command, Fun, #{controller := Controller}) ->
     Category = maps:get(category, Result),
     Reason = maps:get(reason, Result),
     Warnings = trace_issues(maps:get(warnings, Result)),
-    TraceCapture = maps:get(capture, Result),
+    TraceCapture = trace_capture(Command, maps:get(capture, Result)),
     Capture =
         case TraceCapture of
             null ->
@@ -529,6 +562,11 @@ trace_response(Command, Fun, #{controller := Controller}) ->
             _ -> Warnings
         end
     ).
+
+trace_capture(trace_stop_all, #{events := _Events} = Capture) ->
+    Capture#{events := []};
+trace_capture(_Command, Capture) ->
+    Capture.
 
 trace_issues(Warnings) ->
     [
@@ -5592,10 +5630,13 @@ success_result(Result) ->
     }.
 
 error_result(Reason) ->
+    error_result(Reason, true).
+
+error_result(Reason, CleanupConfirmed) ->
     #{
         <<"status">> => <<"error">>,
         <<"reason_code">> => atom_to_binary(Reason),
-        <<"cleanup_confirmed">> => true
+        <<"cleanup_confirmed">> => CleanupConfirmed
     }.
 
 drain_exit(Worker) ->

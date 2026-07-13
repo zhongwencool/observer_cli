@@ -493,8 +493,11 @@ command_help("trace") ->
         "  observer_cli trace stop --all\n"
         "    [TARGET OPTIONS] [OUTPUT OPTIONS]\n"
         "\n"
-        "Run or stop bounded node-global call tracing. Both operations may clear\n"
-        "unrelated node-static traces.\n"
+        "Run or stop bounded node-global call tracing. Calls match one live\n"
+        "target-local PID and one loaded, exported MFA. Events contain identity\n"
+        "and relative timing, never arguments, returns, exceptions, or stacks.\n"
+        "Both operations may clear legacy process trace flags and unrelated\n"
+        "static call patterns. Dynamic trace sessions are not cleared.\n"
         "\n"
         "Run 'observer_cli trace call --help' or\n"
         "'observer_cli trace stop --help' for the exact safety contract.\n"
@@ -518,13 +521,25 @@ tui_help() ->
 trace_call_help() ->
     remote_help(
         "trace call MFA --pid PID --replace-existing-trace [OPTIONS]",
-        "Run a bounded call-only trace for one exact MFA and one local PID.\n"
-        "Setup clears existing node-static traces; the acknowledgement flag is\n"
-        "therefore required.",
-        "  --pid PID                 Local tracee PID; required\n"
+        "Run a bounded call-only trace for one loaded, exported MFA and one live\n"
+        "target-local PID. MFA syntax is module:function/arity.\n"
+        "Setup clears legacy process trace flags and static call patterns,\n"
+        "including on-load and call-memory patterns; the acknowledgement flag\n"
+        "is therefore required. Dynamic trace sessions remain. An explicit\n"
+        "overall timeout must cover the duration plus seven seconds.\n"
+        "Events contain only tracee, MFA, and session-relative offset; arguments,\n"
+        "returns, exceptions, and stacks are never collected. Identifiers are\n"
+        "included by default; use --redact before exporting output.\n"
+        "data.trace.trace_complete is true only after a clean limit or rate stop.\n"
+        "Duration expiry, manual stop, reload, interference, or unconfirmed\n"
+        "cleanup produces a partial capture; the command itself may complete.",
+        "  --pid PID                 Live target-local tracee PID; required\n"
         "  --duration DURATION       100ms..60s; 10s by default\n"
         "  --limit N                 1..1000 events; 100 by default\n"
-        "  --rate N/s                1..200 events/s; conflicts with --limit\n"
+        "  --rate N/s                Recon burst breaker, not a pacer; 1..200/s;\n"
+        "                            trip event included; an expired window resets\n"
+        "                            on its first event, so capture may exceed N;\n"
+        "                            conflicts with --limit\n"
         "  --replace-existing-trace  Acknowledge node-global replacement\n",
         "  observer_cli trace call my_mod:my_fun/2 --pid \"<0.123.0>\" \\\n"
         "    --duration 30s --limit 200 --replace-existing-trace\n"
@@ -534,9 +549,13 @@ trace_stop_help() ->
     remote_help(
         "trace stop --all",
         "Stop an active observer_cli trace or perform emergency cleanup. This\n"
-        "always calls recon_trace:clear/0 and can remove unrelated node-static\n"
-        "traces. With recon 2.5.6, fixed-name tracer or formatter processes may\n"
-        "also be terminated. --all acknowledges that scope.",
+        "clears legacy process trace flags and static call patterns, including\n"
+        "on-load and call-memory patterns. With recon 2.5.6, fixed-name tracer\n"
+        "or formatter processes may also be terminated; dynamic trace sessions\n"
+        "remain. --all acknowledges that scope. Explicit timeout minimum: 5s.\n"
+        "The public stop response never returns captured events; read the matching\n"
+        "trace call response instead. With no owned observer_cli trace, cleanup\n"
+        "still runs but reports cleanup_unconfirmed.",
         "  --all  Acknowledge node-global trace cleanup; required\n",
         "  observer_cli trace stop --all\n"
     ).
@@ -624,8 +643,8 @@ arguments(Options) -> maps:get(arguments, Options, []).
 
 command_request(trace, ["call", MFA], Options) ->
     (trace_request(call, Options))#{mfa => MFA, pid => maps:get(pid, Options)};
-command_request(trace, ["stop"], _Options) ->
-    #{action => stop_all};
+command_request(trace, ["stop"], Options) ->
+    #{action => stop_all, all => maps:get(all, Options, false)};
 command_request(process, [Target], Options) ->
     (request_options(Options))#{target => Target};
 command_request(port, [Target], Options) ->
@@ -1010,6 +1029,8 @@ target_dispatch(Target, Command, Request, Options, Policy, Remaining) ->
                     <<"cleanup_confirmed">> := true
                 } ->
                     target_dispatch_error(Reason);
+                #{<<"cleanup_confirmed">> := false} ->
+                    {error, cleanup, cleanup_unconfirmed};
                 _Invalid ->
                     invalid
             catch
@@ -1655,9 +1676,9 @@ valid_command_payload(Command, #{<<"data">> := Data} = Response, Probes) ->
         supervision_tree ->
             valid_supervision_tree_data(Data);
         trace_call ->
-            valid_trace_data(Data);
+            valid_trace_data(trace_call, Data);
         trace_stop_all ->
-            valid_trace_data(Data);
+            valid_trace_data(trace_stop_all, Data);
         _ ->
             valid_list_command_payload(Command, Data, Probes)
     end.
@@ -1682,9 +1703,125 @@ valid_supervision_tree_data(#{<<"status">> := Status, <<"risk_level">> := Risk})
 valid_supervision_tree_data(_Data) ->
     false.
 
-valid_trace_data(#{<<"reason">> := Reason, <<"trace">> := Trace}) ->
-    (Reason =:= null orelse is_binary(Reason)) andalso is_map(Trace);
-valid_trace_data(_Data) ->
+valid_trace_data(Command, #{<<"reason">> := Reason, <<"trace">> := Trace}) ->
+    is_binary(Reason) andalso byte_size(Reason) > 0 andalso is_map(Trace) andalso
+        maps:get(<<"reason">>, Trace, undefined) =:= Reason andalso
+        valid_trace_capture(Command, Trace);
+valid_trace_data(_Command, _Data) ->
+    false.
+
+valid_trace_capture(
+    Command,
+    #{
+        <<"status">> := Status,
+        <<"reason">> := CaptureReason,
+        <<"trace_complete">> := Complete,
+        <<"truncated">> := Truncated,
+        <<"dropped_count">> := Dropped,
+        <<"events">> := Events,
+        <<"coverage">> := <<"external_global_calls_only">>,
+        <<"cleanup_confirmed">> := Cleanup,
+        <<"interference_detected">> := Interference
+    } = Trace
+) ->
+    valid_trace_keys(Trace) andalso is_binary(CaptureReason) andalso
+        byte_size(CaptureReason) > 0 andalso valid_trace_status(Status, Complete) andalso
+        is_boolean(Truncated) andalso valid_trace_loss(Complete, Truncated, Dropped) andalso
+        is_list(Events) andalso length(Events) =< 1000 andalso
+        lists:all(fun valid_trace_event/1, Events) andalso is_boolean(Cleanup) andalso
+        valid_trace_cleanup(Cleanup, Complete) andalso valid_trace_reload(Trace) andalso
+        is_boolean(Interference) andalso valid_trace_interference(Interference, Trace) andalso
+        valid_trace_selector(Command, Trace) andalso valid_trace_event_selectors(Trace, Events);
+valid_trace_capture(_Command, _Trace) ->
+    false.
+
+valid_trace_keys(Trace) ->
+    Allowed = [
+        <<"status">>,
+        <<"reason">>,
+        <<"trace_complete">>,
+        <<"truncated">>,
+        <<"dropped_count">>,
+        <<"events">>,
+        <<"module_reloaded">>,
+        <<"interference_detected">>,
+        <<"coverage">>,
+        <<"cleanup_confirmed">>,
+        <<"tracee">>,
+        <<"mfa">>
+    ],
+    lists:all(fun(Key) -> lists:member(Key, Allowed) end, maps:keys(Trace)).
+
+valid_trace_status(<<"complete">>, true) -> true;
+valid_trace_status(<<"partial">>, false) -> true;
+valid_trace_status(_Status, _Complete) -> false.
+
+valid_trace_loss(true, false, 0) -> true;
+valid_trace_loss(true, true, Dropped) -> nonnegative_integer(Dropped) andalso Dropped > 0;
+valid_trace_loss(false, false, 0) -> true;
+valid_trace_loss(false, true, null) -> true;
+valid_trace_loss(false, true, Dropped) -> nonnegative_integer(Dropped) andalso Dropped > 0;
+valid_trace_loss(_Complete, _Truncated, _Dropped) -> false.
+
+valid_trace_interference(false, _Trace) ->
+    true;
+valid_trace_interference(true, #{
+    <<"trace_complete">> := false,
+    <<"truncated">> := true,
+    <<"dropped_count">> := null
+}) ->
+    true;
+valid_trace_interference(true, _Trace) ->
+    false.
+
+valid_trace_cleanup(true, _Complete) -> true;
+valid_trace_cleanup(false, false) -> true;
+valid_trace_cleanup(false, true) -> false.
+
+valid_trace_reload(#{<<"module_reloaded">> := true, <<"trace_complete">> := false}) -> true;
+valid_trace_reload(#{<<"module_reloaded">> := false}) -> true;
+valid_trace_reload(Trace) -> not is_map_key(<<"module_reloaded">>, Trace).
+
+valid_trace_event(
+    #{
+        <<"tracee">> := Tracee,
+        <<"mfa">> := MFA,
+        <<"offset_ms">> := Offset
+    } = Event
+) ->
+    map_size(Event) =:= 3 andalso is_binary(Tracee) andalso byte_size(Tracee) > 0 andalso
+        valid_trace_mfa(MFA) andalso nonnegative_integer(Offset);
+valid_trace_event(_Event) ->
+    false.
+
+valid_trace_selector(_Command, #{<<"tracee">> := Tracee, <<"mfa">> := MFA}) ->
+    is_binary(Tracee) andalso byte_size(Tracee) > 0 andalso valid_trace_mfa(MFA);
+valid_trace_selector(trace_stop_all, Trace) ->
+    not is_map_key(<<"tracee">>, Trace) andalso not is_map_key(<<"mfa">>, Trace);
+valid_trace_selector(_Command, _Trace) ->
+    false.
+
+valid_trace_event_selectors(#{<<"tracee">> := Tracee, <<"mfa">> := MFA}, Events) ->
+    lists:all(
+        fun(Event) ->
+            maps:get(<<"tracee">>, Event) =:= Tracee andalso maps:get(<<"mfa">>, Event) =:= MFA
+        end,
+        Events
+    );
+valid_trace_event_selectors(_Trace, Events) ->
+    Events =:= [].
+
+valid_trace_mfa(
+    #{
+        <<"module">> := Module,
+        <<"function">> := Function,
+        <<"arity">> := Arity
+    } = MFA
+) ->
+    map_size(MFA) =:= 3 andalso is_binary(Module) andalso byte_size(Module) > 0 andalso
+        is_binary(Function) andalso byte_size(Function) > 0 andalso
+        is_integer(Arity) andalso Arity >= 0 andalso Arity =< 255;
+valid_trace_mfa(_MFA) ->
     false.
 
 valid_otp_state_payload(#{<<"data">> := Data} = Response, Probes) ->
@@ -2366,6 +2503,7 @@ valid_redacted_identifier_field(_Key, _Value) ->
     true.
 
 identifier_field_prefix(<<"pid">>) -> <<"pid-">>;
+identifier_field_prefix(<<"tracee">>) -> <<"pid-">>;
 identifier_field_prefix(<<"owner">>) -> <<"pid-">>;
 identifier_field_prefix(<<"group_leader">>) -> <<"pid-">>;
 identifier_field_prefix(<<"controller">>) -> <<"pid-">>;

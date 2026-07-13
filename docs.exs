@@ -2,7 +2,7 @@
   extras: [
     {"README.md", title: "Home"},
     {"./docs/reference/cli.md", title: "CLI"},
-    {"./docs/reference/tui.md", title: "TUI reference"},
+    {"./docs/reference/tui.md", title: "Reference"},
     {"./docs/reference/tui-plugins.md", title: "TUI plugins"},
     {"./docs/explanation/core-concepts.md", title: "Core concepts"},
     {"./docs/CHANGELOG.md", title: "Changelog"},

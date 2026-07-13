@@ -353,13 +353,20 @@ observer_cli trace call my_worker:handle_call/3 \
 | `--pid` | None | Required target-local PID |
 | `--duration` | `10s` | `100ms` to `60s` |
 | `--limit` | `100` | `1` to `1000`; conflicts with `--rate` |
-| `--rate` | Off | `1/s` to `200/s`; conflicts with `--limit` |
+| `--rate` | Off | Recon breaker threshold `1/s` to `200/s`; conflicts with `--limit` |
 | `--replace-existing-trace` | Off | Required acknowledgement |
 
-Setup and cleanup call `recon_trace:clear/0`, which can remove unrelated
-node-static traces and fixed-name trace helpers. The result records tracee and
-MFA identities plus session-relative offsets; it does not collect arguments,
-returns, exceptions, or stacks.
+The rate form is recon's burst breaker, not a strict pacer. Recon forwards the
+event that trips a window, and the first event after an expired window resets
+its counter, so a capture can contain more than `N` events around a boundary.
+
+Setup and cleanup clear legacy process trace flags and tracers plus static call
+patterns, including on-load and call-memory patterns. Recon 2.5.6 can also kill
+processes occupying its fixed tracer or formatter names. OTP dynamic trace
+sessions are not cleared. The result records tracee and MFA identities plus
+session-relative offsets; it does not collect arguments, returns, exceptions,
+or stacks. Events rejected because they do not match both the requested PID and
+exact MFA make the result partial rather than being reported as requested data.
 
 Use emergency cleanup only when a trace was interrupted or cleanup is
 unconfirmed:
@@ -438,7 +445,9 @@ stable within one response and reset on the next invocation.
 Durations accept positive integer milliseconds (`1500` or `1500ms`) or seconds
 (`2s`). Fractional values are rejected. The ordinary deadline is `10s`.
 Sampled work derives a deadline of at least its duration plus five seconds. An
-explicit timeout must cover that margin. For example:
+explicit timeout must cover that margin. `trace call` instead requires its
+duration plus seven seconds so target cleanup retains the full five-second
+margin; `trace stop --all` requires at least five seconds. For example:
 
 ```sh
 observer_cli diagnose --observe 30s --timeout 40s --format term
@@ -514,7 +523,9 @@ no saved context succeeds.
 | Connection failure | Verify the full node name, short/long mode, cookie, EPMD, firewall, and network reachability. |
 | `capability_unavailable` | Deploy the matching observer_cli bundle and `recon` in the target release. The CLI does not inject them. |
 | JSON unavailable | Use an OTP 27 or newer controller, or select term output. |
-| `timeout_too_short` | Allow the sampling or trace duration plus five seconds. |
+| `timeout_too_short` | Allow the sampling duration plus five seconds. |
+| `trace_timeout_too_short` | Allow the trace duration plus seven seconds. |
+| `trace_stop_timeout_too_short` | Use at least five seconds for trace cleanup. |
 | Schema incompatibility | Use the same observer_cli build on controller and target. |
 | Scan-budget refusal | Narrow the command or limit instead of repeatedly forcing the scan. |
 | Exit `4` cleanup failure | Preserve all output and confirm target state before another invasive action. |

@@ -241,9 +241,11 @@ blocking, and non-atomic.
 
 **Tracing.** `trace call` changes node-global static tracing and requires one
 exact MFA, one target-local PID, bounded duration and event rate, plus
-`--replace-existing-trace`. Setup and cleanup use `recon_trace:clear/0`, which
-can remove unrelated node-static traces and fixed-name trace helpers.
-`trace stop --all` has the same global scope.
+`--replace-existing-trace`. The rate form is recon's burst breaker rather than
+a strict pacer. Setup and cleanup clear legacy process trace flags and tracers,
+static call patterns (including on-load and call-memory), and fixed-name recon
+helpers. OTP dynamic trace sessions remain. `trace stop --all` has the same
+global scope.
 
 ### Sampling changes the sample
 

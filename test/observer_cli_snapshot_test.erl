@@ -1727,7 +1727,7 @@ snapshot_rare_branch_contract_test() ->
     ?assertMatch(
         #{<<"command">> := <<"trace_stop_all">>},
         observer_cli_snapshot:capture_trace(
-            #{action => stop_all}, #{controller => self()}
+            #{action => stop_all, all => true}, #{controller => self()}
         )
     ),
     ?assertEqual(

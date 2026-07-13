@@ -45,8 +45,12 @@ command_request_converts_validated_cli_values_test() ->
         )
     ),
     ?assertEqual(
-        #{action => stop_all},
+        #{action => stop_all, all => false},
         observer_cli_escriptize:command_request(trace, ["stop"], #{})
+    ),
+    ?assertEqual(
+        #{action => stop_all, all => true},
+        observer_cli_escriptize:command_request(trace, ["stop"], #{all => true})
     ),
     ?assertEqual(
         #{target => <<"server">>, behavior => gen_server},
@@ -701,7 +705,12 @@ command_help_test() ->
         24, 80, [], fun() -> observer_cli_escriptize:main(["trace", "--help"]) end
     ),
     observer_cli_test_io:assert_stable_fragments(TraceHelp, [
-        "node-global", "trace call", "trace stop --all"
+        "node-global",
+        "loaded, exported MFA",
+        "never arguments, returns, exceptions, or stacks",
+        "Dynamic trace sessions are not cleared",
+        "trace call",
+        "trace stop --all"
     ]),
     lists:foreach(
         fun({Arguments, Fragments}) ->
@@ -713,8 +722,28 @@ command_help_test() ->
         end,
         [
             {["tui", "--help"], ["REFRESH_MS", "positional COOKIE"]},
-            {["trace", "call", "--help"], ["--rate N/s", "--replace-existing-trace"]},
-            {["trace", "stop", "--help"], ["recon_trace:clear/0", "--all"]},
+            {["trace", "call", "--help"], [
+                "module:function/arity",
+                "Live target-local tracee PID; required",
+                "duration plus seven seconds",
+                "returns, exceptions, and stacks are never collected",
+                "included by default; use --redact",
+                "data.trace.trace_complete",
+                "Recon burst breaker, not a pacer",
+                "trip event included; an expired window resets",
+                "capture may exceed N",
+                "--replace-existing-trace"
+            ]},
+            {["trace", "stop", "--help"], [
+                "call-memory",
+                "fixed-name tracer",
+                "dynamic trace sessions",
+                "remain. --all acknowledges",
+                "Explicit timeout minimum: 5s",
+                "never returns captured events",
+                "cleanup_unconfirmed",
+                "--all"
+            ]},
             {["snapshot", "--deep", "--help"], ["snapshot", "--deep"]}
         ]
     ),
@@ -986,13 +1015,20 @@ probe_failure_is_not_duplicated_test() ->
 
 trace_incomplete_data_is_complete_test() ->
     Base = valid_controller_response(trace_call, atom_to_binary(node())),
+    PartialTrace = (fixture_trace_capture())#{
+        <<"status">> := <<"partial">>,
+        <<"reason">> := <<"duration_elapsed">>,
+        <<"trace_complete">> := false,
+        <<"truncated">> := true,
+        <<"dropped_count">> := null
+    },
     lists:foreach(
         fun(Command) ->
             Response = Base#{
                 <<"command">> := atom_to_binary(Command),
                 <<"data">> := #{
-                    <<"reason">> => <<"completed">>,
-                    <<"trace">> => #{<<"trace_complete">> => false}
+                    <<"reason">> => <<"duration_elapsed">>,
+                    <<"trace">> => PartialTrace
                 }
             },
             ?assertEqual(
@@ -1006,6 +1042,51 @@ trace_incomplete_data_is_complete_test() ->
             )
         end,
         [trace_call, trace_stop_all]
+    ).
+
+trace_payload_mutations_are_rejected_test() ->
+    Base = valid_controller_response(trace_call, atom_to_binary(node())),
+    Trace = fixture_trace_capture(),
+    Event = #{
+        <<"tracee">> => <<"<0.1.0>">>,
+        <<"mfa">> => maps:get(<<"mfa">>, Trace),
+        <<"offset_ms">> => 0
+    },
+    Mutations = [
+        Trace#{<<"trace_complete">> := false},
+        Trace#{<<"truncated">> := false, <<"dropped_count">> := 1},
+        Trace#{<<"interference_detected">> := true},
+        Trace#{<<"events">> := [Event#{<<"tracee">> := 42}]},
+        Trace#{<<"events">> := [Event#{<<"tracee">> := <<"<0.2.0>">>}]},
+        Trace#{<<"events">> := lists:duplicate(1001, Event)},
+        Trace#{<<"unexpected">> => true},
+        maps:remove(<<"reason">>, Trace),
+        maps:remove(<<"mfa">>, Trace),
+        Trace#{<<"mfa">> := (maps:get(<<"mfa">>, Trace))#{<<"arity">> := 256}},
+        Trace#{<<"cleanup_confirmed">> := yes},
+        Trace#{<<"cleanup_confirmed">> := false},
+        Trace#{<<"status">> := <<"unknown">>},
+        Trace#{<<"module_reloaded">> => true},
+        Trace#{<<"module_reloaded">> => yes}
+    ],
+    lists:foreach(
+        fun(Mutation) ->
+            Data = maps:get(<<"data">>, Base),
+            Response = Base#{<<"data">> := Data#{<<"trace">> := Mutation}},
+            ?assertEqual(
+                {error, invalid_command_response},
+                observer_cli_escriptize:validate_response(trace_call, include, node(), Response)
+            )
+        end,
+        Mutations
+    ),
+    Data = maps:get(<<"data">>, Base),
+    ReasonMismatch = Base#{
+        <<"data">> := Data#{<<"reason">> := <<"duration_elapsed">>, <<"trace">> := Trace}
+    },
+    ?assertEqual(
+        {error, invalid_command_response},
+        observer_cli_escriptize:validate_response(trace_call, include, node(), ReasonMismatch)
     ).
 
 controller_validates_real_trace_responses_test_() ->
@@ -1620,9 +1701,30 @@ fixture_data(memory) ->
 fixture_data(otp_state) ->
     otp_state_data(gen_statem);
 fixture_data(trace_call) ->
-    #{<<"reason">> => <<"completed">>, <<"trace">> => #{}};
+    #{<<"reason">> => <<"limit_reached">>, <<"trace">> => fixture_trace_capture()};
+fixture_data(trace_stop_all) ->
+    #{<<"reason">> => <<"limit_reached">>, <<"trace">> => fixture_trace_capture()};
 fixture_data(_Command) ->
     #{}.
+
+fixture_trace_capture() ->
+    #{
+        <<"status">> => <<"complete">>,
+        <<"reason">> => <<"limit_reached">>,
+        <<"trace_complete">> => true,
+        <<"truncated">> => false,
+        <<"dropped_count">> => 0,
+        <<"events">> => [],
+        <<"interference_detected">> => false,
+        <<"coverage">> => <<"external_global_calls_only">>,
+        <<"cleanup_confirmed">> => true,
+        <<"tracee">> => <<"<0.1.0>">>,
+        <<"mfa">> => #{
+            <<"module">> => <<"erlang">>,
+            <<"function">> => <<"node">>,
+            <<"arity">> => 0
+        }
+    }.
 
 run_escript(Escript, Args) ->
     Port = open_port(
@@ -2315,7 +2417,7 @@ direct_remote_command_suite() ->
                     arguments => ["alarm_handler"], behavior => "gen_event", limit => "5"
                 }},
                 {supervision_tree, #{arguments => [], app => "kernel"}},
-                {trace, #{arguments => ["stop"]}}
+                {trace, #{arguments => ["stop"], all => true}}
             ]
         ),
         assert_command_ok(disconnect, #{arguments => []})
@@ -2961,8 +3063,12 @@ validation_payload_contract(Probe) ->
             {supervision_tree, #{
                 <<"status">> => <<"ok">>, <<"risk_level">> => <<"low">>
             }},
-            {trace_call, #{<<"reason">> => null, <<"trace">> => #{}}},
-            {trace_stop_all, #{<<"reason">> => null, <<"trace">> => #{}}}
+            {trace_call, #{
+                <<"reason">> => <<"limit_reached">>, <<"trace">> => fixture_trace_capture()
+            }},
+            {trace_stop_all, #{
+                <<"reason">> => <<"limit_reached">>, <<"trace">> => fixture_trace_capture()
+            }}
         ]
     ),
     lists:foreach(
