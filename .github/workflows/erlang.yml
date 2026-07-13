@@ -40,7 +40,10 @@ jobs:
           otp-version: ${{matrix.other_otp}}
       - name: Save cross-OTP target
         if: matrix.other_otp != ''
-        run: echo "OBSERVER_CLI_CROSS_OTP_ERL=$INSTALL_DIR_FOR_OTP/bin/erl" >> "$GITHUB_ENV"
+        run: |
+          mv "$INSTALL_DIR_FOR_OTP" "$RUNNER_TEMP/cross-otp"
+          "$RUNNER_TEMP/cross-otp/Install" -minimal "$RUNNER_TEMP/cross-otp"
+          echo "OBSERVER_CLI_CROSS_OTP_ERL=$RUNNER_TEMP/cross-otp/bin/erl" >> "$GITHUB_ENV"
       - uses: erlef/setup-beam@v1
         with:
           otp-version: ${{matrix.otp}}
