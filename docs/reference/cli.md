@@ -16,7 +16,7 @@ command surface.
 
 ```mermaid
 flowchart LR
-    A[Install observer_cli<br/>in the target release] --> B[Build the controller<br/>escript]
+    A[Install observer_cli<br/>in the target release] --> B[Install the controller<br/>escript]
     B --> C[Set the target node<br/>and cookie source]
     C --> D[Connect and check status]
     D --> E[Run default diagnose]
@@ -71,12 +71,32 @@ mix compile
 Include both applications in the deployed release. The target must run as a
 distributed Erlang node before a controller can reach it.
 
-## 2. Build the controller escript
+## 2. Install the controller escript
+
+The controller is an escript, not a standalone native binary. It requires
+Erlang/OTP and `escript` locally. Select the asset for the controller's OTP
+major. The command CLI still requires the matching `observer_cli` version in
+the target release; TUI auto-load also requires the controller and target to
+use the same OTP major.
+
+### Download a GitHub Release (recommended)
+
+On macOS or Linux, the versioned installer selects the matching prebuilt
+escript, verifies its release checksum, and installs it for the current user:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/zhongwencool/observer_cli/v2.0.0/install.sh | sh
+```
+
+Add `$HOME/.local/bin` to `PATH` if the installer asks you to.
+
+### Build from source
 
 Build the standalone command from a 2.0.0 source checkout:
 
 ```sh
-git clone --branch v2.0.0 \
+VERSION=2.0.0
+git clone --branch "v${VERSION}" --depth 1 \
   https://github.com/zhongwencool/observer_cli.git
 cd observer_cli
 rebar3 escriptize
@@ -100,6 +120,8 @@ Install the generated escript for the current user:
 mkdir -p "$HOME/.local/bin"
 install -m 0755 _build/default/bin/observer_cli \
   "$HOME/.local/bin/observer_cli"
+export PATH="$HOME/.local/bin:$PATH"
+observer_cli --version
 ```
 
 Add `$HOME/.local/bin` to `PATH` if necessary. Rebuild the escript after changing

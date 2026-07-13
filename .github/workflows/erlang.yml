@@ -3,7 +3,7 @@ name: ci
 on:
   push:
     branches: [main]
-    tags: ['*']
+    tags: ['v*']
   pull_request:
 
 concurrency:
@@ -65,6 +65,26 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: zhongwencool/observer_cli
           files: _build/test/covertool/*.covertool.xml
+      - name: Prepare release escript
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          BIN=_build/default/bin/observer_cli
+          printf '%s\n' "$GITHUB_REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'
+          sh -n install.sh
+          grep -Fx "VERSION=$VERSION" install.sh
+          "$BIN" --version | tee "$RUNNER_TEMP/observer_cli-version"
+          grep -Fx "observer_cli $VERSION" "$RUNNER_TEMP/observer_cli-version"
+          grep -Fx "controller OTP ${{matrix.otp}}" "$RUNNER_TEMP/observer_cli-version"
+          mkdir -p dist
+          install -m 0755 "$BIN" "dist/observer_cli-$VERSION-otp${{matrix.otp}}"
+      - name: Upload release escript
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: observer_cli-otp${{matrix.otp}}
+          path: dist/observer_cli-*
+          if-no-files-found: error
 
   mix:
     runs-on: ubuntu-24.04
@@ -79,3 +99,33 @@ jobs:
         run: |
           mix deps.get
           mix compile
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, mix]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: observer_cli-otp*
+          path: dist
+          merge-multiple: true
+      - name: Create checksums
+        run: |
+          cd dist
+          VERSION=${GITHUB_REF_NAME#v}
+          sha256sum observer_cli-"$VERSION"-otp{26,27,28,29} > SHA256SUMS
+          test "$(wc -l < SHA256SUMS)" -eq 4
+          sha256sum --check SHA256SUMS
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{github.token}}
+          GH_REPO: ${{github.repository}}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes
+          fi

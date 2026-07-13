@@ -68,12 +68,35 @@ mix compile
 
 ## Get started
 
-Build the standalone controller from a `2.0.0` checkout:
+Release downloads are prebuilt escripts, not standalone native binaries. They
+require Erlang/OTP and `escript` on the controller. The command CLI still
+requires the matching `observer_cli` version in the target release; TUI
+auto-load also requires the controller and target to use the same OTP major.
+
+### Download a GitHub Release (recommended)
+
+On macOS or Linux, the versioned installer selects the escript for the local
+OTP major, verifies its release checksum, and installs it for the current user:
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/zhongwencool/observer_cli/v2.0.0/install.sh | sh
+```
+
+Add `$HOME/.local/bin` to `PATH` if the installer asks you to.
+
+### Build from source
+
+Build the same version from its release tag instead:
+
+```sh
+VERSION=2.0.0
+git clone --branch "v${VERSION}" --depth 1 \
+  https://github.com/zhongwencool/observer_cli.git
+cd observer_cli
 rebar3 escriptize
 mkdir -p "$HOME/.local/bin"
 install -m 0755 _build/default/bin/observer_cli "$HOME/.local/bin/observer_cli"
+export PATH="$HOME/.local/bin:$PATH"
 observer_cli --version
 ```
 
