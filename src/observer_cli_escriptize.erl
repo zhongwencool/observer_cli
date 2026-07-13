@@ -2514,7 +2514,7 @@ valid_trace_outcome(
     #{<<"reason">> := Reason, <<"trace">> := Trace},
     #{<<"status">> := <<"ok">>, <<"reason_code">> := null}
 ) ->
-    maps:get(<<"cleanup_confirmed">>, Trace) =:= true andalso
+    maps:get(<<"cleanup_confirmed">>, Trace) andalso
         valid_trace_reason(Command, complete, Reason) andalso
         valid_trace_reason_shape(Command, complete, Reason, Trace);
 valid_trace_outcome(
@@ -2526,7 +2526,7 @@ valid_trace_outcome(
     Cleanup = maps:get(<<"cleanup_confirmed">>, Trace),
     valid_trace_reason(Command, error, Reason) andalso
         valid_trace_reason_shape(Command, error, Reason, Trace) andalso
-        (Reason =:= <<"cleanup_unconfirmed">>) =:= (Cleanup =:= false);
+        (Reason =:= <<"cleanup_unconfirmed">>) =/= Cleanup;
 valid_trace_outcome(_Command, _Outcome, _Data, _Probe) ->
     false.
 
@@ -2566,7 +2566,7 @@ valid_natural_trace_shape(#{
 }) ->
     case Complete of
         true ->
-            Reloaded =:= false andalso Interference =:= false;
+            not Reloaded andalso not Interference;
         false ->
             (Reloaded orelse Interference orelse
                 (is_integer(Dropped) andalso Dropped > 0)) andalso
