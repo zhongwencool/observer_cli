@@ -4,47 +4,17 @@ Release and maintenance changes, newest first.
 
 ## 2.0.0 (release candidate)
 
-- Added command-first snapshot, inspection, diagnostics, saved-target context,
-  and bounded `recon` call-trace commands.
-- Added behavior-aware `otp-state` inspection for `gen_server`, `gen_statem`,
-  and `gen_event`; the pre-release `gen-server-state` command was removed.
-- Limited child-list enumeration to applications with at most 300 preflight
-  children and capped returned entries at 100; the preflight remains O(children).
-- Made `tui` the only interactive escript command and removed the positional
-  TUI shorthand. Automatic remote module loading remains TUI-only.
-- Added local help and version routes, command-specific usage errors, fixed exit
-  classes, and separate stdout/stderr contracts.
-- Kept canonical trace command identities across parser, context, runtime, and
-  success paths, with trace-stop timeouts validated independently from call
-  sampling.
-- Rendered successful commands as structured text while retaining consultable
-  Erlang terms and OTP 27+ JSON for machine output.
-- Defined the `observer_cli.cli/v1` response as a fixed six-field envelope with
-  one top-level outcome, nested target and capture metadata, and one non-probe
-  issue list. Published its JSON Schema 2020-12 definition under `priv/schema/`.
-- Made probe entries the only source of probe failures and derived exit status
-  from the validated outcome, probes, issues, and diagnose findings.
-- Reported compatible, missing, and incompatible target diagnostics, including
-  expected and observed bundle/protocol versions.
-- Saved target context only after controller cleanup is confirmed, bounded and
-  sanitized observed capabilities, and preflighted encoders before context
-  changes.
-- Allowed `disconnect` to remove malformed or oversized protected context data
-  without weakening file-type or permission checks.
-- Removed command-first remote BEAM injection. Command targets now require a
-  compatible diagnostics bundle in their release.
-- Kept target protocol `1` for the release candidate; controller and target must
-  use the same build because older seven-field release-candidate responses are
-  rejected rather than converted.
-- Added generated-escript help, version, stream, and exit-code smoke checks to
-  every configured OTP 26–29 CI job.
-- Restored green lint, Dialyzer, ExDoc, and aggregate check gates.
-- Published an ExDoc `llms.txt` index, per-page Markdown documents, and
-  copy-ready Markdown controls for LLM and agent workflows.
-- Documented scan admission, Erlang distribution trust, high-risk state and
-  supervision inspection, and node-global `recon` cleanup.
-- Introduced explicit 2.0 plugin callback shapes. See
-  [TUI plugins](reference/tui-plugins.md#migrate-a-1x-plugin-to-20) for the migration table.
+- Added a command-first interface for production diagnostics, automation, and
+  AI agents, covering health checks, snapshots, resource inspection, OTP state,
+  and bounded call tracing.
+- Added reusable remote-target workflows with `connect`, `status`, and
+  `disconnect`, including target compatibility checks.
+- Added structured text, Erlang term, and OTP 27+ JSON output with stable exit
+  statuses and a versioned response schema.
+- Made `tui` the explicit interactive command and removed the old positional
+  launch form. Updated the TUI plugin API for 2.0.
+- Fixed CLI help, error, output-stream, and exit-status behavior, trace cleanup,
+  and malformed saved-context removal.
 
 ## 1.8.8
 

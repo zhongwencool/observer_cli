@@ -4,7 +4,9 @@
     {"./docs/reference/cli.md", title: "CLI"},
     {"./docs/reference/tui.md", title: "TUI reference"},
     {"./docs/reference/tui-plugins.md", title: "TUI plugins"},
-    {"./docs/explanation/core-concepts.md", title: "Core concepts"}
+    {"./docs/explanation/core-concepts.md", title: "Core concepts"},
+    {"./docs/CHANGELOG.md", title: "Changelog"},
+    {"LICENSE", title: "License"}
   ],
   logo: "./docs/favicon.png",
   authors: [
@@ -51,7 +53,8 @@
   groups_for_extras: [
     {"CLI", ~r"/reference/cli\.md$"},
     {"TUI", ~r"/reference/tui(?:-plugins)?\.md$"},
-    {"Core concepts", ~r"/explanation/core-concepts\.md$"}
+    {"Core concepts", ~r"/explanation/core-concepts\.md$"},
+    {"Project", ~r"(?:/CHANGELOG\.md|^LICENSE)$"}
   ],
   filter_modules: fn _, _ -> false end,
   skip_code_autolink_to:

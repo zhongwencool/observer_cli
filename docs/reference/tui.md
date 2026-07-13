@@ -53,42 +53,26 @@ observer_cli:start(Node, [{cookie, Cookie}, {interval, 2000}]).
 | Plugin | `P` | Configured plugin sheets |
 
 ```mermaid
-flowchart LR
-    H[Home]
-    N[Network list]
-    O[Ports list]
-    K[Sockets list]
-    L[ETS / Mnesia / App lists]
-    S[System]
-    D[Doc]
-    G[Plugin sheets]
-    PR[Process detail]
-    PO[Port detail]
-    SO[Socket detail]
+flowchart TB
+    NAV["Main pages · global shortcuts<br/>H Home · N Network · O Ports · K Sockets · S System<br/>E ETS · M Mnesia · A App · D Doc · P Plugins"]
 
-    H <--> N
-    H <--> O
-    H <--> K
-    H <--> L
-    H <--> S
-    H <--> D
-    H <--> G
-    H --> PR
-    G --> PR
-    N --> PO
-    O --> PO
-    K --> SO
-    PR --> H
-    PR --> G
-    PO --> N
-    PO --> O
-    PO --> H
-    SO --> K
-    SO --> H
+    PICK_PROCESS["Choose a process<br/>Home ranking · plugin PID row"]
+    PICK_PORT["Choose a port<br/>Network row · Ports row"]
+    PICK_SOCKET["Choose a socket<br/>Sockets row"]
+
+    PROCESS["Process detail<br/>Return: H · B from plugin"]
+    PORT["Port detail<br/>Return: N · O · H"]
+    SOCKET["Socket detail<br/>Return: K · H"]
+
+    NAV --> PICK_PROCESS --> PROCESS
+    NAV --> PICK_PORT --> PORT
+    NAV --> PICK_SOCKET --> SOCKET
 ```
 
-The diagram shows page relationships only. The tables below are authoritative
-for shortcuts, fields, sampling behavior, and return keys.
+The diagram separates two navigation mechanisms: global shortcuts among peer
+main pages, then context-specific row drill-down. Pages without a row-detail
+transition appear only in the global shortcut set. The tables below are
+authoritative for all shortcuts and behavior.
 
 The Home, Network, Ports, Sockets, ETS, Mnesia, App, and Plugin lists use
 terminal height to choose the visible row count. If terminal geometry is
