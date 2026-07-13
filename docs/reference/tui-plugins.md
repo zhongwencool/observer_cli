@@ -180,7 +180,7 @@ flowchart TD
 ```
 
 ![Runtime plugin page showing BEAM memory and sortable worker, process, and port
-rows](assets/tui-plugin-runtime.png)
+rows](https://raw.githubusercontent.com/zhongwencool/observer_cli/8ec77bc92ea3238f17585f948977d04a6d6ec3fb/docs/assets/tui-plugin-runtime.png)
 
 ## Tables, sorting, and pagination
 

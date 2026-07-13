@@ -17,7 +17,7 @@ Press `D` for the built-in shortcut page and `q` to quit. The old bare
 `observer_cli NODE [COOKIE REFRESH_MS]` form is not supported.
 
 ![Observer CLI Home page showing the VM summary, memory and IO statistics, and
-processes ranked by memory](assets/tui-home.png)
+processes ranked by memory](https://raw.githubusercontent.com/zhongwencool/observer_cli/8ec77bc92ea3238f17585f948977d04a6d6ec3fb/docs/assets/tui-home.png)
 
 ## Start forms
 
@@ -358,7 +358,7 @@ sorting uses deltas after the first refresh. Identity sorting uses current
 metadata.
 
 ![Sockets page showing registry totals, endpoints, socket states, and IO
-counters](assets/tui-sockets.png)
+counters](https://raw.githubusercontent.com/zhongwencool/observer_cli/8ec77bc92ea3238f17585f948977d04a6d6ec3fb/docs/assets/tui-sockets.png)
 
 ### General socket fields
 
@@ -580,7 +580,7 @@ integer at least `1000` changes the detail refresh interval. State is a static
 capture in the built-in pager.
 
 ![Process Info page showing process metadata, memory, garbage collection,
-links, and history](assets/tui-process-info.png)
+links, and history](https://raw.githubusercontent.com/zhongwencool/observer_cli/8ec77bc92ea3238f17585f948977d04a6d6ec3fb/docs/assets/tui-process-info.png)
 
 ### Process Info fields
 

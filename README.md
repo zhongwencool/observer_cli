@@ -19,7 +19,7 @@ Both interfaces use Erlang distribution. Connect only to trusted nodes over a
 trusted network: a distribution cookie is not a read-only credential.
 
 ![Observer CLI Home page showing live VM health, memory and IO statistics, and
-process rankings](assets/tui-home.png)
+process rankings](https://raw.githubusercontent.com/zhongwencool/observer_cli/8ec77bc92ea3238f17585f948977d04a6d6ec3fb/docs/assets/tui-home.png)
 
 ## Installation
 
