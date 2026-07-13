@@ -19,6 +19,11 @@ Release and maintenance changes, newest first.
   sampling.
 - Rendered successful commands as structured text while retaining consultable
   Erlang terms and OTP 27+ JSON for machine output.
+- Defined the `observer_cli.cli/v1` response as a fixed six-field envelope with
+  one top-level outcome, nested target and capture metadata, and one non-probe
+  issue list. Published its JSON Schema 2020-12 definition under `priv/schema/`.
+- Made probe entries the only source of probe failures and derived exit status
+  from the validated outcome, probes, issues, and diagnose findings.
 - Reported compatible, missing, and incompatible target diagnostics, including
   expected and observed bundle/protocol versions.
 - Saved target context only after controller cleanup is confirmed, bounded and
@@ -28,6 +33,9 @@ Release and maintenance changes, newest first.
   without weakening file-type or permission checks.
 - Removed command-first remote BEAM injection. Command targets now require a
   compatible diagnostics bundle in their release.
+- Kept target protocol `1` for the release candidate; controller and target must
+  use the same build because older seven-field release-candidate responses are
+  rejected rather than converted.
 - Added generated-escript help, version, stream, and exit-code smoke checks to
   every configured OTP 26–29 CI job.
 - Restored green lint, Dialyzer, ExDoc, and aggregate check gates.
