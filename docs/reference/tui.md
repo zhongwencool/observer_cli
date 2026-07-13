@@ -3,6 +3,19 @@
 The terminal UI shows a live, line-oriented view of one BEAM node. Type a
 shortcut and press Enter; an empty line means Enter by itself.
 
+## Quick start
+
+Build the escript, then use the explicit `tui` command. This example uses the
+cookie already available to the controller:
+
+```sh
+rebar3 escriptize
+./_build/default/bin/observer_cli tui app@host
+```
+
+Press `D` for the built-in shortcut page and `q` to quit. The old bare
+`observer_cli NODE [COOKIE REFRESH_MS]` form is not supported.
+
 ## Start forms
 
 From the generated escript:
@@ -24,8 +37,6 @@ observer_cli:start(Node, Cookie).
 observer_cli:start(Node, [{cookie, Cookie}, {interval, 2000}]).
 ```
 
-See [Configuration reference](configuration.md#tui-start-api) for exact API behavior.
-
 ## Main pages
 
 | Page | Key | Contents |
@@ -40,6 +51,44 @@ See [Configuration reference](configuration.md#tui-start-api) for exact API beha
 | App | `A` | Process resources grouped by application |
 | Doc | `D` | Built-in shortcut summary |
 | Plugin | `P` | Configured plugin sheets |
+
+```mermaid
+flowchart LR
+    H[Home]
+    N[Network list]
+    O[Ports list]
+    K[Sockets list]
+    L[ETS / Mnesia / App lists]
+    S[System]
+    D[Doc]
+    G[Plugin sheets]
+    PR[Process detail]
+    PO[Port detail]
+    SO[Socket detail]
+
+    H <--> N
+    H <--> O
+    H <--> K
+    H <--> L
+    H <--> S
+    H <--> D
+    H <--> G
+    H --> PR
+    G --> PR
+    N --> PO
+    O --> PO
+    K --> SO
+    PR --> H
+    PR --> G
+    PO --> N
+    PO --> O
+    PO --> H
+    SO --> K
+    SO --> H
+```
+
+The diagram shows page relationships only. The tables below are authoritative
+for shortcuts, fields, sampling behavior, and return keys.
 
 The Home, Network, Ports, Sockets, ETS, Mnesia, App, and Plugin lists use
 terminal height to choose the visible row count. If terminal geometry is
@@ -606,7 +655,8 @@ Built-in input is:
 | `H` | Return Home |
 | `q` | Quit |
 
-See [Configuration reference](configuration.md#plugin-configuration) for callback and row-handler contracts.
+See [TUI plugins](tui-plugins.md) for callback, configuration, sorting,
+pagination, row-handler, and formatter contracts.
 
 ## Redraw behavior
 

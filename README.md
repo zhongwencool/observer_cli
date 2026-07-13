@@ -1,147 +1,132 @@
 # observer_cli
 
+[![Build Status](https://github.com/zhongwencool/observer_cli/workflows/ci/badge.svg)](https://github.com/zhongwencool/observer_cli/actions)
+[![codecov](https://codecov.io/gh/zhongwencool/observer_cli/branch/main/graph/badge.svg)](https://codecov.io/gh/zhongwencool/observer_cli)
+[![GitHub tag](https://img.shields.io/github/tag/zhongwencool/observer_cli.svg)](https://github.com/zhongwencool/observer_cli)
+[![MIT License](https://img.shields.io/hexpm/l/observer_cli.svg)](https://hex.pm/packages/observer_cli)
+[![Hex.pm Version](https://img.shields.io/hexpm/v/observer_cli.svg)](https://hex.pm/packages/observer_cli)
+[![Hex.pm Downloads](https://img.shields.io/hexpm/dt/observer_cli.svg)](https://hex.pm/packages/observer_cli)
+[![Hex Docs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/observer_cli/)
+
 **Production-ready BEAM diagnostics for operators, automation, and AI agents.**
 
-`observer_cli` is an LLM-friendly command-line tool for inspecting live Erlang
-and Elixir systems. Its command-first CLI provides bounded operations, explicit
-exit codes, and stable text, Erlang-term, and JSON output, so people, scripts,
-and AI agents can use the same production diagnostics interface. An interactive
-TUI remains available for exploratory work.
+`observer_cli` inspects live Erlang and Elixir systems through two explicit
+interfaces. The command CLI is the recommended starting point for bounded,
+repeatable diagnostics with stable text, Erlang-term, or JSON output. The TUI
+provides a live terminal workspace for interactive exploration.
 
-The project is built on Erlang/OTP and [`recon`](https://hex.pm/packages/recon).
-Version 2.0 provides two explicit interfaces:
+Both interfaces use Erlang distribution. Connect only to trusted nodes over a
+trusted network: a distribution cookie is not a read-only credential.
 
-| Interface | Best for | What it provides |
-| --- | --- | --- |
-| **Command CLI — featured** | Production diagnostics, automation, and LLM workflows | Bounded commands with structured output; requires the matching diagnostics bundle on the target |
-| Interactive TUI | Exploring a node and drilling into live runtime views | A live terminal interface that can load the matching `observer_cli` bundle on the target |
+## Installation
 
-> **Trust boundary**
->
-> Both interfaces use Erlang distribution. Run them only against trusted nodes
-> over a trusted network. Read [Safety and observer effect](docs/explanation/safety-and-observer-effect.md)
-> before using scans, state inspection, or tracing in production.
+Install `observer_cli` in the target release so command diagnostics can run
+there. Version 2.0 controllers require the matching `2.0.0` target bundle.
 
-## Start here
+<!-- tabs-open -->
+### Erlang
 
-Choose the path that matches your goal:
+Add the dependency to `rebar.config`:
 
-- Follow [Your first diagnosis](docs/tutorials/first-diagnosis.md) to build the
-  standalone command and inspect a disposable node.
-- Follow [Your first TUI session](docs/tutorials/first-tui-session.md) to learn
-  the interactive views and navigation.
-- Use [Install and build](docs/how-to/install-and-build.md) when adding
-  `observer_cli` to an Erlang or Elixir release.
-- Open the [CLI reference](docs/reference/cli.md) or
-  [TUI reference](docs/reference/tui.md) when you already know what you need.
+```erlang
+{deps, [
+    {observer_cli, "2.0.0"}
+]}.
+```
 
-To discover the command interface from a source checkout:
+Fetch and compile it:
+
+```sh
+rebar3 compile
+```
+
+### Elixir
+
+Add the dependency to `mix.exs`:
+
+```elixir
+defp deps do
+  [
+    {:observer_cli, "2.0.0"}
+  ]
+end
+```
+
+Fetch and compile it:
+
+```sh
+mix deps.get
+mix compile
+```
+<!-- tabs-close -->
+
+## Get started
+
+Build the standalone controller from a `2.0.0` checkout:
 
 ```sh
 rebar3 escriptize
-./_build/default/bin/observer_cli --help
-./_build/default/bin/observer_cli diagnose --help
+mkdir -p "$HOME/.local/bin"
+install -m 0755 _build/default/bin/observer_cli "$HOME/.local/bin/observer_cli"
+observer_cli --version
 ```
 
-The command interface uses an explicit target and cookie source:
+Save a target without storing its cookie value:
 
 ```sh
 export OBSERVER_CLI_COOKIE='replace-me'
 
-./_build/default/bin/observer_cli connect \
+observer_cli connect \
   --node app@host \
   --cookie-env OBSERVER_CLI_COOKIE
-./_build/default/bin/observer_cli status
-./_build/default/bin/observer_cli diagnose
-./_build/default/bin/observer_cli disconnect
+observer_cli status
+observer_cli diagnose
+observer_cli disconnect
 ```
 
-`connect` saves target metadata, not the cookie and not a persistent connection.
-Every later command starts a temporary hidden controller, probes the target, and
-stops the controller before returning. For stateless automation, pass `--node`
-and the cookie source on every command instead.
+`connect` stores a target selector, not a persistent connection. Every remote
+command starts a temporary hidden controller, performs bounded work, validates
+the response, and stops the controller before returning.
 
-Start the interactive interface explicitly with `tui`:
+## What you can do
 
-```sh
-./_build/default/bin/observer_cli tui app@host replace-me 1500
-```
+- Diagnose capacity pressure with calibrated findings and explicit probe
+  coverage.
+- Inspect memory, allocators, schedulers, distribution, and network activity.
+- Rank processes, applications, ETS tables, Mnesia tables, ports, and sockets.
+- Inspect one process, Erlang port, supervision tree, or bounded OTP state.
+- Capture one exact, bounded function trace with explicit node-global consent.
+- Feed automation and agents a versioned `observer_cli.cli/v1` envelope with
+  stable exit statuses.
+- Explore the same node interactively through detailed TUI pages and plugins.
 
-The positional cookie is visible in process arguments and shell history. Prefer
-starting from an Erlang shell that already has the correct cookie, or use this
-form only in a controlled environment. The old bare
-`observer_cli NODE [COOKIE REFRESH_MS]` escript syntax is not supported in 2.0.
+The normative machine-readable response contract is published as
+[`priv/schema/observer_cli.cli.v1.schema.json`](https://raw.githubusercontent.com/zhongwencool/observer_cli/2.0.0/priv/schema/observer_cli.cli.v1.schema.json).
 
-> **Screenshot TODO — `docs/images/tui-home.png`**
->
-> Capture the full Home view from a terminal at least 150 columns wide and 30
-> rows high. It must show the selected Home tab, target and OTP information,
-> system and memory summaries, named process rows, and the footer. Use the
-> reproducible one-paste scene under **Capture the current TUI Home
-> screenshot** in [Contribute a change](docs/how-to/contribute.md#9-capture-the-current-tui-home-screenshot).
+## Choose CLI or TUI
 
-## What you can inspect
+| Interface | Choose it for | Start it with |
+| --- | --- | --- |
+| **CLI — recommended** | Production runbooks, automation, incident capture, and AI-agent workflows | `observer_cli diagnose` |
+| TUI | Live exploration, ranking changes, and detail drill-down | `observer_cli tui app@host` |
 
-The command interface covers:
+The CLI requires `observer_cli` 2.0.0 in the target release and does not inject
+missing diagnostic code. The TUI can load its matching interactive bundle on a
+trusted target before starting. The old bare
+`observer_cli NODE [COOKIE REFRESH_MS]` form is not supported; use the explicit
+`tui` command.
 
-- VM memory, allocators, schedulers, distribution, and network counters;
-- top processes and bounded per-process metadata;
-- applications, ETS tables, Mnesia tables, Erlang ports, and OTP sockets;
-- bounded supervision trees and behavior-aware OTP state shapes;
-- quick, sampled, deep, and application-scoped diagnostics;
-- one exact, bounded function trace with explicit node-global acknowledgement.
+## Next steps
 
-Snapshot and diagnosis commands redact identifiers by default. Inspection and
-trace commands include identifiers by default and accept `--redact`. Text is for
-operators; consultable Erlang terms and JSON use the versioned
-`observer_cli.cli/v1` envelope. JSON requires an OTP 27 or newer controller.
+- [CLI](https://hexdocs.pm/observer_cli/cli.md): install both sides, connect, diagnose, automate,
+  interpret output, and troubleshoot a complete first workflow.
+- [TUI reference](https://hexdocs.pm/observer_cli/tui.md): start the interface and look up every
+  page, field, source, and shortcut.
+- [TUI plugins](https://hexdocs.pm/observer_cli/tui-plugins.md): add plugin sheets, row
+  drill-down, and process formatters.
+- [Core concepts](https://hexdocs.pm/observer_cli/core-concepts.md): understand execution,
+  compatibility, diagnostic evidence, and safety boundaries.
 
-## Documentation
-
-The ExDoc site uses this README as its home page and organizes the remaining
-material by purpose:
-
-| Section | Use it when you want to... |
-| --- | --- |
-| [Tutorials](docs/tutorials/first-diagnosis.md) | learn through a complete first session |
-| [How-to guides](docs/how-to/install-and-build.md) | complete a specific operational or development task |
-| [Reference](docs/reference/cli.md) | look up commands, keys, configuration, or output contracts |
-| [Explanation](docs/explanation/execution-model.md) | understand execution, diagnostics, and safety decisions |
-| [Changelog](docs/CHANGELOG.md) | review behavior changes by release |
-
-### Use the documentation with an LLM
-
-The generated ExDoc site includes an `llms.txt` index whose links point to
-Markdown versions of every documentation page. After the updated documentation
-is published, HexDocs serves it at
-[`/observer_cli/llms.txt`](https://hexdocs.pm/observer_cli/llms.txt). Give that
-URL to an LLM or agent so it can discover the relevant pages without parsing
-the HTML site. To provide one page as context, open it in ExDoc and use **Copy
-Markdown**.
-
-From a source checkout, generate the same files locally:
-
-```sh
-rebar3 docs
-cat doc/llms.txt
-```
-
-The `docs` alias runs `rebar3_ex_doc` with the HTML, Markdown, and EPUB
-formatters. Local Markdown pages are written beside the HTML pages under
-`doc/`. When preparing a HexDocs upload, build with `rebar3 docs` first and
-pass that directory to `rebar3_hex` with `--doc-dir doc`; otherwise
-`rebar3_ex_doc`'s default provider invocation generates only HTML and EPUB.
-
-## Compatibility and verification
-
-The repository CI compiles, checks, and tests the generated escript on OTP 26,
-27, 28, and 29. This is a controller build matrix, not proof of every possible
-controller/target version pair. Command diagnostics require target capabilities
-matching bundle `2.0.0` and protocol `1`.
-
-See [Output contract and compatibility](docs/reference/output-contract.md) for
-the exact format and runtime boundaries.
-
-## License
-
-`observer_cli` is released under the [MIT License](LICENSE).
+The generated ExDoc site provides `llms.txt`, a Markdown version of every page,
+and ExDoc's built-in **Copy Markdown** action. Build it locally with
+`rebar3 docs`.

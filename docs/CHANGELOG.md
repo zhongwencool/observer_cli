@@ -44,7 +44,7 @@ Release and maintenance changes, newest first.
 - Documented scan admission, Erlang distribution trust, high-risk state and
   supervision inspection, and node-global `recon` cleanup.
 - Introduced explicit 2.0 plugin callback shapes. See
-  [Extend the TUI](how-to/extend-the-tui.md) for the migration table.
+  [TUI plugins](reference/tui-plugins.md#migrate-a-1x-plugin-to-20) for the migration table.
 
 ## 1.8.8
 

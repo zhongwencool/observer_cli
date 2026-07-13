@@ -1,428 +1,525 @@
-# Command-line reference
+# CLI
 
-`observer_cli` 2.0 combines bounded inspection commands with an interactive
-TUI. This reference covers syntax, defaults, limits, and exit behavior. The
-built escript exposes the same contract through `observer_cli --help` and
-`observer_cli COMMAND --help`.
+Use the command interface for bounded production diagnostics, automation, and
+agent workflows. This page is a complete path from target installation to a
+first diagnosis, structured output, and troubleshooting.
 
-## Invocation
+Commands use this form:
 
 ```text
 observer_cli COMMAND [ARGUMENTS] [OPTIONS]
-observer_cli tui NODE [COOKIE REFRESH_MS]
 ```
 
 Options follow the command name. A global option before the command is rejected.
+Use `observer_cli --help` and `observer_cli COMMAND --help` to inspect the built
+command surface.
 
-Local informational forms are:
+## 1. Install observer_cli on the target
 
-| Form | Result |
-| --- | --- |
-| `observer_cli`, `observer_cli --help`, `observer_cli -h` | Root help |
-| `observer_cli help COMMAND` | Help for one root command |
-| `observer_cli COMMAND --help` | Help for one root command |
-| `observer_cli trace call --help` | Trace-call help and safety contract |
-| `observer_cli trace stop --help` | Trace-cleanup help and safety contract |
-| `observer_cli --version` | Bundle version, CLI schema, protocol version, and controller OTP release |
+The target release must contain `observer_cli` and `recon`. Command diagnostics
+do not upload missing code. A 2.0.0 controller requires target bundle `2.0.0`
+and protocol `1`.
 
-`version` without the leading `--` is not a command.
+<!-- tabs-open -->
+### Erlang
 
-## Target selection
+Add the dependency to `rebar.config`:
 
-Every command except `connect`, `status`, `disconnect`, and `tui` accepts a
-saved or explicit target.
-
-### Saved target
-
-`connect` saves target metadata. A later command with no `--node` uses that context:
-
-```text
-observer_cli connect --node NODE \
-  (--cookie-env NAME | --cookie-file PATH) [OPTIONS]
+```erlang
+{deps, [
+    {observer_cli, "2.0.0"}
+]}.
 ```
 
-The context stores the node, name mode, and cookie source. It does not store the cookie and does not keep a connection open. `status` starts a new probe, and `disconnect` deletes the context.
+Fetch and compile it:
 
-A reachable target with a missing or incompatible diagnostics bundle can still be saved. `connect` and `status` report that state as a warning; diagnostic and inspection commands require the compatible bundle.
+```sh
+rebar3 compile
+```
 
-### Explicit target
+### Elixir
 
-Pass all of the following together:
+Add the dependency to `mix.exs`:
+
+```elixir
+defp deps do
+  [
+    {:observer_cli, "2.0.0"}
+  ]
+end
+```
+
+Fetch and compile it:
+
+```sh
+mix deps.get
+mix compile
+```
+<!-- tabs-close -->
+
+Include both applications in the deployed release. The target must run as a
+distributed Erlang node before a controller can reach it.
+
+## 2. Build the controller escript
+
+Build the standalone command from a 2.0.0 source checkout:
+
+```sh
+git clone --branch 2.0.0 \
+  https://github.com/zhongwencool/observer_cli.git
+cd observer_cli
+rebar3 escriptize
+./_build/default/bin/observer_cli --version
+./_build/default/bin/observer_cli --help
+```
+
+The version output identifies the bundle, CLI schema, target protocol, and the
+controller OTP release. For example, a controller built on OTP 29 reports:
+
+```text
+observer_cli 2.0.0
+schema observer_cli.cli/v1
+protocol 1
+controller OTP 29
+```
+
+Install the generated escript for the current user:
+
+```sh
+mkdir -p "$HOME/.local/bin"
+install -m 0755 _build/default/bin/observer_cli \
+  "$HOME/.local/bin/observer_cli"
+```
+
+Add `$HOME/.local/bin` to `PATH` if necessary. Rebuild the escript after changing
+Observer CLI or its dependencies.
+
+Every remote command starts from a non-distributed escript, creates a temporary
+hidden controller with no listening distribution port, performs one request,
+validates the response, and confirms cleanup. There is no daemon or persistent
+connection.
+
+## 3. Set the node and cookie
+
+You need the target's full distributed node name and Erlang distribution
+cookie. Erlang distribution grants trusted-peer code execution and is not
+encrypted by default. Use only trusted nodes and networks.
+
+Pass a node with exactly one cookie source:
 
 ```text
 --node NODE (--cookie-env NAME | --cookie-file PATH)
 ```
 
-`--cookie-env` and `--cookie-file` are mutually exclusive. `--name-mode`
-accepts `short` or `long`. Without it, a host containing neither `.` nor `:`
-selects short names; other hosts select long names. A node without `@HOST`
-uses the controller hostname for this inference.
+`--cookie-env` takes the environment variable name, not the cookie value:
 
-| Option | Meaning |
+```sh
+export OBSERVER_CLI_COOKIE='replace-me'
+observer_cli memory \
+  --node 'app@host.example' \
+  --cookie-env OBSERVER_CLI_COOKIE
+```
+
+For a cookie file, use an owner-only regular file:
+
+```sh
+chmod 600 /secure/path/app.cookie
+observer_cli memory \
+  --node 'app@host.example' \
+  --cookie-file '/secure/path/app.cookie'
+```
+
+On Unix, a cookie file with group or other permission bits is rejected. One
+trailing LF or CRLF is removed; the remaining cookie must contain 1 to 255
+printable ASCII bytes.
+
+Name mode defaults from the host: a dot or colon selects long names, otherwise
+short names. A node without `@HOST` uses the controller hostname for inference.
+Override it when necessary:
+
+```text
+--name-mode short
+--name-mode long
+```
+
+The controller and target must use the same name mode. An explicit `--node`
+without a cookie source is rejected.
+
+## 4. Connect and check status
+
+Save the target so later commands do not repeat it:
+
+```sh
+observer_cli connect \
+  --node 'app@host.example' \
+  --cookie-file '/secure/path/app.cookie'
+
+observer_cli status
+```
+
+`connect` verifies reachability and saves:
+
+- the normalized node name;
+- `short` or `long` name mode; and
+- the environment-variable name or absolute cookie-file path.
+
+It does not store the cookie value or keep a connection open. The selector is
+stored at the platform user-config path:
+
+```erlang
+filename:join(filename:basedir(user_config, "observer_cli"), "context.etf")
+```
+
+For example, macOS normally resolves it to
+`~/Library/Application Support/observer_cli/context.etf`. The directory is mode
+`0700`; the regular, non-symlink file is mode `0600`, size-limited, safely
+decoded, and replaced atomically only after controller cleanup succeeds.
+
+A reachable target with a missing or incompatible diagnostics bundle is still
+saved. `connect` and `status` report that state as a warning. Diagnostic and
+inspection commands then fail with a capability error until the matching bundle
+is deployed.
+
+For stateless automation, skip `connect` and pass the explicit target and cookie
+source to every command:
+
+```sh
+observer_cli diagnose \
+  --node 'app@host.example' \
+  --cookie-env OBSERVER_CLI_COOKIE \
+  --format term
+```
+
+## 5. Diagnose the target
+
+Start with the default diagnosis:
+
+```sh
+observer_cli diagnose
+printf 'exit=%s\n' "$?"
+```
+
+It takes two samples roughly 1.5 seconds apart. It checks process, port, atom,
+and ETS counts against their VM limits, warning above 85 percent and reporting
+a critical finding at or above 95 percent. Context from other available probes
+does not become a finding by itself.
+
+Use an observation window only when a point-in-time result is insufficient:
+
+```sh
+observer_cli diagnose --observe 10s
+observer_cli diagnose --observe 10s --deep
+observer_cli diagnose --observe 10s --app kernel
+```
+
+| Option | Constraint |
 | --- | --- |
-| `--node NODE` | Target distributed Erlang node |
-| `--cookie-env NAME` | Read the cookie from environment variable `NAME` |
-| `--cookie-file PATH` | Read the cookie from a protected regular file |
-| `--name-mode short\|long` | Override name-mode inference |
+| `--observe DURATION` | `5s` to `60s`; takes five planned samples |
+| `--deep` | Requires `--observe`; conflicts with `--app`; takes seven samples and a binary-holder ranking |
+| `--app APP` | Requires `--observe`; conflicts with `--deep`; adds bounded application evidence |
+| `--include-identifiers` | Reveals identifiers that diagnosis redacts by default |
 
-Cookie-source and saved-context security rules are defined in [Output and storage contract](output-contract.md#saved-target-context).
+Observation adds trends for global memory and stable resources. New, terminated,
+or replaced resources are not treated as growth in one resource. Deep mode does
+more work but does not relax scan budgets.
 
-## Output options
+Read a structured diagnosis in this order:
 
-| Option | Default | Constraint |
-| --- | --- | --- |
-| `--format text\|term\|json` | `text` | Select one output encoding |
-| `--json` | Off | Alias for `--format json`; JSON requires an OTP 27 or newer controller |
-| `--redact` | See below | Replace identifiers in inspection and trace output |
-| `--include-identifiers` | See below | Reveal identifiers in `snapshot` and `diagnose` |
-| `--timeout DURATION` | Command-dependent | Positive duration, at most `120s` |
+1. `outcome` says `complete`, `partial`, or `error`.
+2. `meta.capture.probes` says what ran, whether it was required, and its coverage.
+3. `data.findings` contains calibrated conclusions backed by response paths.
+4. `data.context` contains measurements that do not claim a root cause.
+5. `data.skipped` names unrequested or deliberately uncalibrated rules.
+6. `issues` contains non-probe warnings and errors.
 
-`--json` conflicts with a non-JSON `--format`. `--redact` and `--include-identifiers` are mutually exclusive.
+Failed probes and their reason codes appear only in
+`meta.capture.probes`. Incomplete required coverage suppresses findings and
+produces a partial result. "No findings" means only that the covered rules
+found nothing; it does not certify that the node is healthy.
 
-`snapshot` and `diagnose` redact identifiers by default; use
-`--include-identifiers` to reveal them. Other remote inspection and trace
-commands include identifiers by default; use `--redact` to hide them. Context
-commands accept neither option.
+## 6. Inspect resources and trace
 
-A duration is a positive integer in milliseconds (`1500` or `1500ms`) or seconds (`2s`). Fractional durations are not accepted.
+Run one narrow command for the domain indicated by the diagnosis.
 
-The ordinary deadline is `10s`. Derived defaults are:
-
-- a command with an explicit `--duration`: the larger of `10s` and the sample duration plus `5s`;
-- `diagnose --observe`: the observation duration plus `5s`;
-- `trace call`: the larger of `10s` and the trace duration plus `5s` (`15s` with defaults).
-
-An explicit timeout for sampled work must cover the sample or observation duration plus `5s`. In particular, an explicit timeout for `schedulers` must be at least `6.5s` when its default `1500ms` sample is used.
-
-## Target context commands
-
-### `connect`
+### Snapshot and VM health
 
 ```text
-observer_cli connect --node NODE \
-  (--cookie-env NAME | --cookie-file PATH) \
-  [--name-mode short|long] [--timeout DURATION] \
-  [--format text|term|json] [--json]
-```
-
-Verifies distribution reachability, reads target OTP information, probes diagnostics capabilities, and saves target metadata. It reports expected and observed bundle/protocol versions. It never stores the cookie or leaves a controller node running.
-
-Defaults: inferred name mode, `10s` timeout, text output.
-
-### `status`
-
-```text
-observer_cli status [--timeout DURATION] \
-  [--format text|term|json] [--json]
-```
-
-Loads and probes the saved context. The result includes target OTP, name mode, cookie-source metadata, and diagnostics compatibility. It creates no persistent connection.
-
-Defaults: `10s` timeout, text output.
-
-### `disconnect`
-
-```text
-observer_cli disconnect [--format text|term|json] [--json]
-```
-
-Deletes the saved target context. It performs no network disconnect. Repeating the command with no context succeeds.
-
-## Diagnostics
-
-### `diagnose`
-
-```text
-observer_cli diagnose [--observe DURATION] [--deep | --app APP] \
-  [--include-identifiers] [TARGET OPTIONS] [OUTPUT OPTIONS]
-```
-
-With no diagnostic option, performs a two-sample diagnosis over roughly 1.5
-seconds. A completed diagnosis with warning or critical findings exits `1`.
-
-| Option | Default | Constraint |
-| --- | --- | --- |
-| `--observe DURATION` | No observation window | `5s` to `60s` |
-| `--deep` | Off | Requires `--observe`; conflicts with `--app` |
-| `--app APP` | No application scope | Requires `--observe`; conflicts with `--deep` |
-| `--include-identifiers` | Off | Include node, PID, name, application, and MFA identifiers |
-
-Application observation uses the same preflight admission limit of 300 and
-100-child output bound as `supervision-tree`. A scan-budget refusal is retained
-instead of repeating child enumeration in later samples.
-
-### `snapshot`
-
-```text
-observer_cli snapshot [--deep] [--include-identifiers] \
-  [TARGET OPTIONS] [OUTPUT OPTIONS]
-```
-
-Collects a bounded fact bundle. The default captures core VM facts without resource inventories. `--deep` adds bounded process, application, table, network, port, and socket inventories.
-
-Defaults: shallow capture, redacted identifiers.
-
-## VM health commands
-
-### `memory`
-
-```text
+observer_cli snapshot [--deep] [TARGET OPTIONS] [OUTPUT OPTIONS]
 observer_cli memory [TARGET OPTIONS] [OUTPUT OPTIONS]
+observer_cli schedulers [--duration DURATION] [TARGET OPTIONS] [OUTPUT OPTIONS]
+observer_cli distribution [--limit N] [TARGET OPTIONS] [OUTPUT OPTIONS]
+observer_cli network [--sort KEY] [--limit N] [--duration DURATION]
 ```
 
-Returns point-in-time BEAM memory, allocator, and runtime facts. Values are VM facts, not host RSS. There are no command-specific options.
+| Command | Default and boundary |
+| --- | --- |
+| `snapshot` | Shallow core VM facts; `--deep` adds bounded inventories |
+| `memory` | BEAM memory, allocators, and runtime facts, not host RSS |
+| `schedulers` | `1500ms`; accepts `250ms` to `10s` |
+| `distribution` | Limit `20`; accepts `1` to `200` |
+| `network` | Sort `oct`, limit `20`; optional `250ms` to `10s` interval |
 
-### `schedulers`
+`network` sort keys are `oct`, `recv_oct`, `send_oct`, `cnt`, `recv_cnt`, and
+`send_cnt`. Its counters cover VM port drivers and legacy `inet`, not all host
+traffic or the OTP socket registry.
 
-```text
-observer_cli schedulers [--duration DURATION] \
-  [TARGET OPTIONS] [OUTPUT OPTIONS]
-```
-
-Measures normal and dirty scheduler utilization and run queues.
-
-| Option | Default | Range |
-| --- | --- | --- |
-| `--duration` | `1500ms` | `250ms` to `10s` |
-
-### `distribution`
+### Processes, applications, and tables
 
 ```text
-observer_cli distribution [--limit N] \
-  [TARGET OPTIONS] [OUTPUT OPTIONS]
-```
-
-Returns visible and hidden connected nodes plus distribution context.
-
-| Option | Default | Range |
-| --- | --- | --- |
-| `--limit` | `20` | `1` to `200` |
-
-### `network`
-
-```text
-observer_cli network [--sort KEY] [--limit N] [--duration DURATION] \
-  [TARGET OPTIONS] [OUTPUT OPTIONS]
-```
-
-Returns VM port-driver and legacy `inet` counters. It does not represent all host network traffic. Without `--duration`, counters are totals; with it, the result contains interval deltas.
-
-| Option | Default | Accepted values |
-| --- | --- | --- |
-| `--sort` | `oct` | `oct`, `recv_oct`, `send_oct`, `cnt`, `recv_cnt`, `send_cnt` |
-| `--limit` | `20` | `1` to `200` |
-| `--duration` | No interval | `250ms` to `10s` |
-
-## Runtime-resource commands
-
-### `processes`
-
-```text
-observer_cli processes [--sort KEY] [--limit N] [--duration DURATION] \
-  [TARGET OPTIONS] [OUTPUT OPTIONS]
-```
-
-Lists top local processes using bounded, explicit-key inspection. `--duration` reports interval deltas for changing metrics instead of cumulative totals.
-
-| Option | Default | Accepted values |
-| --- | --- | --- |
-| `--sort` | `memory` | `memory`, `message_queue_len`, `reductions`, `binary_memory`, `total_heap_size` |
-| `--limit` | `20` | `1` to `200` |
-| `--duration` | No interval | `250ms` to `10s` |
-
-### `process`
-
-```text
+observer_cli processes [--sort KEY] [--limit N] [--duration DURATION]
 observer_cli process PID_OR_NAME [TARGET OPTIONS] [OUTPUT OPTIONS]
+observer_cli applications [--sort KEY] [--limit N]
+observer_cli ets [--sort memory|size] [--limit N]
+observer_cli mnesia [--sort memory|size] [--limit N]
 ```
 
-Inspects one target-local PID, such as `"<0.123.0>"`, or one registered name.
-The bounded response includes process metadata and a normalized current
-stacktrace, but excludes messages, the process dictionary, and arbitrary
-process state.
+`processes` defaults to `--sort memory --limit 20`; accepted sort keys are
+`memory`, `message_queue_len`, `reductions`, `binary_memory`, and
+`total_heap_size`. Its optional duration is `250ms` to `10s`.
 
-### `applications`
+`process` accepts a target-local PID such as `'<0.123.0>'` or an existing
+registered name. It returns bounded metadata and a normalized current stack,
+not messages, the process dictionary, or arbitrary state.
 
-```text
-observer_cli applications [--sort KEY] [--limit N] \
-  [TARGET OPTIONS] [OUTPUT OPTIONS]
-```
+`applications` defaults to memory and also sorts by `process_count`,
+`reductions`, or `message_queue_len`. ETS and Mnesia commands read table
+metadata, never table contents. List limits default to `20` and accept `1` to
+`200`.
 
-Groups process count, memory, reductions, and message queues by application.
-
-| Option | Default | Accepted values |
-| --- | --- | --- |
-| `--sort` | `memory` | `memory`, `process_count`, `reductions`, `message_queue_len` |
-| `--limit` | `20` | `1` to `200` |
-
-### `ets`
+### Ports and sockets
 
 ```text
-observer_cli ets [--sort KEY] [--limit N] \
-  [TARGET OPTIONS] [OUTPUT OPTIONS]
-```
-
-Lists ETS metadata without reading table contents.
-
-| Option | Default | Accepted values |
-| --- | --- | --- |
-| `--sort` | `memory` | `memory`, `size` |
-| `--limit` | `20` | `1` to `200` |
-
-### `mnesia`
-
-```text
-observer_cli mnesia [--sort KEY] [--limit N] \
-  [TARGET OPTIONS] [OUTPUT OPTIONS]
-```
-
-Lists local Mnesia table metadata. A stopped Mnesia application is represented as `not_running`.
-
-| Option | Default | Accepted values |
-| --- | --- | --- |
-| `--sort` | `memory` | `memory`, `size` |
-| `--limit` | `20` | `1` to `200` |
-
-### `ports`
-
-```text
-observer_cli ports [--sort KEY] [--limit N] \
-  [TARGET OPTIONS] [OUTPUT OPTIONS]
-```
-
-Lists non-`inet` Erlang Port resources. These are VM Port objects, not TCP or UDP port numbers.
-
-| Option | Default | Accepted values |
-| --- | --- | --- |
-| `--sort` | `queue_size` | `queue_size`, `memory`, `input`, `output`, `io` |
-| `--limit` | `20` | `1` to `200` |
-
-### `port`
-
-```text
+observer_cli ports [--sort KEY] [--limit N]
 observer_cli port '#Port<0.N>' [TARGET OPTIONS] [OUTPUT OPTIONS]
+observer_cli sockets [--sort KEY] [--limit N] [--duration DURATION]
 ```
 
-Inspects one target-local Erlang Port. Only the canonical target text `#Port<0.N>` is accepted. `--redact` hides the port, process, endpoint, interface, and network-namespace identifiers.
+`ports` lists non-`inet` Erlang Port objects, not TCP or UDP port numbers. It
+defaults to `queue_size`; accepted keys are `queue_size`, `memory`, `input`,
+`output`, and `io`. `port` accepts only canonical target-local text such as
+`'#Port<0.7>'`.
 
-### `sockets`
+`sockets` reads the OTP socket registry. It defaults to `io`; accepted keys are
+`io`, `read_bytes`, `write_bytes`, `packets`, `waits`, and `fails`. The optional
+duration is `250ms` to `10s`.
+
+### OTP state and supervision
 
 ```text
-observer_cli sockets [--sort KEY] [--limit N] [--duration DURATION] \
-  [TARGET OPTIONS] [OUTPUT OPTIONS]
+observer_cli otp-state PID_OR_NAME --behavior BEHAVIOR [--limit N]
+observer_cli supervision-tree --app APP
 ```
 
-Lists sockets exposed by the OTP `socket` registry. Without `--duration`, counters are totals; with it, the result contains interval deltas.
+`otp-state` requires the operator to assert `gen_server`, `gen_statem`, or
+`gen_event`. It copies process state before reducing it to bounded,
+behavior-aware shapes and therefore reports `risk_level=high`. `--limit`
+applies only to `gen_event`, defaults to `20`, and accepts `1` to `200`.
 
-| Option | Default | Accepted values |
-| --- | --- | --- |
-| `--sort` | `io` | `io`, `read_bytes`, `write_bytes`, `packets`, `waits`, `fails` |
-| `--limit` | `20` | `1` to `200` |
-| `--duration` | No interval | `250ms` to `10s` |
+`supervision-tree` returns one running application's public supervisor root and
+direct children; it does not recurse. It refuses child enumeration above 300
+preflight children and returns at most 100 in OTP order. Both the preflight and
+state acquisition can still have target-dependent cost.
 
-## OTP-structure commands
+### Trace one exact call
 
-### `otp-state`
+Tracing changes node-global static tracing. Coordinate with other operators,
+select one target-local PID and one exact exported MFA, then acknowledge trace
+replacement:
 
-```text
-observer_cli otp-state PID_OR_NAME --behavior BEHAVIOR [--limit N] \
-  [TARGET OPTIONS] [OUTPUT OPTIONS]
+```sh
+observer_cli trace call my_worker:handle_call/3 \
+  --pid '<0.123.0>' \
+  --duration 2s \
+  --limit 20 \
+  --replace-existing-trace \
+  --format term > trace.term
 ```
-
-Resolves one target-local PID or existing registered name, copies its OTP state,
-and returns behavior-aware bounded shapes instead of arbitrary state values.
-`--behavior` is a required operator assertion; the command does not perform a
-second, more invasive behavior-detection call.
 
 | Option | Default | Constraint |
-| --- | --- | --- |
-| `--behavior` | Required | `gen_server`, `gen_statem`, or `gen_event` |
-| `--limit` | `20` for `gen_event` | `1` to `200`; rejected for other behaviors |
-| `--timeout` | `10s` | At least `10s` for this command |
-
-For `gen_server`, the result contains `state_shape`. For `gen_statem`, it
-contains a bounded `current_state` identity plus `current_state_shape` and
-`data_shape`. For `gen_event`, it contains ordered handler entries with module,
-bounded ID, and state shape. One command shares a 64 KiB state-shape budget,
-10,000 visited nodes, and depth 6; reaching a bound returns a successful,
-explicitly truncated result. The handler limit is an output soft cap: state
-acquisition still copies the complete handler state list. The inner
-`sys:get_state/2` timeout is fixed at five seconds and cannot retract a system
-request already delivered to the process. Use `--redact` before sharing a
-report.
-
-### `supervision-tree`
-
-```text
-observer_cli supervision-tree --app APP \
-  [TARGET OPTIONS] [OUTPUT OPTIONS]
-```
-
-Returns one running application's public supervisor root and direct children;
-it does not recurse. `--app` is required. The command refuses `which_children`
-when the preflight observes more than 300 direct children and returns at most
-100 children in OTP order. These limits do not make the preceding
-`count_children` call constant-time or cancellable.
-
-## Trace commands
-
-Tracing is node-global. Both trace operations require an acknowledgement option because they can clear tracing established by another tool.
-
-### `trace call`
-
-```text
-observer_cli trace call MODULE:FUNCTION/ARITY \
-  --pid PID --replace-existing-trace \
-  [--duration DURATION] [--limit N | --rate N/s] \
-  [TARGET OPTIONS] [OUTPUT OPTIONS]
-```
-
-Runs call-only tracing for one exact MFA and one target-local PID. Module and function wildcards are not accepted. Arity is `0` to `255`.
-
-| Option | Default | Range or requirement |
 | --- | --- | --- |
 | `--pid` | None | Required target-local PID |
 | `--duration` | `10s` | `100ms` to `60s` |
-| `--limit` | `100` | `1` to `1000` events; conflicts with `--rate` |
+| `--limit` | `100` | `1` to `1000`; conflicts with `--rate` |
 | `--rate` | Off | `1/s` to `200/s`; conflicts with `--limit` |
 | `--replace-existing-trace` | Off | Required acknowledgement |
 
-Setup clears existing node-static tracing before installing the exact pattern.
+Setup and cleanup call `recon_trace:clear/0`, which can remove unrelated
+node-static traces and fixed-name trace helpers. The result records tracee and
+MFA identities plus session-relative offsets; it does not collect arguments,
+returns, exceptions, or stacks.
 
-### `trace stop`
+Use emergency cleanup only when a trace was interrupted or cleanup is
+unconfirmed:
 
-```text
-observer_cli trace stop --all [TARGET OPTIONS] [OUTPUT OPTIONS]
+```sh
+observer_cli trace stop --all
 ```
 
-Clears observer_cli tracing and is also the emergency cleanup operation. `--all` is required. The operation always calls `recon_trace:clear/0`, so it can remove unrelated node-static traces. With the bundled recon 2.5.6 behavior, fixed-name tracer or formatter processes may also be terminated.
+`--all` is mandatory because cleanup has the same node-global scope.
 
-## Interactive TUI command
+## 7. Use output and exit contracts
+
+Remote commands accept:
+
+| Option | Default | Constraint |
+| --- | --- | --- |
+| `--format text\|term\|json` | `text` | Select one encoding |
+| `--json` | Off | Alias for JSON; requires OTP 27 or newer on the controller |
+| `--redact` | See below | Hide identifiers in inspection and trace output |
+| `--include-identifiers` | See below | Reveal snapshot and diagnosis identifiers |
+| `--timeout DURATION` | Command-dependent | Positive duration, at most `120s` |
+
+Text is for operators. Do not scrape it. Term output is one consultable Erlang
+map followed by a period. JSON contains the same data as one object and uses the
+controller's OTP `json` module.
+
+Structured responses use exactly six top-level keys:
+
+```erlang
+#{
+  <<"schema">> => <<"observer_cli.cli/v1">>,
+  <<"command">> => CommandOrNull,
+  <<"outcome">> => <<"complete">> | <<"partial">> | <<"error">>,
+  <<"data">> => CommandDataOrNull,
+  <<"meta">> => #{
+    <<"target">> => TargetOrNull,
+    <<"capture">> => CaptureOrNull
+  },
+  <<"issues">> => Issues
+}
+```
+
+The normative machine-readable definition is the JSON Schema 2020-12 document
+at
+[`priv/schema/observer_cli.cli.v1.schema.json`](https://raw.githubusercontent.com/zhongwencool/observer_cli/2.0.0/priv/schema/observer_cli.cli.v1.schema.json).
+It is included in Hex and release artifacts.
+
+The `schema` value is the observer_cli protocol identity, not a JSON Schema
+dialect. JSON follows RFC 8259 and capture timestamps use RFC 3339. The schema groups
+context, snapshot/diagnostic, VM-health, resource-list, resource-detail, and
+trace command data with `oneOf` discriminators.
+
+`meta.capture` includes timestamps, duration, probes, and known observer
+effects. Each probe records `id`, `required`, `status`, `reason_code`, duration,
+samples, and coverage. `issues` contains only non-probe problems. Command data
+depends on the `command` identity; consumers must validate that command family,
+not assume one universal `data` shape.
+
+Every issue has exactly `severity`, `class`, `reason_code`, and `message`.
+Probe failure reasons stay only in `meta.capture.probes`; they are not copied
+into `issues` or `data.skipped`. An optional probe unavailable before execution
+does not make a complete command partial. A trace can have
+`data.trace.trace_complete=false` while the top-level outcome remains
+`complete` when the bounded trace command itself completed as promised.
+
+Snapshot and diagnosis redact identifiers by default; use
+`--include-identifiers` only for a protected destination. Other inspection and
+trace commands include identifiers by default; use `--redact` before exporting
+them. The two identifier-policy options are mutually exclusive. Aliases are
+stable within one response and reset on the next invocation.
+
+### Timeouts
+
+Durations accept positive integer milliseconds (`1500` or `1500ms`) or seconds
+(`2s`). Fractional values are rejected. The ordinary deadline is `10s`.
+Sampled work derives a deadline of at least its duration plus five seconds. An
+explicit timeout must cover that margin. For example:
+
+```sh
+observer_cli diagnose --observe 30s --timeout 40s --format term
+```
+
+### Standard streams
+
+| Situation | stdout | stderr |
+| --- | --- | --- |
+| Successful text, term, or JSON command | Encoded response | Empty |
+| Text command error | Empty | Plain diagnostic and, for arguments, a help hint |
+| Term or JSON command error | Error envelope when encoding works | Empty |
+| JSON requested before OTP 27 | Empty | Plain encoder diagnostic |
+| Help or version | Help/version text | Empty |
+
+### Exit statuses
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Complete command; a diagnosis has no findings |
+| `1` | Complete diagnosis has warning or critical findings |
+| `2` | Argument, output-format, or direct capability error |
+| `3` | Partial result, safety refusal, connection or scan-budget failure, or required-probe failure |
+| `4` | Schema-validation, cleanup, internal, or unknown failure |
+
+A nonzero command can still return valuable structured evidence. Automation
+must preserve stdout, stderr, and the exit status, then inspect `outcome`,
+`meta.capture.probes`, and `issues`.
+
+```sh
+#!/bin/sh
+set -u
+
+report="observer-cli-$(date -u +%Y%m%dT%H%M%SZ).term"
+errors="$report.stderr"
+
+if observer_cli diagnose --observe 30s --deep --timeout 40s \
+    --format term >"$report" 2>"$errors"
+then
+    status=0
+else
+    status=$?
+fi
+
+case "$status" in
+    0) echo "diagnosis complete: $report" ;;
+    1) echo "diagnosis has findings: $report" ;;
+    2) echo "fix invocation or target capability: $report" >&2 ;;
+    3) echo "preserve partial/refused runtime evidence: $report" >&2 ;;
+    4) echo "investigate schema, cleanup, or internal failure: $report" >&2 ;;
+    *) echo "unexpected observer_cli exit status: $status" >&2 ;;
+esac
+
+exit "$status"
+```
+
+## 8. Disconnect and troubleshoot
+
+Remove the saved target selector:
+
+```sh
+observer_cli disconnect
+```
+
+This removes local metadata, not a live network connection. Repeating it with
+no saved context succeeds.
+
+| Symptom or reason code | Action |
+| --- | --- |
+| `missing_cookie_source` | With `--node`, pass exactly one of `--cookie-env` or `--cookie-file`. |
+| `cookie_file_permissions` | Remove every group and other permission bit; normally use `chmod 600`. |
+| `no_active_context` | Run `connect`, or supply explicit target and cookie options. |
+| Connection failure | Verify the full node name, short/long mode, cookie, EPMD, firewall, and network reachability. |
+| `capability_unavailable` | Deploy the matching observer_cli bundle and `recon` in the target release. The CLI does not inject them. |
+| JSON unavailable | Use an OTP 27 or newer controller, or select term output. |
+| `timeout_too_short` | Allow the sampling or trace duration plus five seconds. |
+| Schema incompatibility | Use the same observer_cli build on controller and target. |
+| Scan-budget refusal | Narrow the command or limit instead of repeatedly forcing the scan. |
+| Exit `4` cleanup failure | Preserve all output and confirm target state before another invasive action. |
+
+Local information forms do not connect to a target:
+
+```text
+observer_cli
+observer_cli --help
+observer_cli help COMMAND
+observer_cli COMMAND --help
+observer_cli trace call --help
+observer_cli trace stop --help
+observer_cli --version
+```
+
+`version` without `--` is not a command. The interactive interface is explicit:
 
 ```text
 observer_cli tui NODE [COOKIE REFRESH_MS]
 ```
 
-Starts the terminal UI. `REFRESH_MS` defaults to `1500` and must be at least `1000`. The three-argument positional form requires both `COOKIE` and `REFRESH_MS`; there is no form with `NODE COOKIE` only.
-
-When `COOKIE` is omitted, the controller's current cookie is used. A positional
-cookie is visible in process arguments and shell history. Before starting the
-UI, the escript loads its TUI module bundle when the target copy is missing or
-incompatible. See [TUI reference](tui.md) for pages and keys.
-
-## Exit statuses
-
-| Code | Meaning |
-| --- | --- |
-| `0` | Success, including a complete diagnosis with no findings |
-| `1` | Complete `diagnose` result with warning or critical findings |
-| `2` | Argument, format, or direct capability error |
-| `3` | Runtime failure, safety refusal, scan-budget failure, required-probe failure, or ordinary partial capture |
-| `4` | Internal, schema-validation, or cleanup failure |
-
-A command may return structured data with a nonzero status. A bounded trace is
-the exception to the ordinary partial-capture mapping: it may be partial and
-still exit `0` when its probe completed without errors. Automation must inspect
-both the exit status and the envelope's `capture`, `warnings`, and `errors`
-fields. See
-[Output and storage contract](output-contract.md).
+The old bare `observer_cli NODE [COOKIE REFRESH_MS]` entry is not supported.
