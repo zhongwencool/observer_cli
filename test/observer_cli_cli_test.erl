@@ -1411,6 +1411,9 @@ command_text_and_error_encoding_test() ->
             {{unsupported_format, "yaml"}, <<"unsupported format: yaml">>},
             {json_unavailable, <<"JSON output requires OTP 27 or newer">>},
             {command_unavailable, <<"command capability is not available yet">>},
+            {{remote_otp_mismatch, "29", "26"}, <<
+                "TUI auto-load requires the same OTP major release; controller OTP 29, target OTP 26"
+            >>},
             {invalid_command_response, <<
                 "target response schema is incompatible; install the same observer_cli build on the controller and target"
             >>},

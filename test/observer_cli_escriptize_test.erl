@@ -302,16 +302,11 @@ assert_halt(Expected, Fun) ->
 
 required_modules_test_() ->
     [
-        {"simple application without deps", fun simple_app/0},
-        {"application with dependency", fun app_with_dependency/0},
-        {"unloaded dependency metadata", fun unloaded_dependency_metadata/0},
-        {"application with included application", fun app_with_included/0},
+        {"required modules contain roots only", fun required_modules_contain_roots_only/0},
         {"resolve target name", fun resolve_target_name_test/0},
         {"random local node name", fun random_local_node_name_test/0},
         {"ensure set env", fun ensure_set_env_test/0},
         {"ensure set env stop remote fun", fun ensure_set_env_stop_remote_fun_test/0},
-        {"application helpers", fun application_helpers_test/0},
-        {"application helpers fallback", fun application_helpers_fallback_test/0},
         {"parse args", fun parse_args_test/0},
         {"run args", fun run_args_test/0},
         {"run command args", fun run_command_args_test/0},
@@ -347,85 +342,45 @@ required_modules_test_() ->
         {"hostile capability values", {timeout, 20000, fun hostile_capability/0}}
     ].
 
-simple_app() ->
-    TestApp = application_spec(#{
-        application => some_app,
-        applications => [kernel, stdlib],
-        included_applications => [],
-        modules => [some_app]
-    }),
-    ok = application:load(TestApp),
-
-    ?assertEqual([some_app], observer_cli_escriptize:required_modules([some_app])),
-
-    application:unload(some_app).
-
-app_with_dependency() ->
+required_modules_contain_roots_only() ->
     ok = application:load(
         application_spec(#{
-            application => dependency_a,
+            application => formatter_dependency,
             applications => [kernel, stdlib],
             included_applications => [],
-            modules => [dependency_a_1, dependency_a_2]
+            modules => [formatter_dependency_module]
         })
     ),
-
     ok = application:load(
         application_spec(#{
-            application => some_app,
-            applications => [kernel, stdlib, dependency_a],
+            application => formatter_included,
+            applications => [kernel, stdlib],
             included_applications => [],
-            modules => [some_app]
+            modules => [formatter_included_module]
         })
     ),
-
-    ?assertEqual(
-        lists:sort([some_app, dependency_a_1, dependency_a_2]),
-        lists:sort(observer_cli_escriptize:required_modules([some_app]))
+    ok = application:load(
+        application_spec(#{
+            application => formatter_root,
+            applications => [kernel, stdlib, formatter_dependency],
+            included_applications => [formatter_included],
+            modules => [formatter_root_module, observer_cli]
+        })
     ),
-
-    application:unload(some_app),
-    application:unload(dependency_a).
-
-unloaded_dependency_metadata() ->
-    ReconWasLoaded = application:get_key(recon, modules) =/= undefined,
-    _ = application:unload(recon),
-    _ = application:load(observer_cli),
     try
-        Mods = observer_cli_escriptize:required_modules([observer_cli]),
-        ?assert(lists:member(recon_lib, Mods))
+        Roots = [observer_cli, recon, formatter_root],
+        Expected = lists:usort(
+            lists:append([observer_cli_escriptize:application_modules(App) || App <- Roots])
+        ),
+        Modules = observer_cli_escriptize:required_modules(Roots),
+        ?assertEqual(Expected, Modules),
+        ?assertNot(lists:member(formatter_dependency_module, Modules)),
+        ?assertNot(lists:member(formatter_included_module, Modules))
     after
-        case ReconWasLoaded of
-            true -> ok;
-            false -> application:unload(recon)
-        end
+        application:unload(formatter_root),
+        application:unload(formatter_included),
+        application:unload(formatter_dependency)
     end.
-
-app_with_included() ->
-    ok = application:load(
-        application_spec(#{
-            application => included_a,
-            applications => [kernel, stdlib],
-            included_applications => [],
-            modules => [included_a_1, included_a_2]
-        })
-    ),
-
-    ok = application:load(
-        application_spec(#{
-            application => some_app,
-            applications => [kernel, stdlib],
-            included_applications => [included_a],
-            modules => [some_app]
-        })
-    ),
-
-    ?assertEqual(
-        lists:sort([some_app, included_a_1, included_a_2]),
-        lists:sort(observer_cli_escriptize:required_modules([some_app]))
-    ),
-
-    application:unload(some_app).
 
 application_spec(#{
     application := Application,
@@ -476,54 +431,6 @@ ensure_set_env_stop_remote_fun_test() ->
         application:unset_env(test_stop_app, test_stop_remote),
         application:unset_env(test_stop_app, test_stop_remote_fun)
     end.
-
-application_helpers_test() ->
-    _ = application:unload(helper_inc),
-    _ = application:unload(helper_app),
-    ok = application:load(
-        application_spec(#{
-            application => helper_inc,
-            applications => [kernel, stdlib],
-            included_applications => [],
-            modules => [helper_inc_mod]
-        })
-    ),
-    _LoadRes = application:load(
-        application_spec(#{
-            application => helper_app,
-            applications => [kernel, stdlib, helper_dep],
-            included_applications => [helper_inc],
-            modules => [helper_mod]
-        })
-    ),
-    LoadRes2 = application:load(
-        application_spec(#{
-            application => helper_app,
-            applications => [kernel, stdlib, helper_dep],
-            included_applications => [helper_inc],
-            modules => [helper_mod]
-        })
-    ),
-    case LoadRes2 of
-        ok -> ok;
-        {error, {already_loaded, _}} -> ok
-    end,
-    ?assertEqual([helper_inc], observer_cli_escriptize:application_included(helper_app)),
-    ?assertEqual([helper_mod], observer_cli_escriptize:application_modules(helper_app)),
-    ?assertEqual(
-        [kernel, stdlib, helper_dep], observer_cli_escriptize:applications([], helper_app)
-    ),
-    ?assertEqual(
-        [helper_dep, helper_inc],
-        lists:sort(observer_cli_escriptize:all_applications(helper_app))
-    ),
-    application:unload(helper_app),
-    application:unload(helper_inc).
-
-application_helpers_fallback_test() ->
-    ?assertEqual([], observer_cli_escriptize:application_included(unknown_app)),
-    ?assertEqual([], observer_cli_escriptize:application_modules(unknown_app)),
-    ?assertEqual([], observer_cli_escriptize:applications([], unknown_app)).
 
 parse_args_test() ->
     ?assertEqual(
@@ -2769,14 +2676,64 @@ remote_load_peer_node_test() ->
         PrevEnv = application:get_env(observer_cli, Key),
         ok = application:set_env(observer_cli, Key, copied_to_peer),
         try
+            Before = system_module_md5s(Node),
+            ?assertEqual(false, erpc:call(Node, code, is_loaded, [observer_cli])),
             erpc:call(Node, application, unset_env, [observer_cli, Key]),
-            ?assertEqual(ok, observer_cli_escriptize:remote_load(Node)),
+            ?assertEqual(
+                ok,
+                observer_cli_escriptize:run_remote(
+                    Node,
+                    fun observer_cli_escriptize:remote_module_available/1,
+                    fun observer_cli_escriptize:remote_load/1,
+                    fun() -> ok end
+                )
+            ),
             ?assertEqual(
                 {ok, copied_to_peer},
                 erpc:call(Node, application, get_env, [observer_cli, Key])
-            )
+            ),
+            ?assertNotEqual(false, erpc:call(Node, code, is_loaded, [observer_cli])),
+            ?assertNotEqual(false, erpc:call(Node, code, is_loaded, [recon])),
+            ?assertEqual(Before, system_module_md5s(Node))
         after
             restore_env(observer_cli, Key, PrevEnv),
+            peer:stop(Peer)
+        end
+    end).
+
+cross_otp_remote_load_test_() ->
+    case os:getenv("OBSERVER_CLI_CROSS_OTP_ERL") of
+        false ->
+            [];
+        Erl ->
+            {timeout, 30, fun() -> cross_otp_remote_load(Erl) end}
+    end.
+
+cross_otp_remote_load(Erl) ->
+    with_distribution(fun(_Cookie) ->
+        {ok, Peer, Node} = peer:start_link(#{
+            exec => Erl, name => peer:random_name("observer_cli_cross_otp")
+        }),
+        try
+            ControllerOtp = integer_to_list(?OTP_RELEASE),
+            TargetOtp = erpc:call(Node, erlang, system_info, [otp_release]),
+            ?assertNotEqual(ControllerOtp, TargetOtp),
+            Before = system_module_md5s(Node),
+            ?assertEqual(false, erpc:call(Node, code, is_loaded, [observer_cli])),
+            ?assertError(
+                {remote_otp_mismatch, ControllerOtp, TargetOtp},
+                observer_cli_escriptize:remote_load(Node)
+            ),
+            Output = assert_halt(3, fun() ->
+                observer_cli_escriptize:main(["tui", atom_to_list(Node)])
+            end),
+            OutputBinary = iolist_to_binary(Output),
+            ?assertNotEqual(nomatch, binary:match(OutputBinary, list_to_binary(ControllerOtp))),
+            ?assertNotEqual(nomatch, binary:match(OutputBinary, list_to_binary(TargetOtp))),
+            ?assertNotEqual(nomatch, binary:match(OutputBinary, <<"same OTP major release">>)),
+            ?assertEqual(false, erpc:call(Node, code, is_loaded, [observer_cli])),
+            ?assertEqual(Before, system_module_md5s(Node))
+        after
             peer:stop(Peer)
         end
     end).
@@ -4696,6 +4653,26 @@ temporary_directory(Prefix) ->
     ),
     ok = file:make_dir(Dir),
     Dir.
+
+system_module_md5s(Node) ->
+    maps:from_list([
+        {{App, Module}, remote_module_md5(Node, Module)}
+     || App <- [crypto, syntax_tools], Module <- remote_application_modules(Node, App)
+    ]).
+
+remote_application_modules(Node, App) ->
+    case erpc:call(Node, application, load, [App]) of
+        ok -> ok;
+        {error, {already_loaded, App}} -> ok
+    end,
+    {ok, Modules} = erpc:call(Node, application, get_key, [App, modules]),
+    Modules.
+
+remote_module_md5(Node, Module) ->
+    case erpc:call(Node, code, is_loaded, [Module]) of
+        false -> not_loaded;
+        _ -> erpc:call(Node, erlang, get_module_info, [Module, md5])
+    end.
 
 assert_equal(Expected, Actual) ->
     ?assertEqual(Expected, Actual).

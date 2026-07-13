@@ -327,6 +327,42 @@ stable_reductions_denominator_lifecycle_and_signed_gauges_test() ->
         lists:foreach(fun(Pid) -> exit(Pid, kill) end, [Stable, Reset, NonPositive, Dead, Born])
     end.
 
+bounded_lifecycle_pid_samples_keep_full_counts_test() ->
+    Born = [spawn(fun wait/0) || _ <- lists:seq(1, 21)],
+    Dead = [spawn(fun wait/0) || _ <- lists:seq(1, 21)],
+    Reset = [spawn(fun wait/0) || _ <- lists:seq(1, 21)],
+    Pids = Born ++ Dead ++ Reset,
+    try
+        Context = observer_cli_diagnostic:reductions_context(
+            #{
+                values => maps:from_list(
+                    [{Pid, facts(1, 1, 1)} || Pid <- Dead] ++
+                        [{Pid, facts(1, 1, 2)} || Pid <- Reset]
+                )
+            },
+            #{
+                values => maps:from_list(
+                    [{Pid, facts(1, 1, 1)} || Pid <- Born] ++
+                        [{Pid, facts(1, 1, 1)} || Pid <- Reset]
+                )
+            }
+        ),
+        lists:foreach(
+            fun({CountKey, PidsKey, TruncatedKey}) ->
+                ?assertEqual(21, maps:get(CountKey, Context)),
+                ?assertEqual(20, length(maps:get(PidsKey, Context))),
+                ?assertEqual(true, maps:get(TruncatedKey, Context))
+            end,
+            [
+                {born_count, born_pids, born_pids_truncated},
+                {dead_count, dead_pids, dead_pids_truncated},
+                {reset_count, reset_pids, reset_pids_truncated}
+            ]
+        )
+    after
+        lists:foreach(fun(Pid) -> exit(Pid, kill) end, Pids)
+    end.
+
 quick_reductions_rate_uses_inventory_midpoints_test() ->
     Pid = spawn(fun wait/0),
     try

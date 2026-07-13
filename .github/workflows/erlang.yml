@@ -2,7 +2,16 @@ name: ci
 
 on:
   push:
+    branches: [main]
+    tags: ['*']
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -14,20 +23,32 @@ jobs:
         include:
           - otp: '29'
             rebar3: '3.27'
+            other_otp: '26'
           - otp: '28'
             rebar3: '3.24'
           - otp: '27'
             rebar3: '3.22'
           - otp: '26'
             rebar3: '3.22'
+            other_otp: '29'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      - name: Install cross-OTP target
+        if: matrix.other_otp != ''
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{matrix.other_otp}}
+      - name: Save cross-OTP target
+        if: matrix.other_otp != ''
+        run: echo "OBSERVER_CLI_CROSS_OTP_ERL=$INSTALL_DIR_FOR_OTP/bin/erl" >> "$GITHUB_ENV"
       - uses: erlef/setup-beam@v1
         with:
           otp-version: ${{matrix.otp}}
           rebar3-version: ${{matrix.rebar3}}
+      - name: formatting
+        run: rebar3 fmt --check
       - name: quality checks
-        run: rebar3 check
+        run: rebar3 as ci check
       - name: generated escript smoke
         run: scripts/escript-smoke.sh
       - name: test coverage
@@ -36,8 +57,22 @@ jobs:
           rebar3 as test do eunit, covertool generate
       - name: Upload coverage reports to Codecov
         if: matrix.otp == '29'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: zhongwencool/observer_cli
           files: _build/test/covertool/*.covertool.xml
+
+  mix:
+    runs-on: ubuntu-24.04
+    name: Erlang/OTP 29 / Elixir 1.20 / Mix
+    steps:
+      - uses: actions/checkout@v7
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: '29'
+          elixir-version: '1.20'
+      - name: Mix compile
+        run: |
+          mix deps.get
+          mix compile

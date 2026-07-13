@@ -1,5 +1,5 @@
 {application, observer_cli, [
-    {description, "Visualize Erlang Nodes On The Command Line"},
+    {description, "Production-ready BEAM diagnostics for operators, automation, and AI agents."},
     {vsn, "2.0.0"},
     {modules, [observer_cli]},
     {registered, []},
@@ -11,6 +11,7 @@
         "mix.lock",
         "priv",
         "README.md",
+        "docs.exs",
         "docs/*",
         "rebar.config",
         "rebar.lock",

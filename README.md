@@ -25,6 +25,9 @@ process rankings](https://raw.githubusercontent.com/zhongwencool/observer_cli/8e
 
 Install `observer_cli` in the target release so command diagnostics can run
 there. Version 2.0 controllers require the matching `2.0.0` target bundle.
+Observer CLI 2.0 supports Erlang/OTP 26–29. JSON output requires OTP 27 or
+newer on the controller; text and Erlang-term output work across the supported
+range.
 
 <!-- tabs-open -->
 ### Erlang
@@ -121,9 +124,19 @@ trusted target before starting. The old bare
 `observer_cli NODE [COOKIE REFRESH_MS]` form is not supported; use the explicit
 `tui` command.
 
+TUI auto-load sends controller-compiled BEAM bytecode to the target without
+recompiling it. Build the controller on the same OTP major as the target when
+auto-load is needed; cross-major bytecode loading is outside the supported
+compatibility contract.
+
 `observer_cli logs` returns sensitive, untrusted retained text. It reads only a
 selected handler's configured path, not the handler's private file descriptor
 or rotation archives, and deliberately rejects redaction flags.
+
+## Upgrading from 1.x
+
+Version 2.0 changes the TUI plugin callbacks and replaces positional plugin
+sorting. Follow the [1.x plugin migration table](https://hexdocs.pm/observer_cli/tui-plugins.html#migrate-a-1-x-plugin-to-2-0).
 
 ## Next steps
 

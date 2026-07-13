@@ -1,5 +1,7 @@
 -module(observer_cli_cli).
 
+-ignore_xref({json, encode, 1}).
+
 -include_lib("kernel/include/file.hrl").
 
 -export([
@@ -1873,6 +1875,13 @@ reason_message(connection_failed) ->
     <<"target connection failed; check node name, name mode, EPMD, network, and cookie">>;
 reason_message(tui_start_failed) ->
     <<"interactive TUI startup failed; check target reachability, cookie, and bundle compatibility">>;
+reason_message({remote_otp_mismatch, ControllerOtp, TargetOtp}) ->
+    iolist_to_binary([
+        <<"TUI auto-load requires the same OTP major release; controller OTP ">>,
+        escape_text(ControllerOtp),
+        <<", target OTP ">>,
+        escape_text(TargetOtp)
+    ]);
 reason_message(Reason) when
     Reason =:= invalid_command_response;
     Reason =:= invalid_snapshot_response;

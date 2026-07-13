@@ -94,6 +94,12 @@ and checks for a compatible TUI installation. When core modules are missing or
 incompatible, it uses `recon` to load the required `observer_cli` and configured
 formatter modules before starting the remote TUI.
 
+Auto-load sends the controller's compiled BEAM files to the target without
+recompiling them. Build the controller on the same OTP major as the target when
+auto-load is needed; cross-major bytecode loading is outside the supported
+compatibility contract. This restriction does not apply when the target already
+has a compatible bundle and no code is loaded.
+
 The TUI can therefore load code and application environment into the target. It
 runs until the operator quits, scans and refreshes repeatedly, and produces
 terminal views rather than a versioned response envelope. Plugin applications

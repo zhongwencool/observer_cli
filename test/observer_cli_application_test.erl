@@ -284,6 +284,34 @@ diagnostics_application_attribution_uses_one_public_inventory_test() ->
         lists:foreach(fun(Pid) -> exit(Pid, kill) end, [Leader, Root | Processes])
     end.
 
+application_counts_are_separate_from_process_scan_test() ->
+    Apps = [{app_a, "fixture", "1"}, {app_b, "fixture", "1"}],
+    ProcessSource = diagnostics_process_source([], fun(_Pid, _Keys) -> undefined end),
+    AppSource = #{
+        loaded_fun => fun() -> Apps end,
+        running_fun => fun(_Timeout) -> [] end,
+        supervisor_fun => fun(_App) -> undefined end,
+        root_info_fun => fun(_Root, _Key) -> undefined end
+    },
+    #{<<"status">> := <<"ok">>, <<"result">> := Response} = observer_cli_snapshot:dispatch(
+        self(),
+        applications,
+        #{test_process_source => ProcessSource, test_application_source => AppSource},
+        #{timeout_ms => 3000, identifier_policy => include}
+    ),
+    Data = maps:get(<<"data">>, Response),
+    ?assertEqual(3, maps:get(<<"scanned_count">>, Data)),
+    ?assertEqual(3, maps:get(<<"eligible_count">>, Data)),
+    ?assertEqual(3, maps:get(<<"returned_count">>, Data)),
+    ?assertEqual(0, maps:get(<<"process_scanned_count">>, Data)),
+    ?assertEqual(0, maps:get(<<"process_eligible_count">>, Data)),
+    ?assertEqual(
+        ok, observer_cli_escriptize:validate_response(applications, include, node(), Response)
+    ),
+    receive
+        {process_fold, []} -> ok
+    end.
+
 applications_follow_group_leader_chain_and_aggregate_no_group_test() ->
     App = observer_cli_goal08_chain_app,
     Leader = spawn(fun application_fixture/0),

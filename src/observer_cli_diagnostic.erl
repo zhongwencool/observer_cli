@@ -1248,6 +1248,13 @@ reductions_context(#{values := First} = FirstInventory, #{values := Second} = Se
     Born = ordsets:subtract(SecondIds, FirstIds),
     Dead = ordsets:subtract(FirstIds, SecondIds),
     Items0 = [process_delta(Pid, maps:get(Pid, First), maps:get(Pid, Second)) || Pid <- Stable],
+    Reset = [
+        Pid
+     || #{pid := {identifier, pid, Pid}, reductions_state := counter_reset} <- Items0
+    ],
+    {BornPids, BornPidsTruncated} = pid_sample(Born, ?CONTEXT_LIMIT),
+    {DeadPids, DeadPidsTruncated} = pid_sample(Dead, ?CONTEXT_LIMIT),
+    {ResetPids, ResetPidsTruncated} = pid_sample(Reset, ?CONTEXT_LIMIT),
     Denominator = lists:sum([
         Delta
      || #{reductions_delta := Delta} <- Items0, is_integer(Delta), Delta > 0
@@ -1260,9 +1267,13 @@ reductions_context(#{values := First} = FirstInventory, #{values := Second} = Se
         stable_positive_reductions_denominator => Denominator,
         born_count => length(Born),
         dead_count => length(Dead),
-        reset_count => length([reset || #{reductions_state := counter_reset} <- Items0]),
-        born_pids => [{identifier, pid, Pid} || Pid <- Born],
-        dead_pids => [{identifier, pid, Pid} || Pid <- Dead],
+        reset_count => length(Reset),
+        born_pids => BornPids,
+        born_pids_truncated => BornPidsTruncated,
+        dead_pids => DeadPids,
+        dead_pids_truncated => DeadPidsTruncated,
+        reset_pids => ResetPids,
+        reset_pids_truncated => ResetPidsTruncated,
         sample_audits => [
             maps:get(audit, Inventory, #{})
          || Inventory <- [
@@ -1271,6 +1282,9 @@ reductions_context(#{values := First} = FirstInventory, #{values := Second} = Se
         ],
         items => Items
     }.
+
+pid_sample(Pids, Limit) ->
+    {[{identifier, pid, Pid} || Pid <- lists:sublist(Pids, Limit)], length(Pids) > Limit}.
 
 process_delta(Pid, First, Second) ->
     Before = maps:get(reductions, First),

@@ -6,9 +6,9 @@ defmodule ObserverCli.MixProject do
       app: :observer_cli,
       version: "2.0.0",
       language: :erlang,
-      description: "observer in shell",
+      description: "Production-ready BEAM diagnostics for operators, automation, and AI agents.",
       deps: [
-        {:recon, "~> 2.5.6"}
+        {:recon, "2.5.6"}
       ]
     ]
   end
@@ -26,10 +26,10 @@ defmodule ObserverCli.MixProject do
           # title        - Menu title. It's mandatory.
           # shortcut     - Switch plugin by shortcut. It's mandatory.
           # interval     - Refresh interval ms. It's options. default is 1500ms.
-          # sort_column  - Sort the sheet by this index. It's options default is 2.
+          # sort         - Sort by column ID. It's optional; defaults to sheet_header/0's default_sort.
 
-          # %{module: ObserverCli.Plug1, title: "Example-1", interval: 1500, shortcut: "S", sort_column: 3},
-          # %{module: ObserverCli.Plug2, title: "Example-2", interval: 1600, shortcut: "D", sort_column: 2}
+          # %{module: ObserverCli.Plug1, title: "Example-1", interval: 1500, shortcut: "S", sort: :value},
+          # %{module: ObserverCli.Plug2, title: "Example-2", interval: 1600, shortcut: "D", sort: :name}
         ]
       ]
     ]

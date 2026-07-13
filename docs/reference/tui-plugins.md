@@ -260,7 +260,8 @@ format(Pid, Term) ->
 Observer CLI falls back to `observer_cli_formatter_default` for that value.
 
 Configure both the formatter application and module. The application identifies
-the modules and non-core dependencies that the TUI must load remotely.
+only its own modules for TUI auto-load; dependency and included applications are
+not uploaded.
 
 <!-- tabs-open -->
 ### Erlang
@@ -285,7 +286,9 @@ config :observer_cli,
 ```
 <!-- tabs-close -->
 
-Include the formatter application in the target release. Verify normal terms,
+Install the formatter application's dependencies and included applications on
+the target. Auto-load can upload the formatter application's own modules when
+the controller and target use the same OTP major release. Verify normal terms,
 Unicode, and large nested terms in the Process Messages, Dictionary, and State
 views.
 

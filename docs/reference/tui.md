@@ -30,6 +30,8 @@ observer_cli tui NODE [COOKIE REFRESH_MS]
 `REFRESH_MS` defaults to `1500` and must be at least `1000`. Supplying a cookie
 also requires the refresh value. The escript starts a hidden controller, loads
 a compatible TUI bundle into the target when needed, and starts the UI there.
+Auto-load requires the controller and target to use the same OTP major release;
+a compatible bundle already installed on the target is used without auto-load.
 
 From an Erlang shell:
 

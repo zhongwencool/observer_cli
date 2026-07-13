@@ -301,7 +301,7 @@ render_worker(
     end.
 
 parse_cmd() ->
-    parse_cmd_str(observer_cli_lib:to_list(io:get_line(""))).
+    parse_cmd_str(observer_cli_lib:read_cmd()).
 
 parse_cmd_str(Key) ->
     case Key of

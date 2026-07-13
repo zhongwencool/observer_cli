@@ -435,6 +435,7 @@ next_draw_view_2(Status, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ, Manager
             ?output(?CLEAR),
             render_worker(state, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ, ManagerPid);
         redraw ->
+            ?output(?CLEAR),
             render_worker(Status, Type, Interval, Pid, TimeRef, NewRedQ, NewMemQ, ManagerPid)
     end.
 
@@ -729,7 +730,7 @@ get_menu_title(Type, Menu) ->
     ]).
 
 parse_cmd() ->
-    parse_cmd_str(observer_cli_lib:to_list(io:get_line(""))).
+    parse_cmd_str(observer_cli_lib:read_cmd()).
 
 parse_cmd_str(Key) ->
     case Key of

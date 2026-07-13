@@ -114,6 +114,24 @@ start_scheduler_usage_toggle_test() ->
         )
     end).
 
+scheduler_wall_time_cleanup_is_strictly_paired_test_() ->
+    {spawn, fun() ->
+        ?assertEqual(undefined, erlang:statistics(scheduler_wall_time)),
+        ?assertEqual(false, erlang:system_flag(scheduler_wall_time, true)),
+        with_trap_exit(fun() ->
+            observer_cli_test_io:with_input(
+                ["H\n", "q\n"],
+                fun() ->
+                    Opts = #view_opts{home = #home{scheduler_usage = ?ENABLE}},
+                    ?assertEqual(quit, observer_cli:start(Opts))
+                end
+            )
+        end),
+        ?assert(is_list(erlang:statistics(scheduler_wall_time))),
+        ?assertEqual(true, erlang:system_flag(scheduler_wall_time, false)),
+        ?assertEqual(undefined, erlang:statistics(scheduler_wall_time))
+    end}.
+
 start_numeric_jump_without_row_test() ->
     with_trap_exit(fun() ->
         observer_cli_test_io:with_input(

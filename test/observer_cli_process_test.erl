@@ -735,6 +735,86 @@ render_worker_next_draw_actions_test() ->
     stop_worker(Worker),
     exit(Target, kill).
 
+render_worker_shrinking_redraw_clears_test() ->
+    Target = spawn(fun() -> receive
+        after infinity -> ok
+        end end),
+    try
+        MessageOutput = capture_redraw(
+            message,
+            Target,
+            observer_cli_process:render_process_messages(#{
+                pid => Target, message_queue_len => 1, messages => [message_before_shrink]
+            })
+        ),
+        assert_clear_between(MessageOutput, "message_before_shrink", "No messages"),
+
+        DictionaryOutput = capture_redraw(
+            dict,
+            Target,
+            observer_cli_process:render_process_dictionary(#{
+                pid => Target, dictionary => [{observer_cli_redraw_key, value}]
+            })
+        ),
+        assert_clear_between(
+            DictionaryOutput, "observer_cli_redraw_key", "No dictionary"
+        ),
+
+        StackOutput = capture_redraw(
+            stack,
+            Target,
+            observer_cli_process:render_process_stack([
+                {old_stack, frame, 0, [{file, "old.erl"}, {line, 1}]},
+                {old_stack, caller, 0, [{file, "old.erl"}, {line, 2}]}
+            ])
+        ),
+        assert_clear_between(StackOutput, "old_stack:caller/0", "current_stacktrace"),
+
+        Ref = erlang:monitor(process, Target),
+        exit(Target, kill),
+        receive
+            {'DOWN', Ref, process, Target, _} -> ok
+        after 1000 ->
+            exit(fixture_exit_timeout)
+        end,
+        DeadOutput = capture_redraw(info, Target, "old process detail\nstale tail\n"),
+        assert_clear_between(DeadOutput, "stale tail", "has already died.")
+    after
+        erlang:is_process_alive(Target) andalso exit(Target, kill)
+    end.
+
+capture_redraw(Status, Target, PreviousBody) ->
+    {ok, Output} = observer_cli_test_io:capture_with_geometry(
+        24,
+        205,
+        [],
+        fun() ->
+            Worker = spawn(fun() ->
+                io:put_chars(PreviousBody),
+                observer_cli_process:render_worker(
+                    Status,
+                    home,
+                    1500,
+                    Target,
+                    ?INIT_TIME_REF,
+                    queue:new(),
+                    queue:new(),
+                    self()
+                )
+            end),
+            Worker ! redraw,
+            stop_worker(Worker)
+        end
+    ),
+    unicode:characters_to_binary(Output).
+
+assert_clear_between(Output, Before, After) ->
+    {BeforePos, _} = binary:match(Output, list_to_binary(Before)),
+    {ClearPos, _} = binary:match(Output, ?CLEAR),
+    [{AfterPos, _} | _] = lists:reverse(binary:matches(Output, list_to_binary(After))),
+    ?assert(BeforePos < ClearPos),
+    ?assert(ClearPos < AfterPos).
+
 spawn_worker(Type, TargetPid) ->
     Parent = self(),
     spawn(fun() ->

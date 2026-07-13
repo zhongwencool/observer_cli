@@ -14,10 +14,7 @@
     run_args/2,
     resolve_target_name/1,
     random_local_node_name/0,
-    application_included/1,
     application_modules/1,
-    applications/2,
-    all_applications/1,
     run/3,
     run/4,
     run_remote/4,
@@ -213,6 +210,13 @@ run_tui(TargetNode, Cookie, Interval) ->
     try run(TargetNode, cookie_atom(Cookie), Interval) of
         Result -> Result
     catch
+        error:{remote_otp_mismatch, ControllerOtp, TargetOtp}:_Stacktrace ->
+            command_error(
+                tui,
+                text,
+                connection,
+                {remote_otp_mismatch, ControllerOtp, TargetOtp}
+            );
         _Class:_Reason:_Stacktrace ->
             command_error(tui, text, connection, tui_start_failed)
     end.
@@ -3691,7 +3695,7 @@ output_put_chars(Device, Output) ->
     end.
 output_format(Device, Format, Args) ->
     case get(observer_cli_test_output) of
-        capture -> io:format(Format, Args);
+        capture -> io:put_chars(io_lib:format(Format, Args));
         undefined -> io:format(Device, Format, Args)
     end.
 -else.
@@ -3797,10 +3801,16 @@ remote_load(Node) ->
     do_remote_load(Node).
 
 do_remote_load(Node) ->
+    ControllerOtp = integer_to_list(?OTP_RELEASE),
+    TargetOtp = erpc:call(Node, erlang, system_info, [otp_release]),
+    case TargetOtp of
+        ControllerOtp -> ok;
+        _ -> erlang:error({remote_otp_mismatch, ControllerOtp, TargetOtp})
+    end,
     application:load(observer_cli),
     Formatter = application:get_env(observer_cli, formatter, ?DEFAULT_FORMATTER),
     FormatterApp = maps:get(application, Formatter),
-    Apps = lists:usort([observer_cli, FormatterApp]),
+    Apps = lists:usort([observer_cli, recon, FormatterApp]),
     lists:foreach(fun(Mod) -> remote_load_module(Node, Mod) end, required_modules(Apps)),
     erpc:call(Node, ?MODULE, ensure_set_env, [
         observer_cli, application:get_all_env(observer_cli)
@@ -3862,27 +3872,7 @@ ensure_net_kernel_name_mode(ExpectedMode) ->
 %%%===================================================================
 
 required_modules(AppList) ->
-    required_modules(AppList, sets:new()).
-
-required_modules([], Res) ->
-    sets:to_list(Res);
-required_modules(AppList, Res) ->
-    [H | T] = AppList,
-    required_modules(
-        T ++ all_applications(H),
-        lists:foldl(fun sets:add_element/2, Res, application_modules(H))
-    ).
-
-all_applications(App) ->
-    observer_cli_lib:pipe([], [
-        fun(ApplicationsAcc) ->
-            applications(ApplicationsAcc, App)
-        end,
-        fun(ApplicationsAcc) ->
-            ApplicationsAcc ++ application_included(App)
-        end,
-        fun(ApplicationsAcc) -> ApplicationsAcc -- [kernel, stdlib] end
-    ]).
+    lists:usort(lists:append([application_modules(App) || App <- AppList])).
 
 -spec ensure_set_env(App :: atom(), Env :: [{atom(), term()}]) -> ok | {error, term()}.
 ensure_set_env(App, Env) ->
@@ -3936,25 +3926,11 @@ maybe_wait_remote_stop(_Node) ->
     ok.
 -endif.
 
-application_included(Application) ->
-    ensure_application_loaded(Application),
-    case application:get_key(Application, included_applications) of
-        {ok, Apps} -> Apps;
-        _ -> []
-    end.
-
 application_modules(Application) ->
     ensure_application_loaded(Application),
     case application:get_key(Application, modules) of
         {ok, Modules} -> Modules;
         _ -> []
-    end.
-
-applications(ApplicationsAcc, App) ->
-    ensure_application_loaded(App),
-    case application:get_key(App, applications) of
-        {ok, Applications} -> ApplicationsAcc ++ Applications;
-        undefined -> ApplicationsAcc
     end.
 
 ensure_application_loaded(App) ->

@@ -238,6 +238,13 @@ home_parse_cmd_str_test() ->
         {">\n", quit}
     ]).
 
+malformed_pid_parse_test() ->
+    assert_shared_parse([
+        {"<a.b.c>\n", quit},
+        {">not-a-number\n", quit},
+        {"<0." ++ lists:duplicate(100, $9) ++ ".0>\n", quit}
+    ]).
+
 assert_shared_parse(Cases) ->
     lists:foreach(
         fun({Command, Expected}) ->

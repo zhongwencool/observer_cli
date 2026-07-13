@@ -1989,30 +1989,39 @@ snapshot_worker_death_reports_unconfirmed_trace_cleanup() ->
         after 1000 ->
             error(blocked_owner_timeout)
         end,
-    #{collector := Collector, silent_io := SilentIO} = wait_helpers(),
-    {monitors, Monitors} = process_info(Owner, monitors),
-    Excluded = [Parent, Tracee, Collector, SilentIO],
-    [Worker] = [Pid || {process, Pid} <- Monitors, not lists:member(Pid, Excluded)],
-    exit(Worker, kill),
-    Response =
+    try
+        #{collector := Collector, silent_io := SilentIO} = wait_helpers(),
+        {monitors, Monitors} = process_info(Owner, monitors),
+        Excluded = [Parent, Tracee, Collector, SilentIO],
+        [Worker] = [Pid || {process, Pid} <- Monitors, not lists:member(Pid, Excluded)],
+        WorkerMon = erlang:monitor(process, Worker),
+        exit(Worker, kill),
         receive
-            {Ref, Caller, DispatchResult} -> DispatchResult
-        after 3000 ->
-            error(dispatch_timeout)
+            {'DOWN', WorkerMon, process, Worker, killed} -> ok
         end,
-    ?assertMatch(
-        #{
-            <<"status">> := <<"error">>,
-            <<"reason_code">> := <<"cleanup_unconfirmed">>,
-            <<"cleanup_confirmed">> := false
-        },
-        Response
-    ),
-    ?assert(is_process_alive(Owner)),
-    Owner ! release,
-    wait_until(fun() -> observer_cli_trace:wait_cleanup(0) end),
-    assert_clean(Tracee),
-    Tracee ! stop.
+        exit(Owner, kill),
+        wait_until(fun() -> observer_cli_trace:wait_cleanup(0) end),
+        ?assertEqual(
+            {traced, global}, erlang:trace_info({?MODULE, fixture, 0}, traced)
+        ),
+        Response =
+            receive
+                {Ref, Caller, DispatchResult} -> DispatchResult
+            after 3000 ->
+                error(dispatch_timeout)
+            end,
+        ?assertMatch(
+            #{
+                <<"status">> := <<"error">>,
+                <<"reason_code">> := <<"cleanup_unconfirmed">>,
+                <<"cleanup_confirmed">> := false
+            },
+            Response
+        )
+    after
+        cleanup(),
+        Tracee ! stop
+    end.
 
 snapshot_stop_omits_historical_events() ->
     cleanup(),

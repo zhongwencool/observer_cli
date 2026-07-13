@@ -3395,12 +3395,12 @@ stable_process_window_lifecycle_and_late_hot_test() ->
         lists:foreach(fun(Pid) -> exit(Pid, kill) end, Pids)
     end.
 
-reduction_window_keeps_full_baseline_and_stable_pids_test() ->
-    Pids = [spawn(fun process_fixture/0) || _ <- lists:seq(1, 5)],
-    [Stable, LateHot, Reset, Dead, Born] = Pids,
+reduction_window_keeps_full_counts_and_bounded_lifecycle_samples_test() ->
+    Pids = [spawn(fun process_fixture/0) || _ <- lists:seq(1, 8)],
+    [Stable, LateHot, Reset1, Reset2, Dead1, Dead2, Born1, Born2] = Pids,
     try
         Source = #{
-            count_fun => fun() -> 5 end,
+            count_fun => fun() -> 8 end,
             fold =>
                 {fixture_window, fun(Fun, Acc) ->
                     Sample =
@@ -3411,8 +3411,8 @@ reduction_window_keeps_full_baseline_and_stable_pids_test() ->
                     put(goal08_sample, Sample),
                     Current =
                         case Sample of
-                            1 -> [Stable, LateHot, Reset, Dead];
-                            2 -> [Stable, LateHot, Reset, Born]
+                            1 -> [Stable, LateHot, Reset1, Reset2, Dead1, Dead2];
+                            2 -> [Stable, LateHot, Reset1, Reset2, Born1, Born2]
                         end,
                     lists:foldl(Fun, Acc, Current)
                 end},
@@ -3420,8 +3420,24 @@ reduction_window_keeps_full_baseline_and_stable_pids_test() ->
                 Sample = get(goal08_sample),
                 Values =
                     case Sample of
-                        1 -> #{Stable => 10, LateHot => 10, Reset => 50, Dead => 1};
-                        2 -> #{Stable => 20, LateHot => 1010, Reset => 2, Born => 9999}
+                        1 ->
+                            #{
+                                Stable => 10,
+                                LateHot => 10,
+                                Reset1 => 50,
+                                Reset2 => 40,
+                                Dead1 => 1,
+                                Dead2 => 2
+                            };
+                        2 ->
+                            #{
+                                Stable => 20,
+                                LateHot => 1010,
+                                Reset1 => 2,
+                                Reset2 => 1,
+                                Born1 => 9999,
+                                Born2 => 9998
+                            }
                     end,
                 [{reductions, maps:get(Pid, Values)}]
             end,
@@ -3445,10 +3461,15 @@ reduction_window_keeps_full_baseline_and_stable_pids_test() ->
         [Item] = maps:get(<<"items">>, Data),
         ?assertEqual(list_to_binary(pid_to_list(LateHot)), maps:get(<<"pid">>, Item)),
         ?assertEqual(1000, maps:get(<<"reductions_delta">>, Item)),
-        ?assertEqual(4, maps:get(<<"baseline_count">>, Data)),
-        ?assertEqual(1, maps:get(<<"born_count">>, Data)),
-        ?assertEqual(1, maps:get(<<"dead_count">>, Data)),
-        ?assertEqual(1, maps:get(<<"reset_count">>, Data)),
+        ?assertEqual(6, maps:get(<<"baseline_count">>, Data)),
+        lists:foreach(
+            fun(Prefix) ->
+                ?assertEqual(2, maps:get(<<Prefix/binary, "_count">>, Data)),
+                ?assertEqual(1, length(maps:get(<<Prefix/binary, "_pids">>, Data))),
+                ?assertEqual(true, maps:get(<<Prefix/binary, "_pids_truncated">>, Data))
+            end,
+            [<<"born">>, <<"dead">>, <<"reset">>]
+        ),
         ?assertEqual(2, maps:get(<<"retained_sample_count">>, Data)),
         ?assert(maps:get(<<"working_set_estimated_bytes">>, Data) > 0)
     after

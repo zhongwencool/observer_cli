@@ -1,6 +1,14 @@
 -module(observer_cli_snapshot).
 
--dialyzer({nowarn_function, [diagnostic_memory/1, call_snapshot_probe/1, probe_result/4]}).
+-dialyzer(
+    {nowarn_function, [
+        diagnostic_memory/1,
+        call_snapshot_probe/1,
+        probe_result/4,
+        iterator_fold/2,
+        iterator_fold/3
+    ]}
+).
 
 -export([
     capabilities/0,
@@ -157,7 +165,6 @@
 -define(BUNDLE_VERSION, <<"2.0.0">>).
 -define(TARGET_MARGIN_MS, 1000).
 -define(WORKER_DOWN_TIMEOUT_MS, 100).
--define(TRACE_CLEANUP_TIMEOUT_MS, 250).
 -define(DEEP_FINISH_MARGIN_MS, 250).
 -define(MAX_HEAP_WORDS, 8 * 1024 * 1024).
 -define(MAX_RESPONSE_BYTES, 1024 * 1024).
@@ -349,11 +356,15 @@ stop_worker(Worker, WorkerRef, Reason, Command) ->
         error_result(cleanup_unconfirmed, false)
     end.
 
-cleanup_result(trace, Reason) ->
-    case observer_cli_trace:wait_cleanup(?TRACE_CLEANUP_TIMEOUT_MS) of
-        true -> error_result(Reason);
-        false -> error_result(cleanup_unconfirmed, false)
-    end;
+cleanup_result(trace, Reason) when
+    Reason =:= target_timeout;
+    Reason =:= controller_disconnected;
+    Reason =:= cleanup_unconfirmed;
+    Reason =:= internal_error;
+    Reason =:= worker_heap_limit_exceeded;
+    Reason =:= probe_failed
+->
+    error_result(cleanup_unconfirmed, false);
 cleanup_result(_Command, Reason) ->
     error_result(Reason).
 
@@ -2430,6 +2441,12 @@ collect_processes(Source, Sort, Limit, Duration, Context, Admission) ->
     Window = stable_process_window(
         maps:get(values, First), maps:get(values, Second), Interval
     ),
+    Born = maps:get(born, Window),
+    Dead = maps:get(dead, Window),
+    Reset = maps:get(reset, Window),
+    {BornPids, BornPidsTruncated} = pid_sample(Born, Limit),
+    {DeadPids, DeadPidsTruncated} = pid_sample(Dead, Limit),
+    {ResetPids, ResetPidsTruncated} = pid_sample(Reset, Limit),
     Ranked = rank_window(maps:get(stable, Window), Limit),
     Items = [
         public_process_item(window_process_item(Pid, Sort, Delta, Interval, Source))
@@ -2445,12 +2462,15 @@ collect_processes(Source, Sort, Limit, Duration, Context, Admission) ->
         sort_semantics => delta,
         interval_ms => Interval,
         baseline_count => maps:size(maps:get(values, First)),
-        born_count => length(maps:get(born, Window)),
-        dead_count => length(maps:get(dead, Window)),
-        reset_count => length(maps:get(reset, Window)),
-        born_pids => [{identifier, pid, Pid} || Pid <- maps:get(born, Window)],
-        dead_pids => [{identifier, pid, Pid} || Pid <- maps:get(dead, Window)],
-        reset_pids => [{identifier, pid, Pid} || Pid <- maps:get(reset, Window)],
+        born_count => length(Born),
+        dead_count => length(Dead),
+        reset_count => length(Reset),
+        born_pids => BornPids,
+        born_pids_truncated => BornPidsTruncated,
+        dead_pids => DeadPids,
+        dead_pids_truncated => DeadPidsTruncated,
+        reset_pids => ResetPids,
+        reset_pids_truncated => ResetPidsTruncated,
         baseline_exclusions => maps:get(exclusions, FirstAudit),
         tracked_field_count => maps:get(tracked_field_count, Admission),
         retained_sample_count => 2,
@@ -2463,6 +2483,9 @@ collect_processes(Source, Sort, Limit, Duration, Context, Admission) ->
         explicit_process_info_keys,
         process_scan_admitted
     ]}.
+
+pid_sample(Pids, Limit) ->
+    {[{identifier, pid, Pid} || Pid <- lists:sublist(Pids, Limit)], length(Pids) > Limit}.
 
 inventory_acc(Context, Limit) ->
     #{
@@ -3015,14 +3038,17 @@ collect_admitted_applications(
                 application_item(App, Stats, LoadedSet, RunningSet, Versions)
              || App <- Apps ++ [no_group]
             ],
+            Eligible = length(Items0),
             RankedItems = recon_top_n(Items0, Sort, Limit),
             Items = [maps:remove(memory, Item) || Item <- RankedItems],
             Audit = audit_inventory(Acc, length(Items), ProcessStarted, ProcessFinished),
             Data = Audit#{
                 items => Items,
-                eligible_count => length(Items0),
+                scanned_count => Eligible,
+                eligible_count => Eligible,
+                process_scanned_count => maps:get(scanned, Acc),
                 process_eligible_count => maps:get(eligible, Acc),
-                dropped_count => length(Items0) - length(Items),
+                dropped_count => Eligible - length(Items),
                 truncated => false,
                 sort => Sort,
                 sort_semantics => current,

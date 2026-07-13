@@ -115,7 +115,19 @@ render_system_line_missing_output_test() ->
 accept_net_ticktime_result_test() ->
     ?assertEqual(ok, observer_cli:accept_net_ticktime_result(change_initiated, 60)),
     ?assertEqual(ok, observer_cli:accept_net_ticktime_result({ongoing_change_to, 60}, 60)),
+    ?assertEqual(
+        {error, connection, connection_failed},
+        observer_cli:accept_net_ticktime_result({ongoing_change_to, 30}, 60)
+    ),
     ?assertEqual(ok, observer_cli:accept_net_ticktime_result(unchanged, 60)).
+
+update_net_ticktime_from_disconnected_node_test() ->
+    {ok, Host} = inet:gethostname(),
+    MissingNode = list_to_atom("observer_cli_missing_ticktime@" ++ Host),
+    ?assertEqual(
+        {error, connection, connection_failed},
+        observer_cli:update_net_ticktime_from(MissingNode)
+    ).
 
 render_memory_process_line_test() ->
     MemSum = {1, 2, 3, 4},

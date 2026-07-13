@@ -33,7 +33,7 @@
   before_closing_body_tag: fn
     :html ->
       """
-      <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+      <script src="https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.min.js"></script>
       <script>mermaid.initialize({startOnLoad: true})</script>
       <script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.11.1/highlight.min.js"></script>
       <script>

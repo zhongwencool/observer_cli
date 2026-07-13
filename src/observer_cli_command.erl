@@ -140,11 +140,16 @@ parse_integer(Number) ->
 
 -spec to_pid(string()) -> {go_to_pid, pid()} | quit.
 to_pid(Str) ->
-    case string:tokens(Str, ".<>\n") of
-        [X, Y, Z] ->
-            {go_to_pid, list_to_pid("<" ++ X ++ "." ++ Y ++ "." ++ Z ++ ">")};
-        [Y] ->
-            {go_to_pid, list_to_pid("<0." ++ Y ++ ".0>")};
-        _ ->
-            quit
+    try
+        case string:tokens(Str, ".<>\n") of
+            [X, Y, Z] ->
+                {go_to_pid, list_to_pid("<" ++ X ++ "." ++ Y ++ "." ++ Z ++ ">")};
+            [Y] ->
+                {go_to_pid, list_to_pid("<0." ++ Y ++ ".0>")};
+            _ ->
+                quit
+        end
+    catch
+        error:badarg -> quit;
+        error:system_limit -> quit
     end.
