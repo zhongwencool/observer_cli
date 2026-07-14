@@ -349,6 +349,24 @@ trans_format_test() ->
         observer_cli_inet:trans_format(number, 1, 2, 3)
     ).
 
+inet_window_uses_matching_deltas_test() ->
+    First = [
+        {first, 110, [{recv_cnt, 10}, {send_cnt, 100}]},
+        {second, 220, [{recv_cnt, 20}, {send_cnt, 200}]}
+    ],
+    Last = [
+        {first, 215, [{recv_cnt, 15}, {send_cnt, 200}]},
+        {second, 241, [{recv_cnt, 30}, {send_cnt, 211}]}
+    ],
+    ?assertEqual(
+        [{second, 10, [{recv_cnt, 10}, {send_cnt, 11}]}],
+        observer_cli_inet:inet_window(recv_cnt, 1, First, Last)
+    ),
+    ?assertEqual(
+        [{first, 105, [{recv_cnt, 5}, {send_cnt, 100}]}],
+        observer_cli_inet:inet_window(cnt, 1, First, Last)
+    ).
+
 get_menu_str_test() ->
     Count = lists:flatten(observer_cli_inet:get_menu_str(inet_count, cnt, 2000, 5)),
     Window = lists:flatten(observer_cli_inet:get_menu_str(inet_window, cnt, 2000, 5)),
@@ -479,6 +497,25 @@ render_inet_rows_non_cnt_test() ->
         gen_tcp:close(Listen)
     end.
 
+render_inet_rows_directional_io_columns_test() ->
+    Opts = #inet{type = recv_oct, cur_page = 1, pages = [{1, 1}]},
+    Item = #{
+        pos => 1,
+        choose_pos => 1,
+        port => test_port,
+        value => 1,
+        type1 => 2,
+        type2 => 3,
+        input => 1024,
+        output => 2048,
+        queue_size => 0,
+        memory => 0,
+        peer => "-"
+    },
+    {_, [_Title, Row]} = observer_cli_inet:render_inet_rows([Item], 1, Opts),
+    Plain = observer_cli_test_io:plain(Row),
+    ?assert(string:str(Plain, "2.0000 KiB") < string:str(Plain, "1.0000 KiB")).
+
 render_inet_rows_octet_stat_test() ->
     {ok, Listen} = gen_tcp:listen(0, [binary, {active, false}, {reuseaddr, true}]),
     {ok, Port} = inet:port(Listen),
@@ -486,7 +523,10 @@ render_inet_rows_octet_stat_test() ->
     {ok, Server} = gen_tcp:accept(Listen),
     Opts = #inet{type = recv_oct, cur_page = 1, pages = [{1, 1}]},
     try
-        InetInfo = observer_cli_inet:collect_inet_render_info([{Server, 1, []}], 1, Opts),
+        InetInfo = observer_cli_inet:collect_inet_render_info(
+            [{Server, 1, [{send_oct, 2}]}], 1, Opts
+        ),
+        ?assertMatch([#{type1 := 2, type2 := 3}], InetInfo),
         {PortList, Rows} = observer_cli_inet:render_inet_rows(InetInfo, 1, Opts),
         ?assertEqual(1, length(PortList)),
         ?assert(string:find(lists:flatten(Rows), "recv_oct") =/= nomatch)

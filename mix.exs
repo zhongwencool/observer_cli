@@ -15,6 +15,7 @@ defmodule ObserverCli.MixProject do
 
   def application do
     [
+      extra_applications: [:crypto],
       env: [
         # {:formatter, #{
         # :application => atom(), - Formatter application. observer_cli loads all it's modules to remote node.
@@ -33,5 +34,5 @@ defmodule ObserverCli.MixProject do
         ]
       ]
     ]
-    end
+  end
 end

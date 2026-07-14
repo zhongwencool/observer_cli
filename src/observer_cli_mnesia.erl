@@ -239,28 +239,37 @@ get_table_list2(Owner, HideSys, Attr) ->
             true ->
                 Acc;
             false ->
-                Size = mnesia:table_info(Id, size),
-                Memory = mnesia:table_info(Id, memory) * WordSize,
-                Tab0 = [
-                    {name, Id},
-                    {owner, Owner},
-                    {size, Size},
-                    {reg_name, RegName},
-                    {type, mnesia:table_info(Id, type)},
-                    {memory, Memory},
-                    {index, mnesia:table_info(Id, index)}
-                ],
-                Tab = with_storage_type(Id, Tab0),
-                [{0, proplists:get_value(Attr, Tab), Tab} | Acc]
+                try
+                    Size = mnesia:table_info(Id, size),
+                    Storage = mnesia:table_info(Id, storage_type),
+                    RawMemory = mnesia:table_info(Id, memory),
+                    case is_integer(Size) andalso is_integer(RawMemory) of
+                        true ->
+                            Memory =
+                                case Storage of
+                                    disc_only_copies -> RawMemory;
+                                    _ -> RawMemory * WordSize
+                                end,
+                            Tab0 = [
+                                {name, Id},
+                                {owner, Owner},
+                                {size, Size},
+                                {reg_name, RegName},
+                                {type, mnesia:table_info(Id, type)},
+                                {memory, Memory},
+                                {index, mnesia:table_info(Id, index)}
+                            ],
+                            Tab = with_storage_type(Id, Storage, Tab0),
+                            [{0, proplists:get_value(Attr, Tab), Tab} | Acc];
+                        false ->
+                            Acc
+                    end
+                catch
+                    _:_ -> Acc
+                end
         end
     end,
     lists:foldl(CollectFun, [], mnesia:system_info(tables)).
-
--dialyzer([{nowarn_function, [with_storage_type/2]}]).
-
-with_storage_type(Id, Tab0) ->
-    Storage = mnesia:table_info(Id, storage_type),
-    with_storage_type(Id, Storage, Tab0).
 
 with_storage_type(Id, Storage, Tab0) when Storage =:= ram_copies orelse Storage =:= disc_copies ->
     [

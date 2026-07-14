@@ -41,5 +41,9 @@
    (cd "$TMP" && shasum -a 256 -c SHA256SUMS)
    rm -rf "$TMP"
 
-   rebar3 hex publish
+   rebar3 docs
+   test -f doc/llms.txt
+   test -f doc/cli.md
+   test -f doc/tui.md
+   rebar3 hex publish --doc-dir doc
    ```

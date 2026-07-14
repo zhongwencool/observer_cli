@@ -127,6 +127,11 @@ render_ets_info({_StartPos, SortEts}, Attr) ->
         begin
             Name = proplists:get_value(name, Ets),
             Memory = proplists:get_value(memory, Ets),
+            MemoryBytes =
+                case Memory of
+                    Words when is_integer(Words) -> Words * WordSize;
+                    _ -> Memory
+                end,
             Size = proplists:get_value(size, Ets),
             Type = proplists:get_value(type, Ets),
             Protect = proplists:get_value(protection, Ets),
@@ -137,7 +142,7 @@ render_ets_info({_StartPos, SortEts}, Attr) ->
             ?render([
                 ?W(Name, NameW),
                 ?W(Size, SizeW),
-                ?W({byte, Memory * WordSize}, MemoryW),
+                ?W({byte, MemoryBytes}, MemoryW),
                 ?W(Type, TypeW),
                 ?W(Protect, ProtectionW),
                 ?W(KeyPos, KeyPosW),

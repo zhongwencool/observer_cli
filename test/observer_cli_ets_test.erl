@@ -61,6 +61,21 @@ unread_test() ->
     {_, _, Info} = observer_cli_ets:unread(),
     ?assertEqual(unread, proplists:get_value(name, Info)).
 
+ets_table_churn_renders_unread_rows_test() ->
+    Rows = [
+        begin
+            Tab = ets:new(ets_churn, []),
+            true = ets:delete(Tab),
+            observer_cli_ets:get_ets_info(Tab, memory)
+        end
+     || _ <- lists:seq(1, 100)
+    ],
+    [_Title | Rendered] = observer_cli_ets:render_ets_info(Rows, 100, 1, memory),
+    ?assertEqual(100, length(Rendered)),
+    ?assert(
+        lists:all(fun(Row) -> string:find(lists:flatten(Row), "unread") =/= nomatch end, Rendered)
+    ).
+
 collect_ets_info_test() ->
     TabName = collect_ets_table,
     ets:new(TabName, [named_table, public, set]),

@@ -48,12 +48,19 @@
     collect_process_extra/2,
     binary_refs_summary/1,
     format_suspending/1,
-    wait_for_state_view/4
+    wait_for_state_view/4,
+    bounded_process_detail/3
 ]).
 -endif.
 
 %% lists:foldl(fun(_X, Acc) -> queue:in('NaN', Acc) end, queue:new(), lists:seq(1, 5))
 -define(INIT_QUEUE, {['NaN', 'NaN', 'NaN', 'NaN'], ['NaN']}).
+-define(DETAIL_TIMEOUT_MS, 5000).
+-define(DETAIL_MAX_HEAP_WORDS, 512 * 1024).
+-define(DETAIL_MAX_TERM_BYTES, 64 * 1024).
+-define(DETAIL_MAX_OUTPUT_CHARS, 64 * 1024).
+-define(DETAIL_MAX_OUTPUT_BYTES, 64 * 1024).
+-define(DETAIL_FORMAT_DEPTH, 32).
 
 -spec start(Type, pid(), view_opts()) -> no_return() when Type :: home | plugin.
 start(Type, Pid, Opts) ->
@@ -132,9 +139,8 @@ render_worker(info, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
             next_draw_view(info, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ, ManagerPid)
     end;
 render_worker(message, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
-    case collect_process_messages(Pid) of
-        {ok, MessagesInfo} ->
-            Line = render_process_messages(MessagesInfo),
+    case bounded_process_detail(message, Pid) of
+        {ok, Line} ->
             ?output([?CURSOR_TOP, render_stateless_view(message, Type, Interval, Line)]),
             next_draw_view(message, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid);
         dead ->
@@ -150,9 +156,8 @@ render_worker(message, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
             )
     end;
 render_worker(dict, Type, Interval, Pid, TimeRef, RedQ, MemQ, ManagerPid) ->
-    case collect_process_dictionary(Pid) of
-        {ok, DictionaryInfo} ->
-            Line = render_process_dictionary(DictionaryInfo),
+    case bounded_process_detail(dict, Pid) of
+        {ok, Line} ->
             ?output([?CURSOR_TOP, render_stateless_view(dict, Type, Interval, Line)]),
             next_draw_view(dict, Type, TimeRef, Interval, Pid, RedQ, MemQ, ManagerPid);
         dead ->
@@ -219,38 +224,44 @@ render_stateless_view(View, Type, Interval, Line) ->
     [Menu, Line, LastLine].
 
 collect_process_info(Pid) ->
-    ProcessInfo = recon:info(Pid),
-    Meta = proplists:get_value(meta, ProcessInfo),
-    case Meta of
+    ProcessInfo = recon:info(Pid, [
+        registered_name,
+        group_leader,
+        status,
+        links,
+        monitors,
+        monitored_by,
+        trap_exit,
+        initial_call,
+        memory,
+        message_queue_len,
+        heap_size,
+        total_heap_size,
+        garbage_collection,
+        reductions
+    ]),
+    case ProcessInfo of
         undefined ->
             dead;
         _ ->
             WordSize = erlang:system_info(wordsize),
 
-            RegisteredName = proplists:get_value(registered_name, Meta),
-            GroupLeader = proplists:get_value(group_leader, Meta),
-            Status = proplists:get_value(status, Meta),
-
-            Signals = proplists:get_value(signals, ProcessInfo),
-            Link = proplists:get_value(links, Signals),
-            Monitors = proplists:get_value(monitors, Signals),
-            MonitoredBy = proplists:get_value(monitored_by, Signals),
-            TrapExit = proplists:get_value(trap_exit, Signals),
-
-            Location = proplists:get_value(location, ProcessInfo),
-            InitialCall = proplists:get_value(initial_call, Location),
-
-            MemoryUsed = proplists:get_value(memory_used, ProcessInfo),
-            Memory = proplists:get_value(memory, MemoryUsed),
-            MessageQueueLen = proplists:get_value(message_queue_len, MemoryUsed),
-            HeapSize = proplists:get_value(heap_size, MemoryUsed, 0) * WordSize,
-            TotalHeapSize = proplists:get_value(total_heap_size, MemoryUsed, 0) * WordSize,
+            RegisteredName = proplists:get_value(registered_name, ProcessInfo),
+            GroupLeader = proplists:get_value(group_leader, ProcessInfo),
+            Status = proplists:get_value(status, ProcessInfo),
+            Link = proplists:get_value(links, ProcessInfo),
+            Monitors = proplists:get_value(monitors, ProcessInfo),
+            MonitoredBy = proplists:get_value(monitored_by, ProcessInfo),
+            TrapExit = proplists:get_value(trap_exit, ProcessInfo),
+            InitialCall = proplists:get_value(initial_call, ProcessInfo),
+            Memory = proplists:get_value(memory, ProcessInfo),
+            MessageQueueLen = proplists:get_value(message_queue_len, ProcessInfo),
+            HeapSize = proplists:get_value(heap_size, ProcessInfo, 0) * WordSize,
+            TotalHeapSize = proplists:get_value(total_heap_size, ProcessInfo, 0) * WordSize,
             GarbageCollection = collect_process_gc(
-                proplists:get_value(garbage_collection, MemoryUsed)
+                proplists:get_value(garbage_collection, ProcessInfo), WordSize
             ),
-
-            Work = proplists:get_value(work, ProcessInfo),
-            Reductions = proplists:get_value(reductions, Work),
+            Reductions = proplists:get_value(reductions, ProcessInfo),
             case collect_process_extra(Pid, WordSize) of
                 dead ->
                     dead;
@@ -317,10 +328,11 @@ binary_refs_summary(Binaries) ->
     ),
     {erlang:length(Binaries), Bytes}.
 
-collect_process_gc(GarbageCollection) ->
+collect_process_gc(GarbageCollection, WordSize) ->
     #{
-        min_bin_vheap_size => proplists:get_value(min_bin_vheap_size, GarbageCollection),
-        min_heap_size => proplists:get_value(min_heap_size, GarbageCollection),
+        min_bin_vheap_size =>
+            proplists:get_value(min_bin_vheap_size, GarbageCollection) * WordSize,
+        min_heap_size => proplists:get_value(min_heap_size, GarbageCollection) * WordSize,
         fullsweep_after => proplists:get_value(fullsweep_after, GarbageCollection),
         minor_gcs => proplists:get_value(minor_gcs, GarbageCollection)
     }.
@@ -401,6 +413,107 @@ collect_process_state(Pid) ->
 render_process_state(Pid, State) ->
     Line = truncate_str(Pid, State),
     replace_first_line(Line, state_title(Pid)).
+
+bounded_process_detail(View, Pid) ->
+    bounded_process_detail(View, Pid, ?DETAIL_TIMEOUT_MS).
+
+bounded_process_detail(View, Pid, Timeout) ->
+    bounded_detail(
+        Pid,
+        fun() -> collect_and_render_process_detail(View, Pid) end,
+        Timeout
+    ).
+
+collect_and_render_process_detail(message, Pid) ->
+    case collect_process_messages(Pid) of
+        {ok, Info} -> {ok, render_process_messages(Info)};
+        dead -> dead
+    end;
+collect_and_render_process_detail(dict, Pid) ->
+    case collect_process_dictionary(Pid) of
+        {ok, Info} -> {ok, render_process_dictionary(Info)};
+        dead -> dead
+    end;
+collect_and_render_process_detail(state, Pid) ->
+    State = collect_process_state(Pid),
+    {ok, render_process_state(Pid, State)}.
+
+bounded_detail(Pid, Fun, Timeout) ->
+    Parent = self(),
+    Ref = make_ref(),
+    {Worker, Monitor} = spawn_opt(
+        fun() -> Parent ! {Ref, self(), bounded_detail_result(Fun)} end,
+        [
+            monitor,
+            {max_heap_size, #{
+                size => ?DETAIL_MAX_HEAP_WORDS,
+                kill => true,
+                error_logger => false,
+                include_shared_binaries => true
+            }}
+        ]
+    ),
+    await_bounded_detail(Pid, Worker, Monitor, Ref, Timeout).
+
+bounded_detail_result(Fun) ->
+    try Fun() of
+        {ok, Output} -> bounded_detail_output(Output);
+        dead -> dead
+    catch
+        _:_ -> error
+    end.
+
+bounded_detail_output(Output) ->
+    try unicode:characters_to_binary(Output) of
+        Binary when
+            is_binary(Binary),
+            byte_size(Binary) =< ?DETAIL_MAX_OUTPUT_BYTES
+        ->
+            case string:length(Binary) =< ?DETAIL_MAX_OUTPUT_CHARS of
+                true -> {ok, Binary};
+                false -> too_large
+            end;
+        _ ->
+            too_large
+    catch
+        _:_ -> too_large
+    end.
+
+await_bounded_detail(Pid, Worker, Monitor, Ref, Timeout) ->
+    receive
+        {Ref, Worker, Result} ->
+            erlang:demonitor(Monitor, [flush]),
+            normalize_bounded_detail(Pid, Result);
+        {'DOWN', Monitor, process, Worker, killed} ->
+            normalize_bounded_detail(Pid, too_large);
+        {'DOWN', Monitor, process, Worker, _Reason} ->
+            normalize_bounded_detail(Pid, too_large)
+    after Timeout ->
+        exit(Worker, kill),
+        receive
+            {'DOWN', Monitor, process, Worker, _Reason} -> ok
+        after 1000 ->
+            erlang:demonitor(Monitor, [flush])
+        end,
+        receive
+            {Ref, Worker, _Result} -> ok
+        after 0 ->
+            ok
+        end,
+        normalize_bounded_detail(Pid, too_large)
+    end.
+
+normalize_bounded_detail(_Pid, {ok, Binary}) ->
+    {ok, Binary};
+normalize_bounded_detail(_Pid, dead) ->
+    dead;
+normalize_bounded_detail(Pid, error) ->
+    normalize_bounded_detail(Pid, too_large);
+normalize_bounded_detail(Pid, too_large) ->
+    {ok, unicode:characters_to_binary(detail_too_large(Pid))}.
+
+detail_too_large(Pid) ->
+    io_lib:format("Process: ~p~n~ntoo_large~n", [Pid]).
 
 %% state_view is static. user left state view and may stay long after. no need for redraw
 next_draw_view(state, Type, TimeRef, Interval, Pid, NewRedQ, NewMemQ, ManagerPid) ->
@@ -769,9 +882,12 @@ render_state(Pid, Type, Interval) ->
     LastLine = render_footer(),
     ?output([?CURSOR_TOP, Menu, PromptBefore]),
     try
-        State = collect_process_state(Pid),
+        {ok, BoundedLine} = bounded_process_detail(state, Pid),
         Nav = state_nav(Type),
-        Line = render_process_state(Pid, State),
+        Line = replace_first_line(
+            unicode:characters_to_list(BoundedLine),
+            state_title(Pid)
+        ),
         Footer = state_footer(Menu, Nav),
         Action = print_with_less(Line, Menu, Nav, Footer),
         case Action of
@@ -839,17 +955,30 @@ state_footer_text(_Nav) ->
     "q(quit)    F/B(page forward/back)".
 
 truncate_str(Pid, Term) ->
-    State = #{
-        pid => Pid,
-        term => Term,
-        %% we need default mod, cause user can override conf
-        formatter_default => observer_cli_formatter_default,
-        formatter => undefined
-    },
-    observer_cli_lib:pipe(State, [
-        fun format_mod/1,
-        fun format/1
-    ]).
+    case detail_term_within_limits(Term) of
+        true ->
+            State = #{
+                pid => Pid,
+                term => Term,
+                %% we need default mod, cause user can override conf
+                formatter_default => observer_cli_formatter_default,
+                formatter => undefined
+            },
+            observer_cli_lib:pipe(State, [
+                fun format_mod/1,
+                fun format/1
+            ]);
+        false ->
+            detail_too_large(Pid)
+    end.
+
+detail_term_within_limits(Term) ->
+    try
+        erlang:external_size(Term) =< ?DETAIL_MAX_TERM_BYTES andalso
+            io_lib:limit_term(Term, ?DETAIL_FORMAT_DEPTH) =:= Term
+    catch
+        _:_ -> false
+    end.
 
 format_mod(State) ->
     #{formatter_default := FormatModDefault} = State,

@@ -20,6 +20,7 @@
     render_io_info/1,
     render_io_rows/1,
     inet_info/5,
+    inet_window/4,
     getstat/2,
     get_remote_ip/1,
     start_port_view/4
@@ -209,13 +210,18 @@ collect_inet_rows(Type, Rows, Start, ChoosePos) ->
 collect_inet_row(Type, Item, Pos, ChoosePos) when Type =:= cnt orelse Type =:= oct ->
     {Port, Value, [{_, Type1Value}, {_, Type2Value}]} = Item,
     collect_inet_row(Port, Value, Type1Value, Type2Value, Pos, ChoosePos);
-collect_inet_row(Type, {Port, Value, _}, Pos, ChoosePos) ->
+collect_inet_row(Type, {Port, Value, Stats}, Pos, ChoosePos) ->
     {_, Type1, _} = trans_type(Type),
-    Packet1 = getstat(Port, erlang:list_to_existing_atom(Type1)),
+    OtherType = erlang:list_to_existing_atom(Type1),
+    Packet1 =
+        case proplists:get_value(OtherType, Stats) of
+            undefined -> getstat(Port, OtherType);
+            OtherValue -> OtherValue
+        end,
     AllPacket =
         case is_integer(Packet1) of
             true -> Value + Packet1;
-            false -> Value
+            false -> Packet1
         end,
     collect_inet_row(Port, Value, Packet1, AllPacket, Pos, ChoosePos).
 
@@ -318,8 +324,8 @@ render_inet_rows(InetList, _Num, #inet{type = Type}) ->
             ValueFormat,
             Packet1Format,
             AllFormat,
-            ?W({byte, Input}, OutputW),
-            ?W({byte, Output}, InputW),
+            ?W({byte, Output}, OutputW),
+            ?W({byte, Input}, InputW),
             ?W(QueueSize, QueueW),
             ?W({byte, Memory}, MemoryW),
             ?W(IP, PeerW)
@@ -342,9 +348,57 @@ get_menu_str(inet_window, Type, Interval, Rows) ->
 collect_inet_info(Function, Type, Num, Ms, Count) ->
     inet_info(Function, Type, Num, Ms, Count).
 
-inet_info(inet_count, Type, Num, _, _) -> recon:inet_count(Type, Num);
-inet_info(inet_window, Type, Num, _, 0) -> recon:inet_count(Type, Num);
-inet_info(inet_window, Type, Num, Ms, _) -> recon:inet_window(Type, Num, Ms).
+inet_info(inet_count, Type, Num, _, _) ->
+    recon:inet_count(Type, Num);
+inet_info(inet_window, Type, Num, _, 0) ->
+    recon:inet_count(Type, Num);
+inet_info(inet_window, Type, Num, Ms, _) ->
+    {Unit, _, _} = trans_type(Type),
+    CombinedType =
+        case Unit of
+            number -> cnt;
+            byte -> oct
+        end,
+    Sample = fun() -> recon_lib:inet_attrs(CombinedType) end,
+    {First, Last} = recon_lib:sample(Ms, Sample),
+    inet_window(Type, Num, First, Last).
+
+inet_window(Type, Num, First, Last) ->
+    {Unit, _, _} = trans_type(Type),
+    DirectionTypes =
+        case Unit of
+            number -> [recv_cnt, send_cnt];
+            byte -> [recv_oct, send_oct]
+        end,
+    MetricValues = fun(Metric, Items) ->
+        [
+            {Port, proplists:get_value(Metric, Stats), []}
+         || {Port, _, Stats} <- Items
+        ]
+    end,
+    DirectionWindows = maps:from_list([
+        {Metric, recon_lib:sliding_window(MetricValues(Metric, First), MetricValues(Metric, Last))}
+     || Metric <- DirectionTypes
+    ]),
+    SelectedWindow =
+        case Type of
+            cnt -> recon_lib:sliding_window(First, Last);
+            oct -> recon_lib:sliding_window(First, Last);
+            _ -> maps:get(Type, DirectionWindows)
+        end,
+    Selected = recon_lib:sublist_top_n_attrs(SelectedWindow, Num),
+    DirectionValues = [
+        {Metric,
+            maps:from_list([
+                {Port, Value}
+             || {Port, Value, _} <- maps:get(Metric, DirectionWindows)
+            ])}
+     || Metric <- DirectionTypes
+    ],
+    [
+        {Port, Value, [{Metric, maps:get(Port, Values)} || {Metric, Values} <- DirectionValues]}
+     || {Port, Value, _} <- Selected
+    ].
 
 getstat(Port, Attr) ->
     case inet:getstat(Port, [Attr]) of

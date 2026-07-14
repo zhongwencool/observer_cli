@@ -210,7 +210,7 @@ CPU scheduler IDs returned by OTP, not dirty IO schedulers. observer_cli uses
 | `Memory` | Process memory, bytes | Count: current; window: change | `recon:proc_count/2` or `recon:proc_window/3` with `memory` |
 | `BinMemory` | Referenced binary memory, bytes | Count: current; window: change | Recon `binary_memory` attribute |
 | `Reductions` | Process reductions | Count: total; window: increment | Recon `reductions` attribute |
-| `TotalHeapSize` | Process total heap size returned by OTP in words | Count: current; window: change | Recon `total_heap_size` attribute |
+| `TotalHeapSize` | Process total heap words multiplied by VM word size, bytes | Count: current; window: change | Recon `total_heap_size` attribute |
 | `MsgQueue` | Pending message count | Count: current; window: change | Recon `message_queue_len` attribute |
 
 Only the selected ranking field uses the count or window value. The companion
@@ -218,16 +218,13 @@ Only the selected ranking field uses the count or window value. The companion
 Window changes are second sample minus first and can be negative. A process
 present in only one sample retains that sample's absolute value.
 A reduction is a VM scheduling work unit, not elapsed CPU time.
-The current renderer passes `TotalHeapSize` words to the byte formatter without
-converting by VM word size; treat the numeric magnitude as words despite the
-displayed byte suffix.
 
 ## Network
 
 | Input | Action |
 | --- | --- |
 | `ic` | Use `recon:inet_count/2` |
-| `iw` | Use `recon:inet_window/3` with the page interval |
+| `iw` | Use a Recon-backed window sample with the page interval |
 | `rc` | Sort by received packet count |
 | `ro` | Sort by received octets |
 | `sc` | Sort by sent packet count |
@@ -246,22 +243,19 @@ Ranked rows cover legacy `inet` Ports, not every host connection or the OTP
 | --- | --- | --- | --- |
 | `Byte Input`, `Byte Output` | Bytes added since the preceding Network redraw | Refresh delta | `statistics(io)` |
 | `Total Input`, `Total Output` | Cumulative bytes through VM Ports | Total | `statistics(io)` |
-| `NO`, `Port` | Display row and legacy `inet` Port identifier | Current | `recon:inet_count/2` or `recon:inet_window/3` |
-| `recv_cnt`, `send_cnt`, `cnt` | Received, sent, and combined packet counts | Count: total; combined window: delta; one-direction window: see below | `inet:getstat/2` through Recon |
-| `recv_oct`, `send_oct`, `oct` | Received, sent, and combined bytes | Count: total; combined window: delta; one-direction window: see below | `inet:getstat/2` through Recon |
+| `NO`, `Port` | Display row and legacy `inet` Port identifier | Current | Recon count or window sampling |
+| `recv_cnt`, `send_cnt`, `cnt` | Received, sent, and combined packet counts | Count: total; window: delta | `inet:getstat/2` through Recon |
+| `recv_oct`, `send_oct`, `oct` | Received, sent, and combined bytes | Count: total; window: delta | `inet:getstat/2` through Recon |
 | `output`, `input` | Cumulative bytes written to and read from the Port driver | Total | `recon:port_info(Port, io)` |
 | `queuesize` | Bytes currently queued by the Port driver, rendered as a raw integer | Current | `recon:port_info(Port, memory_used)` key `queue_size` |
 | `memory` | Runtime memory allocated for the Port, bytes | Current | `recon:port_info(Port, memory_used)` key `memory` |
 | `Peername(ip:port)` | Remote endpoint or formatted socket error | Current | `inet:peername/1` |
 
 The first `iw` redraw uses count mode; later redraws use the configured window.
-For a one-direction window sort such as `recv_oct`, only the selected metric is
-a window delta. The opposite metric is cumulative, and the computed-total
-column adds that cumulative value to the selected delta, so it has no consistent
-interval meaning. The current renderer also places the Port `input` value under
-`output` and the Port `output` value under `input` in one-direction modes.
-Combined `cnt` and `oct` modes place those two values under the matching
-headings.
+For Ports present in both samples, all ranked metric columns use deltas from the
+same window. A Port present in only one sample retains that sample's absolute
+values. One-direction modes remain sorted by the selected direction. Port
+`input` and `output` totals appear under their matching headings.
 
 ## Ports
 
@@ -524,7 +518,7 @@ renderer can fail that redraw. Sorting uses raw memory words or object count.
 | Field | Meaning and unit | Source |
 | --- | --- | --- |
 | `Name` | Table name | Table ID from `mnesia:system_info(tables)` |
-| `Memory` | Current implementation's `memory` value multiplied by VM word size and displayed as bytes | `mnesia:table_info(Table, memory)`, `system_info(wordsize)` |
+| `Memory` | Table memory in bytes; word-valued storage types are multiplied by VM word size | `mnesia:table_info(Table, memory)`, `system_info(wordsize)` |
 | `Size` | Stored record count | `mnesia:table_info(Table, size)` |
 | `Type` | Mnesia table type | `mnesia:table_info(Table, type)` |
 | `Storage` | Local storage type such as `ram_copies`, `disc_copies`, or `disc_only_copies` | `mnesia:table_info(Table, storage_type)` |
@@ -534,8 +528,8 @@ renderer can fail that redraw. Sorting uses raw memory words or object count.
 
 The `schema` table is always hidden; `hide` toggles an additional fixed list of
 legacy system tables. OTP reports `memory` in words for `ram_copies` and
-`disc_copies`, but in bytes for `disc_only_copies`; the current unconditional
-word-size multiplication therefore overstates `disc_only_copies` memory.
+`disc_copies`, but in bytes for `disc_only_copies`; only the word-valued forms
+are multiplied by VM word size.
 
 ## App
 
@@ -604,14 +598,10 @@ The primary view combines `recon:info/1` with bounded `process_info/2` reads.
 | `trap_exit` | Whether exit signals are converted to messages | Recon `signals` |
 | `stack_size` | Current stack words multiplied by VM word size, bytes | `process_info(Pid, stack_size)` |
 | `binary_refs` | Referenced-binary entry count / sum of referenced binary sizes | `process_info(Pid, binary)` |
-| `min_bin_vheap_size` | Minimum virtual binary heap threshold returned by OTP, in words | Recon garbage-collection data |
-| `min_heap_size` | Minimum heap threshold returned by OTP, in words | Recon garbage-collection data |
+| `min_bin_vheap_size` | Minimum virtual binary heap words multiplied by VM word size, bytes | Recon garbage-collection data |
+| `min_heap_size` | Minimum heap words multiplied by VM word size, bytes | Recon garbage-collection data |
 | `fullsweep_after` | Minor collections allowed before a full-sweep collection | Recon garbage-collection data |
 | `minor_gcs` | Minor collections since the last full sweep | Recon garbage-collection data |
-
-The current renderer passes `min_bin_vheap_size` and `min_heap_size` word counts
-to the byte formatter without multiplying by VM word size. Treat their numeric
-magnitudes as words despite the displayed byte suffix.
 
 Process `status` is one of the states returned by OTP, including `exiting`,
 `waiting`, `running`, `runnable`, `garbage_collecting`, or `suspended`.

@@ -301,6 +301,8 @@ render_top_n_view_test() ->
     ?assertEqual(3, length(Rows3)),
     ?assertEqual(2, length(PidList4)),
     ?assertEqual(3, length(Rows4)),
+    ExpectedHeap = observer_cli_lib:to_byte(1000 * erlang:system_info(wordsize)),
+    ?assertNotEqual(nomatch, string:find(observer_cli_test_io:plain(Rows4), ExpectedHeap)),
     ?assertEqual(2, length(PidList5)),
     ?assertEqual(3, length(Rows5)),
     erlang:exit(Pid2, kill),

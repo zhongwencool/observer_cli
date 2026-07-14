@@ -94,6 +94,38 @@ collect_mnesia_info_running_test() ->
         cleanup_mnesia(Dir)
     end.
 
+mnesia_table_churn_skips_disappeared_rows_test() ->
+    Dir = filename:join(["test", "tmp", "mnesia_churn"]),
+    setup_mnesia(Dir),
+    lists:foreach(
+        fun(_) ->
+            {atomic, ok} = mnesia:create_table(vanished_table, [
+                {attributes, [id, value]}, {ram_copies, [node()]}
+            ]),
+            ok = mnesia:wait_for_tables([vanished_table], 5000),
+            {atomic, ok} = mnesia:delete_table(vanished_table)
+        end,
+        lists:seq(1, 20)
+    ),
+    Tables = mnesia:system_info(tables),
+    ets:insert(mnesia_gvar, [
+        {{schema, tables}, [vanished_table | Tables]},
+        {{vanished_table, storage_type}, ram_copies}
+    ]),
+    try
+        ?assertEqual(undefined, mnesia:table_info(vanished_table, memory)),
+        List = observer_cli_mnesia:collect_mnesia_info(false, memory),
+        ?assertEqual([], [
+            Tab
+         || {_, _, Tab} <- List,
+            proplists:get_value(name, Tab) =:= vanished_table
+        ])
+    after
+        ets:insert(mnesia_gvar, {{schema, tables}, Tables}),
+        ets:delete(mnesia_gvar, {vanished_table, storage_type}),
+        cleanup_mnesia(Dir)
+    end.
+
 collect_mnesia_info_disc_only_table_test() ->
     Dir = filename:join(["test", "tmp", "mnesia_disc_only"]),
     setup_mnesia(Dir),
@@ -103,6 +135,7 @@ collect_mnesia_info_disc_only_table_test() ->
                 {attributes, [id, value]}, {disc_only_copies, [node()]}
             ]),
         ok = mnesia:wait_for_tables([disc_table], 5000),
+        ok = mnesia:dirty_write({disc_table, 1, value}),
         List = observer_cli_mnesia:collect_mnesia_info(false, memory),
         [CollectedRow] = [
             Row
@@ -111,6 +144,7 @@ collect_mnesia_info_disc_only_table_test() ->
         ],
         {0, _SortValue, Tab} = CollectedRow,
         ?assertEqual(disc_only_copies, proplists:get_value(storage, Tab)),
+        ?assertEqual(mnesia:table_info(disc_table, memory), proplists:get_value(memory, Tab)),
         ?assert(proplists:is_defined(fixed, Tab))
     after
         cleanup_mnesia(Dir)

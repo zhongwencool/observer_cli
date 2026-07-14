@@ -176,6 +176,17 @@ collect_process_info_test() ->
         ?assert(is_integer(maps:get(heap_size, Process))),
         ?assert(is_integer(maps:get(total_heap_size, Process))),
         ?assert(is_integer(maps:get(stack_size, Process))),
+        {garbage_collection, RawGC} = erlang:process_info(Target, garbage_collection),
+        GC = maps:get(garbage_collection, Process),
+        WordSize = erlang:system_info(wordsize),
+        ?assertEqual(
+            proplists:get_value(min_bin_vheap_size, RawGC) * WordSize,
+            maps:get(min_bin_vheap_size, GC)
+        ),
+        ?assertEqual(
+            proplists:get_value(min_heap_size, RawGC) * WordSize,
+            maps:get(min_heap_size, GC)
+        ),
         ?assertMatch({_, _}, maps:get(binary_refs, Process)),
         ?assert(is_atom(maps:get(priority, Process))),
         ?assert(is_integer(maps:get(catchlevel, Process))),

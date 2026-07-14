@@ -54,6 +54,30 @@ jobs:
         run: rebar3 as ci check
       - name: generated escript smoke
         run: scripts/escript-smoke.sh
+      - name: Ubuntu installer smoke
+        if: matrix.otp == '29'
+        run: |
+          docker run --rm -i -v "$PWD:/src:ro" ubuntu:24.04 sh -euxs <<'SMOKE'
+          ! command -v shasum
+          mkdir -p /tmp/bin /tmp/release
+          ln -s /bin/true /tmp/bin/escript
+          cat > /tmp/bin/curl <<'SH'
+          #!/bin/sh
+          cp "/tmp/release/${2##*/}" "$4"
+          SH
+          cat > /tmp/bin/erl <<'SH'
+          #!/bin/sh
+          printf 29
+          SH
+          cat > /tmp/release/observer_cli-2.0.0-otp29 <<'SH'
+          #!/bin/sh
+          printf '%s\n' 'observer_cli 2.0.0' 'controller OTP 29'
+          SH
+          chmod +x /tmp/bin/curl /tmp/bin/erl /tmp/release/observer_cli-2.0.0-otp29
+          (cd /tmp/release && sha256sum observer_cli-2.0.0-otp29 > SHA256SUMS)
+          HOME=/tmp/home PATH=/tmp/bin:/usr/bin:/bin sh /src/install.sh
+          test -x /tmp/home/.local/bin/observer_cli
+          SMOKE
       - name: test coverage
         run: |
           epmd -daemon
@@ -95,10 +119,14 @@ jobs:
         with:
           otp-version: '29'
           elixir-version: '1.20'
-      - name: Mix compile
+      - name: Mix release smoke
+        env:
+          MIX_ENV: prod
         run: |
           mix deps.get
-          mix compile
+          mix release
+          mix run --no-start -e 'true = :crypto in Application.spec(:observer_cli, :applications)'
+          _build/prod/rel/observer_cli/bin/observer_cli eval ':crypto.strong_rand_bytes(1)'
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

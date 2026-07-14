@@ -954,8 +954,13 @@ top_n_row_values(message_queue_len, Pid, MQLen) ->
         observer_cli_lib:to_byte(Memory),
         observer_cli_lib:to_list(Reductions)
     };
-top_n_row_values(_Type, Pid, Bytes) ->
+top_n_row_values(Type, Pid, Value) ->
     {Reductions, MsgQueueLen} = get_pid_info(Pid, [reductions, message_queue_len]),
+    Bytes =
+        case Type of
+            total_heap_size -> Value * erlang:system_info(wordsize);
+            _ -> Value
+        end,
     {
         observer_cli_lib:to_byte(Bytes),
         observer_cli_lib:to_list(Reductions),
