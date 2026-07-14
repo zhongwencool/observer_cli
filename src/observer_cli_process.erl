@@ -418,17 +418,11 @@ bounded_process_detail(View, Pid) ->
     bounded_process_detail(View, Pid, ?DETAIL_TIMEOUT_MS).
 
 bounded_process_detail(View, Pid, Timeout) ->
-    case
-        bounded_detail(
-            Pid,
-            fun() -> collect_and_render_process_detail(View, Pid) end,
-            Timeout
-        )
-    of
-        error when View =:= state -> error;
-        error -> normalize_bounded_detail(Pid, too_large);
-        Result -> Result
-    end.
+    bounded_detail(
+        Pid,
+        fun() -> collect_and_render_process_detail(View, Pid) end,
+        Timeout
+    ).
 
 collect_and_render_process_detail(message, Pid) ->
     case collect_process_messages(Pid) of
@@ -441,8 +435,11 @@ collect_and_render_process_detail(dict, Pid) ->
         dead -> dead
     end;
 collect_and_render_process_detail(state, Pid) ->
-    State = collect_process_state(Pid),
-    {ok, render_process_state(Pid, State)}.
+    try collect_process_state(Pid) of
+        State -> {ok, truncate_str(Pid, State)}
+    catch
+        _:_ -> state_error
+    end.
 
 bounded_detail(Pid, Fun, Timeout) ->
     Parent = self(),
@@ -465,18 +462,25 @@ bounded_detail(Pid, Fun, Timeout) ->
 bounded_detail_result(Fun) ->
     try Fun() of
         {ok, Output} -> bounded_detail_output(Output);
-        dead -> dead
+        dead -> dead;
+        state_error -> state_error
     catch
         _:_ -> error
     end.
 
+bounded_detail_output(Binary) when
+    is_binary(Binary),
+    byte_size(Binary) > ?DETAIL_MAX_OUTPUT_BYTES
+->
+    too_large;
 bounded_detail_output(Output) ->
     try unicode:characters_to_binary(Output) of
         Binary when
             is_binary(Binary),
             byte_size(Binary) =< ?DETAIL_MAX_OUTPUT_BYTES
         ->
-            case string:length(Binary) =< ?DETAIL_MAX_OUTPUT_CHARS of
+            Characters = unicode:characters_to_list(Binary),
+            case erlang:length(Characters) =< ?DETAIL_MAX_OUTPUT_CHARS of
                 true -> {ok, Binary};
                 false -> too_large
             end;
@@ -518,8 +522,10 @@ normalize_bounded_detail(_Pid, {ok, Binary}) ->
     {ok, Binary};
 normalize_bounded_detail(_Pid, dead) ->
     dead;
-normalize_bounded_detail(_Pid, error) ->
+normalize_bounded_detail(_Pid, state_error) ->
     error;
+normalize_bounded_detail(Pid, error) ->
+    normalize_bounded_detail(Pid, too_large);
 normalize_bounded_detail(Pid, too_large) ->
     {ok, unicode:characters_to_binary(detail_too_large(Pid))}.
 

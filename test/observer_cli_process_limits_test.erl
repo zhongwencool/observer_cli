@@ -30,12 +30,34 @@ bounded_process_detail() ->
         exit(Small, kill)
     end,
 
+    assert_default_binary_output(),
+    assert_too_many_messages(),
     assert_large_message(binary:copy(<<"x">>, 2 * 1024 * 1024)),
     assert_large_message(lists:seq(1, 100)),
+    assert_large_message(1 bsl 240000),
     assert_large_dictionary(),
     assert_large_state(),
     assert_unsupported_state(),
     assert_custom_formatter_limits().
+
+assert_default_binary_output() ->
+    Binary = binary:copy(<<"0123456789">>, 20),
+    Target = idle_process(),
+    Target ! Binary,
+    try
+        {ok, Output} = observer_cli_process:bounded_process_detail(message, Target, 2000),
+        ?assertNotEqual(nomatch, binary:match(Output, Binary))
+    after
+        exit(Target, kill)
+    end.
+
+assert_too_many_messages() ->
+    Output = unicode:characters_to_binary(
+        observer_cli_process:render_process_messages(#{
+            message_queue_len => 10001, too_many => true
+        })
+    ),
+    ?assertNotEqual(nomatch, binary:match(Output, <<"too_large">>)).
 
 assert_large_message(Message) ->
     Target = idle_process(),
@@ -102,6 +124,37 @@ assert_custom_formatter_limits() ->
             exit(Oversized, kill)
         end,
 
+        Unicode = idle_process(),
+        Unicode ! {unicode_output, 17000},
+        try
+            assert_too_large(
+                observer_cli_process:bounded_process_detail(message, Unicode, 2000)
+            )
+        after
+            exit(Unicode, kill)
+        end,
+
+        Invalid = idle_process(),
+        Invalid ! invalid_output,
+        try
+            assert_too_large(
+                observer_cli_process:bounded_process_detail(message, Invalid, 2000)
+            )
+        after
+            exit(Invalid, kill)
+        end,
+
+        Fallback = idle_process(),
+        Fallback ! raise_formatter,
+        try
+            {ok, FallbackOutput} =
+                observer_cli_process:bounded_process_detail(message, Fallback, 2000),
+            ?assertNotEqual(nomatch, binary:match(FallbackOutput, <<"raise_formatter">>)),
+            ?assertEqual(nomatch, binary:match(FallbackOutput, <<"too_large">>))
+        after
+            exit(Fallback, kill)
+        end,
+
         Hanging = idle_process(),
         Hanging ! {hang, self()},
         try
@@ -133,12 +186,12 @@ assert_custom_formatter_limits() ->
             FormatterMonitor = erlang:monitor(process, FormatterWorker),
             exit(Caller, kill),
             receive
-                {'DOWN', CallerMonitor, process, Caller, _Reason} -> ok
+                {'DOWN', CallerMonitor, process, Caller, _CallerReason} -> ok
             after 1000 ->
                 error(formatter_caller_still_alive)
             end,
             receive
-                {'DOWN', FormatterMonitor, process, FormatterWorker, _Reason} -> ok
+                {'DOWN', FormatterMonitor, process, FormatterWorker, _FormatterReason} -> ok
             after 1000 ->
                 error(orphaned_formatter_worker)
             end
@@ -154,7 +207,7 @@ assert_custom_formatter_limits() ->
             ),
             HeapWorker =
                 receive
-                    {formatter_worker, WorkerPid} -> WorkerPid
+                    {formatter_worker, HeapWorkerPid} -> HeapWorkerPid
                 after 1000 ->
                     error(heap_formatter_worker_missing)
                 end,
@@ -191,6 +244,12 @@ restore_formatter_env(undefined) ->
 
 format(_Pid, [{oversized_output, Count}]) ->
     lists:duplicate(Count, $x);
+format(_Pid, [{unicode_output, Count}]) ->
+    lists:duplicate(Count, 16#1F600);
+format(_Pid, [invalid_output]) ->
+    {invalid, chardata};
+format(_Pid, [raise_formatter]) ->
+    error(custom_formatter_failed);
 format(_Pid, [{hang, Owner}]) ->
     Owner ! {formatter_worker, self()},
     receive
