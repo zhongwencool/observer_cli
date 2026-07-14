@@ -14,6 +14,9 @@
    sh -n install.sh
    rebar3 escriptize
    scripts/escript-smoke.sh
+   MIX_ENV=prod mix deps.get --check-locked
+   MIX_ENV=prod mix escript.build
+   OBSERVER_CLI_BIN="$PWD/observer_cli" scripts/escript-smoke.sh
    rebar3 docs
    rebar3 hex build
    ```

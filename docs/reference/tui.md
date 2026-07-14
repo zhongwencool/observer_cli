@@ -580,7 +580,8 @@ links, and history](https://raw.githubusercontent.com/zhongwencool/observer_cli/
 
 ### Process Info fields
 
-The primary view combines `recon:info/1` with bounded `process_info/2` reads.
+The primary view requests only the displayed `process_info/2` fields; it does
+not fetch the process dictionary or current stacktrace in the background.
 
 | Field | Meaning and unit | Source |
 | --- | --- | --- |
@@ -615,10 +616,19 @@ point-in-time samples; reductions are cumulative and memory is current bytes.
 
 | View | Data source and boundary |
 | --- | --- |
-| Messages | Reads `message_queue_len` first. An empty queue is not fetched; queues above 10,000 are refused; otherwise messages come from `recon:info(Pid, messages)` and use the configured term formatter. |
+| Messages | Reads `message_queue_len` first. An empty queue is not fetched; queues above 10,000 return `too_large`; otherwise messages come from `recon:info(Pid, messages)` and use the configured term formatter. |
 | Dictionary | Reads the current process dictionary and entry count with `process_info(Pid, dictionary)` and uses the configured term formatter. |
 | Current Stack | Reads `process_info(Pid, current_stacktrace)` and shows at most 30 MFA plus `file:line` frames. |
 | State | Takes one static `recon:get_state(Pid, 2500)` capture and uses the configured term formatter. |
+
+Messages, Dictionary, and State are collected and formatted in a monitored
+worker on the observed node. The worker has a five-second deadline and a
+`512 * 1024`-word heap cap that includes shared binaries. Terms are refused
+above 64 KiB of external representation or print depth 32. Formatter output is
+refused above 65,536 characters or 64 KiB of UTF-8; every refusal displays
+`too_large`. These limits bound the helper and retained output, but the VM can
+still do transient work while copying a requested term, and a delivered
+`system_get_state` request can outlive its caller timeout.
 
 Pager input is:
 

@@ -1,6 +1,7 @@
 .eunit
 .tool-versions
 _build
+/observer_cli
 deps
 doc
 elvis

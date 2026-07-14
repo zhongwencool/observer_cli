@@ -352,8 +352,8 @@ collect_process_messages(Pid) ->
 
 render_process_messages(#{message_queue_len := 0}) ->
     "\e[32;1mNo messages were found.\e[0m\n";
-render_process_messages(#{message_queue_len := Len, too_many := true}) ->
-    io_lib:format("\e[31mToo many message(~w)!\e[0m~n", [Len]);
+render_process_messages(#{too_many := true}) ->
+    "\e[31mtoo_large\e[0m\n";
 render_process_messages(#{pid := Pid, message_queue_len := Len, messages := Messages}) ->
     [
         io_lib:format("~p Message Len:~p~n", [Pid, Len]),
@@ -418,11 +418,17 @@ bounded_process_detail(View, Pid) ->
     bounded_process_detail(View, Pid, ?DETAIL_TIMEOUT_MS).
 
 bounded_process_detail(View, Pid, Timeout) ->
-    bounded_detail(
-        Pid,
-        fun() -> collect_and_render_process_detail(View, Pid) end,
-        Timeout
-    ).
+    case
+        bounded_detail(
+            Pid,
+            fun() -> collect_and_render_process_detail(View, Pid) end,
+            Timeout
+        )
+    of
+        error when View =:= state -> error;
+        error -> normalize_bounded_detail(Pid, too_large);
+        Result -> Result
+    end.
 
 collect_and_render_process_detail(message, Pid) ->
     case collect_process_messages(Pid) of
@@ -453,7 +459,8 @@ bounded_detail(Pid, Fun, Timeout) ->
             }}
         ]
     ),
-    await_bounded_detail(Pid, Worker, Monitor, Ref, Timeout).
+    {ok, KillTimer} = timer:kill_after(Timeout, Worker),
+    await_bounded_detail(Pid, Worker, Monitor, Ref, KillTimer, Timeout).
 
 bounded_detail_result(Fun) ->
     try Fun() of
@@ -479,16 +486,20 @@ bounded_detail_output(Output) ->
         _:_ -> too_large
     end.
 
-await_bounded_detail(Pid, Worker, Monitor, Ref, Timeout) ->
+await_bounded_detail(Pid, Worker, Monitor, Ref, KillTimer, Timeout) ->
     receive
         {Ref, Worker, Result} ->
+            timer:cancel(KillTimer),
             erlang:demonitor(Monitor, [flush]),
             normalize_bounded_detail(Pid, Result);
         {'DOWN', Monitor, process, Worker, killed} ->
+            timer:cancel(KillTimer),
             normalize_bounded_detail(Pid, too_large);
         {'DOWN', Monitor, process, Worker, _Reason} ->
-            normalize_bounded_detail(Pid, too_large)
+            timer:cancel(KillTimer),
+            normalize_bounded_detail(Pid, error)
     after Timeout ->
+        timer:cancel(KillTimer),
         exit(Worker, kill),
         receive
             {'DOWN', Monitor, process, Worker, _Reason} -> ok
@@ -507,8 +518,8 @@ normalize_bounded_detail(_Pid, {ok, Binary}) ->
     {ok, Binary};
 normalize_bounded_detail(_Pid, dead) ->
     dead;
-normalize_bounded_detail(Pid, error) ->
-    normalize_bounded_detail(Pid, too_large);
+normalize_bounded_detail(_Pid, error) ->
+    error;
 normalize_bounded_detail(Pid, too_large) ->
     {ok, unicode:characters_to_binary(detail_too_large(Pid))}.
 

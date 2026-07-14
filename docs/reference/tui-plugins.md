@@ -252,12 +252,19 @@ views. Implement `observer_cli_formatter` and handle every Erlang term:
 
 format(Pid, Term) ->
     unicode:characters_to_list(
-        io_lib:format("Process: ~p~n~n~tp~n", [Pid, Term])
+        io_lib:format(
+            "Process: ~p~n~n~tP~n",
+            [Pid, Term, 32],
+            [{chars_limit, 64 * 1024}]
+        )
     ).
 ```
 
 `format/2` must return a Unicode character list. If it raises, exits, or throws,
 Observer CLI falls back to `observer_cli_formatter_default` for that value.
+Collection and both formatter implementations run in the same bounded worker.
+A timeout, heap-limit exit, invalid return, or output above the 65,536-character
+or 64 KiB UTF-8 caps displays `too_large` without another formatting attempt.
 
 Configure both the formatter application and module. The application identifies
 only its own modules for TUI auto-load; dependency and included applications are

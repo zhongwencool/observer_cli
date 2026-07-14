@@ -93,9 +93,30 @@ VERSION=2.0.0
 git clone --branch "v${VERSION}" --depth 1 \
   https://github.com/zhongwencool/observer_cli.git
 cd observer_cli
+```
+
+<!-- tabs-open -->
+#### Rebar3
+
+```sh
 rebar3 escriptize
+BIN=./_build/default/bin/observer_cli
+```
+
+#### Mix
+
+The CI-tested toolchain is Erlang/OTP 29 with Elixir 1.20:
+
+```sh
+mix deps.get
+mix escript.build
+BIN=./observer_cli
+```
+<!-- tabs-close -->
+
+```sh
 mkdir -p "$HOME/.local/bin"
-install -m 0755 _build/default/bin/observer_cli "$HOME/.local/bin/observer_cli"
+install -m 0755 "$BIN" "$HOME/.local/bin/observer_cli"
 export PATH="$HOME/.local/bin:$PATH"
 observer_cli --version
 ```

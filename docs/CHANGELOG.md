@@ -4,6 +4,8 @@ Release and maintenance changes, newest first.
 
 ## 2.0.0 (release candidate)
 
+- Added `mix escript.build` as an alternative source build for the controller,
+  using the same Erlang entry point, VM flags, dependencies, and bundled schema.
 - Added `observer_cli logs` for bounded retained evidence from one trusted plain
   `logger_std_h` configured file path, with strict source, file-identity, tail,
   response, and output-encoding limits.

@@ -7,6 +7,12 @@ defmodule ObserverCli.MixProject do
       version: "2.0.0",
       language: :erlang,
       description: "Production-ready BEAM diagnostics for operators, automation, and AI agents.",
+      escript: [
+        main_module: :observer_cli_escriptize,
+        app: nil,
+        emu_args: "-hidden +sbtu +A0 -elixir ansi_enabled true",
+        include_priv_for: [:observer_cli]
+      ],
       deps: [
         {:recon, "2.5.6"}
       ]

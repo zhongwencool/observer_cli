@@ -119,11 +119,15 @@ jobs:
         with:
           otp-version: '29'
           elixir-version: '1.20'
-      - name: Mix release smoke
+          rebar3-version: '3.27'
+      - name: Mix escript and release smoke
         env:
           MIX_ENV: prod
         run: |
           mix deps.get
+          mix escript.build
+          erl -noshell -eval '{ok,S}=escript:extract("observer_cli",[]),{archive,A}=lists:keyfind(archive,1,S),{ok,E}=zip:table(A),true=lists:keymember("observer_cli/priv/schema/observer_cli.cli.v1.schema.json",2,E),halt().'
+          OBSERVER_CLI_BIN="$PWD/observer_cli" scripts/escript-smoke.sh
           mix release
           mix run --no-start -e 'true = :crypto in Application.spec(:observer_cli, :applications)'
           _build/prod/rel/observer_cli/bin/observer_cli eval ':crypto.strong_rand_bytes(1)'
