@@ -314,6 +314,39 @@ start_quit_test() ->
         end
     ).
 
+route_stops_socket_store_test() ->
+    {Runner, RunnerRef} = spawn_monitor(fun() ->
+        observer_cli_test_io:with_geometry(
+            24,
+            80,
+            [{sleep, 500, "H\n"}, {sleep, 5000, "q\n"}],
+            fun() -> observer_cli_socket:start(#view_opts{auto_row = false}) end
+        )
+    end),
+    try
+        timer:sleep(100),
+        {links, Links} = process_info(Runner, links),
+        [Store] = [
+            Pid
+         || Pid <- Links,
+            process_info(Pid, current_function) =:=
+                {current_function, {observer_cli_store, loop, 1}}
+        ],
+        StoreRef = monitor(process, Store),
+        receive
+            {'DOWN', StoreRef, process, Store, _} -> ?assert(is_process_alive(Runner))
+        after 2000 ->
+            ?assert(false)
+        end
+    after
+        exit(Runner, kill),
+        receive
+            {'DOWN', RunnerRef, process, Runner, _} -> ok
+        after 1000 ->
+            ?assert(false)
+        end
+    end.
+
 start_manager_branches_test() ->
     Inputs = [
         "io\n",
