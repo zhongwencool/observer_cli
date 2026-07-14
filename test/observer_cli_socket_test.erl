@@ -385,13 +385,65 @@ start_detail_unknown_input_test() ->
 
 start_socket_selection_test() ->
     with_socket(fun(_Socket) ->
-        observer_cli_test_io:with_input(
-            ["1\n", "q\n"],
+        {quit, Output} = observer_cli_test_io:capture_with_geometry(
+            24,
+            80,
+            [{sleep, 250, "1\n"}, {sleep, 100, "q\n"}],
             fun() ->
-                ?assertEqual(quit, observer_cli_socket:start(#view_opts{auto_row = false}))
+                observer_cli_socket:start(#view_opts{auto_row = false})
             end
-        )
+        ),
+        observer_cli_test_io:assert_stable_fragments(Output, ["Overview", "local_address"])
     end).
+
+start_socket_redraw_test() ->
+    {quit, Output} = observer_cli_test_io:capture_with_geometry(
+        24,
+        80,
+        [{sleep, 200, "q\n"}],
+        fun() ->
+            Opts = #view_opts{auto_row = false, sockets = #sockets{interval = 20}},
+            observer_cli_socket:start(Opts)
+        end
+    ),
+    ?assert(length(binary:matches(iolist_to_binary(Output), <<"Current page is 1">>)) >= 2).
+
+socket_capability_absence_fails_closed_test() ->
+    {module, socket} = code:ensure_loaded(socket),
+    SocketPath = filename:dirname(code:which(socket)),
+    CodePath = code:get_path(),
+    true = code:del_path(SocketPath),
+    try
+        true = code:delete(socket),
+        ?assertNot(observer_cli_socket:socket_available()),
+        ?assertMatch({error, _}, observer_cli_socket:collect_general_info()),
+        ?assertMatch({error, _}, observer_cli_socket:collect_socket_overviews()),
+        ?assertMatch({error, _}, observer_cli_socket:collect_socket_info(io, #{})),
+        ?assertMatch(
+            {{error, _}, #{}},
+            observer_cli_socket:collect_socket_render_info(10, 1, io, #{})
+        ),
+        ?assertEqual(error, observer_cli_socket:select_socket(1, #sockets{}))
+    after
+        true = code:set_path(CodePath),
+        {module, socket} = code:ensure_loaded(socket)
+    end.
+
+connected_socket_peer_address_test() ->
+    {ok, Listen} = socket:open(inet, stream, tcp),
+    ok = socket:bind(Listen, #{family => inet, addr => loopback, port => 0}),
+    ok = socket:listen(Listen),
+    {ok, #{port := Port}} = socket:sockname(Listen),
+    {ok, Client} = socket:open(inet, stream, tcp),
+    ok = socket:connect(Client, #{family => inet, addr => loopback, port => Port}),
+    {ok, Server} = socket:accept(Listen),
+    try
+        ?assertNotEqual("-", observer_cli_socket:socket_addr(Client, peername))
+    after
+        socket:close(Server),
+        socket:close(Client),
+        socket:close(Listen)
+    end.
 
 socket_options_dynamic_test() ->
     with_socket(fun(Socket) ->

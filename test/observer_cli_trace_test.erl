@@ -8,6 +8,240 @@
 
 -define(RELOAD_FIXTURE, observer_cli_trace_reload_fixture).
 
+trace_runtime_failure_paths_test() ->
+    cleanup(),
+    try
+        ?assertEqual(undefined, observer_cli_trace:test_helpers()),
+        Owner = spawn(fun stubborn_helper/0),
+        OwnerMon = erlang:monitor(process, Owner),
+        Ref = make_ref(),
+        self() ! {Ref, ready, #{}},
+        exit(Owner, kill),
+        ?assertEqual(
+            result,
+            observer_cli_trace:await_owner_down(Owner, OwnerMon, Ref, result)
+        ),
+
+        Tracer = spawn(fun() ->
+            receive
+                crash -> exit(failed)
+            end
+        end),
+        TracerMon = erlang:monitor(process, Tracer),
+        Tracer ! crash,
+        ?assertEqual(
+            {forced, internal, capture_internal_error},
+            observer_cli_trace:wait_trace(
+                #{ref => make_ref()},
+                #{tracer => Tracer, tracer_mon => TracerMon},
+                erlang:monotonic_time(millisecond) + 1000
+            )
+        ),
+
+        BlockingOwner = spawn(fun stubborn_helper/0),
+        true = register(observer_cli_trace_owner, BlockingOwner),
+        spawn(fun() ->
+            timer:sleep(20),
+            exit(BlockingOwner, kill)
+        end),
+        ?assert(observer_cli_trace:wait_cleanup(500))
+    after
+        cleanup()
+    end.
+
+remote_trace_pid_is_rejected_test_() ->
+    {timeout, 10, fun() ->
+        with_distribution(fun() ->
+            {ok, Peer, Node} = peer:start_link(#{
+                name => peer:random_name("observer_cli_trace_pid")
+            }),
+            try
+                RemotePid = erpc:call(Node, erlang, whereis, [init]),
+                ?assertEqual(error, observer_cli_trace:parse_pid(pid_to_list(RemotePid))),
+                ?assertEqual(ok, observer_cli:update_net_ticktime_from(Node))
+            after
+                peer:stop(Peer)
+            end
+        end)
+    end}.
+
+trace_protocol_timeouts_are_bounded_test_() ->
+    {timeout, 10, fun trace_protocol_timeouts_are_bounded/0}.
+
+fixed_name_collision_blocks_cleanup_confirmation_test_() ->
+    {timeout, 5, fun fixed_name_collision_blocks_cleanup_confirmation/0}.
+
+formatter_only_attachment_completes_test_() ->
+    {timeout, 10, fun formatter_only_attachment_completes/0}.
+
+post_setup_port_collision_is_rejected_test_() ->
+    {timeout, 10, fun post_setup_port_collision_is_rejected/0}.
+
+pre_attach_collector_crash_is_reported_test_() ->
+    {timeout, 10, fun pre_attach_collector_crash_is_reported/0}.
+
+trace_protocol_timeouts_are_bounded() ->
+    cleanup(),
+    try
+        Owner = spawn(fun stubborn_helper/0),
+        OwnerMon = erlang:monitor(process, Owner),
+        OwnerResult = observer_cli_trace:await_owner_down(
+            Owner, OwnerMon, make_ref(), result
+        ),
+        ?assertEqual(cleanup_unconfirmed, maps:get(reason, OwnerResult)),
+        exit(Owner, kill),
+        await_down(Owner, OwnerMon),
+
+        AckOwner = spawn(fun stubborn_helper/0),
+        AckOwnerMon = erlang:monitor(process, AckOwner),
+        AckResult = observer_cli_trace:await_stop_ack(
+            AckOwner, AckOwnerMon, make_ref(), #{code => warning}, undefined, false
+        ),
+        ?assertEqual(cleanup_unconfirmed, maps:get(reason, AckResult)),
+        exit(AckOwner, kill),
+        await_down(AckOwner, AckOwnerMon)
+    after
+        cleanup()
+    end.
+
+fixed_name_collision_blocks_cleanup_confirmation() ->
+    cleanup(),
+    Collision = spawn(fun stubborn_helper/0),
+    CollisionMon = erlang:monitor(process, Collision),
+    true = register(recon_trace_formatter, Collision),
+    try
+        ?assertEqual(
+            {error, cleanup_unconfirmed},
+            observer_cli_trace:verify_cleanup(#{})
+        )
+    after
+        exit(Collision, kill),
+        await_down(Collision, CollisionMon),
+        cleanup()
+    end.
+
+formatter_only_attachment_completes() ->
+    cleanup(),
+    Tracee = tracee(),
+    Coordinator = spawn(fun formatter_suspend_resume/0),
+    try
+        AfterCalls = fun() ->
+            Formatter = whereis(recon_trace_formatter),
+            Coordinator ! {suspend, Formatter, self()},
+            receive
+                formatter_suspended -> ok
+            after 1000 ->
+                error(formatter_suspend_timeout)
+            end,
+            Tracee ! {call, self(), 1},
+            receive
+                called -> ok
+            after 1000 ->
+                error(tracee_timeout)
+            end,
+            wait_until(fun() -> whereis(recon_trace_tracer) =:= undefined end),
+            Coordinator ! resume_after_attach,
+            ok
+        end,
+        Result = observer_cli_trace:call(
+            self(),
+            (request(Tracee))#{max => 1, duration_ms => 3000, test_after_calls => AfterCalls}
+        ),
+        ?assertEqual(ok, maps:get(status, Result)),
+        ?assertEqual(limit_reached, maps:get(reason, Result)),
+        assert_clean(Tracee)
+    after
+        Coordinator ! stop,
+        Tracee ! stop,
+        cleanup()
+    end.
+
+formatter_suspend_resume() ->
+    receive
+        {suspend, Formatter, Owner} ->
+            true = erlang:suspend_process(Formatter),
+            Owner ! formatter_suspended,
+            receive
+                resume_after_attach ->
+                    timer:sleep(100),
+                    true = erlang:resume_process(Formatter);
+                stop ->
+                    _ = resume_formatter(Formatter)
+            end;
+        stop ->
+            ok
+    end.
+
+resume_formatter(Formatter) ->
+    try erlang:resume_process(Formatter) of
+        Result -> Result
+    catch
+        error:badarg -> false
+    end.
+
+post_setup_port_collision_is_rejected() ->
+    cleanup(),
+    Tracee = tracee(),
+    try
+        AfterCalls = fun() ->
+            ok = recon_trace:clear(),
+            TracerPort = open_port({spawn, "cat"}, []),
+            true = register(recon_trace_tracer, TracerPort),
+            FormatterPort = open_port({spawn, "cat"}, []),
+            true = register(recon_trace_formatter, FormatterPort)
+        end,
+        Result = observer_cli_trace:call(
+            self(), (request(Tracee))#{test_after_calls => AfterCalls}
+        ),
+        ?assertEqual(capture_internal_error, maps:get(reason, Result)),
+        ?assertEqual(undefined, whereis(recon_trace_tracer)),
+        ?assertEqual(undefined, whereis(recon_trace_formatter)),
+        assert_clean(Tracee)
+    after
+        Tracee ! stop,
+        cleanup()
+    end.
+
+pre_attach_collector_crash_is_reported() ->
+    cleanup(),
+    Tracee = tracee(),
+    try
+        AfterCalls = fun() ->
+            #{collector := Collector} = get(observer_cli_trace_helpers),
+            exit(Collector, kill),
+            ok = recon_trace:clear(),
+            wait_until(fun() ->
+                not is_process_alive(Collector) andalso
+                    whereis(recon_trace_tracer) =:= undefined andalso
+                    whereis(recon_trace_formatter) =:= undefined
+            end)
+        end,
+        Result = observer_cli_trace:call(
+            self(), (request(Tracee))#{test_after_calls => AfterCalls}
+        ),
+        ?assertEqual(capture_internal_error, maps:get(reason, Result)),
+        assert_forced(Result),
+        assert_clean(Tracee)
+    after
+        Tracee ! stop,
+        cleanup()
+    end.
+
+with_distribution(Fun) ->
+    WasAlive = erlang:is_alive(),
+    case WasAlive of
+        true ->
+            Fun();
+        false ->
+            Name = list_to_atom(peer:random_name("observer_cli_trace_origin")),
+            {ok, _} = net_kernel:start([Name, shortnames]),
+            try
+                Fun()
+            after
+                net_kernel:stop()
+            end
+    end.
+
 fixture() ->
     ok.
 

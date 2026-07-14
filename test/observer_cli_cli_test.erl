@@ -520,6 +520,22 @@ validation_edge_paths_test() ->
         {invalid_timeout, ["diagnose", "--observe", "5s", "--timeout", "invalid"]},
         {invalid_duration, ["network", "--duration", "invalid"]},
         {invalid_duration, ["processes", "--duration", "invalid"]},
+        {unsupported_command_option, [
+            "otp-state", "server", "--behavior", "gen_event", "--duration", "1s"
+        ]},
+        {invalid_timeout, [
+            "otp-state", "server", "--behavior", "gen_server", "--timeout", "invalid"
+        ]},
+        {unsupported_command_option, [
+            "trace",
+            "call",
+            "erlang:node/0",
+            "--pid",
+            "<0.1.0>",
+            "--replace-existing-trace",
+            "--handler",
+            "default"
+        ]},
         {unsupported_command_option, ["diagnose", "--sort", "memory"]},
         {unsupported_command_option, [
             "distribution", "--limit", "20", "--duration", "250ms"
@@ -805,6 +821,10 @@ context_option_validation_test() ->
     ),
     ?assertEqual(
         {error, missing_cookie_source}, observer_cli_cli:context_options(#{node => "target"})
+    ),
+    ?assertEqual(
+        {error, invalid_node},
+        observer_cli_cli:context_options(#{node => "@", cookie_env => "COOKIE"})
     ),
     ?assertMatch(
         {ok, #{name_mode := "long", cookie_env := "COOKIE"}},
@@ -1430,6 +1450,129 @@ command_text_and_error_encoding_test() ->
         observer_cli_cli:escape_text(<<"valid", 16#ff>>)
     ).
 
+text_encoder_public_edge_contract_test() ->
+    Capabilities = #{<<"protocol_version">> => 1, <<"bundle_version">> => <<"2.0.0">>},
+    Incompatible = observer_cli_cli:response(
+        connect,
+        complete,
+        #{<<"node">> => <<"target@host">>, <<"otp_release">> => <<"29">>},
+        null,
+        #{
+            <<"node">> => <<"target@host">>,
+            <<"probe">> => <<"succeeded">>,
+            <<"diagnostics_module">> => <<"incompatible">>,
+            <<"name_mode">> => <<"short">>,
+            <<"cookie_source">> => #{<<"type">> => <<"file">>, <<"path">> => <<"/tmp/cookie">>},
+            <<"expected_capabilities">> => Capabilities,
+            <<"observed_capabilities">> => null
+        },
+        []
+    ),
+    {ok, IncompatibleText} = observer_cli_cli:encode(text, Incompatible),
+    ?assertNotEqual(nomatch, binary:match(IncompatibleText, <<"incompatible">>)),
+    ?assertNotEqual(nomatch, binary:match(IncompatibleText, <<"file:/tmp/cookie">>)),
+
+    {ok, TraceStopText} = observer_cli_cli:encode(
+        text, observer_cli_cli:response(trace_stop_all, complete, null, null, #{}, [])
+    ),
+    ?assertMatch(<<"observer_cli trace stop", _/binary>>, TraceStopText),
+
+    Values = observer_cli_cli:response(
+        snapshot,
+        <<"partial">>,
+        null,
+        null,
+        #{<<"values">> => [#{}, [], <<>>, 1.5, {sample, json}, [<<"nested">>]]},
+        []
+    ),
+    {ok, ValuesText} = observer_cli_cli:encode(text, Values),
+    lists:foreach(
+        fun(Fragment) -> ?assertNotEqual(nomatch, binary:match(ValuesText, Fragment)) end,
+        [
+            <<"[0]: {}">>,
+            <<"[1]: []">>,
+            <<"[2]: \"\"">>,
+            <<"[3]: 1.5">>,
+            <<"{sample,json}">>,
+            <<"nested">>
+        ]
+    ),
+
+    Truncated = log_response([<<"tail">>]),
+    TruncatedData = (maps:get(<<"data">>, Truncated))#{
+        <<"tail">> := (maps:get(<<"tail">>, maps:get(<<"data">>, Truncated)))#{
+            <<"truncated_line_indexes">> := [0]
+        }
+    },
+    {ok, TruncatedText} = observer_cli_cli:encode(
+        text,
+        Truncated#{
+            <<"data">> := TruncatedData,
+            <<"meta">> := (maps:get(<<"meta">>, Truncated))#{<<"target">> := null}
+        }
+    ),
+    ?assertNotEqual(nomatch, binary:match(TruncatedText, <<"[earlier bytes omitted] tail">>)),
+
+    FailedLogs = observer_cli_cli:response(
+        logs,
+        error,
+        null,
+        null,
+        #{<<"sources">> => [], <<"selected_source">> => null, <<"tail">> => null},
+        []
+    ),
+    {ok, FailedLogsText} = observer_cli_cli:encode(text, FailedLogs),
+    ?assertNotEqual(nomatch, binary:match(FailedLogsText, <<"outcome=error reason=null">>)).
+
+terminal_and_error_message_edge_contract_test() ->
+    ?assertEqual(<<"base64:/w==">>, observer_cli_cli:escape_text([<<16#ff>>])),
+    ?assertMatch(<<"base64:", _/binary>>, observer_cli_cli:escape_text([16#D800])),
+    lists:foreach(
+        fun(Codepoint) ->
+            Expected = iolist_to_binary(io_lib:format("\\u{~.16B}", [Codepoint])),
+            ?assertEqual(
+                Expected,
+                observer_cli_cli:escape_text(unicode:characters_to_binary([Codepoint]))
+            )
+        end,
+        [16#061C, 16#200E, 16#200F, 16#2029, 16#2066]
+    ),
+    Cases = [
+        {{duplicate_option, cookie_env}, <<"option may only be specified once: --cookie-env">>},
+        {{missing_option_value, "--node"}, <<"missing value for option: --node">>},
+        {
+            {mutually_exclusive_options, cookie_env, cookie_file},
+            <<"--cookie-env and --cookie-file cannot be used together">>
+        },
+        {{unsupported_name_mode, "wide"}, <<"unsupported name mode: wide">>},
+        {diagnostics_incompatible,
+            <<"the target observer_cli diagnostics bundle is incompatible">>},
+        {global_option_before_command, <<"options must appear after the command name">>},
+        {missing_cookie_source, <<"--node requires exactly one of --cookie-env or --cookie-file">>},
+        {process_target_required, <<"process requires one PID_OR_NAME">>},
+        {otp_state_target_required, <<"otp-state requires one PID_OR_NAME">>},
+        {invalid_behavior, <<"--behavior must be gen_server, gen_statem, or gen_event">>},
+        {observe_required, <<"--deep and --app require --observe DURATION">>},
+        {trace_pid_required, <<"trace call requires --pid PID">>},
+        {timeout_too_short, <<"--timeout must cover the sampling duration plus five seconds">>},
+        {trace_timeout_too_short,
+            <<"trace call --timeout must cover the trace duration plus seven seconds">>},
+        {trace_stop_timeout_too_short, <<"trace stop --timeout must be at least five seconds">>},
+        {otp_state_timeout_too_short, <<"--timeout must be at least 10s for otp-state">>},
+        {unaddressable_handler_id,
+            <<"--handler must be 1..255 safe Unicode characters and must not start with --">>},
+        {invalid_tail, <<"--tail must be an integer from 1 to 2000">>},
+        {invalid_refresh_interval, <<"REFRESH_MS must be an integer of at least 1000">>},
+        {tui_start_failed,
+            <<"interactive TUI startup failed; check target reachability, cookie, and bundle compatibility">>}
+    ],
+    lists:foreach(
+        fun({Reason, Message}) ->
+            ?assertEqual(Message, maps:get(<<"message">>, observer_cli_cli:error(argument, Reason)))
+        end,
+        Cases
+    ).
+
 exit_code_classes_test() ->
     ?assertEqual(2, observer_cli_cli:exit_code(capability)),
     ?assertEqual(3, observer_cli_cli:exit_code(partial)),
@@ -1586,6 +1729,7 @@ context_filesystem_boundary_test() ->
     ),
     ok = file:make_dir(Root),
     try
+        BadPath = [0],
         ?assertEqual({error, no_active_context}, observer_cli_cli:target(#{})),
         ?assertEqual({error, no_active_context}, observer_cli_cli:context_options(#{})),
         _ = observer_cli_cli:load_context(),
@@ -1600,6 +1744,40 @@ context_filesystem_boundary_test() ->
                 filename:join([Root, "missing", "context.etf"]), <<>>
             )
         ),
+        ?assertEqual({error, context_unavailable}, observer_cli_cli:ensure_context_dir(BadPath)),
+        ?assertEqual(
+            {error, context_unavailable}, observer_cli_cli:safe_context_destination(BadPath)
+        ),
+        ?assertEqual(
+            {error, context_unavailable}, observer_cli_cli:readable_context_dir(BadPath)
+        ),
+        ?assertEqual({error, context_unavailable}, observer_cli_cli:read_context_file(BadPath)),
+        ?assertEqual({error, context_unavailable}, observer_cli_cli:delete_context_file(BadPath)),
+        ?assertEqual(
+            ok,
+            observer_cli_cli:delete_context(filename:join([Root, "missing", "context.etf"]))
+        ),
+        Blocked = filename:join(Root, "blocked"),
+        ok = file:make_dir(Blocked),
+        ok = file:change_mode(Blocked, 8#500),
+        try
+            case file:write_file(filename:join(Blocked, "permission-probe"), <<>>) of
+                {error, eacces} ->
+                    ?assertEqual(
+                        {error, context_unavailable},
+                        observer_cli_cli:ensure_context_dir(filename:join(Blocked, "child"))
+                    );
+                {error, eperm} ->
+                    ?assertEqual(
+                        {error, context_unavailable},
+                        observer_cli_cli:ensure_context_dir(filename:join(Blocked, "child"))
+                    );
+                ok ->
+                    ok = file:delete(filename:join(Blocked, "permission-probe"))
+            end
+        after
+            ok = file:change_mode(Blocked, 8#700)
+        end,
         ?assertEqual(
             {error, context_unavailable},
             observer_cli_cli:read_context_bytes(filename:join(Root, "missing.etf"))
@@ -1643,6 +1821,12 @@ context_filesystem_boundary_test() ->
             observer_cli_cli:ensure_context_dir(NotDir)
         ),
         Path = filename:join(Existing, "context.etf"),
+        DirectoryDestination = filename:join(Existing, "directory-destination"),
+        ok = file:make_dir(DirectoryDestination),
+        ?assertEqual(
+            {error, invalid_context_file},
+            observer_cli_cli:write_context(DirectoryDestination, #{})
+        ),
         ?assertEqual(ok, observer_cli_cli:safe_context_destination(Path)),
         ?assertEqual(
             ok,
@@ -1667,6 +1851,33 @@ context_filesystem_boundary_test() ->
         ?assertEqual({error, invalid_context_file}, observer_cli_cli:delete_context_file(Path)),
         ?assertEqual(ok, observer_cli_cli:readable_context_dir(Existing)),
         ok = file:change_mode(Existing, 8#755),
+        ?assertEqual(
+            {error, context_directory_permissions}, observer_cli_cli:delete_context(Path)
+        ),
+        Locked = filename:join(Root, "locked"),
+        ok = file:make_dir(Locked),
+        LockedFile = filename:join(Locked, "context.etf"),
+        ok = file:write_file(LockedFile, <<>>),
+        ok = file:change_mode(LockedFile, 8#600),
+        ok = file:change_mode(Locked, 8#500),
+        try
+            case file:write_file(filename:join(Locked, "permission-probe"), <<>>) of
+                {error, eacces} ->
+                    ?assertEqual(
+                        {error, context_unavailable},
+                        observer_cli_cli:delete_context_file(LockedFile)
+                    );
+                {error, eperm} ->
+                    ?assertEqual(
+                        {error, context_unavailable},
+                        observer_cli_cli:delete_context_file(LockedFile)
+                    );
+                ok ->
+                    ok = file:delete(filename:join(Locked, "permission-probe"))
+            end
+        after
+            ok = file:change_mode(Locked, 8#700)
+        end,
         ?assertEqual(
             {error, context_directory_permissions},
             observer_cli_cli:readable_context_dir(Existing)
@@ -1716,6 +1927,35 @@ context_filesystem_boundary_test() ->
         ?assertEqual(
             {error, cookie_source_unavailable},
             observer_cli_cli:read_cookie_file(Existing)
+        ),
+        UnreadableCookie = filename:join(Root, "unreadable-cookie"),
+        ok = file:write_file(UnreadableCookie, <<"cookie">>),
+        ok = file:change_mode(UnreadableCookie, 8#200),
+        try
+            case file:read_file(UnreadableCookie) of
+                {error, eacces} ->
+                    ?assertEqual(
+                        {error, cookie_source_unavailable},
+                        observer_cli_cli:read_cookie_file(UnreadableCookie)
+                    );
+                {error, eperm} ->
+                    ?assertEqual(
+                        {error, cookie_source_unavailable},
+                        observer_cli_cli:read_cookie_file(UnreadableCookie)
+                    );
+                {ok, _} ->
+                    ok
+            end
+        after
+            ok = file:change_mode(UnreadableCookie, 8#600)
+        end,
+        ?assertEqual(
+            {error, invalid_context},
+            observer_cli_cli:decode_context_fields(
+                not_a_binary,
+                <<"short">>,
+                #{<<"type">> => <<"env">>, <<"name">> => <<"COOKIE">>}
+            )
         ),
         LargeCookie = filename:join(Root, "large-cookie"),
         ok = file:write_file(LargeCookie, binary:copy(<<"x">>, 258)),

@@ -13,6 +13,21 @@ addressable_handler_id_test() ->
     ?assertNot(observer_cli_log:addressable_handler_id(binary:copy(<<"a">>, 256))),
     ?assertNot(observer_cli_log:addressable_handler_id(<<255>>)).
 
+terminal_control_handler_ids_are_rejected_test() ->
+    lists:foreach(
+        fun(Codepoint) ->
+            ?assertNot(
+                observer_cli_log:addressable_handler_id(
+                    unicode:characters_to_binary([Codepoint])
+                )
+            )
+        end,
+        [16#85, 16#061C, 16#200E, 16#200F, 16#2028, 16#2029, 16#2066]
+    ).
+
+invalid_request_is_rejected_before_access_test() ->
+    ?assertEqual({probe_error, invalid_request}, observer_cli_log:capture(#{})).
+
 plain_mode_allowlist_test() ->
     ?assertEqual(
         {ok, supported},
@@ -86,6 +101,39 @@ config_classification_test() ->
     ?assertMatch(
         #{supported := true},
         observer_cli_log:classify_config(app_file, config(app_file, Path, [raw]))
+    ).
+
+invalid_config_shapes_are_rejected_test() ->
+    Path = absolute_path("observer-cli-log-test.log"),
+    lists:foreach(
+        fun(Result) ->
+            ?assertMatch(
+                #{summary := #{reason_code := invalid_log_handler_config}},
+                observer_cli_log:classify_config(app_file, Result)
+            )
+        end,
+        [
+            {ok, #{id => app_file, module => logger_std_h, config => #{}}},
+            {ok, #{
+                id => app_file,
+                module => logger_std_h,
+                config => #{type => file, file => Path}
+            }},
+            config(app_file, [], [raw]),
+            config(app_file, [$/ | improper], [raw])
+        ]
+    ),
+    SupplementaryPath = Path ++ [16#1F600],
+    ?assertMatch(
+        #{supported := true},
+        observer_cli_log:classify_config(
+            app_file, config(app_file, SupplementaryPath, [raw])
+        )
+    ),
+    OversizedPath = "/" ++ lists:duplicate(4097, $a),
+    ?assertMatch(
+        #{summary := #{reason_code := log_path_unrepresentable}},
+        observer_cli_log:classify_config(app_file, config(app_file, OversizedPath, [raw]))
     ).
 
 unaddressable_supported_source_test() ->
@@ -278,6 +326,23 @@ scan_budget_rejects_before_lookup_test() ->
     ?assertEqual(0, maps:get(handler_config_lookups, Effect)),
     ?assertEqual(0, maps:get(read_attempts, Effect)).
 
+source_discovery_failures_are_sanitized_test() ->
+    Base = mock_env(default, <<>>),
+    lists:foreach(
+        fun(Env) ->
+            ?assertMatch(
+                {unavailable, log_source_unavailable, _, _, [_]},
+                observer_cli_log:capture(#{handler => null, tail => 200}, Env)
+            )
+        end,
+        [
+            Base#{handler_ids := fun() -> erlang:error(logger_unavailable) end},
+            Base#{handler_ids := fun() -> [default, <<"invalid">>] end},
+            Base#{handler_ids := fun() -> [default | improper] end},
+            Base#{handler_config := fun(_Id) -> erlang:error(logger_unavailable) end}
+        ]
+    ).
+
 automatic_retry_stays_within_callback_bound_test() ->
     erase(config_callback_count),
     erase(open_count),
@@ -464,6 +529,141 @@ nonseekable_file_is_rejected_and_closed_test() ->
     ?assertEqual(1, maps:get(read_attempts, Effect)),
     ?assertEqual(1, get(close_count)).
 
+file_read_failures_are_classified_test() ->
+    Dir = temporary_directory(),
+    Path = filename:join(Dir, "app.log"),
+    try
+        ok = file:write_file(Path, <<"marker">>),
+        {ok, Info} = file:read_link_info(Path, [raw]),
+        Base = file_env(),
+        ChangedInfo = Info#file_info{inode = Info#file_info.inode + 1},
+        InvalidInfo = Info#file_info{inode = 0},
+        lists:foreach(
+            fun({Expected, Overrides}) ->
+                ?assertEqual(
+                    Expected,
+                    file_result(
+                        observer_cli_log:read_configured_file(
+                            source(Path), maps:merge(Base, Overrides)
+                        )
+                    )
+                )
+            end,
+            [
+                {log_file_read_failed, #{read_link_info => fun(_Path) -> unexpected end}},
+                {log_file_unavailable, #{open => fun(_Path) -> {error, eacces} end}},
+                {log_file_read_failed, #{open => fun(_Path) -> unexpected end}},
+                {race, #{read_file_info => fun(_Fd) -> {ok, ChangedInfo} end}},
+                {log_file_identity_unavailable, #{
+                    read_file_info => fun(_Fd) -> {ok, InvalidInfo} end
+                }},
+                {unsupported_log_file_type, #{
+                    read_file_info => fun(_Fd) -> {ok, Info#file_info{type = directory}} end
+                }},
+                {log_file_read_failed, #{read_file_info => fun(_Fd) -> {error, eio} end}},
+                {log_file_read_failed, #{read_file_info => fun(_Fd) -> unexpected end}},
+                {race, #{pread => fun(_Fd, _Start, _Length) -> eof end}},
+                {log_file_read_failed, #{
+                    pread => fun(_Fd, _Start, _Length) -> {error, eio} end
+                }},
+                {log_file_read_failed, #{position => fun(_Fd) -> unexpected end}},
+                {log_file_unavailable, #{
+                    read_link_info => fun(_Path) -> erlang:error(file_server_down) end
+                }}
+            ]
+        )
+    after
+        file:del_dir_r(Dir)
+    end.
+
+post_read_file_changes_are_classified_test() ->
+    Dir = temporary_directory(),
+    Path = filename:join(Dir, "app.log"),
+    try
+        ok = file:write_file(Path, <<"marker">>),
+        {ok, Info} = file:read_link_info(Path, [raw]),
+        Base = file_env(),
+        ChangedInfo = Info#file_info{inode = Info#file_info.inode + 1},
+        InvalidInfo = Info#file_info{inode = 0},
+        ShortInfo = Info#file_info{size = Info#file_info.size - 1},
+        lists:foreach(
+            fun({Expected, Overrides}) ->
+                ?assertEqual(
+                    Expected,
+                    file_result(
+                        observer_cli_log:read_configured_file(
+                            source(Path), maps:merge(Base, Overrides)
+                        )
+                    )
+                )
+            end,
+            [
+                {race, #{
+                    read_file_info => sequence([
+                        fun(Fd) -> file:read_file_info(Fd, [raw]) end,
+                        {ok, ChangedInfo}
+                    ])
+                }},
+                {log_file_identity_unavailable, #{
+                    read_file_info => sequence([
+                        fun(Fd) -> file:read_file_info(Fd, [raw]) end,
+                        {ok, InvalidInfo}
+                    ])
+                }},
+                {race, #{
+                    read_file_info => sequence([
+                        fun(Fd) -> file:read_file_info(Fd, [raw]) end,
+                        {ok, ShortInfo}
+                    ])
+                }},
+                {unsupported_log_file_type, #{
+                    read_file_info => sequence([
+                        fun(Fd) -> file:read_file_info(Fd, [raw]) end,
+                        {ok, Info#file_info{type = directory}}
+                    ])
+                }},
+                {log_file_read_failed, #{
+                    read_file_info => sequence([
+                        fun(Fd) -> file:read_file_info(Fd, [raw]) end,
+                        unexpected
+                    ])
+                }},
+                {race, #{
+                    read_link_info => sequence([
+                        fun(CurrentPath) -> file:read_link_info(CurrentPath, [raw]) end,
+                        {ok, ChangedInfo}
+                    ])
+                }},
+                {log_file_identity_unavailable, #{
+                    read_link_info => sequence([
+                        fun(CurrentPath) -> file:read_link_info(CurrentPath, [raw]) end,
+                        {ok, InvalidInfo}
+                    ])
+                }},
+                {unsupported_log_file_type, #{
+                    read_link_info => sequence([
+                        fun(CurrentPath) -> file:read_link_info(CurrentPath, [raw]) end,
+                        {ok, Info#file_info{type = directory}}
+                    ])
+                }},
+                {race, #{
+                    read_link_info => sequence([
+                        fun(CurrentPath) -> file:read_link_info(CurrentPath, [raw]) end,
+                        {error, enoent}
+                    ])
+                }},
+                {log_file_read_failed, #{
+                    read_link_info => sequence([
+                        fun(CurrentPath) -> file:read_link_info(CurrentPath, [raw]) end,
+                        unexpected
+                    ])
+                }}
+            ]
+        )
+    after
+        file:del_dir_r(Dir)
+    end.
+
 regular_file_and_symlink_test() ->
     Dir = temporary_directory(),
     Path = filename:join(Dir, "app.log"),
@@ -564,6 +764,100 @@ fifo_replacement_returns_at_deadline() ->
         file:del_dir_r(Dir)
     end.
 
+handler_disappearance_during_open_is_reported_test() ->
+    Dir = temporary_directory(),
+    Path = filename:join(Dir, "app.log"),
+    Handler = observer_cli_log_disappearing_handler,
+    try
+        ok = file:write_file(Path, <<"must-not-leak">>),
+        ok = logger:add_handler(Handler, logger_std_h, #{
+            config => #{type => file, file => Path, modes => [append, raw]}
+        }),
+        Env = (file_env())#{
+            os_type => fun() -> {unix, element(2, os:type())} end,
+            handler_config => fun logger:get_handler_config/1,
+            open => fun(CurrentPath) ->
+                ok = logger:remove_handler(Handler),
+                ok = file:delete(CurrentPath),
+                file:open(CurrentPath, [read, binary, raw])
+            end
+        },
+        {unavailable, log_source_changed, Data, _Coverage, [Effect]} =
+            observer_cli_log:capture(
+                #{handler => <<"observer_cli_log_disappearing_handler">>, tail => 20},
+                Env
+            ),
+        ?assertEqual(null, maps:get(tail, Data)),
+        ?assertEqual(2, maps:get(handler_config_lookups, Effect)),
+        ?assertEqual(1, maps:get(read_attempts, Effect))
+    after
+        _ = logger:remove_handler(Handler),
+        file:del_dir_r(Dir)
+    end.
+
+repeated_real_handler_replacement_is_rejected_test() ->
+    Dir = temporary_directory(),
+    Path1 = filename:join(Dir, "app-1.log"),
+    Path2 = filename:join(Dir, "app-2.log"),
+    Path3 = filename:join(Dir, "app-3.log"),
+    Handler = observer_cli_log_replaced_handler,
+    try
+        lists:foreach(
+            fun(Path) -> ok = file:write_file(Path, <<"must-not-leak">>) end,
+            [Path1, Path2, Path3]
+        ),
+        ok = logger:add_handler(Handler, logger_std_h, #{
+            config => #{type => file, file => Path1, modes => [append, raw]}
+        }),
+        erase(handler_config_count),
+        Env = (file_env())#{
+            os_type => fun() -> {unix, element(2, os:type())} end,
+            handler_config => fun(Id) ->
+                {ok, Config} = logger:get_handler_config(Id),
+                Count = get_count(handler_config_count),
+                put(handler_config_count, Count + 1),
+                case Count of
+                    0 -> replace_file_handler(Handler, Path2);
+                    1 -> replace_file_handler(Handler, Path3);
+                    _ -> ok
+                end,
+                {ok, Config}
+            end
+        },
+        {unavailable, log_source_changed, Data, _Coverage, [Effect]} =
+            observer_cli_log:capture(
+                #{handler => <<"observer_cli_log_replaced_handler">>, tail => 20}, Env
+            ),
+        ?assertEqual(null, maps:get(tail, Data)),
+        ?assertEqual(3, maps:get(handler_config_lookups, Effect)),
+        ?assertEqual(2, maps:get(read_attempts, Effect)),
+        ?assertEqual(nomatch, binary:match(term_to_binary(Data), <<"must-not-leak">>))
+    after
+        _ = logger:remove_handler(Handler),
+        file:del_dir_r(Dir)
+    end.
+
+real_logger_byte_cap_is_reported_test() ->
+    Dir = temporary_directory(),
+    Path = filename:join(Dir, "app.log"),
+    Handler = observer_cli_log_byte_cap,
+    try
+        ok = file:write_file(Path, binary:copy(<<"x">>, 65537)),
+        ok = logger:add_handler(Handler, logger_std_h, #{
+            config => #{type => file, file => Path, modes => [append, raw]}
+        }),
+        {error, log_byte_cap_reached, Data, _Coverage, [_Effect]} =
+            observer_cli_log:capture(
+                #{handler => <<"observer_cli_log_byte_cap">>, tail => 2000}
+            ),
+        Tail = maps:get(tail, Data),
+        ?assertEqual([byte_cap, line_cap], maps:get(truncation_reasons, Tail)),
+        ?assertEqual(65536, maps:get(bytes_read, Tail))
+    after
+        _ = logger:remove_handler(Handler),
+        file:del_dir_r(Dir)
+    end.
+
 real_logger_capture_does_not_change_handlers_test() ->
     Dir = temporary_directory(),
     Path = filename:join(Dir, "app.log"),
@@ -598,6 +892,12 @@ config(Id, Path, Modes) ->
         config => #{type => file, file => Path, modes => Modes}
     }}.
 
+replace_file_handler(Handler, Path) ->
+    ok = logger:remove_handler(Handler),
+    logger:add_handler(Handler, logger_std_h, #{
+        config => #{type => file, file => Path, modes => [append, raw]}
+    }).
+
 source(Path) ->
     observer_cli_log:classify_config(default, config(default, Path, [raw])).
 
@@ -625,6 +925,24 @@ file_env() ->
         pread => fun file:pread/3,
         close => fun file:close/1
     }.
+
+file_result({race, _Coverage, _State}) -> race;
+file_result({error, Reason, _Coverage, _State}) -> Reason.
+
+sequence(Results) ->
+    Key = make_ref(),
+    put(Key, Results),
+    fun(Argument) ->
+        [Result | Rest] = get(Key),
+        case Rest of
+            [] -> erase(Key);
+            _ -> put(Key, Rest)
+        end,
+        case Result of
+            Fun when is_function(Fun, 1) -> Fun(Argument);
+            Value -> Value
+        end
+    end.
 
 absolute_path(Name) ->
     filename:join([filename:absname("."), Name]).

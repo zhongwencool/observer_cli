@@ -262,6 +262,16 @@ command_output_and_error_paths_test() ->
     assert_halt(2, fun() ->
         observer_cli_escriptize:main(["memory", "--invalid"])
     end),
+    assert_halt(2, fun() -> observer_cli_escriptize:main(["version"]) end),
+    assert_halt(2, fun() -> observer_cli_escriptize:main(["--bogus"]) end),
+    assert_halt(2, fun() ->
+        observer_cli_escriptize:main(["tui", "target@host", "cookie", "1000", "extra"])
+    end),
+    assert_halt(3, fun() ->
+        observer_cli_escriptize:main([
+            "tui", "target@host", lists:duplicate(256, $x), "1000"
+        ])
+    end),
     lists:foreach(
         fun(Arguments) ->
             assert_halt(2, fun() -> observer_cli_escriptize:main(Arguments) end)
@@ -330,6 +340,8 @@ required_modules_test_() ->
         {"stop before connect on random failure", fun random_failure_stops_before_connect/0},
         {"forward remaining command deadline", fun forward_remaining_command_deadline/0},
         {"dynamic controller handshake", {timeout, 20000, fun dynamic_controller_handshake/0}},
+        {"invalid remote dispatch contract",
+            {timeout, 20000, fun invalid_remote_dispatch_contract/0}},
         {"active context lifecycle", {timeout, 40000, fun active_context_lifecycle/0}},
         {"connect cleanup preserves context", fun connect_cleanup_preserves_context/0},
         {"connect missing diagnostics", {timeout, 30000, fun connect_missing_diagnostics/0}},
@@ -339,6 +351,9 @@ required_modules_test_() ->
             {timeout, 30000, fun connect_sanitizes_hostile_diagnostics/0}},
         {"missing capability", {timeout, 20000, fun missing_capability/0}},
         {"incompatible capability", {timeout, 20000, fun incompatible_capability/0}},
+        {"undefined capability callback", {timeout, 20000, fun undefined_capability/0}},
+        {"failing capability callback", {timeout, 20000, fun failing_capability/0}},
+        {"non-map capability callback", {timeout, 20000, fun nonmap_capability/0}},
         {"hostile capability values", {timeout, 20000, fun hostile_capability/0}}
     ].
 
@@ -504,7 +519,8 @@ logs_real_response_and_validator_test() ->
             )
         ),
         ?assertEqual({ok, Response, 0}, observer_cli_escriptize:dispatch_response(Response)),
-        assert_log_response_mutations_rejected(Request, Response)
+        assert_log_response_mutations_rejected(Request, Response),
+        assert_log_contract_boundaries(Request, Response)
     after
         _ = logger:remove_handler(Handler),
         file:del_dir_r(Dir)
@@ -981,6 +997,158 @@ assert_log_response_mutations_rejected(Request, Response) ->
         )
     ).
 
+assert_log_contract_boundaries(Request, Response) ->
+    Target = atom_to_binary(node()),
+    Valid = fun(CandidateRequest, CandidateResponse, ExpectedTarget) ->
+        observer_cli_escriptize:validate_logs_response(
+            CandidateRequest, CandidateResponse, ExpectedTarget
+        )
+    end,
+    Data = maps:get(<<"data">>, Response),
+    [Source] = maps:get(<<"sources">>, Data),
+    Tail = maps:get(<<"tail">>, Data),
+    Lines = maps:get(<<"lines">>, Tail),
+    Capture = response_capture(Response),
+    [Probe] = maps:get(<<"probes">>, Capture),
+    [Diagnostics, Module | _] = Effects = maps:get(<<"observer_effects">>, Capture),
+    LogRead = lists:last(Effects),
+    WithData = fun(NewData) -> Response#{<<"data">> := NewData} end,
+    WithTail = fun(NewTail) -> WithData(Data#{<<"tail">> := NewTail}) end,
+    WithLines = fun(NewLines) -> WithTail(Tail#{<<"lines">> := NewLines}) end,
+    ReplaceFirstLine = fun(Line) -> WithLines([Line | tl(Lines)]) end,
+    Rejected = [
+        {invalid, Response, Target},
+        {Request, Response, <<"other@host">>},
+        {Request, WithData(#{}), Target},
+        {Request, WithData(Data#{<<"sources">> := invalid}), Target},
+        {Request, WithData(Data#{<<"sources">> := [#{}]}), Target},
+        {Request,
+            WithData(Data#{
+                <<"sources">> := [Source#{<<"id">> := <<255>>}],
+                <<"selected_source">> := null,
+                <<"tail">> := null
+            }), Target},
+        {Request,
+            WithData(Data#{
+                <<"sources">> := [Source#{<<"id">> := invalid}],
+                <<"selected_source">> := null,
+                <<"tail">> := null
+            }), Target},
+        {Request,
+            WithData(Data#{
+                <<"sources">> := [
+                    Source#{
+                        <<"id">> := <<"--unaddressable">>,
+                        <<"addressable">> := false,
+                        <<"reason_code">> := <<"unaddressable_handler_id">>
+                    }
+                ],
+                <<"selected_source">> := null,
+                <<"tail">> := null
+            }), Target},
+        {Request, WithData(Data#{<<"selected_source">> := invalid}), Target},
+        {Request, ReplaceFirstLine(<<255>>), Target},
+        {Request,
+            ReplaceFirstLine(#{
+                <<"encoding">> => <<"base64">>, <<"data">> => base64:encode(<<"valid">>)
+            }), Target},
+        {Request, ReplaceFirstLine(#{<<"encoding">> => <<"base64">>, <<"data">> => <<"!">>}),
+            Target},
+        {Request, ReplaceFirstLine(invalid), Target},
+        {Request,
+            WithTail(Tail#{
+                <<"content_truncated">> := true,
+                <<"truncation_reasons">> := [<<"line_cap">>, <<"byte_cap">>],
+                <<"truncated_line_indexes">> := [0]
+            }), Target},
+        {Request, WithTail(Tail#{<<"truncated_line_indexes">> := invalid}), Target},
+        {Request, WithTail(Tail#{<<"truncated_line_indexes">> := [0, 0]}), Target},
+        {Request, replace_capture(Response, invalid), Target},
+        {Request,
+            replace_capture(Response, Capture#{
+                <<"probes">> := [Probe#{<<"coverage">> := invalid}]
+            }), Target},
+        {Request,
+            replace_capture(Response, Capture#{
+                <<"observer_effects">> := [invalid, Module, LogRead]
+            }), Target},
+        {Request,
+            replace_capture(Response, Capture#{
+                <<"observer_effects">> := [Diagnostics, invalid, LogRead]
+            }), Target},
+        {Request,
+            replace_capture(Response, Capture#{
+                <<"observer_effects">> := [Diagnostics, Module, invalid, LogRead]
+            }), Target},
+        {Request,
+            replace_capture(Response, Capture#{
+                <<"observer_effects">> := [Diagnostics, Module, invalid]
+            }), Target}
+    ],
+    lists:foreach(
+        fun({CandidateRequest, CandidateResponse, ExpectedTarget}) ->
+            ?assertNot(Valid(CandidateRequest, CandidateResponse, ExpectedTarget))
+        end,
+        Rejected
+    ),
+    Base64Line = #{
+        <<"encoding">> => <<"base64">>, <<"data">> => base64:encode(<<255>>)
+    },
+    ?assert(Valid(Request, ReplaceFirstLine(Base64Line), Target)),
+    EmptyTail = Tail#{
+        <<"returned_lines">> := 0,
+        <<"captured_eof_bytes">> := 0,
+        <<"bytes_read">> := 0,
+        <<"has_more">> := false,
+        <<"content_truncated">> := false,
+        <<"truncation_reasons">> := [],
+        <<"truncated_line_indexes">> := [],
+        <<"lines">> := []
+    },
+    ?assert(Valid(Request, WithTail(EmptyTail), Target)),
+    CombinedTail = Tail#{
+        <<"returned_lines">> := 2,
+        <<"captured_eof_bytes">> := 65537,
+        <<"bytes_read">> := 65536,
+        <<"has_more">> := true,
+        <<"content_truncated">> := true,
+        <<"truncation_reasons">> := [<<"byte_cap">>, <<"line_cap">>],
+        <<"truncated_line_indexes">> := [0, 1],
+        <<"lines">> := [<<"x">>, binary:copy(<<"y">>, 32765)]
+    },
+    CombinedCapture = Capture#{
+        <<"probes">> := [
+            Probe#{<<"status">> := <<"error">>, <<"reason_code">> := <<"log_byte_cap_reached">>}
+        ]
+    },
+    Combined = replace_capture(
+        (WithTail(CombinedTail))#{<<"outcome">> := <<"partial">>}, CombinedCapture
+    ),
+    ?assert(Valid(Request, Combined, Target)),
+    ExplicitPlatform = log_error_response(
+        Target, <<"unsupported_target_platform">>, [], null, [], false, 0, 0
+    ),
+    ?assert(Valid(Request, ExplicitPlatform, Target)),
+    UnsupportedMatrix = log_error_response(
+        Target,
+        <<"log_handler_not_found">>,
+        [
+            log_source_summary(
+                maps:get(handler, Request),
+                <<"other">>,
+                false,
+                <<"unsupported_log_handler">>
+            )
+        ],
+        null,
+        [<<"source_classification_complete">>],
+        false,
+        1,
+        0
+    ),
+    ?assertNot(Valid(Request, UnsupportedMatrix, Target)),
+    ok.
+
 run_args_test() ->
     ?assertEqual(
         {ok, "target@host", test_cookie, 2000},
@@ -1047,6 +1215,14 @@ command_help_test() ->
         "Run 'observer_cli COMMAND --help'"
     ]),
     assert_help_width(TopHelp),
+    {ok, HelpAlias} = observer_cli_test_io:capture_with_geometry(
+        24, 80, [], fun() -> observer_cli_escriptize:main(["help"]) end
+    ),
+    ?assertEqual(TopHelp, HelpAlias),
+    {ok, DashedHelp} = observer_cli_test_io:capture_with_geometry(
+        24, 80, [], fun() -> observer_cli_escriptize:main(["--format", "term", "--help"]) end
+    ),
+    ?assertEqual(TopHelp, DashedHelp),
     {ok, ShortHelp} = observer_cli_test_io:capture_with_geometry(
         24, 80, [], fun() -> observer_cli_escriptize:main(["-h"]) end
     ),
@@ -1089,6 +1265,10 @@ command_help_test() ->
         24, 80, [], fun() -> observer_cli_escriptize:main(["memory", "--help"]) end
     ),
     observer_cli_test_io:assert_stable_fragments(MemoryHelp, ["BEAM memory", "allocator"]),
+    {ok, MemoryHelpAlias} = observer_cli_test_io:capture_with_geometry(
+        24, 80, [], fun() -> observer_cli_escriptize:main(["help", "memory"]) end
+    ),
+    ?assertEqual(MemoryHelp, MemoryHelpAlias),
     {ok, ProcessesHelp} = observer_cli_test_io:capture_with_geometry(
         24, 80, [], fun() -> observer_cli_escriptize:main(["processes", "--help"]) end
     ),
@@ -2412,6 +2592,355 @@ cleanup_and_error_priority_test() ->
         })
     ).
 
+exit_reason_matrix_test() ->
+    lists:foreach(
+        fun({Class, Expected}) ->
+            Response = #{
+                <<"outcome">> => <<"error">>,
+                <<"issues">> => [#{<<"severity">> => <<"error">>, <<"class">> => Class}]
+            },
+            ?assertEqual(Expected, observer_cli_escriptize:response_exit_code(Response))
+        end,
+        [
+            {<<"format">>, 2},
+            {<<"controller">>, 3},
+            {<<"distribution">>, 3},
+            {<<"required_probe">>, 3},
+            {<<"partial">>, 3}
+        ]
+    ),
+    ?assertEqual(
+        4,
+        observer_cli_escriptize:response_exit_code(#{
+            <<"outcome">> => <<"error">>, <<"issues">> => [#{<<"severity">> => <<"error">>}]
+        })
+    ),
+    lists:foreach(
+        fun({Reason, Expected}) ->
+            Response = #{
+                <<"outcome">> => <<"error">>,
+                <<"issues">> => [],
+                <<"meta">> => #{
+                    <<"capture">> => #{
+                        <<"probes">> => [
+                            #{
+                                <<"status">> => <<"error">>, <<"reason_code">> => Reason
+                            }
+                        ]
+                    }
+                }
+            },
+            ?assertEqual(Expected, observer_cli_escriptize:response_exit_code(Response))
+        end,
+        [
+            {<<"mfa_unavailable">>, 2},
+            {<<"mfa_not_traceable">>, 2},
+            {<<"log_source_unavailable">>, 2},
+            {<<"log_handler_required">>, 2},
+            {<<"log_handler_not_found">>, 2},
+            {<<"unsupported_file_modes">>, 2},
+            {<<"unsupported_log_file_type">>, 2},
+            {<<"log_path_unrepresentable">>, 2},
+            {<<"invalid_log_handler_config">>, 2},
+            {<<"unsupported_target_platform">>, 2},
+            {<<"invalid_schema">>, 4},
+            {<<"internal_error">>, 4},
+            {<<"dispatcher_disconnected">>, 4},
+            {<<"helper_setup_failed">>, 4}
+        ]
+    ),
+    ?assertEqual(
+        4,
+        observer_cli_escriptize:response_exit_code(#{
+            <<"outcome">> => <<"error">>, <<"issues">> => []
+        })
+    ).
+
+trace_contract_boundary_matrix_test() ->
+    Target = 'node@host',
+    TargetText = <<"node@host">>,
+    Call = valid_controller_response(trace_call, TargetText),
+    Stop = valid_controller_response(trace_stop_all, TargetText),
+    [CallProbe] = maps:get(<<"probes">>, response_capture(Call)),
+    GlobalWarning = #{
+        <<"severity">> => <<"warning">>,
+        <<"class">> => <<"safety_refusal">>,
+        <<"reason_code">> => <<"global_trace_replacement">>,
+        <<"message">> => <<"node-global trace state is replaced">>
+    },
+    NullStop = observer_cli_cli:response(
+        trace_stop_all,
+        error,
+        null,
+        null,
+        null,
+        [observer_cli_cli:error(capability, capability_unavailable), GlobalWarning]
+    ),
+    ?assertEqual(
+        ok,
+        observer_cli_escriptize:validate_response(trace_stop_all, include, Target, NullStop)
+    ),
+    ?assertEqual(
+        {error, invalid_command_response},
+        observer_cli_escriptize:validate_response(
+            trace_stop_all,
+            include,
+            Target,
+            NullStop#{
+                <<"issues">> := maps:get(<<"issues">>, NullStop) ++
+                    [observer_cli_cli:error(cleanup, cleanup_unconfirmed)]
+            }
+        )
+    ),
+    ?assertNot(
+        observer_cli_escriptize:valid_command_payload(
+            distribution, #{<<"data">> => invalid}, [fixture_probe(<<"distribution">>)]
+        )
+    ),
+    ?assertNot(
+        observer_cli_escriptize:valid_command_payload(
+            supervision_tree,
+            #{<<"data">> => invalid},
+            [fixture_probe(<<"supervision_tree">>)]
+        )
+    ),
+    ?assertNot(
+        observer_cli_escriptize:valid_command_payload(
+            trace_call, maps:remove(<<"outcome">>, Call), [CallProbe]
+        )
+    ),
+    ?assertNot(
+        observer_cli_escriptize:valid_command_payload(
+            trace_call, Call#{<<"data">> := invalid}, [CallProbe]
+        )
+    ),
+    ?assertNot(
+        observer_cli_escriptize:valid_command_payload(
+            trace_call, Call#{<<"outcome">> := <<"partial">>}, [CallProbe]
+        )
+    ),
+    CallData = maps:get(<<"data">>, Call),
+    CallTrace = maps:get(<<"trace">>, CallData),
+    NoReload = maps:remove(<<"module_reloaded">>, CallTrace),
+    ?assertNot(
+        observer_cli_escriptize:valid_command_payload(
+            trace_call,
+            Call#{<<"data">> := CallData#{<<"trace">> := NoReload}},
+            [CallProbe]
+        )
+    ),
+    ?assertNot(
+        observer_cli_escriptize:valid_command_payload(
+            trace_call,
+            Call#{<<"data">> := CallData#{<<"trace">> := #{}}},
+            [CallProbe]
+        )
+    ),
+    ?assertNot(
+        observer_cli_escriptize:valid_command_payload(
+            trace_call,
+            Call#{
+                <<"data">> := CallData#{
+                    <<"trace">> := CallTrace#{<<"events">> := [invalid]}
+                }
+            },
+            [CallProbe]
+        )
+    ),
+    ?assertNot(
+        observer_cli_escriptize:valid_command_payload(
+            trace_call,
+            Call#{
+                <<"data">> := CallData#{
+                    <<"trace">> := CallTrace#{<<"mfa">> := invalid}
+                }
+            },
+            [CallProbe]
+        )
+    ),
+    [StopProbe] = maps:get(<<"probes">>, response_capture(Stop)),
+    ?assert(observer_cli_escriptize:valid_command_payload(trace_stop_all, Stop, [StopProbe])).
+
+otp_state_schema_boundary_matrix_test() ->
+    Target = 'node@host',
+    Base = valid_controller_response(otp_state, <<"node@host">>),
+    [Probe] = maps:get(<<"probes">>, response_capture(Base)),
+    Success = fun(Data) -> Base#{<<"data">> := Data} end,
+    Error = fun(Data, Reason) ->
+        replace_capture(
+            (Success(Data))#{<<"outcome">> := <<"partial">>},
+            (response_capture(Base))#{
+                <<"probes">> := [
+                    Probe#{<<"status">> := <<"error">>, <<"reason_code">> := Reason}
+                ]
+            }
+        )
+    end,
+    Validate = fun(Response) ->
+        observer_cli_escriptize:validate_response(otp_state, include, Target, Response)
+    end,
+    Server = otp_state_data(gen_server),
+    Statem = otp_state_data(gen_statem),
+    Event = otp_state_data(gen_event),
+    Shape = #{<<"type">> => <<"atom">>},
+    ?assertEqual({error, invalid_command_response}, Validate(Success(#{}))),
+    ?assertEqual(
+        {error, invalid_command_response},
+        Validate(Success(Server#{<<"behavior">> := <<"unknown">>}))
+    ),
+    ?assertEqual(
+        {error, invalid_command_response},
+        Validate(Success(Server#{<<"status">> := <<"unknown">>}))
+    ),
+    ServerTimeout = Server#{
+        <<"status">> := <<"error">>,
+        <<"reason_code">> => <<"state_timeout">>,
+        <<"state_shape">> := null,
+        <<"visited_node_count">> := 0
+    },
+    ?assertEqual(ok, Validate(Error(ServerTimeout, <<"state_timeout">>))),
+    StatemNotFound = Statem#{
+        <<"status">> := <<"not_found">>,
+        <<"structural_validation">> := <<"not_performed">>,
+        <<"current_state_shape">> := null,
+        <<"data_shape">> := null,
+        <<"visited_node_count">> := 0
+    },
+    ?assertEqual(ok, Validate(Success(StatemNotFound))),
+    lists:foreach(
+        fun({Reason, Validation}) ->
+            Data = StatemNotFound#{
+                <<"status">> := <<"error">>,
+                <<"reason_code">> => Reason,
+                <<"structural_validation">> := Validation
+            },
+            ?assertEqual(ok, Validate(Error(Data, Reason)))
+        end,
+        [
+            {<<"state_timeout">>, <<"not_performed">>},
+            {<<"state_shape_failed">>, <<"passed">>}
+        ]
+    ),
+    InvalidReason = StatemNotFound#{
+        <<"status">> := <<"error">>, <<"reason_code">> => <<"unknown_state_failure">>
+    },
+    ?assertEqual(
+        {error, invalid_command_response},
+        Validate(Error(InvalidReason, <<"unknown_state_failure">>))
+    ),
+    BaseLimits = maps:get(<<"limits">>, Server),
+    ?assertEqual(
+        {error, invalid_command_response},
+        Validate(Success(Event#{<<"limits">> := BaseLimits}))
+    ),
+    MissingShape = (maps:remove(<<"state_shape">>, Server))#{<<"unused">> => null},
+    ?assertEqual({error, invalid_command_response}, Validate(Success(MissingShape))),
+    ?assertEqual(
+        {error, invalid_command_response},
+        Validate(Success(StatemNotFound#{<<"current_state">> := <<"idle">>}))
+    ),
+    lists:foreach(
+        fun(Data) -> ?assertEqual(ok, Validate(Success(Data))) end,
+        [
+            Statem#{
+                <<"truncated">> := true, <<"truncation_reason">> := <<"depth_cap">>
+            },
+            Statem#{
+                <<"current_state_shape">> := null,
+                <<"data_shape">> := null,
+                <<"truncated">> := true,
+                <<"truncation_reason">> := <<"node_cap">>
+            },
+            Statem#{
+                <<"data_shape">> := null,
+                <<"truncated">> := true,
+                <<"truncation_reason">> := <<"node_cap">>
+            }
+        ]
+    ),
+    EventNotFound = Event#{
+        <<"status">> := <<"not_found">>,
+        <<"structural_validation">> := <<"not_performed">>,
+        <<"observed_handler_count">> := 0,
+        <<"returned_count">> := 0,
+        <<"dropped_count">> := 0,
+        <<"shape_budget_exhausted_count">> := 0,
+        <<"handlers">> := [],
+        <<"visited_node_count">> := 0
+    },
+    ?assertEqual(ok, Validate(Success(EventNotFound))),
+    ?assertEqual(
+        {error, invalid_command_response},
+        Validate(Success(EventNotFound#{<<"observed_handler_count">> := 1}))
+    ),
+    ?assertEqual(
+        {error, invalid_command_response},
+        Validate(Success(Statem#{<<"current_state">> := <<"idle">>}))
+    ),
+    lists:foreach(
+        fun(StateShape) ->
+            ?assertEqual(ok, Validate(Success(Server#{<<"state_shape">> := StateShape})))
+        end,
+        [
+            #{<<"type">> => <<"binary">>, <<"size_bytes">> => 3},
+            #{<<"type">> => <<"bitstring">>, <<"size_bits">> => 3},
+            #{<<"type">> => <<"truncated">>, <<"truncation_reason">> => <<"node_cap">>}
+        ]
+    ),
+    IntegerNodeCap = #{
+        <<"type">> => <<"list">>,
+        <<"size">> => 3,
+        <<"children">> => [Shape, Shape],
+        <<"returned_count">> => 2,
+        <<"truncated">> => true,
+        <<"truncation_reason">> => <<"node_cap">>
+    },
+    ?assertEqual(ok, Validate(Success(Server#{<<"state_shape">> := IntegerNodeCap}))),
+    ?assertEqual(
+        {error, invalid_command_response},
+        Validate(
+            Success(Server#{
+                <<"state_shape">> := IntegerNodeCap#{
+                    <<"truncation_reason">> := <<"invalid_cap">>
+                }
+            })
+        )
+    ),
+    ?assertEqual(
+        ok,
+        Validate(
+            Success(Server#{
+                <<"state_shape">> := IntegerNodeCap#{<<"size">> := null}
+            })
+        )
+    ),
+    Redacted = valid_controller_response(otp_state, <<"node-1">>),
+    ?assertEqual(
+        ok,
+        observer_cli_escriptize:validate_response(
+            otp_state, redact, Target, Redacted#{<<"data">> := Server}
+        )
+    ),
+    ?assertEqual(
+        ok,
+        observer_cli_escriptize:validate_response(otp_state, redact, Target, Redacted)
+    ),
+    lists:foreach(
+        fun(Data) ->
+            ?assertEqual(
+                {error, invalid_command_response},
+                observer_cli_escriptize:validate_response(
+                    otp_state, redact, Target, Redacted#{<<"data">> := Data}
+                )
+            )
+        end,
+        [
+            #{<<"behavior">> => <<"unknown">>},
+            #{<<"behavior">> => <<"gen_event">>, <<"handlers">> => [#{}]},
+            #{<<"behavior">> => <<"gen_statem">>, <<"current_state">> => invalid}
+        ]
+    ).
+
 capability_error_classification_test() ->
     ?assertEqual(
         {error, capability, {diagnostics_incompatible, null}},
@@ -2926,12 +3455,30 @@ run_rejects_failed_remote_load_test() ->
     ?assertEqual([remote_load_called], drain_run_messages([])).
 
 refuse_pre_distributed_controller() ->
-    with_distribution(fun(_Cookie) ->
-        ?assertEqual(
-            {error, controller, controller_already_distributed},
-            observer_cli_escriptize:with_target(#{}, fun(_Target, _Capabilities) -> ok end)
-        )
-    end).
+    Root = temporary_directory("observer_cli_distributed_status_home"),
+    CookieEnv = "OBSERVER_CLI_DISTRIBUTED_STATUS_COOKIE",
+    PreviousHome = os:getenv("HOME"),
+    true = os:putenv("HOME", Root),
+    true = os:putenv(CookieEnv, "cookie"),
+    try
+        ok = observer_cli_cli:save_context(#{
+            node => "target@host", cookie_env => CookieEnv
+        }),
+        with_distribution(fun(_Cookie) ->
+            ?assertEqual(
+                {error, controller, controller_already_distributed},
+                observer_cli_escriptize:with_target(#{}, fun(_Target, _Capabilities) -> ok end)
+            ),
+            ?assertEqual(
+                {error, controller, controller_already_distributed},
+                observer_cli_escriptize:run_status(#{timeout => "10s"})
+            )
+        end)
+    after
+        true = os:unsetenv(CookieEnv),
+        restore_os_env("HOME", PreviousHome),
+        file:del_dir_r(Root)
+    end.
 
 random_failure_stops_before_connect() ->
     ?assertEqual(nonode@nohost, node()),
@@ -3012,9 +3559,72 @@ dynamic_controller_handshake() ->
                     {ok, Capabilities}
                 end
             )
-        )
+        ),
+        ?assertEqual(
+            {error, internal, controller_failed},
+            observer_cli_escriptize:connect_target(
+                Target,
+                shortnames,
+                Cookie,
+                10000,
+                fun() -> RandomBytes end,
+                fun net_kernel:connect_node/1,
+                fun(_ConnectedTarget, _Capabilities) -> erlang:error(callback_failed) end
+            )
+        ),
+        ?assertEqual(ok, observer_cli_escriptize:stop_controller(100))
     after
         stop_target(Port)
+    end,
+    ?assertEqual(nonode@nohost, node()).
+
+invalid_remote_dispatch_contract() ->
+    ?assertEqual(nonode@nohost, node()),
+    Dir = temporary_directory("observer_cli_invalid_remote_dispatch"),
+    Source = filename:join(Dir, "observer_cli_snapshot.erl"),
+    ok = file:write_file(
+        Source,
+        <<
+            "-module(observer_cli_snapshot).\n"
+            "-export([capabilities/0, dispatch/4]).\n"
+            "capabilities() -> #{bundle_version => <<\"2.0.0\">>, protocol_version => 1}.\n"
+            "dispatch(_, _, _, _) -> #{invalid => true}.\n"
+        >>
+    ),
+    {ok, observer_cli_snapshot} = compile:file(Source, [{outdir, Dir}]),
+    Cookie = observer_cli_invalid_dispatch_cookie,
+    {Port, Target} = start_target(shortnames, Cookie, [Dir]),
+    try
+        Results = observer_cli_escriptize:connect_target(
+            Target,
+            shortnames,
+            Cookie,
+            10000,
+            fun() -> binary:copy(<<16#66>>, 24) end,
+            fun net_kernel:connect_node/1,
+            fun(ConnectedTarget, _Capabilities) ->
+                [
+                    observer_cli_escriptize:run_snapshot(
+                        ConnectedTarget, #{}, #{}, 5000
+                    ),
+                    observer_cli_escriptize:run_dispatch(
+                        ConnectedTarget, memory, #{}, #{}, 5000
+                    ),
+                    observer_cli_escriptize:run_diagnose(ConnectedTarget, #{}, 5000)
+                ]
+            end
+        ),
+        ?assertEqual(
+            [
+                {error, schema, invalid_snapshot_response},
+                {error, schema, invalid_command_response},
+                {error, schema, invalid_diagnose_response}
+            ],
+            Results
+        )
+    after
+        stop_target(Port),
+        file:del_dir_r(Dir)
     end,
     ?assertEqual(nonode@nohost, node()).
 
@@ -3125,6 +3735,16 @@ connect_missing_diagnostics() ->
         ?assertNotEqual(nomatch, binary:match(Output, <<"Install the matching">>)),
         {0, Status} = run_escript(Escript, [Script, "status"]),
         ?assertNotEqual(nomatch, binary:match(Status, <<"diagnostics_module=missing">>)),
+        {ok, DirectStatus, 0} = observer_cli_escriptize:run_status(#{timeout => "10s"}),
+        ?assertMatch(
+            #{<<"data">> := #{<<"diagnostics_module">> := <<"missing">>}}, DirectStatus
+        ),
+        ?assertEqual(
+            {error, capability, capability_unavailable},
+            observer_cli_escriptize:run_command(memory, #{
+                arguments => [], timeout => "10s"
+            })
+        ),
         {2, Rejected} = run_escript(Escript, [
             Script,
             "connect",
@@ -3179,7 +3799,18 @@ connect_incompatible_diagnostics() ->
         ?assertNotEqual(nomatch, binary:match(Connect, <<"bundle=1.8.8">>)),
         {0, Status} = run_escript(Escript, [Script, "status"]),
         ?assertNotEqual(nomatch, binary:match(Status, <<"diagnostics_module=incompatible">>)),
-        ?assertNotEqual(nomatch, binary:match(Status, <<"bundle=1.8.8">>))
+        ?assertNotEqual(nomatch, binary:match(Status, <<"bundle=1.8.8">>)),
+        {ok, DirectStatus, 0} = observer_cli_escriptize:run_status(#{timeout => "10s"}),
+        ?assertMatch(
+            #{<<"data">> := #{<<"diagnostics_module">> := <<"incompatible">>}},
+            DirectStatus
+        ),
+        ?assertEqual(
+            {error, capability, capability_unavailable},
+            observer_cli_escriptize:run_command(memory, #{
+                arguments => [], timeout => "10s"
+            })
+        )
     after
         true = os:unsetenv(CookieEnv),
         restore_os_env("HOME", PreviousHome),
@@ -3300,6 +3931,12 @@ direct_remote_command_suite() ->
             }
         ),
         assert_command_ok(status, #{arguments => [], timeout => "10s"}),
+        MainMemory = assert_halt(0, fun() ->
+            observer_cli_escriptize:main(["memory", "--format", "term"])
+        end),
+        ?assertNotEqual(
+            nomatch, binary:match(iolist_to_binary(MainMemory), <<"observer_cli.cli/v1">>)
+        ),
         lists:foreach(
             fun({Command, Options}) ->
                 assert_command_ok(Command, Options#{timeout => "15s"})
@@ -3327,6 +3964,30 @@ direct_remote_command_suite() ->
                 {supervision_tree, #{arguments => [], app => "kernel"}},
                 {trace, #{arguments => ["stop"], all => true}}
             ]
+        ),
+        assert_command_ok(disconnect, #{arguments => []}),
+        CookieFile = filename:join(Root, "target.cookie"),
+        ok = file:write_file(CookieFile, atom_to_binary(Cookie)),
+        ok = file:change_mode(CookieFile, 8#600),
+        assert_command_ok(
+            connect,
+            #{
+                node => atom_to_list(Target),
+                cookie_file => CookieFile,
+                arguments => [],
+                timeout => "10s"
+            }
+        ),
+        {ok, FileStatus, 0} = observer_cli_escriptize:run_command(status, #{
+            arguments => [], timeout => "10s"
+        }),
+        ?assertMatch(
+            #{
+                <<"data">> := #{
+                    <<"cookie_source">> := #{<<"type">> := <<"file">>, <<"path">> := _}
+                }
+            },
+            FileStatus
         ),
         assert_command_ok(disconnect, #{arguments => []})
     after
@@ -4540,6 +5201,35 @@ incompatible_capability() ->
         file:del_dir_r(Dir)
     end.
 
+undefined_capability() ->
+    capability_source_test(
+        "-export([noop/0]).\nnoop() -> ok.\n",
+        {error, capability, {diagnostics_incompatible, null}}
+    ).
+
+failing_capability() ->
+    capability_source_test(
+        "-export([capabilities/0]).\ncapabilities() -> erlang:error(probe_failed).\n",
+        {error, required_probe, capability_probe_failed}
+    ).
+
+nonmap_capability() ->
+    capability_source_test(
+        "-export([capabilities/0]).\ncapabilities() -> invalid.\n",
+        {error, capability, {diagnostics_incompatible, #{}}}
+    ).
+
+capability_source_test(Body, Expected) ->
+    Dir = temporary_directory("observer_cli_capability_source"),
+    Source = filename:join(Dir, "observer_cli_snapshot.erl"),
+    ok = file:write_file(Source, ["-module(observer_cli_snapshot).\n", Body]),
+    {ok, observer_cli_snapshot} = compile:file(Source, [{outdir, Dir}]),
+    try
+        capability_error_test([Dir], Expected)
+    after
+        file:del_dir_r(Dir)
+    end.
+
 hostile_capability() ->
     Dir = temporary_directory("observer_cli_hostile_capability"),
     Source = filename:join(Dir, "observer_cli_snapshot.erl"),
@@ -4548,7 +5238,7 @@ hostile_capability() ->
         [
             "-module(observer_cli_snapshot).\n",
             "-export([capabilities/0]).\n",
-            "capabilities() -> #{bundle_version => list_to_binary([255]), ",
+            "capabilities() -> #{bundle_version => invalid, ",
             "protocol_version => 2147483648, ",
             "secret => do_not_copy}.\n"
         ]

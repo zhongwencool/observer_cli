@@ -86,6 +86,15 @@ start_ports_sort_and_page_test() ->
         end
     ).
 
+start_ports_restarts_and_ignores_invalid_selection_test() ->
+    observer_cli_test_io:with_input(
+        ["1500\n", "x\n", "999\n", "q\n"],
+        fun() ->
+            Opts = #view_opts{auto_row = false},
+            ?assertEqual(quit, observer_cli_port:start(Opts))
+        end
+    ).
+
 start_ports_open_detail_test() ->
     {ok, Listen} = gen_tcp:listen(0, [binary, {active, false}]),
     try

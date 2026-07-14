@@ -72,6 +72,16 @@ get_terminal_rows_test() ->
         end
     ).
 
+read_cmd_failure_paths_test() ->
+    observer_cli_test_io:with_input(
+        [],
+        fun() -> ?assertEqual({error, eof}, observer_cli_lib:read_cmd()) end
+    ),
+    observer_cli_test_io:with_input(
+        [{error, estale}],
+        fun() -> ?assertEqual({error, estale}, observer_cli_lib:read_cmd()) end
+    ).
+
 parse_cmd_quit_test() ->
     observer_cli_test_io:with_input(
         ["q\n"],

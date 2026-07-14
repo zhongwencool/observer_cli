@@ -1046,6 +1046,57 @@ snapshot_worker_and_diagnostic_boundary_test() ->
     ),
     snapshot_coordinate_contract().
 
+snapshot_cleanup_and_admission_failures_test() ->
+    Controller = spawn(fun process_fixture/0),
+    ControllerRef = erlang:monitor(process, Controller),
+    Worker = spawn(fun() ->
+        receive
+            {_RunRef, finish} -> process_fixture()
+        end
+    end),
+    WorkerRef = erlang:monitor(process, Worker),
+    exit(Controller, kill),
+    ?assertMatch(
+        #{<<"reason_code">> := <<"controller_disconnected">>},
+        observer_cli_snapshot:finish_worker(
+            ControllerRef,
+            Worker,
+            WorkerRef,
+            make_ref(),
+            erlang:monotonic_time(millisecond) + 1000,
+            #{}
+        )
+    ),
+    ?assertEqual(
+        {probe_error, invalid_request},
+        observer_cli_snapshot:probe(
+            logs,
+            #{handler => null, tail => 0, test_log_env => #{}},
+            #{controller => self()}
+        )
+    ),
+    ?assertEqual(
+        {probe_error, invalid_request},
+        observer_cli_snapshot:capture_logs(#{}, #{controller => self()})
+    ),
+    RefusedSource = #{count_fun => fun() -> 100001 end},
+    ?assertEqual(
+        scan_budget_exceeded,
+        maps:get(
+            reason_code,
+            observer_cli_snapshot:diagnostic_binary_holders(
+                #{test_process_source => RefusedSource}, #{controller => self()}
+            )
+        )
+    ),
+    Sample = observer_cli_snapshot:diagnostic_sample(
+        #{test_process_source => RefusedSource}, #{controller => self()}
+    ),
+    ?assertEqual(
+        scan_budget_exceeded,
+        maps:get(reason_code, maps:get(process_inventory, Sample))
+    ).
+
 snapshot_coordinate_contract() ->
     ControllerRef = erlang:monitor(process, self()),
     ErrorWorker = spawn(fun() -> receive
@@ -1714,8 +1765,18 @@ snapshot_last_pure_branches_test() ->
     ),
     DefaultProcess = observer_cli_snapshot:default_process_source(),
     ?assert(is_integer((maps:get(monotonic_fun, DefaultProcess))())),
+    {ProcessPath, ProcessFold} = observer_cli_snapshot:process_fold(),
+    ?assert(lists:member(ProcessPath, [otp_process_iterator, bounded_process_list])),
+    ?assert(is_function(ProcessFold, 2)),
     DefaultMnesia = observer_cli_snapshot:default_mnesia_source(),
     ?assert(is_boolean((maps:get(available_fun, DefaultMnesia))())),
+    MnesiaInfo =
+        try (maps:get(info_fun, DefaultMnesia))(schema, storage_type) of
+            Storage -> {ok, Storage}
+        catch
+            exit:InfoReason -> {error, InfoReason}
+        end,
+    ?assert(lists:member(element(1, MnesiaInfo), [ok, error])),
     ?assertEqual(invalid, maps:get(status, observer_cli_snapshot:scheduler_window(#{}, #{}))).
 
 snapshot_rare_branch_contract_test() ->
@@ -2282,6 +2343,78 @@ otp_state_target_resolution_is_uniform_test() ->
         Targets ++ [DeadTarget]
     ),
     ?assertEqual(AtomCount, erlang:system_info(atom_count)).
+
+otp_state_identity_and_acquisition_races_test() ->
+    lists:foreach(
+        fun({CurrentState, Identity}) ->
+            Data = maps:get(
+                <<"data">>, otp_state_fixture_response(gen_statem, {CurrentState, #{}}, #{})
+            ),
+            ?assertEqual(Identity, maps:get(<<"current_state_identity">>, Data))
+        end,
+        [
+            {<<"phase">>, <<"available">>},
+            {<<16#ff>>, <<"unavailable">>},
+            {{phase}, <<"unavailable">>},
+            {binary:copy(<<"x">>, 128), <<"unavailable">>}
+        ]
+    ),
+    MapData = maps:get(<<"data">>, state_fixture_response(#{a => 1, b => 2, c => 3})),
+    MapShape = maps:get(<<"state_shape">>, MapData),
+    ?assertEqual(3, maps:get(<<"size">>, MapShape)),
+    ?assertEqual(2, maps:get(<<"returned_count">>, MapShape)),
+    Wide = lists:seq(1, 10001),
+    WideData = maps:get(
+        <<"data">>, otp_state_fixture_response(gen_statem, {Wide, ignored}, #{})
+    ),
+    ?assertEqual(<<"node_cap">>, maps:get(<<"truncation_reason">>, WideData)),
+    ?assertEqual(null, maps:get(<<"data_shape">>, WideData)),
+    Target = list_to_binary(pid_to_list(self())),
+    TimeoutSource = state_source(fun(_Pid, _Timeout) -> exit(timeout) end),
+    ?assertMatch(
+        {error, state_timeout, _},
+        observer_cli_snapshot:collect_otp_state(Target, gen_server, undefined, TimeoutSource)
+    ),
+    ProcessSource = maps:get(process_source, TimeoutSource),
+    AliveCalls = make_ref(),
+    put(AliveCalls, 0),
+    ?assertMatch(
+        {error, state_probe_failed, _},
+        observer_cli_snapshot:collect_otp_state(
+            Target,
+            gen_server,
+            undefined,
+            TimeoutSource#{
+                process_source := ProcessSource#{
+                    alive_fun => fun(_Pid) ->
+                        case get(AliveCalls) of
+                            0 ->
+                                put(AliveCalls, 1),
+                                true;
+                            _ ->
+                                erlang:error(alive_probe_failed)
+                        end
+                    end
+                },
+                get_state_fun := fun(_Pid, _Timeout) -> erlang:error(state_probe_failed) end
+            }
+        )
+    ),
+    erase(AliveCalls),
+    Server = start_state_server(race_state),
+    RaceTarget = list_to_binary(pid_to_list(Server)),
+    ?assertMatch(
+        {ok, #{status := not_found}, _},
+        observer_cli_snapshot:collect_otp_state(
+            RaceTarget,
+            gen_server,
+            undefined,
+            state_source(fun(Pid, _Timeout) ->
+                kill_and_wait(Pid),
+                exit(timeout)
+            end)
+        )
+    ).
 
 otp_state_behavior_mismatch_fails_closed_test() ->
     lists:foreach(
@@ -2889,6 +3022,110 @@ process_inventory_boundary_and_stable_top_n_test() ->
         ?assertEqual(nomatch, binary:match(term_to_binary(Response), <<"#Ref<">>))
     after
         lists:foreach(fun(Pid) -> exit(Pid, kill) end, Pids)
+    end.
+
+process_label_and_application_attribution_failures_test() ->
+    _ = code:ensure_loaded(proc_lib),
+    case erlang:function_exported(proc_lib, set_label, 1) of
+        true ->
+            Parent = self(),
+            Labelled = spawn(fun() ->
+                proc_lib:set_label(false),
+                Parent ! {label_ready, self()},
+                process_fixture()
+            end),
+            try
+                receive
+                    {label_ready, Labelled} -> ok
+                after 1000 -> erlang:error(label_fixture_timeout)
+                end,
+                LabelResponse = inspection(processes, #{
+                    sort => memory,
+                    limit => 1,
+                    test_process_source => process_source(
+                        [Labelled], fun erlang:process_info/2
+                    )
+                }),
+                [LabelItem] = maps:get(<<"items">>, maps:get(<<"data">>, LabelResponse)),
+                ?assertEqual(null, maps:get(<<"label">>, LabelItem))
+            after
+                kill_and_wait(Labelled)
+            end;
+        false ->
+            ok
+    end,
+    Leader = spawn(fun process_fixture/0),
+    Worker = spawn(fun process_fixture/0),
+    true = group_leader(Leader, Worker),
+    kill_and_wait(Leader),
+    try
+        Context = #{deadline => erlang:monotonic_time(millisecond) + 1000},
+        {ok, DeadLeaderData, _} = observer_cli_snapshot:collect_admitted_applications(
+            [],
+            [],
+            [],
+            #{},
+            process_source([Worker], fun erlang:process_info/2),
+            memory,
+            20,
+            {Context, 0}
+        ),
+        [DeadLeaderItem] = maps:get(items, DeadLeaderData),
+        ?assertEqual(1, maps:get(process_count, DeadLeaderItem)),
+        FaultingInfo = fun
+            (Pid, Keys) when is_list(Keys) -> erlang:process_info(Pid, Keys);
+            (_Pid, group_leader) -> erlang:error(process_info_failed)
+        end,
+        {ok, FaultData, _} = observer_cli_snapshot:collect_admitted_applications(
+            [],
+            [],
+            [],
+            #{},
+            process_source([Worker], FaultingInfo),
+            memory,
+            20,
+            {Context, 0}
+        ),
+        ?assertEqual(1, maps:get(unattributed_process_count, FaultData)),
+        MalformedInfo = fun(_Pid, Keys) ->
+            [
+                {Key,
+                    case Key of
+                        group_leader -> invalid;
+                        _ -> 0
+                    end}
+             || Key <- Keys
+            ]
+        end,
+        {ok, MalformedData, _} = observer_cli_snapshot:collect_admitted_applications(
+            [],
+            [],
+            [],
+            #{},
+            process_source([Worker], MalformedInfo),
+            memory,
+            20,
+            {Context, 0}
+        ),
+        ?assertEqual(1, maps:get(unattributed_process_count, MalformedData)),
+        {ok, VersionData, _} = observer_cli_snapshot:collect_admitted_applications(
+            [bad_version_app],
+            [{bad_version_app, "bad", [<<"x">> | improper]}],
+            [],
+            #{supervisor_fun => fun(_App) -> undefined end},
+            process_source([], fun erlang:process_info/2),
+            memory,
+            20,
+            {Context, 0}
+        ),
+        [VersionItem] = [
+            Item
+         || #{application := {identifier, application, bad_version_app}} = Item <-
+                maps:get(items, VersionData)
+        ],
+        ?assertEqual(null, maps:get(version, VersionItem))
+    after
+        kill_and_wait(Worker)
     end.
 
 process_inventory_label_is_bounded_and_redacted_test() ->
@@ -3662,6 +3899,100 @@ distribution_controller_exclusion_and_capability_test() ->
         port_close(Port)
     end.
 
+distributed_controller_is_excluded_from_resource_inventories_test_() ->
+    {timeout, 15, fun distributed_controller_is_excluded_from_resource_inventories/0}.
+
+distributed_controller_is_excluded_from_resource_inventories() ->
+    with_snapshot_distribution(fun() ->
+        {ok, ControllerPeer, ControllerNode} = peer:start_link(#{
+            name => peer:random_name("snapshot_controller")
+        }),
+        {ok, ObservedPeer, ObservedNode} = peer:start_link(#{
+            name => peer:random_name("snapshot_observed")
+        }),
+        try
+            RemoteController = erpc:call(
+                ControllerNode, erlang, spawn, [timer, sleep, [infinity]]
+            ),
+            Worker = spawn(fun process_fixture/0),
+            try
+                true = group_leader(RemoteController, Worker),
+                Context = #{
+                    controller => RemoteController,
+                    deadline => erlang:monotonic_time(millisecond) + 5000
+                },
+                {ok, Applications, _} = observer_cli_snapshot:collect_admitted_applications(
+                    [],
+                    [],
+                    [],
+                    #{},
+                    process_source([Worker], fun erlang:process_info/2),
+                    memory,
+                    20,
+                    {Context, 0}
+                ),
+                ?assertEqual(1, maps:get(unattributed_process_count, Applications)),
+                {ControllerNode, DistPort} = lists:keyfind(
+                    ControllerNode, 1, erlang:system_info(dist_ctrl)
+                ),
+                NetworkSource = #{
+                    count_fun => fun() -> 1 end,
+                    all_fun => fun() -> {ok, [DistPort]} end,
+                    monotonic_fun => fun() -> erlang:monotonic_time(millisecond) end,
+                    io_fun => fun() -> {{input, 0}, {output, 0}} end
+                },
+                Network = observer_cli_snapshot:capture_counter_resources(
+                    network, network_inventory, #{}, Context, NetworkSource
+                ),
+                ?assertNotEqual(
+                    nomatch, binary:match(term_to_binary(Network), <<"diagnostics_controller">>)
+                ),
+                Ports = observer_cli_snapshot:capture_ports(
+                    #{
+                        test_port_source => #{
+                            count_fun => fun() -> 1 end,
+                            all_fun => fun() -> {ok, [DistPort]} end,
+                            info_fun => fun(_Port, _Key) -> erlang:error(unexpected_port_probe) end
+                        }
+                    },
+                    Context
+                ),
+                ?assertNotEqual(
+                    nomatch, binary:match(term_to_binary(Ports), <<"diagnostics_controller">>)
+                ),
+                Distribution = observer_cli_snapshot:diagnostic_distribution(RemoteController),
+                [ObservedQueue] = maps:get(controller_queues, Distribution),
+                ?assertEqual(
+                    {identifier, peer, ObservedNode}, maps:get(peer, ObservedQueue)
+                ),
+                ?assertEqual(
+                    [
+                        #{
+                            peer => {identifier, peer, ControllerNode},
+                            reason => diagnostics_controller
+                        }
+                    ],
+                    maps:get(excluded_peers, Distribution)
+                )
+            after
+                kill_and_wait(Worker)
+            end
+        after
+            peer:stop(ObservedPeer),
+            peer:stop(ControllerPeer)
+        end
+    end).
+
+safe_port_info_treats_undefined_as_missing_test() ->
+    {ok, Socket} = gen_tcp:listen(0, [binary, {active, false}]),
+    try
+        ?assertEqual(missing, observer_cli_snapshot:safe_port_info(Socket, os_pid)),
+        PortResponse = inspection(port, #{target => self()}),
+        ?assertEqual(<<"not_found">>, maps:get(<<"status">>, maps:get(<<"data">>, PortResponse)))
+    after
+        gen_tcp:close(Socket)
+    end.
+
 normalization_and_identifier_policy_test() ->
     Reference = make_ref(),
     Raw = #{
@@ -4140,6 +4471,21 @@ kill_and_wait(Pid) ->
     after 1000 ->
         erlang:demonitor(Ref, [flush]),
         erlang:error({fixture_cleanup_timeout, Pid})
+    end.
+
+with_snapshot_distribution(Fun) ->
+    WasAlive = erlang:is_alive(),
+    case WasAlive of
+        true ->
+            Fun();
+        false ->
+            Name = list_to_atom(peer:random_name("observer_cli_snapshot_origin")),
+            {ok, _} = net_kernel:start([Name, shortnames]),
+            try
+                Fun()
+            after
+                net_kernel:stop()
+            end
     end.
 
 state_source(GetStateFun) ->
