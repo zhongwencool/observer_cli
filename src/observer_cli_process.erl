@@ -468,11 +468,6 @@ bounded_detail_result(Fun) ->
         _:_ -> error
     end.
 
-bounded_detail_output(Binary) when
-    is_binary(Binary),
-    byte_size(Binary) > ?DETAIL_MAX_OUTPUT_BYTES
-->
-    too_large;
 bounded_detail_output(Output) ->
     try unicode:characters_to_binary(Output) of
         Binary when
