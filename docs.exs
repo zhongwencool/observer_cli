@@ -59,5 +59,10 @@
   ],
   filter_modules: fn _, _ -> false end,
   skip_code_autolink_to:
-    &String.starts_with?(&1, ["observer_cli:", "observer_cli_snapshot:"])
+    &String.starts_with?(&1, [
+      "observer_cli:",
+      "observer_cli_snapshot:",
+      "proc_lib:get_label/1",
+      "proc_lib:set_label/1"
+    ])
 ]
