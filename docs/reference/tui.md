@@ -624,12 +624,12 @@ point-in-time samples; reductions are cumulative and memory is current bytes.
 Messages, Dictionary, and State are collected and formatted in a monitored
 worker on the observed node. The worker has a five-second deadline and a
 `512 * 1024`-word heap cap that includes shared binaries. Terms are refused
-above 64 KiB of external representation or print depth 32. Formatter output is
-refused when the final rendered detail, including view prefixes, exceeds 65,536
-characters or 64 KiB of UTF-8; every refusal displays `too_large`. These limits
-bound the helper and retained output, but the VM can still do transient work
-while copying a requested term, and a delivered `system_get_state` request can
-outlive its caller timeout.
+above 64 KiB of external representation or structural depth 32. Formatter
+output is refused when the final rendered detail, including view prefixes,
+exceeds 65,536 characters or 64 KiB of UTF-8; every refusal displays
+`too_large`. These limits bound the helper and retained output, but the VM can
+still do transient work while copying a requested term, and a delivered
+`system_get_state` request can outlive its caller timeout.
 
 Pager input is:
 

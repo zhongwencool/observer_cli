@@ -245,11 +245,7 @@ get_table_list2(Owner, HideSys, Attr) ->
                     RawMemory = mnesia:table_info(Id, memory),
                     case is_integer(Size) andalso is_integer(RawMemory) of
                         true ->
-                            Memory =
-                                case Storage of
-                                    disc_only_copies -> RawMemory;
-                                    _ -> RawMemory * WordSize
-                                end,
+                            Memory = mnesia_memory(Storage, RawMemory, WordSize),
                             Tab0 = [
                                 {name, Id},
                                 {owner, Owner},
@@ -270,6 +266,9 @@ get_table_list2(Owner, HideSys, Attr) ->
         end
     end,
     lists:foldl(CollectFun, [], mnesia:system_info(tables)).
+
+mnesia_memory(disc_only_copies, RawMemory, _WordSize) -> RawMemory;
+mnesia_memory(_Storage, RawMemory, WordSize) -> RawMemory * WordSize.
 
 with_storage_type(Id, Storage, Tab0) when Storage =:= ram_copies orelse Storage =:= disc_copies ->
     [

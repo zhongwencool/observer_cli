@@ -33,12 +33,19 @@ bounded_process_detail() ->
     assert_default_binary_output(),
     assert_too_many_messages(),
     assert_large_message(binary:copy(<<"x">>, 2 * 1024 * 1024)),
-    assert_large_message(lists:seq(1, 100)),
+    assert_large_message(binary:copy(<<0>>, 60 * 1024)),
+    assert_large_message(deep_term(33)),
+    assert_large_message([x | deep_term(31)]),
     assert_large_message(1 bsl 240000),
     assert_large_dictionary(),
     assert_large_state(),
     assert_unsupported_state(),
     assert_custom_formatter_limits().
+
+deep_term(0) ->
+    '...';
+deep_term(Depth) ->
+    {deep_term(Depth - 1)}.
 
 assert_default_binary_output() ->
     Binary = binary:copy(<<"0123456789">>, 20),

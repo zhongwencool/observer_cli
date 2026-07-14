@@ -6,7 +6,8 @@
     format/2
 ]).
 
--define(FORMAT_CHARS_LIMIT, 64 * 1024).
+%% The extra character makes io_lib's soft truncation exceed the caller's hard cap.
+-define(FORMAT_CHARS_LIMIT, 64 * 1024 + 1).
 
 %%--------------------------------------------------------------------
 -spec format(Pid :: pid(), Term :: term()) ->

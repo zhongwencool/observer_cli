@@ -436,7 +436,7 @@ collect_and_render_process_detail(dict, Pid) ->
     end;
 collect_and_render_process_detail(state, Pid) ->
     try collect_process_state(Pid) of
-        State -> {ok, truncate_str(Pid, State)}
+        State -> {ok, render_process_state(Pid, State)}
     catch
         _:_ -> state_error
     end.
@@ -901,10 +901,7 @@ render_state(Pid, Type, Interval) ->
     try
         {ok, BoundedLine} = bounded_process_detail(state, Pid),
         Nav = state_nav(Type),
-        Line = replace_first_line(
-            unicode:characters_to_list(BoundedLine),
-            state_title(Pid)
-        ),
+        Line = unicode:characters_to_list(BoundedLine),
         Footer = state_footer(Menu, Nav),
         Action = print_with_less(Line, Menu, Nav, Footer),
         case Action of
@@ -992,9 +989,53 @@ truncate_str(Pid, Term) ->
 detail_term_within_limits(Term) ->
     try
         erlang:external_size(Term) =< ?DETAIL_MAX_TERM_BYTES andalso
-            io_lib:limit_term(Term, ?DETAIL_FORMAT_DEPTH) =:= Term
+            detail_term_within_depth(Term, ?DETAIL_FORMAT_DEPTH)
     catch
         _:_ -> false
+    end.
+
+detail_term_within_depth([], _Depth) ->
+    true;
+detail_term_within_depth(Term, _Depth) when is_bitstring(Term) ->
+    true;
+detail_term_within_depth(Term, _Depth) when
+    not is_list(Term),
+    not is_tuple(Term),
+    not is_map(Term)
+->
+    true;
+detail_term_within_depth(_Term, 0) ->
+    false;
+detail_term_within_depth([Head | Tail], Depth) ->
+    detail_term_within_depth(Head, Depth - 1) andalso
+        detail_list_tail_within_depth(Tail, Depth);
+detail_term_within_depth(Tuple, Depth) when is_tuple(Tuple) ->
+    detail_tuple_within_depth(Tuple, 1, Depth - 1);
+detail_term_within_depth(Map, Depth) when is_map(Map) ->
+    detail_map_within_depth(maps:iterator(Map), Depth - 1).
+
+detail_list_tail_within_depth([], _Depth) ->
+    true;
+detail_list_tail_within_depth([Head | Tail], Depth) ->
+    detail_term_within_depth(Head, Depth - 1) andalso
+        detail_list_tail_within_depth(Tail, Depth);
+detail_list_tail_within_depth(Tail, Depth) ->
+    detail_term_within_depth(Tail, Depth - 1).
+
+detail_tuple_within_depth(Tuple, Index, _Depth) when Index > tuple_size(Tuple) ->
+    true;
+detail_tuple_within_depth(Tuple, Index, Depth) ->
+    detail_term_within_depth(element(Index, Tuple), Depth) andalso
+        detail_tuple_within_depth(Tuple, Index + 1, Depth).
+
+detail_map_within_depth(Iterator, Depth) ->
+    case maps:next(Iterator) of
+        {Key, Value, NextIterator} ->
+            detail_term_within_depth(Key, Depth) andalso
+                detail_term_within_depth(Value, Depth) andalso
+                detail_map_within_depth(NextIterator, Depth);
+        none ->
+            true
     end.
 
 format_mod(State) ->

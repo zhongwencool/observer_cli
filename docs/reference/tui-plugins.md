@@ -255,10 +255,13 @@ format(Pid, Term) ->
         io_lib:format(
             "Process: ~p~n~n~tp~n",
             [Pid, Term],
-            [{chars_limit, 64 * 1024}]
+            [{chars_limit, 64 * 1024 + 1}]
         )
     ).
 ```
+
+The extra character in the soft `chars_limit` is a tripwire: the enclosing hard
+cap rejects truncated formatter output instead of displaying it.
 
 `format/2` must return a Unicode character list. If it raises, exits, or throws,
 Observer CLI falls back to `observer_cli_formatter_default` for that value.
