@@ -3356,7 +3356,12 @@ port_detail_is_bounded_and_redacts_inet_identifiers_test() ->
             ok, observer_cli_escriptize:validate_response(port, redact, node(), Response)
         ),
         lists:foreach(
-            fun(Format) -> ?assertMatch({ok, _}, observer_cli_cli:encode(Format, Response)) end,
+            fun(Format) ->
+                case observer_cli_cli:encode(Format, Response) of
+                    {ok, _} -> ok;
+                    {error, #{reason := json_unavailable}} when Format =:= json -> ok
+                end
+            end,
             [text, term, json]
         ),
         Data = maps:get(<<"data">>, Response),

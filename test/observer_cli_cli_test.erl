@@ -1418,8 +1418,13 @@ command_text_and_error_encoding_test() ->
     {ok, MissingText} = observer_cli_cli:encode(text, Missing),
     ?assertEqual(nomatch, binary:match(MissingText, <<"--load-diagnostics">>)),
     ?assertNotEqual(nomatch, binary:match(MissingText, <<"Install the matching">>)),
+    JsonError =
+        case code:ensure_loaded(json) of
+            {module, json} -> json_encoding_failed;
+            {error, _Reason} -> json_unavailable
+        end,
     ?assertMatch(
-        {error, #{reason := json_encoding_failed}},
+        {error, #{reason := JsonError}},
         observer_cli_cli:encode(json, #{<<"pid">> => self()})
     ),
     lists:foreach(

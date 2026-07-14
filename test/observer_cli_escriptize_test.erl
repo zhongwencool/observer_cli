@@ -1377,12 +1377,15 @@ command_help_test() ->
                 "--all"
             ]},
             {["logs", "--help"], [
+                "once from one trusted",
                 "configured path",
+                "does not wait for new lines",
                 "does not flush Logger buffers",
                 "sensitive and untrusted",
                 "--redact and --include-identifiers",
                 "--handler HANDLER_ID",
                 "--tail LINES",
+                "Remote-operation deadline; 10s default, max 120s",
                 "64 KiB",
                 "32 KiB"
             ]},
@@ -3457,8 +3460,7 @@ run_rejects_failed_remote_load_test() ->
 refuse_pre_distributed_controller() ->
     Root = temporary_directory("observer_cli_distributed_status_home"),
     CookieEnv = "OBSERVER_CLI_DISTRIBUTED_STATUS_COOKIE",
-    PreviousHome = os:getenv("HOME"),
-    true = os:putenv("HOME", Root),
+    PreviousConfigHome = set_config_home(Root),
     true = os:putenv(CookieEnv, "cookie"),
     try
         ok = observer_cli_cli:save_context(#{
@@ -3476,7 +3478,7 @@ refuse_pre_distributed_controller() ->
         end)
     after
         true = os:unsetenv(CookieEnv),
-        restore_os_env("HOME", PreviousHome),
+        restore_config_home(PreviousConfigHome),
         file:del_dir_r(Root)
     end.
 
@@ -3636,8 +3638,7 @@ active_context_lifecycle() ->
     {Escript, Script} = context_escript(),
     Root = temporary_directory("observer_cli_context_home"),
     CookieEnv = "OBSERVER_CLI_CONTEXT_COOKIE",
-    PreviousHome = os:getenv("HOME"),
-    true = os:putenv("HOME", Root),
+    PreviousConfigHome = set_config_home(Root),
     true = os:putenv(CookieEnv, CookieText),
     TargetText = atom_to_list(Target),
     try
@@ -3679,7 +3680,7 @@ active_context_lifecycle() ->
         ?assertEqual(<<"No active context.\n">>, Again)
     after
         true = os:unsetenv(CookieEnv),
-        restore_os_env("HOME", PreviousHome),
+        restore_config_home(PreviousConfigHome),
         file:delete(Script),
         file:del_dir_r(Root),
         stop_target(Port)
@@ -3688,8 +3689,7 @@ active_context_lifecycle() ->
 
 connect_cleanup_preserves_context() ->
     Root = temporary_directory("observer_cli_cleanup_context_home"),
-    PreviousHome = os:getenv("HOME"),
-    true = os:putenv("HOME", Root),
+    PreviousConfigHome = set_config_home(Root),
     Old = #{node => "old@host", name_mode => "short", cookie_env => "OLD_COOKIE"},
     New = #{node => "new@host", name_mode => "short", cookie_env => "NEW_COOKIE"},
     try
@@ -3707,7 +3707,7 @@ connect_cleanup_preserves_context() ->
         ),
         ?assertEqual({ok, New}, observer_cli_cli:load_context())
     after
-        restore_os_env("HOME", PreviousHome),
+        restore_config_home(PreviousConfigHome),
         file:del_dir_r(Root)
     end.
 
@@ -3718,8 +3718,7 @@ connect_missing_diagnostics() ->
     {Escript, Script} = context_escript(),
     Root = temporary_directory("observer_cli_missing_context_home"),
     CookieEnv = "OBSERVER_CLI_MISSING_CONTEXT_COOKIE",
-    PreviousHome = os:getenv("HOME"),
-    true = os:putenv("HOME", Root),
+    PreviousConfigHome = set_config_home(Root),
     true = os:putenv(CookieEnv, atom_to_list(Cookie)),
     try
         {0, Output} = run_escript(Escript, [
@@ -3757,7 +3756,7 @@ connect_missing_diagnostics() ->
         ?assertNotEqual(nomatch, binary:match(Rejected, <<"unknown option">>))
     after
         true = os:unsetenv(CookieEnv),
-        restore_os_env("HOME", PreviousHome),
+        restore_config_home(PreviousConfigHome),
         file:delete(Script),
         file:del_dir_r(Root),
         stop_target(Port)
@@ -3783,8 +3782,7 @@ connect_incompatible_diagnostics() ->
     {Escript, Script} = context_escript(),
     Root = temporary_directory("observer_cli_incompatible_context_home"),
     CookieEnv = "OBSERVER_CLI_INCOMPATIBLE_CONTEXT_COOKIE",
-    PreviousHome = os:getenv("HOME"),
-    true = os:putenv("HOME", Root),
+    PreviousConfigHome = set_config_home(Root),
     true = os:putenv(CookieEnv, atom_to_list(Cookie)),
     try
         {0, Connect} = run_escript(Escript, [
@@ -3813,7 +3811,7 @@ connect_incompatible_diagnostics() ->
         )
     after
         true = os:unsetenv(CookieEnv),
-        restore_os_env("HOME", PreviousHome),
+        restore_config_home(PreviousConfigHome),
         file:delete(Script),
         file:del_dir_r(Root),
         stop_target(Port),
@@ -3841,8 +3839,7 @@ connect_sanitizes_hostile_diagnostics() ->
     {Escript, Script} = context_escript(),
     Root = temporary_directory("observer_cli_hostile_context_home"),
     CookieEnv = "OBSERVER_CLI_HOSTILE_CONTEXT_COOKIE",
-    PreviousHome = os:getenv("HOME"),
-    true = os:putenv("HOME", Root),
+    PreviousConfigHome = set_config_home(Root),
     true = os:putenv(CookieEnv, atom_to_list(Cookie)),
     ConnectArgs = [
         Script,
@@ -3875,7 +3872,7 @@ connect_sanitizes_hostile_diagnostics() ->
         ?assertEqual(nomatch, binary:match(Status, <<"do_not_copy">>))
     after
         true = os:unsetenv(CookieEnv),
-        restore_os_env("HOME", PreviousHome),
+        restore_config_home(PreviousConfigHome),
         file:delete(Script),
         file:del_dir_r(Root),
         stop_target(Port),
@@ -3917,8 +3914,7 @@ direct_remote_command_suite() ->
     ]),
     Root = temporary_directory("observer_cli_direct_command_home"),
     CookieEnv = "OBSERVER_CLI_DIRECT_COMMAND_COOKIE",
-    PreviousHome = os:getenv("HOME"),
-    true = os:putenv("HOME", Root),
+    PreviousConfigHome = set_config_home(Root),
     true = os:putenv(CookieEnv, atom_to_list(Cookie)),
     try
         assert_command_ok(
@@ -3992,7 +3988,7 @@ direct_remote_command_suite() ->
         assert_command_ok(disconnect, #{arguments => []})
     after
         true = os:unsetenv(CookieEnv),
-        restore_os_env("HOME", PreviousHome),
+        restore_config_home(PreviousConfigHome),
         file:del_dir_r(Root),
         stop_target(Port)
     end,
@@ -4580,8 +4576,7 @@ ignore_name_mode_result(Mode) ->
 
 malformed_active_context_contract() ->
     Root = temporary_directory("observer_cli_malformed_active"),
-    Previous = os:getenv("HOME"),
-    true = os:putenv("HOME", Root),
+    PreviousConfigHome = set_config_home(Root),
     Path = observer_cli_cli:context_path(),
     Dir = filename:dirname(Path),
     ok = filelib:ensure_dir(Path),
@@ -4606,7 +4601,7 @@ malformed_active_context_contract() ->
         ),
         ?assertEqual({error, enoent}, file:read_file_info(Path))
     after
-        restore_os_env("HOME", Previous),
+        restore_config_home(PreviousConfigHome),
         file:del_dir_r(Root)
     end.
 
@@ -5404,5 +5399,15 @@ restore_os_env(Name, false) ->
     os:unsetenv(Name);
 restore_os_env(Name, Value) ->
     os:putenv(Name, Value).
+
+set_config_home(Root) ->
+    Previous = {os:getenv("HOME"), os:getenv("XDG_CONFIG_HOME")},
+    true = os:putenv("HOME", Root),
+    true = os:putenv("XDG_CONFIG_HOME", Root),
+    Previous.
+
+restore_config_home({Home, ConfigHome}) ->
+    restore_os_env("HOME", Home),
+    restore_os_env("XDG_CONFIG_HOME", ConfigHome).
 
 -endif.

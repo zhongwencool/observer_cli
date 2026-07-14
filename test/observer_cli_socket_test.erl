@@ -408,6 +408,7 @@ start_socket_redraw_test() ->
     ),
     ?assert(length(binary:matches(iolist_to_binary(Output), <<"Current page is 1">>)) >= 2).
 
+-if(?OTP_RELEASE >= 27).
 socket_capability_absence_fails_closed_test() ->
     {module, socket} = code:ensure_loaded(socket),
     SocketPath = filename:dirname(code:which(socket)),
@@ -428,6 +429,7 @@ socket_capability_absence_fails_closed_test() ->
         true = code:set_path(CodePath),
         {module, socket} = code:ensure_loaded(socket)
     end.
+-endif.
 
 connected_socket_peer_address_test() ->
     {ok, Listen} = socket:open(inet, stream, tcp),

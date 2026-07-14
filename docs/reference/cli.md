@@ -367,11 +367,16 @@ trusted `logger_std_h` file handler's configured path. It defaults to the last
 observed, select one with `--handler`; the command never accepts a file path.
 
 V1 supports only plain regular files on Linux and macOS targets. It reads the
-current configured path once from a captured EOF, with a 64 KiB raw cap and a
-32 KiB cap per returned line. It rejects compressed modes, symlink leaves,
-devices, non-seekable files, `logger_disk_log_h`, standard streams, custom
-sinks, and rotation archives. It does not call `logger_std_h:filesync/1`, so
-Logger buffers that have not naturally become reader-visible may be absent.
+current configured path once from a captured EOF and does not wait for new
+lines. The raw read is capped at 64 KiB and each returned line at 32 KiB. It
+rejects compressed modes, symlink leaves, devices, non-seekable files,
+`logger_disk_log_h`, standard streams, custom sinks, and rotation archives. It
+does not call `logger_std_h:filesync/1`, so Logger buffers that have not
+naturally become reader-visible may be absent.
+
+For `logs`, `--timeout` is the remote-operation deadline covering target
+connection, capability checks, this one read, and cleanup. It defaults to `10s`
+and may be set up to `120s`; it is not a follow duration.
 
 The configured path cannot be proven to match the handler's private active file
 descriptor, especially across external rotation. Responses therefore state
