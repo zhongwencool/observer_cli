@@ -3694,7 +3694,7 @@ do_remote_load(Node) ->
     end,
     application:load(observer_cli),
     Formatter = application:get_env(observer_cli, formatter, ?DEFAULT_FORMATTER),
-    FormatterApp = maps:get(application, Formatter),
+    FormatterApp = maps:get(application, Formatter, observer_cli),
     Apps = lists:usort([observer_cli, recon, FormatterApp]),
     lists:foreach(fun(Mod) -> remote_load_module(Node, Mod) end, required_modules(Apps)),
     erpc:call(Node, ?MODULE, ensure_set_env, [

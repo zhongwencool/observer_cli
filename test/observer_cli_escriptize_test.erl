@@ -3277,7 +3277,9 @@ remote_load_peer_node_test() ->
         {ok, Peer, Node} = peer:start_link(#{name => peer:random_name("observer_cli_remote")}),
         Key = test_remote_load_env,
         PrevEnv = application:get_env(observer_cli, Key),
+        PrevFormatter = application:get_env(observer_cli, formatter),
         ok = application:set_env(observer_cli, Key, copied_to_peer),
+        ok = application:set_env(observer_cli, formatter, #{}),
         try
             Before = system_module_md5s(Node),
             ?assertEqual(false, erpc:call(Node, code, is_loaded, [observer_cli])),
@@ -3295,11 +3297,16 @@ remote_load_peer_node_test() ->
                 {ok, copied_to_peer},
                 erpc:call(Node, application, get_env, [observer_cli, Key])
             ),
+            ?assertEqual(
+                {ok, #{}},
+                erpc:call(Node, application, get_env, [observer_cli, formatter])
+            ),
             ?assertNotEqual(false, erpc:call(Node, code, is_loaded, [observer_cli])),
             ?assertNotEqual(false, erpc:call(Node, code, is_loaded, [recon])),
             ?assertEqual(Before, system_module_md5s(Node))
         after
             restore_env(observer_cli, Key, PrevEnv),
+            restore_env(observer_cli, formatter, PrevFormatter),
             peer:stop(Peer)
         end
     end).
