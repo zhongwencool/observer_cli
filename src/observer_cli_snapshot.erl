@@ -2143,7 +2143,7 @@ capture_ets(Request, Context) when is_map(Request) ->
             Count = (maps:get(count_fun, Source))(),
             Estimate = working_set_estimate(min(Count, Limit), 10, 1),
             Outcome =
-                case Count =< ?ETS_SCAN_BUDGET andalso Estimate =< ?MAX_WORKING_SET_BYTES of
+                case Count =< ?ETS_SCAN_BUDGET of
                     true ->
                         fun() -> collect_ets(Source, Sort, Limit, Context, Estimate) end;
                     false ->
@@ -2978,7 +2978,7 @@ collect_applications(AppSource, ProcessSource, Sort, Limit, Context) ->
     Running = (maps:get(running_fun, AppSource))(remaining(maps:get(deadline, Context))),
     Apps = lists:usort([App || {App, _, _} <- Loaded] ++ [App || {App, _, _} <- Running]),
     AppEstimate = working_set_estimate(length(Apps), 4, 1),
-    case length(Apps) =< ?APPLICATION_SCAN_BUDGET andalso AppEstimate =< ?MAX_WORKING_SET_BYTES of
+    case length(Apps) =< ?APPLICATION_SCAN_BUDGET of
         false ->
             {unavailable, scan_budget_exceeded, #{
                 status => unavailable,
@@ -3272,10 +3272,7 @@ collect_available_mnesia(Source, Sort, Limit, Context) ->
         yes ->
             Tables = (maps:get(local_tables_fun, Source))(),
             Estimate = working_set_estimate(min(length(Tables), Limit), 4, 1),
-            case
-                length(Tables) =< ?MNESIA_SCAN_BUDGET andalso
-                    Estimate =< ?MAX_WORKING_SET_BYTES
-            of
+            case length(Tables) =< ?MNESIA_SCAN_BUDGET of
                 true ->
                     collect_admitted_mnesia(Tables, Source, Sort, Limit, Context, Estimate);
                 false ->
@@ -4032,7 +4029,7 @@ vm_io_metrics(Counters, Semantics) ->
 collect_ports(Source, Sort, Limit, Context) ->
     Count = safe_resource_count(Source),
     Estimate = working_set_estimate(min(Count, Limit), 9, 1),
-    case Count =< ?PORT_SCAN_BUDGET andalso Estimate =< ?MAX_WORKING_SET_BYTES of
+    case Count =< ?PORT_SCAN_BUDGET of
         false ->
             {unavailable, scan_budget_exceeded, #{
                 status => unavailable,
