@@ -1585,45 +1585,24 @@
           }
         },
         "observer_effects": {
-          "oneOf": [
-            {
-              "type": "array",
-              "minItems": 3,
-              "maxItems": 3,
-              "prefixItems": [
-                {
-                  "$ref": "#/$defs/diagnosticsWorkerEffect"
-                },
-                {
-                  "$ref": "#/$defs/moduleLoadEffect"
-                },
-                {
-                  "$ref": "#/$defs/configuredLogReadEffect"
-                }
-              ],
-              "items": false
-            },
-            {
-              "type": "array",
-              "minItems": 4,
-              "maxItems": 4,
-              "prefixItems": [
-                {
-                  "$ref": "#/$defs/diagnosticsWorkerEffect"
-                },
-                {
-                  "$ref": "#/$defs/moduleLoadEffect"
-                },
-                {
-                  "$ref": "#/$defs/distributionControllerEffect"
-                },
-                {
-                  "$ref": "#/$defs/configuredLogReadEffect"
-                }
-              ],
-              "items": false
-            }
-          ]
+          "type": "array",
+          "description": "Descriptive annotations; ordering and composition are not a collection trace contract.",
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/diagnosticsWorkerEffect"
+              },
+              {
+                "$ref": "#/$defs/moduleLoadEffect"
+              },
+              {
+                "$ref": "#/$defs/distributionControllerEffect"
+              },
+              {
+                "$ref": "#/$defs/configuredLogReadEffect"
+              }
+            ]
+          }
         }
       }
     },
@@ -1639,13 +1618,10 @@
           "const": "diagnostics_worker"
         },
         "affected_facts": {
-          "const": [
-            "process_count",
-            "port_count",
-            "memory",
-            "io",
-            "garbage_collection"
-          ]
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
@@ -1708,13 +1684,11 @@
         },
         "handler_config_lookups": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 66
+          "minimum": 0
         },
         "read_attempts": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 2
+          "minimum": 0
         },
         "raw_read_cap_bytes": {
           "const": 65536

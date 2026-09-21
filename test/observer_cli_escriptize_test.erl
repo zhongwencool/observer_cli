@@ -950,7 +950,7 @@ assert_log_response_mutations_rejected(Request, Response) ->
         replace_capture(Response, Capture#{
             <<"probes">> := [
                 Probe#{
-                    <<"coverage">> := [<<"source_selected">>, <<"source_classification_complete">>]
+                    <<"coverage">> := [42]
                 }
             ]
         }),
@@ -961,13 +961,13 @@ assert_log_response_mutations_rejected(Request, Response) ->
                 }
             ]
         }),
-        replace_capture(Response, Capture#{<<"observer_effects">> := Effects ++ [LogEffect]}),
+        replace_capture(Response, Capture#{<<"observer_effects">> := Effects ++ [#{}]}),
         replace_capture(Response, Capture#{
             <<"observer_effects">> :=
                 lists:sublist(Effects, length(Effects) - 1) ++
                 [
                     LogEffect#{
-                        <<"handler_config_lookups">> := 67
+                        <<"handler_config_lookups">> := -1
                     }
                 ]
         }),
@@ -976,7 +976,7 @@ assert_log_response_mutations_rejected(Request, Response) ->
                 lists:sublist(Effects, length(Effects) - 1) ++
                 [
                     LogEffect#{
-                        <<"read_attempts">> := 0
+                        <<"read_attempts">> := <<"0">>
                     }
                 ]
         })
@@ -1090,6 +1090,77 @@ assert_log_contract_boundaries(Request, Response) ->
             ?assertNot(Valid(CandidateRequest, CandidateResponse, ExpectedTarget))
         end,
         Rejected
+    ),
+    %% Explanations may evolve independently of log data and outcome.
+    AcceptedCaptures = [
+        Capture#{<<"observer_effects">> := lists:reverse(Effects)},
+        Capture#{<<"observer_effects">> := []},
+        Capture#{<<"observer_effects">> := Effects ++ [LogRead]},
+        Capture#{
+            <<"observer_effects">> := [
+                Diagnostics#{
+                    <<"affected_facts">> :=
+                        maps:get(<<"affected_facts">>, Diagnostics) ++ [<<"reductions">>]
+                },
+                Module,
+                LogRead
+            ]
+        },
+        Capture#{
+            <<"observer_effects">> := [
+                Diagnostics,
+                Module,
+                LogRead#{<<"handler_config_lookups">> := 67, <<"read_attempts">> := 3}
+            ]
+        },
+        Capture#{
+            <<"observer_effects">> := [
+                Diagnostics,
+                Module,
+                LogRead#{
+                    <<"handler_ids_enumerated">> := true,
+                    <<"handler_config_lookups">> := 0,
+                    <<"read_attempts">> := 0
+                }
+            ]
+        },
+        Capture#{<<"probes">> := [Probe#{<<"coverage">> := []}]},
+        Capture#{
+            <<"probes">> := [
+                Probe#{
+                    <<"coverage">> :=
+                        [<<"post_read_verified">>, <<"new_stage">>, <<"source_selected">>]
+                }
+            ]
+        }
+    ],
+    lists:foreach(
+        fun(NewCapture) ->
+            Candidate = replace_capture(Response, NewCapture),
+            ?assertEqual(Data, maps:get(<<"data">>, Candidate)),
+            ?assertEqual(
+                ok, observer_cli_escriptize:validate_response(logs, include, node(), Candidate)
+            ),
+            ?assert(Valid(Request, Candidate, Target))
+        end,
+        AcceptedCaptures
+    ),
+    lists:foreach(
+        fun(BadEffect) ->
+            ?assertNot(
+                Valid(
+                    Request,
+                    replace_capture(Response, Capture#{<<"observer_effects">> := [BadEffect]}),
+                    Target
+                )
+            )
+        end,
+        [
+            Diagnostics#{<<"affected_facts">> := [42]},
+            Diagnostics#{<<"affected_facts">> := <<"memory">>},
+            LogRead#{<<"handler_config_lookups">> := <<"2">>},
+            LogRead#{<<"read_attempts">> := -1}
+        ]
     ),
     Base64Line = #{
         <<"encoding">> => <<"base64">>, <<"data">> => base64:encode(<<255>>)
