@@ -21,6 +21,8 @@
     diagnostic_sample/2,
     dispatch/4,
     normalize/2,
+    parse_pointer/1,
+    pointer_exists/2,
     truncate/1
 ]).
 
@@ -121,7 +123,6 @@
     trim_map_values/4,
     trim_list_values/5,
     evidence_pointers_values/2,
-    parse_pointer/1,
     dispatch_options/1,
     stop_worker/3,
     worker_down/2,
@@ -5590,6 +5591,8 @@ evidence_paths([#{<<"path">> := Pointer} | Rest], Acc) when is_binary(Pointer) -
 evidence_paths([_Invalid | _Rest], _Acc) ->
     error.
 
+%% Shared pure evidence-pointer helpers for target and controller validation.
+-spec parse_pointer(binary()) -> {ok, [binary()]} | error.
 parse_pointer(<<>>) ->
     {ok, []};
 parse_pointer(<<"/", Rest/binary>>) ->
@@ -5619,6 +5622,7 @@ unescape_pointer(<<Byte, Rest/binary>>, Acc) ->
 pointers_exist(Response, Pointers) ->
     lists:all(fun(Pointer) -> pointer_exists(Response, Pointer) end, Pointers).
 
+-spec pointer_exists(term(), [binary()]) -> boolean().
 pointer_exists(_Value, []) ->
     true;
 pointer_exists(Map, [Key | Rest]) when is_map(Map) ->

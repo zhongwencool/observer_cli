@@ -5410,4 +5410,46 @@ restore_config_home({Home, ConfigHome}) ->
     restore_os_env("HOME", Home),
     restore_os_env("XDG_CONFIG_HOME", ConfigHome).
 
+shared_evidence_pointer_contract_test() ->
+    Value = #{
+        <<>> => null,
+        <<"a/b">> => #{<<"~key">> => [null, #{<<"~1">> => true}]},
+        <<"01">> => false
+    },
+    Valid = [
+        <<"/">>,
+        <<"/01">>,
+        <<"/a~1b/~0key/0">>,
+        <<"/a~1b/~0key/1/~01">>
+    ],
+    Invalid = [
+        <<"missing-slash">>,
+        <<"/~">>,
+        <<"/~2">>,
+        <<"/missing">>,
+        <<"/a~1b/~0key/00">>,
+        <<"/a~1b/~0key/01">>,
+        <<"/a~1b/~0key/+1">>,
+        <<"/a~1b/~0key/-1">>,
+        <<"/a~1b/~0key/1x">>,
+        <<"/a~1b/~0key/-">>,
+        <<"/a~1b/~0key/2">>,
+        <<"/a~1b/~0key/0/extra">>
+    ],
+    lists:foreach(
+        fun({Pointer, Expected}) ->
+            Response = Value#{<<"evidence">> => [#{<<"path">> => Pointer}]},
+            TargetResult = observer_cli_snapshot:truncate(Response),
+            case Expected of
+                true -> ?assertEqual({ok, Response}, TargetResult);
+                false -> ?assertEqual({error, invalid_evidence_pointer}, TargetResult)
+            end,
+            ?assertEqual(Expected, observer_cli_escriptize:pointer_exists(Response, Pointer))
+        end,
+        [{P, true} || P <- Valid] ++ [{P, false} || P <- Invalid]
+    ),
+    Root = Value#{<<"evidence">> => [#{<<"path">> => <<>>}]},
+    ?assertEqual({ok, Root}, observer_cli_snapshot:truncate(Root)),
+    ?assertNot(observer_cli_escriptize:pointer_exists(Root, <<>>)).
+
 -endif.

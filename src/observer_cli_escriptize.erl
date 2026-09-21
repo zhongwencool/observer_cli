@@ -3431,54 +3431,14 @@ raw_identifier_text(Value) ->
         ]
     ).
 
-pointer_exists(Response, <<"/", Pointer/binary>>) ->
-    case decode_pointer_segments(binary:split(Pointer, <<"/">>, [global]), []) of
-        {ok, Segments} -> resolve_pointer(Response, Segments);
+%% Keep the controller's non-empty entry contract; parsing and lookup are shared.
+pointer_exists(Response, <<"/", _/binary>> = Pointer) ->
+    case observer_cli_snapshot:parse_pointer(Pointer) of
+        {ok, Segments} -> observer_cli_snapshot:pointer_exists(Response, Segments);
         error -> false
     end;
 pointer_exists(_Response, _Pointer) ->
     false.
-
-resolve_pointer(_Value, []) ->
-    true;
-resolve_pointer(Map, [Key | Rest]) when is_map(Map) ->
-    case maps:find(Key, Map) of
-        {ok, Value} -> resolve_pointer(Value, Rest);
-        error -> false
-    end;
-resolve_pointer(List, [Index | Rest]) when is_list(List) ->
-    try binary_to_integer(Index) of
-        Number when Number >= 0, Number < length(List) ->
-            case integer_to_binary(Number) =:= Index of
-                true -> resolve_pointer(lists:nth(Number + 1, List), Rest);
-                false -> false
-            end;
-        _ ->
-            false
-    catch
-        error:badarg -> false
-    end;
-resolve_pointer(_Value, _Segments) ->
-    false.
-
-decode_pointer_segments([], Acc) ->
-    {ok, lists:reverse(Acc)};
-decode_pointer_segments([Segment | Rest], Acc) ->
-    case decode_pointer_segment(Segment, <<>>) of
-        {ok, Decoded} -> decode_pointer_segments(Rest, [Decoded | Acc]);
-        error -> error
-    end.
-
-decode_pointer_segment(<<>>, Acc) ->
-    {ok, Acc};
-decode_pointer_segment(<<"~0", Rest/binary>>, Acc) ->
-    decode_pointer_segment(Rest, <<Acc/binary, "~">>);
-decode_pointer_segment(<<"~1", Rest/binary>>, Acc) ->
-    decode_pointer_segment(Rest, <<Acc/binary, "/">>);
-decode_pointer_segment(<<"~", _/binary>>, _Acc) ->
-    error;
-decode_pointer_segment(<<Byte, Rest/binary>>, Acc) ->
-    decode_pointer_segment(Rest, <<Acc/binary, Byte>>).
 
 public_value(_Value, Depth) when Depth > ?MAX_RESPONSE_DEPTH ->
     false;

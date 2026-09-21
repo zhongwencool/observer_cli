@@ -865,11 +865,64 @@ context_file_test() ->
     }),
     ?assertEqual(absolute, filename:pathtype(maps:get(cookie_file, FileOptions))).
 
+context_permission_policy_test() ->
+    with_context_path(fun(Path) ->
+        Context = context_term(<<"target@host">>, <<"env">>, <<"OBSERVER_COOKIE">>),
+        lists:foreach(
+            fun({DirMode, FileMode}) ->
+                ok = observer_cli_cli:write_context(Path, Context),
+                ok = file:change_mode(filename:dirname(Path), DirMode),
+                ok = file:change_mode(Path, FileMode),
+                ?assertEqual({ok, Context}, observer_cli_cli:read_context(Path)),
+                ?assertEqual(ok, observer_cli_cli:delete_context(Path)),
+                ?assertEqual({error, enoent}, file:read_link_info(Path))
+            end,
+            [{8#700, 8#400}, {8#750, 8#640}, {8#755, 8#644}]
+        ),
+        ok = observer_cli_cli:write_context(Path, Context),
+        ok = file:change_mode(filename:dirname(Path), 8#500),
+        try
+            ?assertEqual({ok, Context}, observer_cli_cli:read_context(Path))
+        after
+            ok = file:change_mode(filename:dirname(Path), 8#700)
+        end,
+        ok = observer_cli_cli:delete_context(Path),
+        lists:foreach(
+            fun(Mode) ->
+                ok = observer_cli_cli:write_context(Path, Context),
+                ok = file:change_mode(Path, Mode),
+                ?assertEqual(
+                    {error, context_file_permissions}, observer_cli_cli:read_context(Path)
+                ),
+                ?assertEqual(ok, observer_cli_cli:delete_context(Path)),
+                ?assertEqual({error, enoent}, file:read_link_info(Path))
+            end,
+            [8#620, 8#602, 8#666]
+        ),
+        lists:foreach(
+            fun(Mode) ->
+                ok = observer_cli_cli:write_context(Path, Context),
+                ok = file:change_mode(filename:dirname(Path), Mode),
+                ?assertEqual(
+                    {error, context_directory_permissions}, observer_cli_cli:read_context(Path)
+                ),
+                ?assertEqual(
+                    {error, context_directory_permissions}, observer_cli_cli:delete_context(Path)
+                ),
+                ?assertMatch({ok, _}, file:read_link_info(Path))
+            end,
+            [8#720, 8#702, 8#777]
+        ),
+        ok = file:change_mode(filename:dirname(Path), 8#700),
+        ok = file:change_mode(Path, 0),
+        ?assertEqual(ok, observer_cli_cli:delete_context(Path))
+    end).
+
 invalid_context_files_test() ->
     with_context_path(fun(Path) ->
         Valid = context_term(<<"target@host">>, <<"env">>, <<"OBSERVER_COOKIE">>),
         ok = observer_cli_cli:write_context(Path, Valid),
-        ok = file:change_mode(filename:dirname(Path), 8#755),
+        ok = file:change_mode(filename:dirname(Path), 8#777),
         ?assertEqual(
             {error, context_directory_permissions}, observer_cli_cli:read_context(Path)
         ),
@@ -883,7 +936,7 @@ invalid_context_files_test() ->
         write_context_bytes(Path, binary:copy(<<0>>, 8193)),
         ?assertEqual({error, context_too_large}, observer_cli_cli:read_context(Path)),
         write_context_bytes(Path, term_to_binary(Valid)),
-        ok = file:change_mode(Path, 8#644),
+        ok = file:change_mode(Path, 8#666),
         ?assertEqual({error, context_file_permissions}, observer_cli_cli:read_context(Path)),
         ok = file:delete(Path),
         ok = file:make_dir(Path),
@@ -1840,14 +1893,14 @@ context_filesystem_boundary_test() ->
         ?assertEqual(ok, observer_cli_cli:safe_context_destination(Path)),
         ?assertEqual({ok, #{ok => true}}, observer_cli_cli:read_context_file(Path)),
         ?assertEqual({ok, #{ok => true}}, observer_cli_cli:read_context_bytes(Path)),
-        ok = file:change_mode(Path, 8#644),
+        ok = file:change_mode(Path, 8#666),
         ?assertEqual(
             {error, context_file_permissions},
             observer_cli_cli:safe_context_destination(Path)
         ),
         ?assertEqual({error, context_file_permissions}, observer_cli_cli:read_context_file(Path)),
-        ?assertEqual({error, context_file_permissions}, observer_cli_cli:delete_context_file(Path)),
-        ok = file:delete(Path),
+        ?assertEqual(ok, observer_cli_cli:delete_context_file(Path)),
+        ?assertEqual({error, enoent}, file:read_link_info(Path)),
         ok = file:make_dir(Path),
         ?assertEqual(
             {error, invalid_context_file}, observer_cli_cli:safe_context_destination(Path)
@@ -1855,7 +1908,7 @@ context_filesystem_boundary_test() ->
         ?assertEqual({error, invalid_context_file}, observer_cli_cli:read_context_file(Path)),
         ?assertEqual({error, invalid_context_file}, observer_cli_cli:delete_context_file(Path)),
         ?assertEqual(ok, observer_cli_cli:readable_context_dir(Existing)),
-        ok = file:change_mode(Existing, 8#755),
+        ok = file:change_mode(Existing, 8#777),
         ?assertEqual(
             {error, context_directory_permissions}, observer_cli_cli:delete_context(Path)
         ),
