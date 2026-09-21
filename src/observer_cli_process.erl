@@ -890,25 +890,28 @@ render_state(Pid, Type, Interval) ->
         "\n"
     ],
     LastLine = render_footer(),
+    Error =
+        "Information could not be retrieved, system messages may not be handled by this process.\n",
     ?output([?CURSOR_TOP, Menu, PromptBefore]),
-    try
-        {ok, BoundedLine} = bounded_process_detail(state, Pid),
-        Nav = state_nav(Type),
-        Line = unicode:characters_to_list(BoundedLine),
-        Footer = state_footer(Menu, Nav),
-        Action = print_with_less(Line, Menu, Nav, Footer),
-        case Action of
-            quit ->
-                {ok, quit};
-            _ ->
-                ?output([?CURSOR_TOP, Menu, PromptRes, "", LastLine]),
-                {ok, Action}
-        end
+    try bounded_process_detail(state, Pid) of
+        error ->
+            ?output([?CURSOR_TOP, Menu, PromptRes, Error, LastLine]),
+            error;
+        {ok, BoundedLine} ->
+            Nav = state_nav(Type),
+            Line = unicode:characters_to_list(BoundedLine),
+            Footer = state_footer(Menu, Nav),
+            Action = print_with_less(Line, Menu, Nav, Footer),
+            case Action of
+                quit ->
+                    {ok, quit};
+                _ ->
+                    ?output([?CURSOR_TOP, Menu, PromptRes, "", LastLine]),
+                    {ok, Action}
+            end
     catch
         Class:Reason:Stacktrace ->
             log_render_state_error(Class, Reason, Stacktrace, Pid, Type, Interval),
-            Error =
-                "Information could not be retrieved, system messages may not be handled by this process.\n",
             ?output([?CURSOR_TOP, Menu, PromptRes, Error, LastLine]),
             error
     end.

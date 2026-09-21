@@ -101,6 +101,43 @@ render_state_success_test() ->
         end
     ).
 
+render_state_unsupported_process_test() ->
+    Handler = observer_cli_process_state_unavailable,
+    Path = filename:join(
+        "/tmp",
+        lists:flatten(
+            io_lib:format("observer_cli_state_~p.log", [erlang:unique_integer([positive])])
+        )
+    ),
+    Pid = spawn(fun() ->
+        receive
+            stop -> ok
+        end
+    end),
+    try
+        ok = logger:add_handler(Handler, logger_std_h, #{
+            config => #{type => file, file => Path, modes => [write, raw]}
+        }),
+        {Result, Output} = observer_cli_test_io:capture_with_geometry(
+            24,
+            80,
+            [],
+            fun() -> observer_cli_process:render_state(Pid, home, 1500) end
+        ),
+        ?assertEqual(error, Result),
+        observer_cli_test_io:assert_stable_fragments(Output, [
+            "Information could not be retrieved",
+            "system messages may not be handled by this process"
+        ]),
+        ok = logger_std_h:filesync(Handler),
+        {ok, Log} = file:read_file(Path),
+        ?assertEqual(nomatch, binary:match(Log, <<"observer_cli render_state failed">>))
+    after
+        Pid ! stop,
+        _ = logger:remove_handler(Handler),
+        _ = file:delete(Path)
+    end.
+
 state_nav_test() ->
     NavHome = observer_cli_process:state_nav(home),
     NavPlugin = observer_cli_process:state_nav(plugin),
