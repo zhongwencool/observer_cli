@@ -5,6 +5,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -include("observer_cli.hrl").
 
+-export([format/2]).
+
 start_quit_test() ->
     Pid = spawn(fun() -> receive
         after infinity -> ok
@@ -121,6 +123,38 @@ truncate_str_formatter_fallback_test() ->
     after
         restore_formatter_env(Prev)
     end.
+
+truncate_str_formatter_selection_test() ->
+    Prev = application:get_env(observer_cli, formatter),
+    Pid = self(),
+    Term = #{test => ok},
+    Default = observer_cli_formatter_default:format(Pid, Term),
+    try
+        application:unset_env(observer_cli, formatter),
+        ?assertEqual(Default, observer_cli_process:truncate_str(Pid, Term)),
+        application:set_env(observer_cli, formatter, #{}),
+        ?assertEqual(Default, observer_cli_process:truncate_str(Pid, Term)),
+        application:set_env(observer_cli, formatter, #{mod => observer_cli_formatter_default}),
+        ?assertEqual(Default, observer_cli_process:truncate_str(Pid, Term)),
+        application:set_env(observer_cli, formatter, #{mod => ?MODULE}),
+        ?assertEqual(format(Pid, Term), observer_cli_process:truncate_str(Pid, Term)),
+        lists:foreach(
+            fun(Class) ->
+                ?assertEqual(
+                    observer_cli_formatter_default:format(Pid, Class),
+                    observer_cli_process:truncate_str(Pid, Class)
+                )
+            end,
+            [error, exit, throw]
+        )
+    after
+        restore_formatter_env(Prev)
+    end.
+
+format(_Pid, error) -> error(custom_formatter_failed);
+format(_Pid, exit) -> exit(custom_formatter_failed);
+format(_Pid, throw) -> throw(custom_formatter_failed);
+format(Pid, Term) -> lists:flatten(io_lib:format("custom: ~p ~p", [Pid, Term])).
 
 restore_formatter_env({ok, Formatter}) ->
     application:set_env(observer_cli, formatter, Formatter);

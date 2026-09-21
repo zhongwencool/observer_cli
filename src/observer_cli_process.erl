@@ -43,8 +43,6 @@
     state_title/1,
     state_footer/2,
     truncate_str/2,
-    format_mod/1,
-    format/1,
     collect_process_extra/2,
     binary_refs_summary/1,
     format_suspending/1,
@@ -966,17 +964,9 @@ state_footer_text(_Nav) ->
 truncate_str(Pid, Term) ->
     case detail_term_within_limits(Term) of
         true ->
-            State = #{
-                pid => Pid,
-                term => Term,
-                %% we need default mod, cause user can override conf
-                formatter_default => observer_cli_formatter_default,
-                formatter => undefined
-            },
-            observer_cli_lib:pipe(State, [
-                fun format_mod/1,
-                fun format/1
-            ]);
+            Formatter = application:get_env(observer_cli, formatter, ?DEFAULT_FORMATTER),
+            FormatMod = maps:get(mod, Formatter, observer_cli_formatter_default),
+            format(FormatMod, Pid, Term);
         false ->
             detail_too_large(Pid)
     end.
@@ -1033,34 +1023,11 @@ detail_map_within_depth(Iterator, Depth) ->
             true
     end.
 
-format_mod(State) ->
-    #{formatter_default := FormatModDefault} = State,
-    observer_cli_lib:pipe(State, [
-        fun(StateAcc) ->
-            Formatter = application:get_env(observer_cli, formatter, ?DEFAULT_FORMATTER),
-            StateAcc#{formatter => Formatter}
-        end,
-        fun(StateAcc) ->
-            #{formatter := Formatter} = StateAcc,
-            StateAcc#{formatter => maps:get(mod, Formatter, FormatModDefault)}
-        end
-    ]).
-
-format(
-    State = #{formatter := FormatModDefault, formatter_default := FormatModDefault}
-) ->
-    #{pid := Pid, term := Term} = State,
-    observer_cli_formatter:format(FormatModDefault, Pid, Term);
-format(State) ->
-    #{
-        pid := Pid,
-        term := Term,
-        formatter := FormatMod,
-        formatter_default := FormatModDefault
-    } =
-        State,
+format(observer_cli_formatter_default, Pid, Term) ->
+    observer_cli_formatter:format(observer_cli_formatter_default, Pid, Term);
+format(FormatMod, Pid, Term) ->
     try
         observer_cli_formatter:format(FormatMod, Pid, Term)
     catch
-        _:_ -> observer_cli_formatter:format(FormatModDefault, Pid, Term)
+        _:_ -> observer_cli_formatter:format(observer_cli_formatter_default, Pid, Term)
     end.
