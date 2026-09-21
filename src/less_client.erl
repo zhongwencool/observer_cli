@@ -4,6 +4,14 @@
 
 -include("observer_cli.hrl").
 
+-record(page, {
+    buf :: [string()],
+    lines :: pos_integer(),
+    position = 0 :: non_neg_integer()
+}).
+
+-type state() :: {#page{}, iolist() | undefined, map(), iolist() | undefined}.
+
 -ifdef(TEST).
 -export([normalize_key/1, header_lines/1, footer_lines/1, render_footer/1]).
 
@@ -18,7 +26,7 @@
         | {string(), iolist() | undefined, map()}
         | {string(), iolist() | undefined, map(), iolist() | undefined}
 ) ->
-    LessServer :: {pid(), iolist() | undefined, map(), iolist() | undefined}.
+    state().
 %%--------------------------------------------------------------------
 init(Input) when is_list(Input) ->
     init({Input, undefined, #{}, undefined});
@@ -28,15 +36,15 @@ init({Input, Header, Nav}) ->
     init({Input, Header, Nav, undefined});
 init({Input, Header, Nav, Footer}) ->
     %% We must save 1 line for footer and 1 line for menu
-    Lines0 = less_server:lines() - footer_lines(Footer) - header_lines(Header),
+    Lines0 = terminal_lines() - footer_lines(Footer) - header_lines(Header),
     Lines = erlang:max(1, Lines0),
-    {ok, LessServer} = less_server:start_link(Input, Lines),
-    {LessServer, Header, Nav, Footer}.
+    Page = #page{buf = string:split(Input, "\n", all), lines = Lines},
+    {Page, Header, Nav, Footer}.
 %%--------------------------------------------------------------------
 
 %%--------------------------------------------------------------------
 %% @doc
--spec main(LessServer :: {pid(), iolist() | undefined, map(), iolist() | undefined}) ->
+-spec main(State :: state()) ->
     atom().
 %%--------------------------------------------------------------------
 main(State) ->
@@ -48,64 +56,61 @@ loop(State) ->
     Nav = nav(State),
     case io:get_line("") of
         eof ->
-            handle_quit(State);
+            none;
         {error, _Reason} ->
-            handle_quit(State);
+            none;
         Key0 ->
             Key = normalize_key(Key0),
             case maps:find(Key, Nav) of
                 {ok, Action} ->
-                    handle_nav(State, Action);
+                    handle_nav(Action);
                 error ->
                     handle_key(Key, State)
             end
     end.
 
-handle_key("j\n", State) ->
-    handle_next_page(State),
-    loop(State);
-handle_key("F\n", State) ->
-    handle_next_page(State),
-    loop(State);
-handle_key("k\n", State) ->
-    handle_prev_page(State),
-    loop(State);
-handle_key("B\n", State) ->
-    handle_prev_page(State),
-    loop(State);
-handle_key("q\n", State) ->
-    handle_quit(State);
-handle_key("Q\n", State) ->
-    handle_quit(State);
+handle_key(Key, State) when Key =:= "j\n"; Key =:= "F\n" ->
+    main(next_page(State));
+handle_key(Key, State) when Key =:= "k\n"; Key =:= "B\n" ->
+    main(prev_page(State));
+handle_key(Key, _State) when Key =:= "q\n"; Key =:= "Q\n" ->
+    none;
 handle_key(_Key, State) ->
-    handle_current_page(State),
-    loop(State).
+    main(State).
 
-handle_current_page({LessServer, _Header, _Nav, _Footer} = State) ->
-    handle_page(State, less_server:page(LessServer)).
+handle_current_page({#page{buf = Buf, lines = Lines, position = Position}, _, _, _} = State) ->
+    Page = string:join(lists:sublist(Buf, Position + 1, Lines), "\n") ++ "\n",
+    handle_page(State, Page).
 
-handle_next_page({LessServer, _Header, _Nav, _Footer} = State) ->
-    handle_page(State, less_server:next(LessServer)).
+next_page(
+    {#page{buf = Buf, lines = Lines, position = Position} = Page, Header, Nav, Footer} = State
+) ->
+    NewPosition = Position + Lines,
+    case NewPosition >= length(Buf) of
+        true -> State;
+        false -> {Page#page{position = NewPosition}, Header, Nav, Footer}
+    end.
 
-handle_prev_page({LessServer, _Header, _Nav, _Footer} = State) ->
-    handle_page(State, less_server:prev(LessServer)).
+prev_page({#page{lines = Lines, position = Position} = Page, Header, Nav, Footer}) ->
+    {Page#page{position = erlang:max(0, Position - Lines)}, Header, Nav, Footer}.
 
-handle_quit({LessServer, _Header, _Nav, _Footer}) ->
-    less_server:stop(LessServer),
-    none.
+terminal_lines() ->
+    case io:rows() of
+        {ok, Rows} -> Rows;
+        _ -> 43
+    end.
 
 normalize_key(Key) when is_list(Key) ->
     lists:filter(fun(C) -> C =/= $\r end, Key).
 
-handle_nav({LessServer, _Header, _Nav, _Footer}, Action) ->
-    less_server:stop(LessServer),
+handle_nav(Action) ->
     case Action of
         quit -> ok;
         _ -> ?output(?CLEAR)
     end,
     Action.
 
-handle_page({_LessServer, Header, Nav, Footer}, Page) ->
+handle_page({_Page, Header, Nav, Footer}, Page) ->
     ?output(?CLEAR),
     maybe_output_header(Header),
     ?output([Page]),
@@ -136,5 +141,5 @@ maybe_output_footer(undefined, Nav) ->
 maybe_output_footer(Footer, _Nav) ->
     ?output([Footer]).
 
-nav({_LessServer, _Header, Nav, _Footer}) ->
+nav({_Page, _Header, Nav, _Footer}) ->
     Nav.
