@@ -950,7 +950,7 @@ assert_log_response_mutations_rejected(Request, Response) ->
         replace_capture(Response, Capture#{
             <<"probes">> := [
                 Probe#{
-                    <<"coverage">> := [<<"source_selected">>, <<"source_classification_complete">>]
+                    <<"coverage">> := [42]
                 }
             ]
         }),
@@ -961,13 +961,13 @@ assert_log_response_mutations_rejected(Request, Response) ->
                 }
             ]
         }),
-        replace_capture(Response, Capture#{<<"observer_effects">> := Effects ++ [LogEffect]}),
+        replace_capture(Response, Capture#{<<"observer_effects">> := Effects ++ [#{}]}),
         replace_capture(Response, Capture#{
             <<"observer_effects">> :=
                 lists:sublist(Effects, length(Effects) - 1) ++
                 [
                     LogEffect#{
-                        <<"handler_config_lookups">> := 67
+                        <<"handler_config_lookups">> := -1
                     }
                 ]
         }),
@@ -976,7 +976,7 @@ assert_log_response_mutations_rejected(Request, Response) ->
                 lists:sublist(Effects, length(Effects) - 1) ++
                 [
                     LogEffect#{
-                        <<"read_attempts">> := 0
+                        <<"read_attempts">> := <<"0">>
                     }
                 ]
         })
@@ -1090,6 +1090,77 @@ assert_log_contract_boundaries(Request, Response) ->
             ?assertNot(Valid(CandidateRequest, CandidateResponse, ExpectedTarget))
         end,
         Rejected
+    ),
+    %% Explanations may evolve independently of log data and outcome.
+    AcceptedCaptures = [
+        Capture#{<<"observer_effects">> := lists:reverse(Effects)},
+        Capture#{<<"observer_effects">> := []},
+        Capture#{<<"observer_effects">> := Effects ++ [LogRead]},
+        Capture#{
+            <<"observer_effects">> := [
+                Diagnostics#{
+                    <<"affected_facts">> :=
+                        maps:get(<<"affected_facts">>, Diagnostics) ++ [<<"reductions">>]
+                },
+                Module,
+                LogRead
+            ]
+        },
+        Capture#{
+            <<"observer_effects">> := [
+                Diagnostics,
+                Module,
+                LogRead#{<<"handler_config_lookups">> := 67, <<"read_attempts">> := 3}
+            ]
+        },
+        Capture#{
+            <<"observer_effects">> := [
+                Diagnostics,
+                Module,
+                LogRead#{
+                    <<"handler_ids_enumerated">> := true,
+                    <<"handler_config_lookups">> := 0,
+                    <<"read_attempts">> := 0
+                }
+            ]
+        },
+        Capture#{<<"probes">> := [Probe#{<<"coverage">> := []}]},
+        Capture#{
+            <<"probes">> := [
+                Probe#{
+                    <<"coverage">> :=
+                        [<<"post_read_verified">>, <<"new_stage">>, <<"source_selected">>]
+                }
+            ]
+        }
+    ],
+    lists:foreach(
+        fun(NewCapture) ->
+            Candidate = replace_capture(Response, NewCapture),
+            ?assertEqual(Data, maps:get(<<"data">>, Candidate)),
+            ?assertEqual(
+                ok, observer_cli_escriptize:validate_response(logs, include, node(), Candidate)
+            ),
+            ?assert(Valid(Request, Candidate, Target))
+        end,
+        AcceptedCaptures
+    ),
+    lists:foreach(
+        fun(BadEffect) ->
+            ?assertNot(
+                Valid(
+                    Request,
+                    replace_capture(Response, Capture#{<<"observer_effects">> := [BadEffect]}),
+                    Target
+                )
+            )
+        end,
+        [
+            Diagnostics#{<<"affected_facts">> := [42]},
+            Diagnostics#{<<"affected_facts">> := <<"memory">>},
+            LogRead#{<<"handler_config_lookups">> := <<"2">>},
+            LogRead#{<<"read_attempts">> := -1}
+        ]
     ),
     Base64Line = #{
         <<"encoding">> => <<"base64">>, <<"data">> => base64:encode(<<255>>)
@@ -3206,7 +3277,9 @@ remote_load_peer_node_test() ->
         {ok, Peer, Node} = peer:start_link(#{name => peer:random_name("observer_cli_remote")}),
         Key = test_remote_load_env,
         PrevEnv = application:get_env(observer_cli, Key),
+        PrevFormatter = application:get_env(observer_cli, formatter),
         ok = application:set_env(observer_cli, Key, copied_to_peer),
+        ok = application:set_env(observer_cli, formatter, #{}),
         try
             Before = system_module_md5s(Node),
             ?assertEqual(false, erpc:call(Node, code, is_loaded, [observer_cli])),
@@ -3224,11 +3297,16 @@ remote_load_peer_node_test() ->
                 {ok, copied_to_peer},
                 erpc:call(Node, application, get_env, [observer_cli, Key])
             ),
+            ?assertEqual(
+                {ok, #{}},
+                erpc:call(Node, application, get_env, [observer_cli, formatter])
+            ),
             ?assertNotEqual(false, erpc:call(Node, code, is_loaded, [observer_cli])),
             ?assertNotEqual(false, erpc:call(Node, code, is_loaded, [recon])),
             ?assertEqual(Before, system_module_md5s(Node))
         after
             restore_env(observer_cli, Key, PrevEnv),
+            restore_env(observer_cli, formatter, PrevFormatter),
             peer:stop(Peer)
         end
     end).
@@ -5409,5 +5487,47 @@ set_config_home(Root) ->
 restore_config_home({Home, ConfigHome}) ->
     restore_os_env("HOME", Home),
     restore_os_env("XDG_CONFIG_HOME", ConfigHome).
+
+shared_evidence_pointer_contract_test() ->
+    Value = #{
+        <<>> => null,
+        <<"a/b">> => #{<<"~key">> => [null, #{<<"~1">> => true}]},
+        <<"01">> => false
+    },
+    Valid = [
+        <<"/">>,
+        <<"/01">>,
+        <<"/a~1b/~0key/0">>,
+        <<"/a~1b/~0key/1/~01">>
+    ],
+    Invalid = [
+        <<"missing-slash">>,
+        <<"/~">>,
+        <<"/~2">>,
+        <<"/missing">>,
+        <<"/a~1b/~0key/00">>,
+        <<"/a~1b/~0key/01">>,
+        <<"/a~1b/~0key/+1">>,
+        <<"/a~1b/~0key/-1">>,
+        <<"/a~1b/~0key/1x">>,
+        <<"/a~1b/~0key/-">>,
+        <<"/a~1b/~0key/2">>,
+        <<"/a~1b/~0key/0/extra">>
+    ],
+    lists:foreach(
+        fun({Pointer, Expected}) ->
+            Response = Value#{<<"evidence">> => [#{<<"path">> => Pointer}]},
+            TargetResult = observer_cli_snapshot:truncate(Response),
+            case Expected of
+                true -> ?assertEqual({ok, Response}, TargetResult);
+                false -> ?assertEqual({error, invalid_evidence_pointer}, TargetResult)
+            end,
+            ?assertEqual(Expected, observer_cli_escriptize:pointer_exists(Response, Pointer))
+        end,
+        [{P, true} || P <- Valid] ++ [{P, false} || P <- Invalid]
+    ),
+    Root = Value#{<<"evidence">> => [#{<<"path">> => <<>>}]},
+    ?assertEqual({ok, Root}, observer_cli_snapshot:truncate(Root)),
+    ?assertNot(observer_cli_escriptize:pointer_exists(Root, <<>>)).
 
 -endif.

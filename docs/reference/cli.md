@@ -396,6 +396,15 @@ rejects compressed modes, symlink leaves, devices, non-seekable files,
 does not call `logger_std_h:filesync/1`, so Logger buffers that have not
 naturally become reader-visible may be absent.
 
+Log capture annotations are descriptive, not an audit trace contract.
+The controller validates their field types, but does not require a fixed
+`observer_effects` order or composition, an exact `affected_facts` list,
+specific handler-lookup/read counts, or coverage-stage sequences and their
+relationship to the outcome. Counts remain non-negative integers and coverage
+and affected facts remain arrays of strings. The producer's exact behavior is
+covered by collection tests. Target/handler matching, log content limits,
+encoding, truncation, and outcome consistency remain enforced.
+
 For `logs`, `--timeout` is the remote-operation deadline covering target
 connection, capability checks, this one read, and cleanup. It defaults to `10s`
 and may be set up to `120s`; it is not a follow duration.

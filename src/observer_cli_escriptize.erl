@@ -1796,7 +1796,7 @@ valid_log_capture(
         byte_size(Finished) =< 64 andalso is_integer(Duration) andalso Duration >= 0 andalso
         Duration =< 16#7FFFFFFFFFFFFFFF andalso valid_log_probe(Probe, Duration) andalso
         valid_log_effects(Effects) andalso
-        valid_log_matrix(Request, Outcome, Sources, Selected, Tail, Probe, lists:last(Effects));
+        valid_log_matrix(Request, Outcome, Sources, Selected, Tail, Probe);
 valid_log_capture(_Request, _Outcome, _Data, _Capture) ->
     false.
 
@@ -1818,41 +1818,32 @@ valid_log_probe(
 valid_log_probe(_Probe, _Duration) ->
     false.
 
+%% Capture annotations describe the implementation, not the result contract.
 valid_log_coverage(Coverage) when is_list(Coverage) ->
-    Stages = [
-        <<"source_classification_complete">>,
-        <<"source_selected">>,
-        <<"path_prechecked">>,
-        <<"fd_identity_verified">>,
-        <<"bytes_captured">>,
-        <<"post_read_verified">>
-    ],
-    lists:prefix(Coverage, Stages);
+    lists:all(fun is_binary/1, Coverage);
 valid_log_coverage(_Coverage) ->
     false.
 
-valid_log_effects([Diagnostics, ModuleLoad, LogRead]) ->
-    valid_log_diagnostics_effect(Diagnostics) andalso valid_log_module_effect(ModuleLoad) andalso
-        valid_configured_log_effect(LogRead);
-valid_log_effects([Diagnostics, ModuleLoad, Distribution, LogRead]) ->
-    valid_log_diagnostics_effect(Diagnostics) andalso valid_log_module_effect(ModuleLoad) andalso
-        valid_log_distribution_effect(Distribution) andalso valid_configured_log_effect(LogRead);
+valid_log_effects(Effects) when is_list(Effects) ->
+    lists:all(fun valid_log_effect/1, Effects);
 valid_log_effects(_Effects) ->
     false.
 
+valid_log_effect(#{<<"id">> := <<"diagnostics_worker">>} = Effect) ->
+    valid_log_diagnostics_effect(Effect);
+valid_log_effect(#{<<"id">> := <<"module_load">>} = Effect) ->
+    valid_log_module_effect(Effect);
+valid_log_effect(#{<<"id">> := <<"distribution_controller">>} = Effect) ->
+    valid_log_distribution_effect(Effect);
+valid_log_effect(#{<<"id">> := <<"configured_log_read">>} = Effect) ->
+    valid_configured_log_effect(Effect);
+valid_log_effect(_Effect) ->
+    false.
+
 valid_log_diagnostics_effect(
-    #{
-        <<"id">> := <<"diagnostics_worker">>,
-        <<"affected_facts">> := [
-            <<"process_count">>,
-            <<"port_count">>,
-            <<"memory">>,
-            <<"io">>,
-            <<"garbage_collection">>
-        ]
-    } = Effect
+    #{<<"id">> := <<"diagnostics_worker">>, <<"affected_facts">> := Facts} = Effect
 ) ->
-    map_size(Effect) =:= 2;
+    map_size(Effect) =:= 2 andalso is_list(Facts) andalso lists:all(fun is_binary/1, Facts);
 valid_log_diagnostics_effect(_Effect) ->
     false.
 
@@ -1887,8 +1878,7 @@ valid_configured_log_effect(
     } = Effect
 ) ->
     map_size(Effect) =:= 8 andalso is_boolean(Enumerated) andalso is_integer(Lookups) andalso
-        Lookups >= 0 andalso Lookups =< 66 andalso is_integer(Attempts) andalso Attempts >= 0 andalso
-        Attempts =< 2;
+        Lookups >= 0 andalso is_integer(Attempts) andalso Attempts >= 0;
 valid_configured_log_effect(_Effect) ->
     false.
 
@@ -1898,58 +1888,16 @@ valid_log_matrix(
     Sources,
     Selected,
     Tail,
-    #{<<"status">> := Status, <<"reason_code">> := Reason, <<"coverage">> := Coverage},
-    #{
-        <<"handler_ids_enumerated">> := Enumerated,
-        <<"handler_config_lookups">> := Lookups,
-        <<"read_attempts">> := Attempts
-    }
+    #{<<"status">> := Status, <<"reason_code">> := Reason}
 ) ->
     Mode =
         case Handler of
             null -> auto;
             _ -> explicit
         end,
-    valid_log_effect_relations(
-        Mode, Reason, Sources, Selected, Coverage, Enumerated, Lookups, Attempts
-    ) andalso
-        valid_log_count_matrix(Mode, Outcome, Reason, Lookups, Attempts) andalso
-        valid_log_outcome_matrix(Mode, Handler, Outcome, Status, Reason, Sources, Selected, Tail) andalso
-        valid_log_outcome_coverage(Outcome, Reason, Selected, Coverage);
-valid_log_matrix(
-    _Request, _Outcome, _Sources, _Selected, _Tail, _Probe, _Effect
-) ->
+    valid_log_outcome_matrix(Mode, Handler, Outcome, Status, Reason, Sources, Selected, Tail);
+valid_log_matrix(_Request, _Outcome, _Sources, _Selected, _Tail, _Probe) ->
     false.
-
-valid_log_effect_relations(
-    Mode, Reason, Sources, Selected, Coverage, Enumerated, Lookups, Attempts
-) ->
-    Enumerated =:= (Mode =:= auto andalso Reason =/= <<"unsupported_target_platform">>) andalso
-        Lookups >= length(Sources) andalso
-        (Mode =:= auto orelse Lookups =< 3) andalso
-        ((Selected =:= null) =:= (Attempts =:= 0)) andalso
-        lists:member(<<"source_selected">>, Coverage) =:= (Selected =/= null) andalso
-        (not lists:member(<<"path_prechecked">>, Coverage) orelse Attempts >= 1) andalso
-        (Selected =:= null orelse Lookups >= 1) andalso
-        valid_log_zero_work(Reason, Lookups, Attempts).
-
-valid_log_zero_work(Reason, Lookups, Attempts) when
-    Reason =:= <<"unsupported_target_platform">>; Reason =:= <<"scan_budget_exceeded">>
-->
-    Lookups =:= 0 andalso Attempts =:= 0;
-valid_log_zero_work(_Reason, _Lookups, _Attempts) ->
-    true.
-
-valid_log_count_matrix(explicit, Outcome, _Reason, Lookups, Attempts) when
-    Outcome =:= <<"complete">>; Outcome =:= <<"partial">>
-->
-    lists:member(Lookups, [2, 3]) andalso lists:member(Attempts, [1, 2]);
-valid_log_count_matrix(explicit, <<"error">>, <<"log_handler_not_found">>, Lookups, 0) ->
-    lists:member(Lookups, [0, 1]);
-valid_log_count_matrix(explicit, <<"error">>, Reason, 1, 0) ->
-    lists:member(Reason, log_config_reasons());
-valid_log_count_matrix(_Mode, _Outcome, _Reason, _Lookups, _Attempts) ->
-    true.
 
 valid_log_outcome_matrix(
     Mode, Handler, <<"complete">>, <<"ok">>, null, Sources, Selected, Tail
@@ -2043,30 +1991,6 @@ log_selected_file_reasons() ->
         <<"log_file_unavailable">>,
         <<"log_file_read_failed">>
     ].
-
-valid_log_outcome_coverage(Outcome, _Reason, _Selected, Coverage) when
-    Outcome =:= <<"complete">>; Outcome =:= <<"partial">>
-->
-    Coverage =:=
-        [
-            <<"source_classification_complete">>,
-            <<"source_selected">>,
-            <<"path_prechecked">>,
-            <<"fd_identity_verified">>,
-            <<"bytes_captured">>,
-            <<"post_read_verified">>
-        ];
-valid_log_outcome_coverage(
-    <<"error">>, Reason, null, Coverage
-) when Reason =:= <<"unsupported_target_platform">>; Reason =:= <<"scan_budget_exceeded">> ->
-    Coverage =:= [];
-valid_log_outcome_coverage(<<"error">>, _Reason, null, Coverage) ->
-    Coverage =:= [<<"source_classification_complete">>];
-valid_log_outcome_coverage(<<"error">>, _Reason, _Selected, Coverage) ->
-    length(Coverage) >= 2 andalso
-        not lists:member(<<"post_read_verified">>, Coverage);
-valid_log_outcome_coverage(_Outcome, _Reason, _Selected, _Coverage) ->
-    false.
 
 valid_policy_response(_Command, include, _Response) ->
     true;
@@ -3431,54 +3355,14 @@ raw_identifier_text(Value) ->
         ]
     ).
 
-pointer_exists(Response, <<"/", Pointer/binary>>) ->
-    case decode_pointer_segments(binary:split(Pointer, <<"/">>, [global]), []) of
-        {ok, Segments} -> resolve_pointer(Response, Segments);
+%% Keep the controller's non-empty entry contract; parsing and lookup are shared.
+pointer_exists(Response, <<"/", _/binary>> = Pointer) ->
+    case observer_cli_snapshot:parse_pointer(Pointer) of
+        {ok, Segments} -> observer_cli_snapshot:pointer_exists(Response, Segments);
         error -> false
     end;
 pointer_exists(_Response, _Pointer) ->
     false.
-
-resolve_pointer(_Value, []) ->
-    true;
-resolve_pointer(Map, [Key | Rest]) when is_map(Map) ->
-    case maps:find(Key, Map) of
-        {ok, Value} -> resolve_pointer(Value, Rest);
-        error -> false
-    end;
-resolve_pointer(List, [Index | Rest]) when is_list(List) ->
-    try binary_to_integer(Index) of
-        Number when Number >= 0, Number < length(List) ->
-            case integer_to_binary(Number) =:= Index of
-                true -> resolve_pointer(lists:nth(Number + 1, List), Rest);
-                false -> false
-            end;
-        _ ->
-            false
-    catch
-        error:badarg -> false
-    end;
-resolve_pointer(_Value, _Segments) ->
-    false.
-
-decode_pointer_segments([], Acc) ->
-    {ok, lists:reverse(Acc)};
-decode_pointer_segments([Segment | Rest], Acc) ->
-    case decode_pointer_segment(Segment, <<>>) of
-        {ok, Decoded} -> decode_pointer_segments(Rest, [Decoded | Acc]);
-        error -> error
-    end.
-
-decode_pointer_segment(<<>>, Acc) ->
-    {ok, Acc};
-decode_pointer_segment(<<"~0", Rest/binary>>, Acc) ->
-    decode_pointer_segment(Rest, <<Acc/binary, "~">>);
-decode_pointer_segment(<<"~1", Rest/binary>>, Acc) ->
-    decode_pointer_segment(Rest, <<Acc/binary, "/">>);
-decode_pointer_segment(<<"~", _/binary>>, _Acc) ->
-    error;
-decode_pointer_segment(<<Byte, Rest/binary>>, Acc) ->
-    decode_pointer_segment(Rest, <<Acc/binary, Byte>>).
 
 public_value(_Value, Depth) when Depth > ?MAX_RESPONSE_DEPTH ->
     false;
@@ -3810,7 +3694,7 @@ do_remote_load(Node) ->
     end,
     application:load(observer_cli),
     Formatter = application:get_env(observer_cli, formatter, ?DEFAULT_FORMATTER),
-    FormatterApp = maps:get(application, Formatter),
+    FormatterApp = maps:get(application, Formatter, observer_cli),
     Apps = lists:usort([observer_cli, recon, FormatterApp]),
     lists:foreach(fun(Mod) -> remote_load_module(Node, Mod) end, required_modules(Apps)),
     erpc:call(Node, ?MODULE, ensure_set_env, [

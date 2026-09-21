@@ -5,6 +5,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -include("observer_cli.hrl").
 
+-export([format/2]).
+
 start_quit_test() ->
     Pid = spawn(fun() -> receive
         after infinity -> ok
@@ -99,6 +101,43 @@ render_state_success_test() ->
         end
     ).
 
+render_state_unsupported_process_test() ->
+    Handler = observer_cli_process_state_unavailable,
+    Path = filename:join(
+        "/tmp",
+        lists:flatten(
+            io_lib:format("observer_cli_state_~p.log", [erlang:unique_integer([positive])])
+        )
+    ),
+    Pid = spawn(fun() ->
+        receive
+            stop -> ok
+        end
+    end),
+    try
+        ok = logger:add_handler(Handler, logger_std_h, #{
+            config => #{type => file, file => Path, modes => [write, raw]}
+        }),
+        {Result, Output} = observer_cli_test_io:capture_with_geometry(
+            24,
+            80,
+            [],
+            fun() -> observer_cli_process:render_state(Pid, home, 1500) end
+        ),
+        ?assertEqual(error, Result),
+        observer_cli_test_io:assert_stable_fragments(Output, [
+            "Information could not be retrieved",
+            "system messages may not be handled by this process"
+        ]),
+        ok = logger_std_h:filesync(Handler),
+        {ok, Log} = file:read_file(Path),
+        ?assertEqual(nomatch, binary:match(Log, <<"observer_cli render_state failed">>))
+    after
+        Pid ! stop,
+        _ = logger:remove_handler(Handler),
+        _ = file:delete(Path)
+    end.
+
 state_nav_test() ->
     NavHome = observer_cli_process:state_nav(home),
     NavPlugin = observer_cli_process:state_nav(plugin),
@@ -121,6 +160,38 @@ truncate_str_formatter_fallback_test() ->
     after
         restore_formatter_env(Prev)
     end.
+
+truncate_str_formatter_selection_test() ->
+    Prev = application:get_env(observer_cli, formatter),
+    Pid = self(),
+    Term = #{test => ok},
+    Default = observer_cli_formatter_default:format(Pid, Term),
+    try
+        application:unset_env(observer_cli, formatter),
+        ?assertEqual(Default, observer_cli_process:truncate_str(Pid, Term)),
+        application:set_env(observer_cli, formatter, #{}),
+        ?assertEqual(Default, observer_cli_process:truncate_str(Pid, Term)),
+        application:set_env(observer_cli, formatter, #{mod => observer_cli_formatter_default}),
+        ?assertEqual(Default, observer_cli_process:truncate_str(Pid, Term)),
+        application:set_env(observer_cli, formatter, #{mod => ?MODULE}),
+        ?assertEqual(format(Pid, Term), observer_cli_process:truncate_str(Pid, Term)),
+        lists:foreach(
+            fun(Class) ->
+                ?assertEqual(
+                    observer_cli_formatter_default:format(Pid, Class),
+                    observer_cli_process:truncate_str(Pid, Class)
+                )
+            end,
+            [error, exit, throw]
+        )
+    after
+        restore_formatter_env(Prev)
+    end.
+
+format(_Pid, error) -> error(custom_formatter_failed);
+format(_Pid, exit) -> exit(custom_formatter_failed);
+format(_Pid, throw) -> throw(custom_formatter_failed);
+format(Pid, Term) -> lists:flatten(io_lib:format("custom: ~p ~p", [Pid, Term])).
 
 restore_formatter_env({ok, Formatter}) ->
     application:set_env(observer_cli, formatter, Formatter);

@@ -21,6 +21,8 @@
     diagnostic_sample/2,
     dispatch/4,
     normalize/2,
+    parse_pointer/1,
+    pointer_exists/2,
     truncate/1
 ]).
 
@@ -121,7 +123,6 @@
     trim_map_values/4,
     trim_list_values/5,
     evidence_pointers_values/2,
-    parse_pointer/1,
     dispatch_options/1,
     stop_worker/3,
     worker_down/2,
@@ -2142,7 +2143,7 @@ capture_ets(Request, Context) when is_map(Request) ->
             Count = (maps:get(count_fun, Source))(),
             Estimate = working_set_estimate(min(Count, Limit), 10, 1),
             Outcome =
-                case Count =< ?ETS_SCAN_BUDGET andalso Estimate =< ?MAX_WORKING_SET_BYTES of
+                case Count =< ?ETS_SCAN_BUDGET of
                     true ->
                         fun() -> collect_ets(Source, Sort, Limit, Context, Estimate) end;
                     false ->
@@ -2977,7 +2978,7 @@ collect_applications(AppSource, ProcessSource, Sort, Limit, Context) ->
     Running = (maps:get(running_fun, AppSource))(remaining(maps:get(deadline, Context))),
     Apps = lists:usort([App || {App, _, _} <- Loaded] ++ [App || {App, _, _} <- Running]),
     AppEstimate = working_set_estimate(length(Apps), 4, 1),
-    case length(Apps) =< ?APPLICATION_SCAN_BUDGET andalso AppEstimate =< ?MAX_WORKING_SET_BYTES of
+    case length(Apps) =< ?APPLICATION_SCAN_BUDGET of
         false ->
             {unavailable, scan_budget_exceeded, #{
                 status => unavailable,
@@ -3271,10 +3272,7 @@ collect_available_mnesia(Source, Sort, Limit, Context) ->
         yes ->
             Tables = (maps:get(local_tables_fun, Source))(),
             Estimate = working_set_estimate(min(length(Tables), Limit), 4, 1),
-            case
-                length(Tables) =< ?MNESIA_SCAN_BUDGET andalso
-                    Estimate =< ?MAX_WORKING_SET_BYTES
-            of
+            case length(Tables) =< ?MNESIA_SCAN_BUDGET of
                 true ->
                     collect_admitted_mnesia(Tables, Source, Sort, Limit, Context, Estimate);
                 false ->
@@ -4031,7 +4029,7 @@ vm_io_metrics(Counters, Semantics) ->
 collect_ports(Source, Sort, Limit, Context) ->
     Count = safe_resource_count(Source),
     Estimate = working_set_estimate(min(Count, Limit), 9, 1),
-    case Count =< ?PORT_SCAN_BUDGET andalso Estimate =< ?MAX_WORKING_SET_BYTES of
+    case Count =< ?PORT_SCAN_BUDGET of
         false ->
             {unavailable, scan_budget_exceeded, #{
                 status => unavailable,
@@ -5590,6 +5588,8 @@ evidence_paths([#{<<"path">> := Pointer} | Rest], Acc) when is_binary(Pointer) -
 evidence_paths([_Invalid | _Rest], _Acc) ->
     error.
 
+%% Shared pure evidence-pointer helpers for target and controller validation.
+-spec parse_pointer(binary()) -> {ok, [binary()]} | error.
 parse_pointer(<<>>) ->
     {ok, []};
 parse_pointer(<<"/", Rest/binary>>) ->
@@ -5619,6 +5619,7 @@ unescape_pointer(<<Byte, Rest/binary>>, Acc) ->
 pointers_exist(Response, Pointers) ->
     lists:all(fun(Pointer) -> pointer_exists(Response, Pointer) end, Pointers).
 
+-spec pointer_exists(term(), [binary()]) -> boolean().
 pointer_exists(_Value, []) ->
     true;
 pointer_exists(Map, [Key | Rest]) when is_map(Map) ->

@@ -899,8 +899,9 @@ read_context(Path) ->
 readable_context_dir(Dir) ->
     case file:read_link_info(Dir) of
         {ok, #file_info{type = directory, mode = Mode}} ->
-            case Mode band 8#777 of
-                8#700 -> ok;
+            %% Reject group/other write bits, not harmless mode differences.
+            case Mode band 8#022 of
+                0 -> ok;
                 _ -> {error, context_directory_permissions}
             end;
         {ok, _Info} ->
@@ -916,8 +917,8 @@ read_context_file(Path) ->
         {ok, #file_info{type = regular, mode = Mode, size = Size}} when
             Size =< ?MAX_CONTEXT_BYTES
         ->
-            case Mode band 8#777 of
-                8#600 -> read_context_bytes(Path);
+            case Mode band 8#022 of
+                0 -> read_context_bytes(Path);
                 _ -> {error, context_file_permissions}
             end;
         {ok, #file_info{type = regular}} ->
@@ -1004,16 +1005,12 @@ delete_context(Path) ->
 
 delete_context_file(Path) ->
     case file:read_link_info(Path) of
-        {ok, #file_info{type = regular, mode = Mode}} ->
-            case Mode band 8#777 of
-                8#600 ->
-                    case file:delete(Path) of
-                        ok -> ok;
-                        {error, enoent} -> ok;
-                        {error, _Reason} -> {error, context_unavailable}
-                    end;
-                _ ->
-                    {error, context_file_permissions}
+        {ok, #file_info{type = regular}} ->
+            %% Unlinking does not consume the saved target or require file write access.
+            case file:delete(Path) of
+                ok -> ok;
+                {error, enoent} -> ok;
+                {error, _Reason} -> {error, context_unavailable}
             end;
         {ok, _Info} ->
             {error, invalid_context_file};

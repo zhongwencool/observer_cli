@@ -67,7 +67,7 @@ start(Socket, #view_opts{sockets = #sockets{interval = Interval}} = Opts) ->
 manager(
     StorePid, RenderPid, #view_opts{sockets = Sockets = #sockets{cur_page = CurPage}} = ViewOpts
 ) ->
-    case observer_cli_lib:parse_cmd(ViewOpts, ?MODULE, [RenderPid]) of
+    case observer_cli_lib:parse_cmd(ViewOpts, ?MODULE, [RenderPid, StorePid]) of
         quit ->
             observer_cli_lib:exit_processes([StorePid]),
             erlang:send(RenderPid, quit),
