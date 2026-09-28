@@ -3514,10 +3514,7 @@ command_error(Command, Format, Category, Reason) ->
             output_encode_error(EncodeError)
     end.
 
-command_display(trace_call) -> <<"trace call">>;
-command_display(trace_stop_all) -> <<"trace stop">>;
-command_display(otp_state) -> <<"otp-state">>;
-command_display(Command) -> atom_to_binary(Command).
+command_display(Command) -> observer_cli_cli:command_name(Command).
 
 response_command_name(unknown) -> null;
 response_command_name(trace) -> null;
@@ -3532,11 +3529,7 @@ error_response(Command, Category, Reason) ->
     ]).
 
 command_help_command(unknown) -> <<"observer_cli --help">>;
-command_help_command(tui) -> <<"observer_cli tui --help">>;
-command_help_command(trace_call) -> <<"observer_cli trace call --help">>;
-command_help_command(trace_stop_all) -> <<"observer_cli trace stop --help">>;
-command_help_command(otp_state) -> <<"observer_cli otp-state --help">>;
-command_help_command(Command) -> <<"observer_cli ", (atom_to_binary(Command))/binary, " --help">>.
+command_help_command(Command) -> <<"observer_cli ", (command_display(Command))/binary, " --help">>.
 
 command_format(#{json := true}) -> json;
 command_format(#{format := "json"}) -> json;

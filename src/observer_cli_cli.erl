@@ -7,6 +7,7 @@
 -export([
     parse/1,
     command/1,
+    command_name/1,
     schema/0,
     target/1,
     cookie_source/1,
@@ -1434,9 +1435,15 @@ encode(json, Response) ->
 encode(_Format, _Response) ->
     {error, controller_error(format, unsupported_format)}.
 
-text_command(<<"trace_call">>) -> <<"trace call">>;
-text_command(<<"trace_stop_all">>) -> <<"trace stop">>;
-text_command(Command) -> escape_text(Command).
+-spec command_name(atom() | binary()) -> binary().
+command_name(Command) when is_atom(Command) -> command_name(atom_to_binary(Command));
+command_name(<<"trace_call">>) -> <<"trace call">>;
+command_name(<<"trace_stop_all">>) -> <<"trace stop">>;
+command_name(<<"otp_state">>) -> <<"otp-state">>;
+command_name(<<"supervision_tree">>) -> <<"supervision-tree">>;
+command_name(Command) -> Command.
+
+text_command(Command) -> escape_text(command_name(Command)).
 
 logs_text(Response, Data) ->
     Meta = maps:get(<<"meta">>, Response),

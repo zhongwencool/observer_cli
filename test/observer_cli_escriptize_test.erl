@@ -244,6 +244,44 @@ output_capability_precedes_all_command_work_test() ->
             )
     end.
 
+recovery_help_commands_are_executable_test() ->
+    Commands = [
+        connect,
+        status,
+        disconnect,
+        snapshot,
+        diagnose,
+        memory,
+        schedulers,
+        distribution,
+        processes,
+        process,
+        applications,
+        ets,
+        mnesia,
+        network,
+        ports,
+        port,
+        sockets,
+        otp_state,
+        supervision_tree,
+        logs,
+        trace_call,
+        trace_stop_all
+    ],
+    lists:foreach(
+        fun(Command) ->
+            Hint = observer_cli_escriptize:command_help_command(Command),
+            ["observer_cli" | Args] = string:tokens(binary_to_list(Hint), " "),
+            {ok, Help} = observer_cli_test_io:capture_with_geometry(24, 80, [], fun() ->
+                observer_cli_escriptize:main(Args)
+            end),
+            ?assertNotEqual(nomatch, binary:match(iolist_to_binary(Help), <<"Usage:">>))
+        end,
+        Commands
+    ),
+    ?assertEqual(<<"supervision-tree">>, observer_cli_escriptize:command_display(supervision_tree)).
+
 invalid_trace_action_preserves_error_contract_test() ->
     lists:foreach(
         fun(Args) ->
