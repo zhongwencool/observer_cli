@@ -2859,7 +2859,10 @@ deep_snapshot_controller_disconnect_cleans_probe_worker_test() ->
 local_snapshot_text_and_term_envelopes_test() ->
     Response = snapshot(#{}),
     {ok, Text} = observer_cli_cli:encode(text, Response),
-    ?assertMatch(<<"observer_cli snapshot\n", _/binary>>, Text),
+    ?assertMatch(<<"observer_cli snapshot | outcome=complete\n", _/binary>>, Text),
+    {ok, Verbose} = observer_cli_cli:encode(text, Response, #{verbose => true}),
+    ?assertMatch(<<"observer_cli snapshot\n", _/binary>>, Verbose),
+    ?assertNotEqual(nomatch, binary:match(Text, <<"completed probes:">>)),
     ?assertNotEqual(nomatch, binary:match(Text, <<"snapshot_version: 1">>)),
     ?assertEqual(nomatch, binary:match(Text, <<"observer_cli.cli/v1">>)),
     ?assertEqual(nomatch, binary:match(Text, <<"issues:">>)),
