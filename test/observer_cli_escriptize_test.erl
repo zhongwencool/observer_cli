@@ -220,7 +220,16 @@ controller_boundary_helpers_test() ->
     end.
 
 output_capability_precedes_all_command_work_test() ->
-    Commands = [snapshot, diagnose, memory, schedulers, trace, status, connect, disconnect],
+    Commands = [snapshot, diagnose, memory, schedulers, trace, logs, status, connect, disconnect],
+    lists:foreach(
+        fun(Command) ->
+            ?assertEqual(ok, observer_cli_escriptize:ensure_output_format(Command, #{})),
+            ?assertEqual(
+                ok, observer_cli_escriptize:ensure_output_format(Command, #{format => "term"})
+            )
+        end,
+        Commands
+    ),
     case code:ensure_loaded(json) of
         {error, _} ->
             lists:foreach(

@@ -831,7 +831,7 @@ run_disconnect_ready() ->
     end.
 
 ensure_output_format(Command, Options) ->
-    Response = observer_cli_cli:response(Command, complete, null, null, #{}, []),
+    Response = observer_cli_cli:response(Command, complete, null, null, null, []),
     case observer_cli_cli:encode(command_format(Options), Response) of
         {ok, _Output} ->
             ok;
