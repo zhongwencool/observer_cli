@@ -3520,6 +3520,7 @@ command_display(otp_state) -> <<"otp-state">>;
 command_display(Command) -> atom_to_binary(Command).
 
 response_command_name(unknown) -> null;
+response_command_name(trace) -> null;
 response_command_name(Command) -> Command.
 
 error_exit_code(Command, Category, Reason) ->

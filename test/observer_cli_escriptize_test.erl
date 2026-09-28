@@ -244,6 +244,20 @@ output_capability_precedes_all_command_work_test() ->
             )
     end.
 
+invalid_trace_action_preserves_error_contract_test() ->
+    lists:foreach(
+        fun(Args) ->
+            Output = assert_halt(2, fun() ->
+                observer_cli_escriptize:main(Args ++ ["--format", "term"])
+            end),
+            {ok, Tokens, _} = erl_scan:string(binary_to_list(iolist_to_binary(Output))),
+            {ok, Response} = erl_parse:parse_term(Tokens),
+            ?assertEqual(null, maps:get(<<"command">>, Response)),
+            ?assertEqual(<<"error">>, maps:get(<<"outcome">>, Response))
+        end,
+        [["trace"], ["trace", "bogus"], ["--bogus", "trace"]]
+    ).
+
 command_output_and_error_paths_test() ->
     Response = observer_cli_cli:response(
         memory, complete, null, null, #{<<"value">> => 1}, []
