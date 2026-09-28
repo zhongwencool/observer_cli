@@ -538,6 +538,11 @@ The normative machine-readable definition is the JSON Schema 2020-12 document
 at
 [`priv/schema/observer_cli.cli.v1.schema.json`](https://raw.githubusercontent.com/zhongwencool/observer_cli/v2.0.0/priv/schema/observer_cli.cli.v1.schema.json).
 It is included in Hex and release artifacts.
+The schema specifies command payloads, finding evidence, resource fields,
+unavailable states, and trace/log completion boundaries. CI validates emitted
+fixtures and deliberate malformed variants with a pinned Draft 2020-12
+validator, then checks the exact schema packaged by Rebar and Mix. Relational
+safety checks such as target binding and cleanup remain in the controller.
 
 The `schema` value is the observer_cli protocol identity, not a JSON Schema
 dialect. JSON follows RFC 8259 and capture timestamps use RFC 3339. The schema groups
