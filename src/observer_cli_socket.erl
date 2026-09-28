@@ -8,6 +8,10 @@
 -ifdef(TEST).
 -export([
     collect_general_info/0,
+    add_delta_counters/2,
+    current_counters/1,
+    counter_delta/2,
+    sort_value/2,
     collect_socket_detail/1,
     collect_socket_overviews/0,
     render_general_info/1,
@@ -27,7 +31,6 @@
     safe_which_sockets/0,
     safe_socket_info/1,
     socket_id/1,
-    counter_value/2,
     socket_addr/2,
     safe_monitored_by/1,
     level_option_specs/1,
@@ -109,9 +112,13 @@ restart_page(StorePid, RenderPid, ViewOpts = #view_opts{sockets = Sockets}, CurP
     NewPage = observer_cli_lib:next_page(CurPage, Delta),
     restart(StorePid, RenderPid, ViewOpts#view_opts{sockets = Sockets#sockets{cur_page = NewPage}}).
 
-restart(StorePid, RenderPid, ViewOpts) ->
-    observer_cli_lib:exit_processes([StorePid, RenderPid]),
-    start(ViewOpts).
+restart(StorePid, RenderPid, ViewOpts = #view_opts{sockets = Sockets}) ->
+    %% Sorting, paging and refresh changes do not invalidate the sample.
+    Ref = make_ref(),
+    RenderPid ! {configure, Sockets, self(), Ref},
+    receive
+        {Ref, ready} -> manager(StorePid, RenderPid, ViewOpts)
+    end.
 
 socket_sort(socket_io) -> io;
 socket_sort(socket_read_byte) -> rb;
@@ -137,54 +144,111 @@ open_socket_from_list(StorePid, RenderPid, ViewOpts, Pos) ->
             manager(StorePid, RenderPid, ViewOpts)
     end.
 
+render_sockets_worker(StorePid, Sockets, AutoRow, LastCounters) ->
+    render_sockets_worker(StorePid, Sockets, AutoRow, LastCounters, undefined).
+
 render_sockets_worker(
     StorePid,
     Sockets = #sockets{interval = Interval, sort = Sort, cur_page = CurPage},
     AutoRow,
-    LastCounters
+    LastCounters,
+    Notify
 ) ->
     TerminalRow = observer_cli_lib:get_terminal_rows(AutoRow),
-    Rows = erlang:max(TerminalRow - 10, 0),
-    Text = io_lib:format("sort:~p Interval:~wms", [Sort, Interval]),
-    Menu = observer_cli_lib:render_top_menu(sockets, Text),
+    BaseRows = erlang:max(TerminalRow - 10, 0),
+    Text = io_lib:format("Sort: ~p | Refresh:~wms", [Sort, Interval]),
     GeneralRows = render_general_info(collect_general_info()),
-    {SocketRenderInfo, NewCounters} = collect_socket_render_info(
-        Rows, CurPage, Sort, LastCounters
+    {SocketInfo, NewCounters} =
+        case collect_socket_info(Sort, LastCounters) of
+            {error, _} = Error -> {Error, #{}};
+            Sample -> Sample
+        end,
+    {ExtraRows, Menu} = observer_cli_lib:render_sampling_menu(
+        sockets,
+        [Text, socket_sample_status(LastCounters, NewCounters)]
     ),
+    Rows = max(BaseRows - ExtraRows, 0),
+    SocketRenderInfo =
+        case SocketInfo of
+            {error, _} -> SocketInfo;
+            _ -> observer_cli_lib:sublist(SocketInfo, Rows, CurPage)
+        end,
     {SocketList, SocketRows} = render_socket_rows(SocketRenderInfo, Sort),
     LastLine = observer_cli_lib:render_footer(io_lib:format(?LAST_LINE, [CurPage])),
-    ?output([?CURSOR_TOP, Menu, GeneralRows, SocketRows, LastLine]),
+    ?output([?CURSOR_TOP, Menu, GeneralRows, SocketRows, LastLine, "\e[J"]),
     observer_cli_store:update(StorePid, Rows, SocketList),
-    erlang:send_after(Interval, self(), redraw),
+    case Notify of
+        undefined ->
+            ok;
+        {Manager, Ref} ->
+            %% Fence the row mapping before accepting a jump on the new page.
+            _ = observer_cli_store:lookup_row(StorePid),
+            Manager ! {Ref, ready}
+    end,
+    Timer = erlang:send_after(Interval, self(), redraw),
     receive
-        quit -> quit;
-        redraw -> render_sockets_worker(StorePid, Sockets, AutoRow, NewCounters)
+        quit ->
+            quit;
+        {configure, NewSockets, From, ConfigRef} ->
+            erlang:cancel_timer(Timer),
+            receive
+                redraw -> ok
+            after 0 -> ok
+            end,
+            render_sockets_worker(StorePid, NewSockets, AutoRow, NewCounters, {From, ConfigRef});
+        redraw ->
+            render_sockets_worker(StorePid, Sockets, AutoRow, NewCounters)
     end.
 
+socket_sample_status(Previous, Current) ->
+    case {maps:find(sample_time, Previous), maps:find(sample_time, Current)} of
+        {_, error} ->
+            " | missing sample; baseline cleared";
+        {error, _} ->
+            " | warming up";
+        {{ok, Before}, {ok, After}} ->
+            io_lib:format(" | Sample:~wms", [round((After - Before) / 1000)])
+    end.
+
+-ifdef(TEST).
 collect_socket_render_info(Rows, CurPage, Sort, LastCounters) ->
     case collect_socket_info(Sort, LastCounters) of
         {error, _Reason} = Error ->
-            {Error, LastCounters};
+            {Error, #{}};
         {SocketInfo, NewCounters} ->
             {observer_cli_lib:sublist(SocketInfo, Rows, CurPage), NewCounters}
     end.
 
-sort_value(io, Info) ->
-    read_bytes(Info) + write_bytes(Info);
-sort_value(rb, Info) ->
-    read_bytes(Info);
-sort_value(wb, Info) ->
-    write_bytes(Info);
-sort_value(pk, Info) ->
-    packets(Info);
-sort_value(wt, Info) ->
-    waits(Info);
-sort_value(fl, Info) ->
-    fails(Info);
+-endif.
+
+sort_value(Sort, Info) when
+    Sort =:= io;
+    Sort =:= rb;
+    Sort =:= wb;
+    Sort =:= pk;
+    Sort =:= wt;
+    Sort =:= fl;
+    Sort =:= ac
+->
+    Value =
+        case Sort of
+            io -> sum_metrics([read_bytes(Info), write_bytes(Info)]);
+            rb -> read_bytes(Info);
+            wb -> write_bytes(Info);
+            pk -> packets(Info);
+            wt -> waits(Info);
+            fl -> fails(Info);
+            ac -> accepts(Info)
+        end,
+    case is_number(Value) of
+        true -> Value;
+        false -> -1
+    end;
 sort_value(mx, Info) ->
-    max_packet(Info);
-sort_value(ac, Info) ->
-    accepts(Info);
+    case max_packet(Info) of
+        Value when is_number(Value) -> Value;
+        _ -> -1
+    end;
 sort_value(fd, Info) ->
     maps:get(fd, Info, -1);
 sort_value(Sort, Info) ->
@@ -233,10 +297,18 @@ collect_socket_overviews() ->
         false ->
             {error, "socket API is not available"};
         true ->
-            [
-                Info
-             || Socket <- safe_which_sockets(), Info <- [socket_overview(Socket)], Info =/= dead
-            ]
+            case safe_which_sockets() of
+                {error, _} = Error ->
+                    Error;
+                Sockets ->
+                    [
+                        case socket_overview(Socket) of
+                            dead -> (socket_overview(Socket, #{}))#{sample_state => missing};
+                            Info -> Info
+                        end
+                     || Socket <- Sockets
+                    ]
+            end
     end.
 
 collect_socket_info(Sort, LastCounters) ->
@@ -254,20 +326,37 @@ collect_socket_info(Sort, LastCounters) ->
 add_delta_counters(SocketInfos, LastCounters) ->
     [
         Info#{
-            delta_counters => counter_delta(
-                maps:get(counters, Info, #{}), maps:get(Id, LastCounters, #{})
-            )
+            delta_counters =>
+                case maps:get(sample_state, Info, available) of
+                    missing ->
+                        #{};
+                    available ->
+                        counter_delta(
+                            maps:get(counters, Info, #{}), maps:get(Id, LastCounters, undefined)
+                        )
+                end
         }
-     || #{id_str := Id} = Info <- SocketInfos
+     || #{id := Id} = Info <- SocketInfos
     ].
 
 current_counters(SocketInfos) ->
-    maps:from_list([{Id, maps:get(counters, Info, #{})} || #{id_str := Id} = Info <- SocketInfos]).
+    (maps:from_list([{Id, maps:get(counters, Info, #{})} || #{id := Id} = Info <- SocketInfos]))#{
+        sample_time => erlang:monotonic_time(microsecond)
+    }.
 
+counter_delta(_Current, undefined) ->
+    warming_up;
 counter_delta(Current, Previous) ->
     Keys = lists:usort(maps:keys(Current) ++ maps:keys(Previous)),
     maps:from_list([
-        {Key, erlang:max(counter_value(Current, Key) - counter_value(Previous, Key), 0)}
+        {Key,
+            case {maps:find(Key, Current), maps:find(Key, Previous)} of
+                {{ok, Now}, {ok, Before}} when is_integer(Now), is_integer(Before), Now >= Before ->
+                    Now - Before;
+                {{ok, Now}, {ok, Before}} when is_integer(Now), is_integer(Before) -> "reset";
+                _ ->
+                    "miss"
+            end}
      || Key <- Keys
     ]).
 
@@ -284,7 +373,7 @@ safe_which_sockets() ->
     try socket:which_sockets() of
         Sockets -> Sockets
     catch
-        _:_ -> []
+        Class:Reason -> {error, {Class, Reason}}
     end.
 
 socket_overview(Socket) ->
@@ -378,8 +467,8 @@ render_socket_rows({StartPos, SocketInfos}, Sort) ->
 
 render_socket_legend() ->
     observer_cli_lib:render_footer(
-        "Legend: io=read+write, rb/wb=read/write bytes, pk/ac=packets/accepts, "
-        "wt/fl=waits/fails, mx=max packet; counters are deltas"
+        "Legend: chg=window change; rb/wb=bytes pk/ac=packets/accepts wt/fl=waits/fails; "
+        "mx=lifetime max; warm=warming up, miss=missing"
     ).
 
 render_socket_title(Sort) ->
@@ -399,15 +488,15 @@ render_socket_title(Sort) ->
         ?UNDERLINE,
         ?W2(?GRAY_BG, "State", StateW),
         ?UNDERLINE,
-        ?W2(sort_color(read, Sort), "Read rb", ReadW),
+        ?W2(sort_color(read, Sort), "Read chg", ReadW),
         ?UNDERLINE,
-        ?W2(sort_color(write, Sort), "Write wb", WriteW),
+        ?W2(sort_color(write, Sort), "Write chg", WriteW),
         ?UNDERLINE,
-        ?W2(sort_color(packet, Sort), "Pkt/Acc", PacketW),
+        ?W2(sort_color(packet, Sort), "Pkt/Acc chg", PacketW),
         ?UNDERLINE,
-        ?W2(sort_color(wait, Sort), "Wait", WaitW),
+        ?W2(sort_color(wait, Sort), "Wait chg", WaitW),
         ?UNDERLINE,
-        ?W2(sort_color(fail, Sort), "Fail", FailW),
+        ?W2(sort_color(fail, Sort), "Fail chg", FailW),
         ?UNDERLINE,
         ?W2(sort_color(max_packet, Sort), "MaxPkt", MaxW)
     ]).
@@ -450,7 +539,7 @@ render_socket_row(
 
 socket_widths() ->
     observer_cli_lib:weighted_widths(
-        [4, 18, 14, 24, 11, 11, 8, 8, 8, 6, 6, 7],
+        [4, 16, 12, 20, 11, 11, 8, 9, 11, 8, 8, 7],
         [0, 3, 2, 5, 1, 2, 1, 1, 1, 0, 0, 1]
     ).
 
@@ -460,6 +549,10 @@ endpoint(Socket) ->
 kind(#{domain := Domain, type := Type, protocol := Protocol}) ->
     [format_value(Domain), "/", format_value(Protocol), "/", format_value(Type)].
 
+state(#{sample_state := missing}) ->
+    "missing";
+state(#{delta_counters := warming_up}) ->
+    "warming up";
 state(#{rstate := ReadState, wstate := WriteState}) ->
     ["R:", short_state(ReadState), " W:", short_state(WriteState)].
 
@@ -472,43 +565,63 @@ read_bytes(Info) ->
     delta_counter(Info, read_byte).
 
 write_bytes(Info) ->
-    delta_counter(Info, write_byte) + delta_counter(Info, sendfile_byte).
+    sum_metrics([delta_counter(Info, write_byte), optional_delta(Info, sendfile_byte)]).
 
 packets(Info) ->
-    delta_counter(Info, read_pkg) + delta_counter(Info, write_pkg) +
-        delta_counter(Info, sendfile_pkg).
-
-packets_accepts(Info) ->
-    [integer_to_list(packets(Info)), "/", integer_to_list(delta_counter(Info, acc_success))].
-
-waits(Info) ->
-    delta_counter(Info, acc_waits) + delta_counter(Info, read_waits) +
-        delta_counter(Info, write_waits) + delta_counter(Info, sendfile_waits).
-
-fails(Info) ->
-    delta_counter(Info, acc_fails) + delta_counter(Info, read_fails) +
-        delta_counter(Info, write_fails) + delta_counter(Info, sendfile_fails).
-
-max_packet(Info) ->
-    lists:max([
-        current_counter(Info, read_pkg_max),
-        current_counter(Info, write_pkg_max),
-        current_counter(Info, sendfile_pkg_max)
+    sum_metrics([
+        delta_counter(Info, read_pkg),
+        delta_counter(Info, write_pkg),
+        optional_delta(Info, sendfile_pkg)
     ]).
 
+packets_accepts(Info) ->
+    [format_value(packets(Info)), "/", format_value(delta_counter(Info, acc_success))].
+
+waits(Info) ->
+    sum_metrics([
+        delta_counter(Info, acc_waits),
+        delta_counter(Info, read_waits),
+        delta_counter(Info, write_waits),
+        optional_delta(Info, sendfile_waits)
+    ]).
+
+fails(Info) ->
+    sum_metrics([
+        delta_counter(Info, acc_fails),
+        delta_counter(Info, read_fails),
+        delta_counter(Info, write_fails),
+        optional_delta(Info, sendfile_fails)
+    ]).
+
+max_packet(Info) ->
+    Counters = maps:get(counters, Info, #{}),
+    Values = [
+        maps:get(read_pkg_max, Counters, "miss"),
+        maps:get(write_pkg_max, Counters, "miss"),
+        maps:get(sendfile_pkg_max, Counters, 0)
+    ],
+    case lists:all(fun is_integer/1, Values) of
+        true -> lists:max(Values);
+        false -> "miss"
+    end.
+
 accepts(Info) ->
-    delta_counter(Info, acc_success) + delta_counter(Info, acc_tries).
+    sum_metrics([delta_counter(Info, acc_success), delta_counter(Info, acc_tries)]).
 
-delta_counter(Info, Key) ->
-    counter_value(maps:get(delta_counters, Info, maps:get(counters, Info, #{})), Key).
+sum_metrics(Values) ->
+    case [Value || Value <- Values, not is_integer(Value)] of
+        [] -> lists:sum(Values);
+        [Status | _] -> Status
+    end.
 
-current_counter(Info, Key) ->
-    counter_value(maps:get(counters, Info, #{}), Key).
+optional_delta(Info, Key) -> delta_counter(Info, Key, 0).
 
-counter_value(Counters, Key) ->
-    case maps:get(Key, Counters, 0) of
-        Value when is_integer(Value) -> Value;
-        _ -> 0
+delta_counter(Info, Key) -> delta_counter(Info, Key, "miss").
+
+delta_counter(Info, Key, Default) ->
+    case maps:get(delta_counters, Info, warming_up) of
+        warming_up -> "warm";
+        Counters -> maps:get(Key, Counters, Default)
     end.
 
 render_socket_worker(Socket, Interval, TimeRef) ->
@@ -519,7 +632,9 @@ render_socket_worker(Socket, Interval, TimeRef) ->
         Detail ->
             Menu = render_detail_menu(Interval),
             Lines = render_socket_detail(Detail),
-            LastLine = observer_cli_lib:render_footer("q(quit) K(sockets)"),
+            LastLine = observer_cli_lib:render_footer(
+                "q(quit) K(sockets) | Counters: lifetime totals; *_max: lifetime maximum; miss: unavailable"
+            ),
             ?output([?CURSOR_TOP, Menu, Lines, LastLine]),
             next_draw_view(TimeRef, Interval, Socket)
     end.
@@ -540,7 +655,7 @@ detail_manager(RenderPid, Opts) ->
 
 render_detail_menu(Interval) ->
     observer_cli_lib:render_top_menu(
-        sockets, "Socket Info Interval: " ++ integer_to_list(Interval) ++ "ms"
+        sockets, "Socket Info Refresh: " ++ integer_to_list(Interval) ++ "ms (configured)"
     ).
 
 collect_socket_detail(Socket) ->
@@ -691,7 +806,7 @@ render_socket_detail(#{
             [{"local_address", LocalAddress}, {"remote_address", RemoteAddress}],
             detail_widths()
         ),
-        render_kv_section("Counters", counter_pairs(Counters), counter_widths()),
+        render_kv_section("Totals / maxima", counter_pairs(Counters), counter_widths()),
         render_kv_section("Options", Options, option_widths())
     ].
 
@@ -721,6 +836,8 @@ counter_pairs(Counters) ->
 keys_to_pairs(Keys, Map) ->
     [{Key, format_counter(Key, maps:get(Key, Map, undefined))} || Key <- Keys].
 
+format_counter(_Key, undefined) ->
+    "miss";
 format_counter(Key, Value) when
     Key =:= read_byte;
     Key =:= read_pkg_max;
@@ -728,8 +845,6 @@ format_counter(Key, Value) when
     Key =:= write_pkg_max
 ->
     {byte, value_or_zero(Value)};
-format_counter(_Key, undefined) ->
-    "-";
 format_counter(_Key, Value) ->
     Value.
 
@@ -821,7 +936,9 @@ output_die_view(Socket, Interval) ->
         ),
         "\n"
     ],
-    LastLine = observer_cli_lib:render_footer("q(quit) K(sockets)"),
+    LastLine = observer_cli_lib:render_footer(
+        "q(quit) K(sockets) | Counters: lifetime totals; *_max: lifetime maximum; miss: unavailable"
+    ),
     ?output([?CURSOR_TOP, Menu, Line, LastLine]).
 
 sockaddr_to_list(#{family := local, path := Path}) ->

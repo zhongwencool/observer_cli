@@ -34,17 +34,23 @@ process_bar_format_style_test() ->
     ?assert(is_binary(Format10)).
 
 get_refresh_prompt_test() ->
-    Count = lists:flatten(observer_cli:get_refresh_prompt(proc_count, memory, 1500, 5)),
-    Window = lists:flatten(observer_cli:get_refresh_prompt(proc_window, reductions, 1500, 5)),
-    ?assert(lists:prefix("recon:proc_count", Count)),
-    ?assert(lists:prefix("recon:proc_window", Window)).
+    lists:foreach(
+        fun(Type) ->
+            Count = lists:flatten(observer_cli:get_refresh_prompt(proc_count, Type, 1500, 5)),
+            Window = lists:flatten(observer_cli:get_refresh_prompt(proc_window, Type, 1500, 5)),
+            Name = atom_to_list(Type),
+            ?assertEqual("recon:proc_count(" ++ Name ++ ", 5) | Refresh:1500ms", Count),
+            ?assertEqual("recon:proc_window(" ++ Name ++ ", 5, 1500) | Refresh:1500ms", Window)
+        end,
+        [memory, binary_memory, total_heap_size, message_queue_len, reductions]
+    ).
 
 collect_top_n_test() ->
     Count = observer_cli:collect_top_n(proc_count, memory, 1500, 1, true),
     WindowFirst = observer_cli:collect_top_n(proc_window, memory, 1, 1, true),
     WindowNext = observer_cli:collect_top_n(proc_window, memory, 1, 1, false),
     ?assert(is_list(Count)),
-    ?assert(is_list(WindowFirst)),
+    ?assertEqual([], WindowFirst),
     ?assert(is_list(WindowNext)).
 
 collect_home_snapshot_test() ->
@@ -59,10 +65,11 @@ collect_home_snapshot_test() ->
     LastStats = observer_cli:get_incremental_stats(?DISABLE),
     {Snapshot, NewStats} =
         observer_cli:collect_home_snapshot(
-            "printf 'header\\n 1 2\\n'", Home, StableInfo, LastStats, 15, true
+            "printf 'header\\n 1 2\\n'", Home, StableInfo, LastStats, 16, true
         ),
     ?assertEqual(
         lists:sort([
+            menu,
             memory_summary,
             process_rows,
             refresh_prompt,
@@ -79,7 +86,7 @@ collect_home_snapshot_test() ->
     ?assert(is_list(maps:get(top_processes, Snapshot))),
     ?assert(
         lists:prefix(
-            "recon:proc_count(memory, 1)",
+            "recon:proc_count(memory, 2)",
             lists:flatten(maps:get(refresh_prompt, Snapshot))
         )
     ),
@@ -318,11 +325,11 @@ render_top_n_view_type_columns_test() ->
     Items = [{Pid, 1000, Call}],
     LayoutWidth = observer_cli_lib:layout_base_width(),
     Cases = [
-        {memory, LayoutWidth, ["Memory", "Reductions", "MsgQueue"]},
-        {binary_memory, LayoutWidth, ["BinMemory", "Reductions", "MsgQueue"]},
-        {reductions, LayoutWidth + 1, ["Reductions", "Memory", "MsgQueue"]},
-        {total_heap_size, LayoutWidth, ["TotalHeapSize", "Reductions", "MsgQueue"]},
-        {message_queue_len, LayoutWidth, ["MsgQueue", "Memory", "Reductions"]}
+        {memory, LayoutWidth, ["Memory", "Reds total", "MsgQueue"]},
+        {binary_memory, LayoutWidth, ["BinMemory", "Reds total", "MsgQueue"]},
+        {reductions, LayoutWidth + 1, ["Reds total", "Memory", "MsgQueue"]},
+        {total_heap_size, LayoutWidth, ["TotalHeapSize", "Reds total", "MsgQueue"]},
+        {message_queue_len, LayoutWidth, ["MsgQueue", "Memory", "Reds total"]}
     ],
     lists:foreach(
         fun({Type, TitleWidth, Fragments}) ->

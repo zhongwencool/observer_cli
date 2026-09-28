@@ -31,6 +31,9 @@
     accept_net_ticktime_result/2,
     get_refresh_prompt/4,
     collect_top_n/5,
+    process_window/4,
+    process_sample_status/3,
+    redraw_pause/7,
     get_current_initial_call/1,
     get_port_proc_info/2,
     get_top_n_info/1,
@@ -274,9 +277,8 @@ redraw_pause(PsCmd, StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRow)
         quit ->
             quit;
         {Func, Type} ->
-            redraw_running(
-                PsCmd, StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRow, false
-            );
+            %% A timer already in the mailbox must not resume a paused view.
+            redraw_pause(PsCmd, StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRow);
         pause_or_resume ->
             ?output(?CLEAR),
             redraw_running(PsCmd, StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRow, true)
@@ -304,7 +306,7 @@ redraw_running(
     {Snapshot, NewStats} =
         collect_home_snapshot(PsCmd, Home, StableInfo, LastStats, TerminalRow, IsFirstTime),
     {TopNList, Lines} = render_home_snapshot(Home, Snapshot),
-    ?output([?CURSOR_TOP | Lines]),
+    ?output([?CURSOR_TOP, Lines, "\e[J"]),
 
     observer_cli_store:update(StorePid, maps:get(process_rows, Snapshot), TopNList),
     TimeRef = refresh_next_time(Func, Type, Interval),
@@ -323,13 +325,31 @@ collect_home_snapshot(PsCmd, Home, StableInfo, LastStats, TerminalRows, IsFirstT
         scheduler_usage = SchUsage
     } =
         Home,
-    {Diffs, SchedulerUsage, NewStats} = node_stats(LastStats, SchUsage),
+    Baseline =
+        case IsFirstTime of
+            true -> get_incremental_stats(SchUsage);
+            false -> LastStats
+        end,
+    {Diffs0, SchedulerUsage, NewStats} = node_stats(Baseline, SchUsage),
+    Diffs =
+        case IsFirstTime of
+            true -> {"warming up", "warming up", "warming up", "warming up"};
+            false -> Diffs0
+        end,
     ProcessRows = max(
         TerminalRows - 14 - scheduler_usage_rows(SchedulerUsage), 0
     ),
     ProcessRanking = collect_home_processes(Home, ProcessRows, IsFirstTime),
     Runtime = sample_home_runtime(PsCmd, StableInfo, Diffs, SchedulerUsage, Interval),
-    {maps:merge(Runtime#{process_rows => ProcessRows}, ProcessRanking), NewStats}.
+    {ExtraRows, Menu} = observer_cli_lib:render_sampling_menu(
+        home, maps:get(refresh_prompt, ProcessRanking)
+    ),
+    {
+        maps:merge(
+            Runtime#{process_rows => max(ProcessRows - ExtraRows, 0), menu => Menu}, ProcessRanking
+        ),
+        NewStats
+    }.
 
 sample_home_runtime(PsCmd, StableInfo, Diffs, SchedulerUsage, Interval) ->
     #{
@@ -344,9 +364,15 @@ collect_home_processes(
     IsFirstTime
 ) ->
     TopLen = ProcessRows * CurPage,
+    {Items, Status} =
+        case {Func, IsFirstTime} of
+            {proc_window, true} -> {[], " | warming up"};
+            {proc_window, false} -> collect_process_window(Type, Interval, TopLen);
+            _ -> {collect_top_n(Func, Type, Interval, TopLen, IsFirstTime), ""}
+        end,
     #{
-        top_processes => collect_top_n(Func, Type, Interval, TopLen, IsFirstTime),
-        refresh_prompt => get_refresh_prompt(Func, Type, Interval, TopLen)
+        top_processes => Items,
+        refresh_prompt => [get_refresh_prompt(Func, Type, Interval, TopLen), Status]
     }.
 
 render_home_snapshot(Home, Snapshot) ->
@@ -358,13 +384,17 @@ render_home_snapshot(Home, Snapshot) ->
         Home,
     ProcessRows = maps:get(process_rows, Snapshot),
     TopList = maps:get(top_processes, Snapshot),
-    Text = maps:get(refresh_prompt, Snapshot),
     {_, CPULine} = render_scheduler_usage(maps:get(scheduler_usage, Snapshot)),
-    {TopNList, RankLine} = render_top_n_view(Type, TopList, ProcessRows, RankPos, CurPage),
+    MetricType =
+        case Home#home.func of
+            proc_window -> {window, Type};
+            proc_count -> Type
+        end,
+    {TopNList, RankLine} = render_top_n_view(MetricType, TopList, ProcessRows, RankPos, CurPage),
     {
         TopNList,
         [
-            observer_cli_lib:render_top_menu(home, Text),
+            maps:get(menu, Snapshot),
             render_home_summary(maps:get(system_summary, Snapshot)),
             render_home_summary(maps:get(memory_summary, Snapshot)),
             CPULine,
@@ -414,8 +444,8 @@ system_summary(PsCmd, StableInfo, AtomStatus) ->
             _ ->
                 ["--", "--"]
         end,
-    {Reds, AddReds} = Reductions,
-    ReductionsText = [integer_to_list(Reds), "/", integer_to_list(AddReds)],
+    {Reds, _SinceLastCall} = Reductions,
+    ReductionsText = integer_to_list(Reds),
     [
         [
             {normal, [{SysVersion, observer_cli_lib:layout_width() - 3}]},
@@ -472,7 +502,7 @@ system_atom_summary_row(
         {AtomWarning, Atom, 22 + LeftValueExtra},
         {" ps -o pmem", 26 + MiddleLabelExtra},
         {[MemPsV, "%"], 21 + MiddleValueExtra},
-        {"Reds(Total/SinceLastCall)", 20 + RightLabelExtra},
+        {"Reds total", 20 + RightLabelExtra},
         {ReductionsText, 24 + RightValueExtra}
     ]};
 system_atom_summary_row(
@@ -499,7 +529,7 @@ render_memory_process_line(MemSum, Interval) ->
 
 -endif.
 
-memory_process_summary(MemSum, Interval) ->
+memory_process_summary(MemSum, _Interval) ->
     {LeftLabelExtra, LeftValueExtra, MiddleLabelExtra, MiddleValueExtra, RightLabelExtra,
         RightValueExtra} = home_summary_extras(),
     RunQ = erlang:statistics(run_queue),
@@ -542,8 +572,8 @@ memory_process_summary(MemSum, Interval) ->
                 {"Size", 21 + LeftValueExtra},
                 {"Mem Type", 25 + MiddleLabelExtra},
                 {"Size", 21 + MiddleValueExtra},
-                {["IO/GC:(", integer_to_binary(Interval), "ms)"], 20 + RightLabelExtra},
-                {"Total/Increments", 25 + RightValueExtra}
+                {"IO/GC since sample", 20 + RightLabelExtra},
+                {"Total/Delta", 25 + RightValueExtra}
             ]}
         ],
         [
@@ -558,7 +588,7 @@ memory_process_summary(MemSum, Interval) ->
                 {BytesOut, 25 + RightValueExtra}
             ]},
             {normal, [
-                {"Process", 10 + LeftLabelExtra},
+                {"Proc used", 10 + LeftLabelExtra},
                 {{byte, ProcMem}, 12},
                 {ProcMemPercent, 6 + LeftValueExtra},
                 {"Code", 25 + MiddleLabelExtra},
@@ -568,7 +598,7 @@ memory_process_summary(MemSum, Interval) ->
                 {BytesIn, 25 + RightValueExtra}
             ]},
             {normal, [
-                {"Atom", 10 + LeftLabelExtra},
+                {"Atom used", 10 + LeftLabelExtra},
                 {{byte, AtomMem}, 12},
                 {AtomMemPercent, 6 + LeftValueExtra},
                 {
@@ -854,12 +884,35 @@ render_top_n_view(Type, List, Num, Pages, Page, LayoutWidth) ->
     {Rows, PidList} = top_n_rows(FormatFunc, Start, lists:sublist(List, Start, Num)),
     {PidList, [Title | lists:reverse(Rows)]}.
 
+top_n_spec({window, Type}) ->
+    Spec = top_n_spec(Type),
+    [{_, Width} | Rest] = maps:get(metric_columns, Spec),
+    Label =
+        case Type of
+            reductions -> "Reds/s";
+            memory -> "Mem change";
+            binary_memory -> "BinMem change";
+            total_heap_size -> "Heap change";
+            message_queue_len -> "Queue change"
+        end,
+    case Type of
+        message_queue_len ->
+            %% Make room for the full label without widening the table.
+            {NameWidth, TitleWidth, CurrentWidth} = maps:get(text_widths, Spec),
+            Spec#{
+                metric_columns := [{Label, Width + 1} | Rest],
+                text_widths := {NameWidth - 1, TitleWidth, CurrentWidth},
+                row_formats := {"~-12.12s", "~13.13s", " ~-13.13s"}
+            };
+        _ ->
+            Spec#{metric_columns := [{Label, Width} | Rest]}
+    end;
 top_n_spec(memory) ->
     #{
         text_widths => {45, 32, 33},
         metric_columns => [
             {"     Memory", 14},
-            {"    Reductions", 14},
+            {"    Reds total", 14},
             {" MsgQueue", 10}
         ],
         row_formats => {"~13.13s ", "~14.14s", " ~-9.9s"}
@@ -869,7 +922,7 @@ top_n_spec(binary_memory) ->
         text_widths => {45, 32, 33},
         metric_columns => [
             {"  BinMemory", 14},
-            {"    Reductions", 14},
+            {"    Reds total", 14},
             {" MsgQueue", 10}
         ],
         row_formats => {"~13.13s ", "~14.14s", " ~-9.9s"}
@@ -878,7 +931,7 @@ top_n_spec(reductions) ->
     #{
         text_widths => {45, 33, 34},
         metric_columns => [
-            {"   Reductions", 15},
+            {"   Reds total", 15},
             {"      Memory", 13},
             {" MsgQueue", 10}
         ],
@@ -889,7 +942,7 @@ top_n_spec(total_heap_size) ->
         text_widths => {45, 32, 33},
         metric_columns => [
             {" TotalHeapSize", 14},
-            {"    Reductions", 14},
+            {"    Reds total", 14},
             {" MsgQueue", 10}
         ],
         row_formats => {"~13.13s ", "~14.14s", " ~-9.9s"}
@@ -900,7 +953,7 @@ top_n_spec(message_queue_len) ->
         metric_columns => [
             {" MsgQueue", 11},
             {"      Memory", 13},
-            {"    Reductions", 14}
+            {"    Reds total", 14}
         ],
         row_formats => {"~-11.11s", "~13.13s", " ~-13.13s"}
     }.
@@ -940,6 +993,8 @@ render_top_n_row(Type, Spec, Item, ChoosePos, Pos, NameWidth, CurrentWidth) ->
     ),
     {Pid, Row}.
 
+top_n_row_values({window, Type}, Pid, Value) ->
+    top_n_row_values(Type, Pid, Value);
 top_n_row_values(reductions, Pid, Reductions) ->
     {Memory, MsgQueueLen} = get_pid_info(Pid, [memory, message_queue_len]),
     {
@@ -958,7 +1013,7 @@ top_n_row_values(Type, Pid, Value) ->
     {Reductions, MsgQueueLen} = get_pid_info(Pid, [reductions, message_queue_len]),
     Bytes =
         case Type of
-            total_heap_size -> Value * erlang:system_info(wordsize);
+            total_heap_size when is_number(Value) -> Value * erlang:system_info(wordsize);
             _ -> Value
         end,
     {
@@ -1161,12 +1216,9 @@ choose_call(Call, _Pid) ->
     observer_cli_lib:mfa_to_list(Call).
 
 get_refresh_prompt(proc_count, Type, Interval, Rows) ->
-    io_lib:format("recon:proc_count(~p, ~w) Interval:~wms", [Type, Rows, Interval]);
+    io_lib:format("recon:proc_count(~p, ~w) | Refresh:~wms", [Type, Rows, Interval]);
 get_refresh_prompt(proc_window, Type, Interval, Rows) ->
-    io_lib:format(
-        "recon:proc_window(~p, ~w, ~w) Interval:~wms",
-        [Type, Rows, Interval, Interval]
-    ).
+    io_lib:format("recon:proc_window(~p, ~w, ~w) | Refresh:~wms", [Type, Rows, Interval, Interval]).
 
 get_stable_system_info() ->
     OtpRelease = erlang:system_info(otp_release),
@@ -1197,10 +1249,61 @@ get_pid_info(Pid, Keys) ->
             {Val1, Val2}
     end.
 
-collect_top_n(proc_window, Type, Interval, Rows, IsFirstTime) when not IsFirstTime ->
-    recon:proc_window(Type, Rows, Interval);
+collect_top_n(proc_window, _Type, _Interval, _Rows, true) ->
+    [];
+collect_top_n(proc_window, Type, Interval, Rows, false) ->
+    {Items, _Status} = collect_process_window(Type, Interval, Rows),
+    Items;
 collect_top_n(_Func, Type, _Interval, Rows, _FirstTime) ->
     recon:proc_count(Type, Rows).
+
+%% Keep both samples explicit: recon's window helper cannot expose the elapsed
+%% monotonic time and treats a newly observed process as a delta from zero.
+collect_process_window(Type, Interval, Rows) ->
+    First = recon_lib:proc_attrs(Type),
+    Start = erlang:monotonic_time(microsecond),
+    timer:sleep(Interval),
+    Last = recon_lib:proc_attrs(Type),
+    Elapsed = erlang:monotonic_time(microsecond) - Start,
+    {Items, Missing, Reset} = process_window(Type, First, Last, Elapsed),
+    Ranked = recon_lib:sublist_top_n_attrs(Items, Rows),
+    {Ranked, process_sample_status(Elapsed, Missing, Reset)}.
+
+process_sample_status(Elapsed, Missing, Reset) ->
+    [
+        io_lib:format(" | Sample:~wms", [round(Elapsed / 1000)]),
+        [
+            io_lib:format(" | ~s:~w", [Label, Count])
+         || {Label, Count} <-
+                [{"missing", Missing}, {"reset", Reset}],
+            Count > 0
+        ]
+    ].
+
+process_window(Type, First, Last, Elapsed) ->
+    Before = maps:from_list([{Pid, Value} || {Pid, Value, _} <- First]),
+    Gone = length(First) - length([Pid || {Pid, _, _} <- Last, maps:is_key(Pid, Before)]),
+    lists:foldl(
+        fun({Pid, Value, Info}, {Acc, Missing, Reset}) ->
+            case maps:find(Pid, Before) of
+                error ->
+                    {Acc, Missing + 1, Reset};
+                {ok, Previous} when Type =:= reductions, Value < Previous ->
+                    {Acc, Missing, Reset + 1};
+                {ok, _Previous} when Elapsed =< 0 -> {Acc, Missing + 1, Reset};
+                {ok, Previous} ->
+                    Delta = Value - Previous,
+                    Metric =
+                        case Type of
+                            reductions -> round(Delta * 1000000 / Elapsed);
+                            _ -> Delta
+                        end,
+                    {[{Pid, Metric, Info} | Acc], Missing, Reset}
+            end
+        end,
+        {[], Gone, 0},
+        Last
+    ).
 
 connect_error(Prompt, Node) ->
     ?output(observer_cli_lib:ansi_red(Prompt), [Node]).
