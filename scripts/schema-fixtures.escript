@@ -152,6 +152,19 @@ write(Dir, Name, Response) ->
             ok
     end.
 pure_fixtures(Dir) ->
+    lists:foreach(
+        fun({Name, Arguments}) ->
+            {ok, Description, 0} = observer_cli_escriptize:run_command(describe, #{
+                arguments => Arguments
+            }),
+            write(Dir, Name, Description)
+        end,
+        [
+            {"describe-all", []},
+            {"describe-trace", ["trace", "call"]},
+            {"describe-memory", ["memory"]}
+        ]
+    ),
     Resources = #{
         process => #{observed_count_including_observer => 96, limit => 100},
         port => #{observed_count_including_observer => 1, limit => 100},

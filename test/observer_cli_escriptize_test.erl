@@ -219,6 +219,40 @@ controller_boundary_helpers_test() ->
             )
     end.
 
+describe_is_local_and_exports_the_packaged_schema_test() ->
+    Directory = temporary_directory("observer_cli_describe_local"),
+    PreviousHome = set_config_home(Directory),
+    try
+        Before = {node(), observer_cli_cli:load_context()},
+        {ok, Response, 0} = observer_cli_escriptize:run_command(describe, #{
+            arguments => ["trace", "call"]
+        }),
+        ?assertEqual(
+            #{<<"target">> => null, <<"capture">> => null}, maps:get(<<"meta">>, Response)
+        ),
+        ?assertEqual(<<"trace_call">>, maps:get(<<"id">>, maps:get(<<"data">>, Response))),
+        ?assertEqual(Before, {node(), observer_cli_cli:load_context()}),
+        case code:ensure_loaded(json) of
+            {module, json} ->
+                {schema, Bytes} = observer_cli_escriptize:run_command(describe, #{
+                    schema => true, json => true
+                }),
+                ?assertEqual(observer_cli_catalog:schema(), {ok, Bytes}),
+                Output = assert_halt(0, fun() ->
+                    observer_cli_escriptize:main(["describe", "--schema", "--json"])
+                end),
+                ?assertEqual(Bytes, iolist_to_binary(Output));
+            {error, _} ->
+                ?assertEqual(
+                    {error, capability, json_unavailable},
+                    observer_cli_escriptize:run_command(describe, #{schema => true, json => true})
+                )
+        end
+    after
+        restore_config_home(PreviousHome),
+        file:del_dir_r(Directory)
+    end.
+
 diagnostic_next_actions_are_optional_and_validated_test() ->
     Legacy = diagnostic_response(complete, [#{<<"id">> => <<"vm.process_limit_pressure">>}]),
     Response = observer_cli_escriptize:add_next_actions(Legacy),

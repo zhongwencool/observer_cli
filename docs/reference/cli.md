@@ -498,6 +498,27 @@ observer_cli trace stop --all
 
 ## 7. Use output and exit contracts
 
+### Offline capability discovery
+
+```sh
+observer_cli describe --json
+observer_cli describe trace call --json
+observer_cli describe processes --format term
+observer_cli describe --schema --json
+```
+
+`describe` is local: it never connects, resolves cookies, or reads/writes saved
+context. It describes noninteractive commands, arguments, defaults, bounds,
+machine-readable constraints, identifier policy, side effects and authorization.
+The parser and catalog share public names, option spellings and sort values;
+complex domain safety checks remain in the command implementation.
+
+Ordinary descriptions use the six-field response envelope. `--schema --json`
+instead exports the complete bundled JSON Schema document directly, for offline
+validation; it accepts no command arguments. JSON still requires OTP 27+, while
+text and term descriptions work on OTP 26. Use `describe COMMAND --verbose` for
+full operator-readable metadata. TUI is deliberately excluded from this catalog.
+
 Remote commands accept:
 
 | Option | Default | Constraint |

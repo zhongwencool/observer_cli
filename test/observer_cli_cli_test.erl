@@ -48,6 +48,26 @@ reserved_command_words_test() ->
         Commands
     ).
 
+describe_parses_without_target_options_test() ->
+    lists:foreach(
+        fun(Args) -> ?assertMatch({ok, #{command := describe}}, observer_cli_cli:parse(Args)) end,
+        [
+            ["describe"],
+            ["describe", "memory"],
+            ["describe", "trace", "call", "--json"],
+            ["describe", "--schema", "--format", "json"]
+        ]
+    ),
+    lists:foreach(
+        fun(Args) -> ?assertMatch({error, _}, observer_cli_cli:parse(Args)) end,
+        [
+            ["describe", "tui"],
+            ["describe", "--schema"],
+            ["describe", "memory", "--schema", "--json"],
+            ["describe", "--node", "n@host", "--cookie-env", "COOKIE"]
+        ]
+    ).
+
 verbose_is_text_only_test() ->
     ?assertMatch(
         {ok, #{options := #{verbose := true}}}, observer_cli_cli:parse(["memory", "--verbose"])

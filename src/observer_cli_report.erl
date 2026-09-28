@@ -31,6 +31,13 @@ render(Response, Width) ->
 
 body(_Command, null, _Width) ->
     <<"No data returned.">>;
+body(<<"describe">>, #{<<"commands">> := Commands}, _Width) ->
+    [
+        line([
+            text(maps:get(<<"name">>, Command)), <<" - ">>, text(maps:get(<<"summary">>, Command))
+        ])
+     || Command <- Commands
+    ];
 body(<<"snapshot">>, Data, _Width) when is_map(Data) ->
     [
         compact(maps:without([<<"memory">>], Data), 3),

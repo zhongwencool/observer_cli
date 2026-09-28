@@ -111,7 +111,8 @@ schema_contract() ->
             <<"resourceListCommand">>,
             <<"resourceDetailCommand">>,
             <<"traceCommand">>,
-            <<"logsCommand">>
+            <<"logsCommand">>,
+            <<"describeCommand">>
         ]
     ),
     PreCommand = maps:get(<<"preCommandError">>, Definitions),
@@ -134,7 +135,8 @@ schema_commands(Definitions) ->
                 <<"resourceListCommand">>,
                 <<"resourceDetailCommand">>,
                 <<"traceCommand">>,
-                <<"logsCommand">>
+                <<"logsCommand">>,
+                <<"describeCommand">>
             ]
         ])
     ).
@@ -166,7 +168,8 @@ cli_response_commands() ->
         "port",
         "otp-state",
         "supervision-tree",
-        "logs"
+        "logs",
+        "describe"
     ],
     lists:sort(
         [

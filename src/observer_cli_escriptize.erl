@@ -142,6 +142,9 @@ main_options(Options) ->
         }} ->
             CommandIdentity = command_identity(Command, Arguments),
             case run_command(Command, CommandOptions#{arguments => Arguments}) of
+                {schema, SchemaBytes} ->
+                    output_put_chars(standard_io, SchemaBytes),
+                    exit_with_code(0);
                 {ok, Response, ExitCode} ->
                     command_output(CommandOptions, Response, ExitCode);
                 {error, Category, Reason} ->
@@ -283,6 +286,7 @@ usage() ->
         "  tui NODE            Open the terminal UI; see 'tui --help'\n"
         "\n"
         "Help and version:\n"
+        "  describe [COMMAND] Inspect offline command capabilities\n"
         "  --help, -h          Show this overview\n"
         "  help COMMAND        Show command help (also COMMAND --help)\n"
         "  --version           Show local bundle, protocol, schema, and OTP\n"
@@ -314,6 +318,17 @@ usage() ->
         "Run 'observer_cli COMMAND --help' for options and examples.\n"
     ).
 
+command_help("describe") ->
+    io:put_chars(
+        "Usage:\n  observer_cli describe [COMMAND [SUBCOMMAND]] [--format text|term|json]\n"
+        "  observer_cli describe --schema --json\n\n"
+        "Describe noninteractive commands without connecting or reading credentials.\n"
+        "Use --verbose for full text metadata. JSON and term include all constraints.\n"
+        "--schema exports the bundled JSON Schema itself, not a response envelope;\n"
+        "it requires JSON output and no command arguments. JSON requires OTP 27+.\n"
+        "Examples:\n  observer_cli describe trace call --json\n"
+        "  observer_cli describe processes --format term\n"
+    );
 command_help("connect") ->
     io:put_chars(
         "Usage:\n"
@@ -679,6 +694,19 @@ run_command(Command, Options) ->
         Error -> Error
     end.
 
+run_command_ready(describe, #{schema := true}) ->
+    case observer_cli_catalog:schema() of
+        {ok, Bytes} when byte_size(Bytes) =< ?MAX_RESPONSE_BYTES -> {schema, Bytes};
+        {ok, _} -> {error, schema, response_too_large};
+        {error, Reason} -> {error, internal, Reason}
+    end;
+run_command_ready(describe, Options) ->
+    case observer_cli_catalog:describe(arguments(Options)) of
+        {ok, Data} ->
+            {ok, observer_cli_cli:response(describe, complete, null, null, Data, []), 0};
+        {error, Reason} ->
+            {error, argument, Reason}
+    end;
 run_command_ready(snapshot, Options) ->
     with_target(diagnostic_connection_options(Options), fun(Target, _Capabilities, Remaining) ->
         run_snapshot(

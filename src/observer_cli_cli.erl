@@ -160,6 +160,17 @@ add_option(_Command, _Rest, _Positionals, Options, Key, _Value) when is_map_key(
 add_option(Command, Rest, Positionals, Options, Key, Value) ->
     parse_command(Command, Rest, Positionals, Options#{Key => Value}).
 
+validate_command(describe, Arguments, Options) ->
+    case validate_options(describe, Options) of
+        ok ->
+            case {maps:get(schema, Options, false), Arguments} of
+                {true, []} -> ok;
+                {true, _} -> {error, schema_export_no_command};
+                {false, _} -> validate_arguments(describe, Arguments)
+            end;
+        Error ->
+            Error
+    end;
 validate_command(trace, Arguments, Options) ->
     case validate_options(trace, Options) of
         ok -> validate_trace_command(Arguments, Options);
@@ -255,6 +266,20 @@ validate_format_options(_Command, #{verbose := true, format := Format}) when For
 validate_format_options(Command, Options) ->
     validate_runtime_options(Command, Options).
 
+validate_runtime_options(describe, Options) ->
+    case only_options(describe, Options, [schema]) of
+        false ->
+            {error, unsupported_command_option};
+        true ->
+            case
+                maps:get(schema, Options, false) andalso
+                    not (maps:get(json, Options, false) orelse
+                        maps:get(format, Options, "text") =:= "json")
+            of
+                true -> {error, schema_export_requires_json};
+                false -> ok
+            end
+    end;
 validate_runtime_options(schedulers, Options) ->
     case only_options(schedulers, Options, [duration]) of
         true ->
@@ -444,28 +469,7 @@ only_options(Command, Options, CommandOptions) ->
         maps:keys(Options)
     ).
 
-global_options(connect) ->
-    remote_options();
-global_options(status) ->
-    [format, json, timeout, verbose];
-global_options(disconnect) ->
-    [format, json, verbose];
-global_options(logs) ->
-    remote_options();
-global_options(_Command) ->
-    remote_options() ++ [redact, include_identifiers].
-
-remote_options() ->
-    [
-        node,
-        cookie_env,
-        cookie_file,
-        name_mode,
-        format,
-        json,
-        timeout,
-        verbose
-    ].
+global_options(Command) -> observer_cli_catalog:common_options(Command).
 
 validate_diagnose_options(Options) ->
     Observe = maps:find(observe, Options),
@@ -557,6 +561,11 @@ validate_otp_state_timeout(#{timeout := _} = Options) ->
 validate_otp_state_timeout(Options) ->
     validate_target_options(Options).
 
+validate_arguments(describe, Arguments) ->
+    case observer_cli_catalog:describe(Arguments) of
+        {ok, _} -> ok;
+        {error, _} -> {error, unknown_describe_command}
+    end;
 validate_arguments(process, [_Target]) ->
     ok;
 validate_arguments(process, _Arguments) ->
@@ -1232,56 +1241,10 @@ integer_at_least(Text, Minimum) ->
 multiply_duration(Value, Multiplier) when is_integer(Value) -> Value * Multiplier;
 multiply_duration(error, _Multiplier) -> error.
 
-option("--node") -> {value, node};
-option("--cookie-env") -> {value, cookie_env};
-option("--cookie-file") -> {value, cookie_file};
-option("--name-mode") -> {value, name_mode};
-option("--format") -> {value, format};
-option("--json") -> {flag, json};
-option("--verbose") -> {flag, verbose};
-option("--timeout") -> {value, timeout};
-option("--redact") -> {flag, redact};
-option("--include-identifiers") -> {flag, include_identifiers};
-option("--deep") -> {flag, deep};
-option("--sort") -> {value, sort};
-option("--limit") -> {value, limit};
-option("--duration") -> {value, duration};
-option("--info") -> {flag, info};
-option("--app") -> {value, app};
-option("--observe") -> {value, observe};
-option("--pid") -> {value, pid};
-option("--rate") -> {value, rate};
-option("--replace-existing-trace") -> {flag, replace_existing_trace};
-option("--all") -> {flag, all};
-option("--behavior") -> {value, behavior};
-option("--handler") -> {value, handler};
-option("--tail") -> {value, tail};
-option([$-, $- | _]) -> unknown;
-option(_Argument) -> positional.
+option(Argument) -> observer_cli_catalog:option(Argument).
 
 -spec command(string()) -> atom() | undefined.
-command("connect") -> connect;
-command("status") -> status;
-command("disconnect") -> disconnect;
-command("snapshot") -> snapshot;
-command("memory") -> memory;
-command("schedulers") -> schedulers;
-command("distribution") -> distribution;
-command("processes") -> processes;
-command("process") -> process;
-command("applications") -> applications;
-command("ets") -> ets;
-command("mnesia") -> mnesia;
-command("network") -> network;
-command("ports") -> ports;
-command("port") -> port;
-command("sockets") -> sockets;
-command("otp-state") -> otp_state;
-command("supervision-tree") -> supervision_tree;
-command("logs") -> logs;
-command("trace") -> trace;
-command("diagnose") -> diagnose;
-command(_Argument) -> undefined.
+command(Argument) -> observer_cli_catalog:command(Argument).
 
 -spec schema() -> binary().
 schema() -> ?SCHEMA.
@@ -1290,17 +1253,7 @@ argument_error(Reason) ->
     {error, #{category => argument, exit_code => 2, reason => Reason}}.
 
 %% Keep recovery hints on the same sort definitions used by validation.
-sort_keys(processes) ->
-    ["memory", "message_queue_len", "reductions", "binary_memory", "total_heap_size"];
-sort_keys(applications) ->
-    ["memory", "process_count", "reductions", "message_queue_len"];
-sort_keys(Command) when Command =:= ets; Command =:= mnesia -> ["memory", "size"];
-sort_keys(network) ->
-    ["oct", "recv_oct", "send_oct", "cnt", "recv_cnt", "send_cnt"];
-sort_keys(ports) ->
-    ["queue_size", "memory", "input", "output", "io"];
-sort_keys(sockets) ->
-    ["io", "read_bytes", "write_bytes", "packets", "waits", "fails"].
+sort_keys(Command) -> observer_cli_catalog:sort_keys(Command).
 
 argument_error(Reason, Command, Options) ->
     {error, Error} = argument_error(Reason),
@@ -1459,6 +1412,8 @@ encode(text, #{<<"command">> := <<"logs">>, <<"data">> := Data} = Response) when
     is_map(Data)
 ->
     capped(iolist_to_binary(logs_text(Response, Data)));
+encode(text, #{<<"command">> := <<"describe">>, <<"data">> := #{<<"name">> := _}} = Response) ->
+    encode(verbose, Response);
 encode(text, Response) ->
     capped(observer_cli_report:render(Response, report_width()));
 encode(verbose, #{<<"command">> := Command} = Response) when
@@ -1504,12 +1459,13 @@ report_width() ->
     end.
 
 -spec command_name(atom() | binary()) -> binary().
-command_name(Command) when is_atom(Command) -> command_name(atom_to_binary(Command));
-command_name(<<"trace_call">>) -> <<"trace call">>;
-command_name(<<"trace_stop_all">>) -> <<"trace stop">>;
-command_name(<<"otp_state">>) -> <<"otp-state">>;
-command_name(<<"supervision_tree">>) -> <<"supervision-tree">>;
-command_name(Command) -> Command.
+command_name(Command) when is_atom(Command) -> observer_cli_catalog:public_name(Command);
+command_name(Command) when is_binary(Command) ->
+    try
+        observer_cli_catalog:public_name(binary_to_existing_atom(Command, utf8))
+    catch
+        error:badarg -> Command
+    end.
 
 text_command(Command) -> escape_text(command_name(Command)).
 
@@ -1988,6 +1944,12 @@ reason_message({unsupported_format, Format}) ->
     iolist_to_binary([<<"unsupported format: ">>, escape_text(Format)]);
 reason_message({unsupported_name_mode, Mode}) ->
     iolist_to_binary([<<"unsupported name mode: ">>, escape_text(Mode)]);
+reason_message(schema_export_requires_json) ->
+    <<"describe --schema requires --json or --format json">>;
+reason_message(schema_export_no_command) ->
+    <<"describe --schema exports the complete schema; omit command arguments">>;
+reason_message(unknown_describe_command) ->
+    <<"unknown command description; use describe or describe trace">>;
 reason_message(verbose_text_only) ->
     <<"--verbose is only supported with --format text; JSON and term already contain complete evidence">>;
 reason_message(json_unavailable) ->
