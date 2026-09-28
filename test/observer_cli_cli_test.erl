@@ -48,6 +48,24 @@ reserved_command_words_test() ->
         Commands
     ).
 
+orphan_target_options_are_rejected_test() ->
+    lists:foreach(
+        fun(Options) ->
+            ?assertMatch(
+                {error, #{reason := target_option_requires_node}},
+                observer_cli_cli:parse(["memory" | Options])
+            )
+        end,
+        [["--cookie-env", "COOKIE"], ["--cookie-file", "/missing"], ["--name-mode", "long"]]
+    ),
+    ?assertMatch({ok, _}, observer_cli_cli:parse(["memory"])),
+    ?assertMatch(
+        {ok, _},
+        observer_cli_cli:parse([
+            "memory", "--node", "n@host", "--cookie-env", "COOKIE", "--name-mode", "long"
+        ])
+    ).
+
 positional_tui_forms_are_unknown_commands_test() ->
     ?assertMatch(
         {error, #{reason := {unknown_command, "target@host"}}},

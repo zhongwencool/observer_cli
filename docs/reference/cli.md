@@ -198,7 +198,9 @@ Override it when necessary:
 ```
 
 The controller and target must use the same name mode. An explicit `--node`
-without a cookie source is rejected.
+without a cookie source is rejected. Conversely, `--cookie-env`, `--cookie-file`,
+and `--name-mode` require an explicit `--node`; they never silently override or
+get ignored by saved context. Run `connect` again to update the saved selector.
 
 ## 4. Connect and check status
 

@@ -643,6 +643,12 @@ validate_target_without_timeout(#{node := _Node} = Options) ->
         {ok, {_Target, _Mode}} -> ok;
         {error, Reason} -> {error, Reason}
     end;
+validate_target_without_timeout(Options) when
+    is_map_key(cookie_env, Options);
+    is_map_key(cookie_file, Options);
+    is_map_key(name_mode, Options)
+->
+    {error, target_option_requires_node};
 validate_target_without_timeout(_Options) ->
     ok.
 
@@ -1834,6 +1840,8 @@ reason_message(global_option_before_command) ->
     <<"options must appear after the command name">>;
 reason_message(missing_cookie_source) ->
     <<"--node requires exactly one of --cookie-env or --cookie-file">>;
+reason_message(target_option_requires_node) ->
+    <<"--cookie-env, --cookie-file, and --name-mode require --node; use connect to update the saved target">>;
 reason_message(process_target_required) ->
     <<"process requires one PID_OR_NAME">>;
 reason_message(port_target_required) ->
