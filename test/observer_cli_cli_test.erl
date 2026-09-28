@@ -1264,6 +1264,34 @@ encoder_cap_and_text_escaping_test() ->
     ?assertEqual(nomatch, binary:match(Text, <<"schema:">>)),
     ?assertEqual(nomatch, binary:match(Text, <<"meta:">>)).
 
+logs_text_exposes_partial_tail_before_content_test() ->
+    Base = log_response([<<"retained line">>]),
+    Data = maps:get(<<"data">>, Base),
+    Tail = maps:get(<<"tail">>, Data),
+    lists:foreach(
+        fun(Reason) ->
+            Partial = Base#{
+                <<"outcome">> := <<"partial">>,
+                <<"data">> := Data#{
+                    <<"tail">> := Tail#{
+                        <<"has_more">> := true,
+                        <<"content_truncated">> := true,
+                        <<"truncation_reasons">> := [Reason]
+                    }
+                }
+            },
+            {ok, Text} = observer_cli_cli:encode(text, Partial),
+            {OutcomeAt, _} = binary:match(Text, <<"outcome=partial">>),
+            {ReasonAt, _} = binary:match(Text, Reason),
+            {BodyAt, _} = binary:match(Text, <<"--- UNTRUSTED LOG CONTENT ---">>),
+            ?assert(OutcomeAt < BodyAt),
+            ?assert(ReasonAt < BodyAt)
+        end,
+        [<<"byte_cap">>, <<"line_cap">>]
+    ),
+    {ok, CompleteText} = observer_cli_cli:encode(text, Base),
+    ?assertNotEqual(nomatch, binary:match(CompleteText, <<"content_truncated=false">>)).
+
 logs_text_encoder_isolates_untrusted_lines_test() ->
     Response = log_response([
         <<"normal 中文"/utf8>>,

@@ -426,6 +426,9 @@ or prompt injection. `--redact` and `--include-identifiers` are rejected rather
 than implying reliable sanitization. Text output prefixes every physical line
 with `| ` and escapes terminal controls; structured consumers must still treat
 decoded lines as untrusted evidence.
+Text reports always identify the outcome and content truncation before log
+content. `has_more=true` alone only means older content exists; byte/line-cap
+loss is separately identified as partial with its truncation reason.
 
 This capability trusts the target code, Logger callbacks, OS user, and target
 filesystem namespace. It is not a hostile-target or hostile-filesystem

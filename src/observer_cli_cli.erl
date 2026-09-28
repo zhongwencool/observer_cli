@@ -1446,10 +1446,10 @@ logs_text(Response, Data) ->
     Tail = maps:get(<<"tail">>, Data),
     [
         <<"observer_cli logs\n">>,
+        logs_failure_text(Response, Tail),
         logs_target_text(Target),
         logs_source_text(Selected, Sources),
-        logs_tail_text(Tail),
-        logs_failure_text(Response, Tail)
+        logs_tail_text(Tail)
     ].
 
 logs_target_text(#{<<"node">> := Node, <<"otp_release">> := Otp}) ->
@@ -1544,9 +1544,7 @@ logs_line_text(Line) when is_binary(Line) ->
 logs_line_text(#{<<"encoding">> := <<"base64">>, <<"data">> := Data}) ->
     <<"base64:", Data/binary>>.
 
-logs_failure_text(_Response, Tail) when Tail =/= null ->
-    [];
-logs_failure_text(Response, null) ->
+logs_failure_text(Response, Tail) ->
     Capture = maps:get(<<"capture">>, maps:get(<<"meta">>, Response)),
     Reason =
         case Capture of
@@ -1558,7 +1556,22 @@ logs_failure_text(Response, null) ->
         escape_text(maps:get(<<"outcome">>, Response)),
         <<" reason=">>,
         text_scalar(Reason),
-        <<"\n">>
+        <<"\n">>,
+        case Tail of
+            null ->
+                [];
+            _ ->
+                [
+                    <<"content_truncated=">>,
+                    text_scalar(maps:get(<<"content_truncated">>, Tail)),
+                    <<" truncation_reasons=">>,
+                    lists:join(<<",">>, [
+                        escape_text(R)
+                     || R <- maps:get(<<"truncation_reasons">>, Tail)
+                    ]),
+                    <<"\n">>
+                ]
+        end
     ].
 
 cookie_source_text(#{<<"type">> := <<"env">>, <<"name">> := Name}) ->
