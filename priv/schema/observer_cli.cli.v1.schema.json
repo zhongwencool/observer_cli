@@ -1117,8 +1117,8 @@
         },
         "name_mode": {
           "enum": [
-            "shortnames",
-            "longnames"
+            "short",
+            "long"
           ]
         },
         "cookie_source": {
