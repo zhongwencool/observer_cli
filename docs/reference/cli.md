@@ -292,7 +292,9 @@ reason codes. Command `data` may also retain domain-specific status or reason
 details. Probe failures are not duplicated in `issues` or diagnosis
 `data.skipped`. Incomplete required coverage suppresses findings and produces a
 partial result. "No findings" means only that the covered rules found nothing;
-it does not certify that the node is healthy.
+it does not certify that the node is healthy. If required evidence is complete but
+an optional probe fails, the report remains partial and retains its supported
+findings; the summary states how many findings remain available.
 
 ## 6. Inspect resources and trace
 

@@ -417,6 +417,25 @@ required_gap_suppresses_findings_and_optional_refusal_stays_complete_test() ->
     ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, Partial)),
     ?assertEqual([], maps:get(findings, report_data(Partial))),
     ?assertEqual([], maps:get(<<"issues">>, Partial)),
+    ?assertNotEqual(
+        nomatch, binary:match(maps:get(summary, report_data(Partial)), <<"findings suppressed">>)
+    ),
+    FailedInventory = #{status => error, reason_code => process_inventory_failed},
+    OptionalFailure = observer_cli_diagnostic:build_report(
+        [
+            sample(0, resources(96, 100), FailedInventory),
+            sample(1, resources(96, 100), FailedInventory)
+        ],
+        [0, 1500],
+        Timing,
+        #{}
+    ),
+    ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, OptionalFailure)),
+    ?assertEqual(1, length(maps:get(findings, report_data(OptionalFailure)))),
+    ?assertNotEqual(
+        nomatch,
+        binary:match(maps:get(summary, report_data(OptionalFailure)), <<"1 finding(s) retained">>)
+    ),
     Complete = observer_cli_diagnostic:build_report(
         [High, sample(1, resources(10, 100), unavailable_inventory())],
         [0, 1500],
@@ -645,6 +664,11 @@ observation_required_sets_optional_outcomes_test() ->
         observation, StartedFailureSamples, Plan5, unavailable_holder(), timing(), #{}
     ),
     ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, StartedFailure)),
+    ?assertEqual(1, length(maps:get(findings, report_data(StartedFailure)))),
+    ?assertNotEqual(
+        nomatch,
+        binary:match(maps:get(summary, report_data(StartedFailure)), <<"1 finding(s) retained">>)
+    ),
     ?assertEqual([], maps:get(<<"issues">>, StartedFailure)),
     GapSamples = [
         observation_sample(0, unavailable),
@@ -659,6 +683,9 @@ observation_required_sets_optional_outcomes_test() ->
     ),
     ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, Gap)),
     ?assertEqual([], maps:get(findings, report_data(Gap))),
+    ?assertNotEqual(
+        nomatch, binary:match(maps:get(summary, report_data(Gap)), <<"findings suppressed">>)
+    ),
     ?assertMatch(
         #{status := invalid, reason_code := sampling_gap},
         maps:get(trends, maps:get(context, report_data(Gap)))

@@ -297,7 +297,7 @@ build_report(Samples, Plan, Timing, Distribution) ->
                 distribution => Distribution
             },
             skipped => Skipped,
-            summary => summary(Status, Findings)
+            summary => summary(Status, Findings, RequiredComplete)
         },
         []
     ).
@@ -421,7 +421,7 @@ observation_report(Mode, Samples, Plan, Holder, Timing, Distribution) ->
                 distribution => Distribution
             },
             skipped => observation_skipped(Mode, Samples, Holder),
-            summary => observation_summary(Mode, Status, Findings)
+            summary => observation_summary(Mode, Status, Findings, RequiredComplete)
         },
         []
     ).
@@ -1051,11 +1051,18 @@ observation_skipped(Mode, _Samples, _Holder) ->
     [#{id => Id, reason_code => ruleset_not_calibrated} || Id <- Growth] ++
         Binary.
 
-observation_summary(Mode, partial, _Findings) ->
+observation_summary(Mode, partial, _Findings, false) ->
     iolist_to_binary(
         io_lib:format("~p diagnostics capture is partial; findings suppressed.", [Mode])
     );
-observation_summary(Mode, complete, Findings) ->
+observation_summary(Mode, partial, Findings, true) ->
+    iolist_to_binary(
+        io_lib:format(
+            "~p diagnostics capture is partial; required evidence is complete; ~B finding(s) retained.",
+            [Mode, length(Findings)]
+        )
+    );
+observation_summary(Mode, complete, Findings, true) ->
     iolist_to_binary(
         io_lib:format("~p diagnostics completed with ~B finding(s).", [Mode, length(Findings)])
     ).
@@ -1444,11 +1451,18 @@ skipped_checks(_Samples) ->
     ],
     [#{id => Id, reason_code => ruleset_not_calibrated} || Id <- Growth].
 
-summary(partial, _Findings) ->
+summary(partial, _Findings, false) ->
     <<"Quick diagnostics capture is partial; findings suppressed.">>;
-summary(complete, []) ->
+summary(partial, Findings, true) ->
+    iolist_to_binary(
+        io_lib:format(
+            "Quick diagnostics capture is partial; required evidence is complete; ~B finding(s) retained.",
+            [length(Findings)]
+        )
+    );
+summary(complete, [], true) ->
     <<"Quick diagnostics completed with no limit findings.">>;
-summary(complete, Findings) ->
+summary(complete, Findings, true) ->
     iolist_to_binary(
         io_lib:format("Quick diagnostics found ~B limit finding(s).", [length(Findings)])
     ).
