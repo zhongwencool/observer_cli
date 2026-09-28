@@ -857,6 +857,29 @@ context_option_validation_test() ->
         })
     ).
 
+unicode_context_round_trip_test() ->
+    lists:foreach(
+        fun(Source) ->
+            Options = Source#{node => "target@host", name_mode => "short"},
+            Context = observer_cli_cli:context_term(Options),
+            ?assertEqual(2, maps:get(<<"version">>, Context)),
+            with_context_path(fun(Path) ->
+                ?assertEqual(ok, observer_cli_cli:write_context(Path, Context)),
+                {ok, Stored} = observer_cli_cli:read_context(Path),
+                ?assertEqual({ok, Options}, observer_cli_cli:decode_context(Stored))
+            end)
+        end,
+        [#{cookie_file => "/tmp/中文/é.cookie"}, #{cookie_env => "中文_COOKIE"}]
+    ),
+    Legacy = context_term(<<"target@host">>, <<"file">>, <<"/tmp/", 233, ".cookie">>),
+    ?assertMatch({ok, #{cookie_file := "/tmp/é.cookie"}}, observer_cli_cli:decode_context(Legacy)),
+    Invalid = Legacy#{<<"version">> := 2},
+    ?assertEqual({error, invalid_context}, observer_cli_cli:decode_context(Invalid)),
+    ?assertEqual(
+        {error, invalid_context},
+        observer_cli_cli:save_context(#{node => "target@host", cookie_file => [47, 16#110000]})
+    ).
+
 context_file_test() ->
     with_context_path(fun(Path) ->
         Secret = <<"must_not_be_stored">>,

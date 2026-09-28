@@ -770,9 +770,19 @@ context_options(_Options) ->
 
 -spec save_context(map()) -> ok | {error, atom()}.
 save_context(Options) ->
-    case context_options(Options) of
-        {ok, ContextOptions} -> write_context(context_path(), context_term(ContextOptions));
-        Error -> Error
+    try
+        case context_options(Options) of
+            {ok, ContextOptions} ->
+                Context = context_term(ContextOptions),
+                case byte_size(term_to_binary(Context)) =< ?MAX_CONTEXT_BYTES of
+                    true -> write_context(context_path(), Context);
+                    false -> {error, context_too_large}
+                end;
+            Error ->
+                Error
+        end
+    catch
+        error:_ -> {error, invalid_context}
     end.
 
 -spec load_context() -> {ok, map()} | {error, atom()}.
@@ -808,18 +818,24 @@ mode_text(longnames) -> "long".
 
 context_term(#{node := Node, name_mode := Mode, cookie_env := Name}) ->
     #{
-        <<"version">> => 1,
-        <<"node">> => list_to_binary(Node),
-        <<"name_mode">> => list_to_binary(Mode),
-        <<"cookie_source">> => #{<<"type">> => <<"env">>, <<"name">> => list_to_binary(Name)}
+        <<"version">> => 2,
+        <<"node">> => context_binary(Node),
+        <<"name_mode">> => context_binary(Mode),
+        <<"cookie_source">> => #{<<"type">> => <<"env">>, <<"name">> => context_binary(Name)}
     };
 context_term(#{node := Node, name_mode := Mode, cookie_file := Path}) ->
     #{
-        <<"version">> => 1,
-        <<"node">> => list_to_binary(Node),
-        <<"name_mode">> => list_to_binary(Mode),
-        <<"cookie_source">> => #{<<"type">> => <<"file">>, <<"path">> => list_to_binary(Path)}
+        <<"version">> => 2,
+        <<"node">> => context_binary(Node),
+        <<"name_mode">> => context_binary(Mode),
+        <<"cookie_source">> => #{<<"type">> => <<"file">>, <<"path">> => context_binary(Path)}
     }.
+
+context_binary(Text) ->
+    case unicode:characters_to_binary(Text) of
+        Binary when is_binary(Binary) -> Binary;
+        _ -> error(badarg)
+    end.
 
 write_context(Path, Context) ->
     Dir = filename:dirname(Path),
@@ -964,18 +980,36 @@ decode_context_binary({error, _Reason}) ->
 
 decode_context(
     #{
-        <<"version">> := 1,
+        <<"version">> := Version,
         <<"node">> := Node,
         <<"name_mode">> := Mode,
         <<"cookie_source">> := Source
     } = Context
-) when map_size(Context) =:= 4, is_binary(Node), is_binary(Mode), is_map(Source) ->
-    decode_context_fields(Node, Mode, Source);
+) when
+    map_size(Context) =:= 4,
+    is_binary(Node),
+    is_binary(Mode),
+    is_map(Source),
+    (Version =:= 1 orelse Version =:= 2)
+->
+    case Version of
+        1 -> decode_context_fields(Node, Mode, Source, latin1);
+        2 -> decode_context_fields(Node, Mode, Source)
+    end;
 decode_context(_Context) ->
     {error, invalid_context}.
 
 decode_context_fields(Node, Mode, Source) ->
-    try {binary_to_list(Node), binary_to_list(Mode), decode_context_source(Source)} of
+    decode_context_fields(Node, Mode, Source, utf8).
+
+decode_context_fields(Node, Mode, Source, Encoding) ->
+    try
+        {
+            unicode:characters_to_list(Node, Encoding),
+            unicode:characters_to_list(Mode, Encoding),
+            decode_context_source(Source, Encoding)
+        }
+    of
         {NodeText, ModeText, {ok, SourceOptions}} ->
             Options = SourceOptions#{node => NodeText, name_mode => ModeText},
             case context_options(Options) of
@@ -988,18 +1022,31 @@ decode_context_fields(Node, Mode, Source) ->
         _:_ -> {error, invalid_context}
     end.
 
-decode_context_source(#{<<"type">> := <<"env">>, <<"name">> := Name} = Source) when
+-ifdef(TEST).
+decode_context_source(Source) ->
+    decode_context_source(Source, utf8).
+-endif.
+
+decode_context_source(#{<<"type">> := <<"env">>, <<"name">> := Name} = Source, Encoding) when
     map_size(Source) =:= 2, is_binary(Name)
 ->
-    {ok, #{cookie_env => binary_to_list(Name)}};
-decode_context_source(#{<<"type">> := <<"file">>, <<"path">> := Path} = Source) when
-    map_size(Source) =:= 2, is_binary(Path)
-->
-    case filename:pathtype(binary_to_list(Path)) of
-        absolute -> {ok, #{cookie_file => binary_to_list(Path)}};
+    case unicode:characters_to_list(Name, Encoding) of
+        Text when is_list(Text) -> {ok, #{cookie_env => Text}};
         _ -> error
     end;
-decode_context_source(_Source) ->
+decode_context_source(#{<<"type">> := <<"file">>, <<"path">> := Path} = Source, Encoding) when
+    map_size(Source) =:= 2, is_binary(Path)
+->
+    case unicode:characters_to_list(Path, Encoding) of
+        Text when is_list(Text) ->
+            case filename:pathtype(Text) of
+                absolute -> {ok, #{cookie_file => Text}};
+                _ -> error
+            end;
+        _ ->
+            error
+    end;
+decode_context_source(_Source, _Encoding) ->
     error.
 
 delete_context(Path) ->

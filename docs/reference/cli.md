@@ -231,6 +231,9 @@ For example, macOS normally resolves it to
 `~/Library/Application Support/observer_cli/context.etf`. The directory is mode
 `0700`; the regular, non-symlink file is mode `0600`, size-limited, safely
 decoded, and replaced atomically only after controller cleanup succeeds.
+New selectors use UTF-8 strings in internal context version 2, including cookie
+paths with non-ASCII characters. Legacy version 1 selectors remain readable;
+after downgrading to an older CLI, run `connect` again to recreate its selector.
 
 A reachable target with a missing or incompatible diagnostics bundle is still
 saved. `connect` and `status` report that state as a warning. Diagnostic and
