@@ -359,7 +359,7 @@
         "duration_ms": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Milliseconds."
         },
         "probes": {
           "type": "array",
@@ -431,7 +431,7 @@
         "duration_ms": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Milliseconds."
         },
         "samples": {
           "type": "integer",
@@ -1482,7 +1482,7 @@
             "child_id_canonical_bytes": {
               "type": "integer",
               "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "description": "Bytes."
             }
           },
           "required": [],
@@ -1776,7 +1776,7 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 9223372036854775807,
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "bytes_read": {
           "type": "integer",
@@ -1869,7 +1869,7 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 9223372036854775807,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Milliseconds."
         },
         "probes": {
           "type": "array",
@@ -1987,7 +1987,7 @@
         },
         "raw_read_cap_bytes": {
           "const": 65536,
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "atime_may_change": {
           "const": true
@@ -2048,7 +2048,7 @@
             4,
             8
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         }
       },
       "required": [
@@ -2069,7 +2069,7 @@
             "observed_count_including_observer": {
               "type": "integer",
               "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "description": "Count."
             },
             "limit": {
               "type": "integer",
@@ -2092,7 +2092,7 @@
             "observed_count_including_observer": {
               "type": "integer",
               "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "description": "Count."
             },
             "limit": {
               "type": "integer",
@@ -2115,7 +2115,7 @@
             "observed_count_including_observer": {
               "type": "integer",
               "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "description": "Count."
             },
             "limit": {
               "type": "integer",
@@ -2138,7 +2138,7 @@
             "observed_count": {
               "type": "integer",
               "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "description": "Count."
             },
             "limit": {
               "type": "integer",
@@ -2166,47 +2166,47 @@
         "total_bytes": {
           "type": "integer",
           "minimum": 0,
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "processes_bytes": {
           "type": "integer",
           "minimum": 0,
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "processes_used_bytes": {
           "type": "integer",
           "minimum": 0,
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "system_bytes": {
           "type": "integer",
           "minimum": 0,
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "atom_bytes": {
           "type": "integer",
           "minimum": 0,
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "atom_used_bytes": {
           "type": "integer",
           "minimum": 0,
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "binary_bytes": {
           "type": "integer",
           "minimum": 0,
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "code_bytes": {
           "type": "integer",
           "minimum": 0,
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "ets_bytes": {
           "type": "integer",
           "minimum": 0,
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "observer_contaminated": {
           "type": "boolean"
@@ -2236,7 +2236,7 @@
         "memory_bytes": {
           "type": "integer",
           "minimum": 0,
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         }
       },
       "required": [
@@ -2410,18 +2410,15 @@
             "properties": {
               "instance": {
                 "type": "integer",
-                "minimum": 0,
-                "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+                "minimum": 0
               },
               "hits": {
                 "type": "integer",
-                "minimum": 0,
-                "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+                "minimum": 0
               },
               "calls": {
                 "type": "integer",
-                "minimum": 0,
-                "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+                "minimum": 0
               },
               "cache_hit_rate": {
                 "type": "number",
@@ -2512,8 +2509,7 @@
           "type": "array",
           "items": {
             "type": "integer",
-            "minimum": 0,
-            "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+            "minimum": 0
           }
         },
         "run_queue_snapshot_atomic": {
@@ -2547,7 +2543,7 @@
         "value": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Opaque scheduler wall-time counter units; compare only within the same sampling window, not elapsed milliseconds."
         },
         "unit": {
           "const": "opaque_same_window"
@@ -2669,7 +2665,7 @@
         "interval_ms": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Milliseconds."
         },
         "topology": {
           "$ref": "#/$defs/schedulerTopology"
@@ -2714,7 +2710,7 @@
         },
         "monotonic_midpoint_ms": {
           "type": "integer",
-          "description": "VM-local monotonic milliseconds; may be negative and cannot be compared across VM instances."
+          "description": "VM-local monotonic milliseconds; values may be negative and are comparable only within one VM instance."
         }
       },
       "required": [
@@ -2792,12 +2788,12 @@
             "observed_queue_size_bytes": {
               "type": "integer",
               "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "description": "Bytes."
             },
             "busy_limit_bytes": {
               "type": "integer",
               "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "description": "Bytes."
             },
             "health_inference": {
               "const": "unavailable"
@@ -2848,7 +2844,7 @@
         "connected_peer_count": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Count."
         },
         "connected_peers": {
           "type": "array",
@@ -2907,7 +2903,7 @@
         "returned_peer_count": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Count."
         },
         "truncated": {
           "type": "boolean"
@@ -2988,12 +2984,12 @@
         "working_set_estimated_bytes": {
           "type": "integer",
           "minimum": 0,
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "working_set_budget_bytes": {
           "type": "integer",
           "minimum": 0,
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "observed_resource_count": {
           "type": "integer",
@@ -3037,15 +3033,15 @@
         },
         "scan_started_monotonic_ms": {
           "type": "integer",
-          "description": "VM-local monotonic milliseconds; may be negative and cannot be compared across VM instances."
+          "description": "VM-local monotonic milliseconds; values may be negative and are comparable only within one VM instance."
         },
         "scan_finished_monotonic_ms": {
           "type": "integer",
-          "description": "VM-local monotonic milliseconds; may be negative and cannot be compared across VM instances."
+          "description": "VM-local monotonic milliseconds; values may be negative and are comparable only within one VM instance."
         },
         "sample_monotonic_ms": {
           "type": "integer",
-          "description": "VM-local monotonic milliseconds; may be negative and cannot be compared across VM instances."
+          "description": "VM-local monotonic milliseconds; values may be negative and are comparable only within one VM instance."
         },
         "complete": {
           "type": "boolean"
@@ -3117,12 +3113,12 @@
         "interval_ms": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Milliseconds."
         },
         "requested_duration_ms": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Milliseconds."
         },
         "born_pids": {
           "type": "array",
@@ -3148,7 +3144,7 @@
         "observed_count_including_observer": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Count."
         }
       },
       "required": [],
@@ -3194,12 +3190,12 @@
             "active_suspend_count": {
               "type": "integer",
               "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "description": "Count."
             },
             "outstanding_suspend_count": {
               "type": "integer",
               "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "description": "Count."
             }
           },
           "required": [
@@ -3239,8 +3235,7 @@
               "anyOf": [
                 {
                   "type": "integer",
-                  "minimum": 0,
-                  "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+                  "minimum": 0
                 },
                 {
                   "type": "null"
@@ -3252,8 +3247,7 @@
             },
             "line": {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             "location": {
               "anyOf": [
@@ -3396,7 +3390,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "message_queue_len": {
           "anyOf": [
@@ -3430,7 +3424,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "total_heap_size_bytes": {
           "anyOf": [
@@ -3442,7 +3436,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "stack_size_bytes": {
           "anyOf": [
@@ -3454,7 +3448,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "binary_refs_count": {
           "anyOf": [
@@ -3477,7 +3471,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "binary_memory_bytes": {
           "anyOf": [
@@ -3489,7 +3483,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "catchlevel": {
           "anyOf": [
@@ -3507,78 +3501,63 @@
           "properties": {
             "min_bin_vheap_size": {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             "min_heap_size": {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             "fullsweep_after": {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             "minor_gcs": {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             "old_heap_block_size": {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             "heap_block_size": {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             "mbuf_size": {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             "recent_size": {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             "stack_size": {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             "old_heap_size": {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             "heap_size": {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             "bin_vheap_size": {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             "bin_vheap_block_size": {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             "bin_old_vheap_size": {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             "bin_old_vheap_block_size": {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             }
           },
           "required": [],
@@ -3608,7 +3587,7 @@
         "links_total_count": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Count."
         },
         "links_truncated": {
           "type": "boolean"
@@ -3623,7 +3602,7 @@
         "monitors_total_count": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Count."
         },
         "monitors_truncated": {
           "type": "boolean"
@@ -3638,7 +3617,7 @@
         "monitored_by_total_count": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Count."
         },
         "monitored_by_truncated": {
           "type": "boolean"
@@ -3653,13 +3632,13 @@
         "memory_delta": {
           "anyOf": [
             {
-              "type": "integer",
-              "description": "VM-local monotonic milliseconds; may be negative and cannot be compared across VM instances."
+              "type": "integer"
             },
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Signed byte change over the measured sample interval."
         },
         "memory_per_second": {
           "anyOf": [
@@ -3669,18 +3648,19 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Bytes per second over the measured sample interval."
         },
         "message_queue_len_delta": {
           "anyOf": [
             {
-              "type": "integer",
-              "description": "VM-local monotonic milliseconds; may be negative and cannot be compared across VM instances."
+              "type": "integer"
             },
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Signed change in message count over the measured sample interval."
         },
         "message_queue_len_per_second": {
           "anyOf": [
@@ -3690,18 +3670,19 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Message count per second over the measured sample interval."
         },
         "reductions_delta": {
           "anyOf": [
             {
-              "type": "integer",
-              "description": "VM-local monotonic milliseconds; may be negative and cannot be compared across VM instances."
+              "type": "integer"
             },
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "BEAM reduction count increase over the measured sample interval; reset counters are excluded."
         },
         "reductions_per_second": {
           "anyOf": [
@@ -3711,18 +3692,19 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "BEAM reduction count per second over the measured sample interval."
         },
         "binary_memory_delta": {
           "anyOf": [
             {
-              "type": "integer",
-              "description": "VM-local monotonic milliseconds; may be negative and cannot be compared across VM instances."
+              "type": "integer"
             },
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Signed byte change over the measured sample interval."
         },
         "binary_memory_per_second": {
           "anyOf": [
@@ -3732,18 +3714,19 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Bytes per second over the measured sample interval."
         },
         "total_heap_size_delta": {
           "anyOf": [
             {
-              "type": "integer",
-              "description": "VM-local monotonic milliseconds; may be negative and cannot be compared across VM instances."
+              "type": "integer"
             },
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Signed byte change over the measured sample interval."
         },
         "total_heap_size_per_second": {
           "anyOf": [
@@ -3753,7 +3736,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Bytes per second over the measured sample interval."
         }
       },
       "required": [
@@ -3821,7 +3805,7 @@
         "memory_bytes": {
           "type": "integer",
           "minimum": 0,
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "message_queue_len": {
           "type": "integer",
@@ -3910,11 +3894,12 @@
         "memory_bytes": {
           "type": "integer",
           "minimum": 0,
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "size": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "Table object count."
         }
       },
       "required": [
@@ -3945,33 +3930,31 @@
         "size": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Table object count."
         },
         "memory_bytes": {
           "anyOf": [
             {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             {
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "disk_bytes": {
           "anyOf": [
             {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             {
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "management": {
           "type": "string",
@@ -4038,7 +4021,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "memory": {
           "anyOf": [
@@ -4050,7 +4033,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "input": {
           "anyOf": [
@@ -4348,7 +4331,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "write_bytes": {
           "anyOf": [
@@ -4360,7 +4343,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "io": {
           "anyOf": [
@@ -4605,8 +4588,7 @@
           ],
           "items": {
             "type": "integer",
-            "minimum": 0,
-            "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+            "minimum": 0
           }
         },
         "controls": {
@@ -4616,8 +4598,7 @@
           ],
           "items": {
             "type": "integer",
-            "minimum": 0,
-            "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+            "minimum": 0
           }
         },
         "connected_pid": {
@@ -4640,7 +4621,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "memory": {
           "anyOf": [
@@ -4652,7 +4633,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "display_id": {
           "anyOf": [
@@ -4796,7 +4777,7 @@
             "seconds": {
               "type": "integer",
               "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "description": "Seconds."
             }
           },
           "additionalProperties": false
@@ -5004,8 +4985,7 @@
               ],
               "items": {
                 "type": "integer",
-                "minimum": 0,
-                "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+                "minimum": 0
               }
             },
             "controls": {
@@ -5015,8 +4995,7 @@
               ],
               "items": {
                 "type": "integer",
-                "minimum": 0,
-                "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+                "minimum": 0
               }
             },
             "connected_pid": {
@@ -5039,7 +5018,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Bytes; not a percentage of host physical memory."
+              "description": "Bytes."
             },
             "memory": {
               "anyOf": [
@@ -5051,7 +5030,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Bytes; not a percentage of host physical memory."
+              "description": "Bytes."
             },
             "display_id": {
               "anyOf": [
@@ -5161,7 +5140,7 @@
             "links_total_count": {
               "type": "integer",
               "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "description": "Count."
             },
             "links_truncated": {
               "type": "boolean"
@@ -5176,7 +5155,7 @@
             "monitors_total_count": {
               "type": "integer",
               "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "description": "Count."
             },
             "monitors_truncated": {
               "type": "boolean"
@@ -5191,7 +5170,7 @@
             "monitored_by_total_count": {
               "type": "integer",
               "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "description": "Count."
             },
             "monitored_by_truncated": {
               "type": "boolean"
@@ -5248,8 +5227,7 @@
           "anyOf": [
             {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             {
               "type": "null"
@@ -5260,8 +5238,7 @@
           "anyOf": [
             {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             {
               "type": "null"
@@ -5272,8 +5249,7 @@
           "anyOf": [
             {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             {
               "type": "null"
@@ -5284,8 +5260,7 @@
           "anyOf": [
             {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             {
               "type": "null"
@@ -5296,8 +5271,7 @@
           "anyOf": [
             {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             {
               "type": "null"
@@ -5308,8 +5282,7 @@
           "anyOf": [
             {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             {
               "type": "null"
@@ -5974,7 +5947,7 @@
             "size_bytes": {
               "type": "integer",
               "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "description": "Bytes."
             }
           },
           "required": [
@@ -5992,7 +5965,7 @@
             "size_bits": {
               "type": "integer",
               "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "description": "Bits."
             }
           },
           "required": [
@@ -6060,13 +6033,13 @@
               "anyOf": [
                 {
                   "type": "integer",
-                  "minimum": 0,
-                  "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+                  "minimum": 0
                 },
                 {
                   "type": "null"
                 }
-              ]
+              ],
+              "description": "Container element count; null when the list size is unavailable."
             },
             "children": {
               "type": "array",
@@ -6510,11 +6483,11 @@
         "sample_index": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Zero-based sample index."
         },
         "monotonic_midpoint_ms": {
           "type": "integer",
-          "description": "VM-local monotonic milliseconds; may be negative and cannot be compared across VM instances."
+          "description": "VM-local monotonic milliseconds; values may be negative and are comparable only within one VM instance."
         },
         "observed": {
           "type": "number"
@@ -6531,7 +6504,7 @@
         "observed_count_including_observer": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Count."
         },
         "limit": {
           "type": "integer",
@@ -6553,8 +6526,7 @@
         },
         "observed_runnable_count_including_observer": {
           "type": "integer",
-          "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "minimum": 0
         },
         "wall_time_unit": {
           "const": "opaque_same_window"
@@ -6655,15 +6627,15 @@
         },
         "monotonic_start_ms": {
           "type": "integer",
-          "description": "VM-local monotonic milliseconds; may be negative and cannot be compared across VM instances."
+          "description": "VM-local monotonic milliseconds; values may be negative and are comparable only within one VM instance."
         },
         "monotonic_finish_ms": {
           "type": "integer",
-          "description": "VM-local monotonic milliseconds; may be negative and cannot be compared across VM instances."
+          "description": "VM-local monotonic milliseconds; values may be negative and are comparable only within one VM instance."
         },
         "monotonic_midpoint_ms": {
           "type": "integer",
-          "description": "VM-local monotonic milliseconds; may be negative and cannot be compared across VM instances."
+          "description": "VM-local monotonic milliseconds; values may be negative and are comparable only within one VM instance."
         },
         "process_limit": {
           "type": "integer",
@@ -6672,7 +6644,7 @@
         "process_observed_count_including_observer": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Count."
         },
         "process_usage_ratio": {
           "type": "number",
@@ -6685,7 +6657,7 @@
         "port_observed_count_including_observer": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Count."
         },
         "port_usage_ratio": {
           "type": "number",
@@ -6698,7 +6670,7 @@
         "atom_observed_count_including_observer": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Count."
         },
         "atom_usage_ratio": {
           "type": "number",
@@ -6711,7 +6683,7 @@
         "ets_observed_count_including_observer": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Count."
         },
         "ets_usage_ratio": {
           "type": "number",
@@ -6756,20 +6728,19 @@
         "planned_interval_ms": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Milliseconds."
         },
         "planned_duration_ms": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Milliseconds."
         },
         "target_monotonic_times_ms": {
           "type": "array",
           "items": {
-            "type": "integer",
-            "description": "VM-local monotonic milliseconds; may be negative and cannot be compared across VM instances."
+            "type": "integer"
           },
-          "description": "VM-local monotonic milliseconds; may be negative and cannot be compared across VM instances."
+          "description": "VM-local monotonic milliseconds; values may be negative and are comparable only within one VM instance."
         },
         "actual_samples": {
           "type": "array",
@@ -6779,11 +6750,11 @@
               "sample_index": {
                 "type": "integer",
                 "minimum": 0,
-                "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+                "description": "Zero-based sample index."
               },
               "target_monotonic_ms": {
                 "type": "integer",
-                "description": "VM-local monotonic milliseconds; may be negative and cannot be compared across VM instances."
+                "description": "VM-local monotonic milliseconds; values may be negative and are comparable only within one VM instance."
               },
               "started_monotonic_ms": {
                 "anyOf": [
@@ -6868,7 +6839,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Signed change in messages over the measured sample interval."
         },
         "memory_bytes": {
           "anyOf": [
@@ -6879,7 +6851,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Signed change in bytes over the measured sample interval."
         },
         "size": {
           "anyOf": [
@@ -6889,7 +6861,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Signed change in table objects over the measured sample interval."
         },
         "memory_words": {
           "anyOf": [
@@ -6899,7 +6872,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Signed change in machine words over the measured sample interval."
         },
         "queue_size": {
           "anyOf": [
@@ -6910,7 +6884,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Signed change in bytes over the measured sample interval."
         },
         "memory": {
           "anyOf": [
@@ -6921,7 +6895,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Signed change in bytes over the measured sample interval."
         },
         "input": {
           "anyOf": [
@@ -6931,7 +6905,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Signed change in bytes over the measured sample interval."
         },
         "output": {
           "anyOf": [
@@ -6941,7 +6916,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Signed change in bytes over the measured sample interval."
         },
         "total_bytes": {
           "anyOf": [
@@ -6952,7 +6928,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Signed change in bytes over the measured sample interval."
         },
         "processes_bytes": {
           "anyOf": [
@@ -6963,7 +6939,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Signed change in bytes over the measured sample interval."
         },
         "processes_used_bytes": {
           "anyOf": [
@@ -6974,7 +6950,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Signed change in bytes over the measured sample interval."
         },
         "system_bytes": {
           "anyOf": [
@@ -6985,7 +6961,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Signed change in bytes over the measured sample interval."
         },
         "atom_bytes": {
           "anyOf": [
@@ -6996,7 +6972,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Signed change in bytes over the measured sample interval."
         },
         "atom_used_bytes": {
           "anyOf": [
@@ -7007,7 +6983,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Signed change in bytes over the measured sample interval."
         },
         "binary_bytes": {
           "anyOf": [
@@ -7018,7 +6994,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Signed change in bytes over the measured sample interval."
         },
         "code_bytes": {
           "anyOf": [
@@ -7029,7 +7005,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Signed change in bytes over the measured sample interval."
         },
         "ets_bytes": {
           "anyOf": [
@@ -7040,7 +7016,7 @@
               "type": "null"
             }
           ],
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Signed change in bytes over the measured sample interval."
         },
         "input_state": {
           "enum": [
@@ -7076,67 +7052,72 @@
       "type": "object",
       "properties": {
         "message_queue_len": {
-          "type": "number"
+          "type": "number",
+          "description": "Messages per second over the measured sample interval."
         },
         "memory_bytes": {
           "type": "number",
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes per second over the measured sample interval."
         },
         "size": {
-          "type": "number"
+          "type": "number",
+          "description": "Table objects per second over the measured sample interval."
         },
         "memory_words": {
-          "type": "number"
+          "type": "number",
+          "description": "Machine words per second over the measured sample interval."
         },
         "queue_size": {
           "type": "number",
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes per second over the measured sample interval."
         },
         "memory": {
           "type": "number",
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes per second over the measured sample interval."
         },
         "input": {
-          "type": "number"
+          "type": "number",
+          "description": "Bytes per second over the measured sample interval."
         },
         "output": {
-          "type": "number"
+          "type": "number",
+          "description": "Bytes per second over the measured sample interval."
         },
         "total_bytes": {
           "type": "number",
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes per second over the measured sample interval."
         },
         "processes_bytes": {
           "type": "number",
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes per second over the measured sample interval."
         },
         "processes_used_bytes": {
           "type": "number",
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes per second over the measured sample interval."
         },
         "system_bytes": {
           "type": "number",
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes per second over the measured sample interval."
         },
         "atom_bytes": {
           "type": "number",
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes per second over the measured sample interval."
         },
         "atom_used_bytes": {
           "type": "number",
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes per second over the measured sample interval."
         },
         "binary_bytes": {
           "type": "number",
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes per second over the measured sample interval."
         },
         "code_bytes": {
           "type": "number",
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes per second over the measured sample interval."
         },
         "ets_bytes": {
           "type": "number",
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes per second over the measured sample interval."
         }
       },
       "required": [],
@@ -7214,7 +7195,7 @@
         "interval_ms": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Milliseconds."
         },
         "replaced": {
           "type": "array",
@@ -7262,12 +7243,12 @@
         "sample_count": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Count."
         },
         "interval_ms": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Milliseconds."
         },
         "deltas": {
           "$ref": "#/$defs/trendMetrics"
@@ -7304,7 +7285,7 @@
         "sample_count": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Count."
         },
         "lifecycle": {
           "$ref": "#/$defs/lifecycle"
@@ -7319,12 +7300,12 @@
         "born_count": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Count."
         },
         "dead_count": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Count."
         },
         "sort_metric": {
           "const": "io"
@@ -7469,7 +7450,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Signed change in bytes over the measured sample interval."
         },
         "message_queue_len_delta": {
           "anyOf": [
@@ -7479,7 +7461,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Signed change in message count over the measured sample interval."
         },
         "reductions_delta": {
           "anyOf": [
@@ -7489,7 +7472,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Signed change in BEAM reduction count over the measured sample interval."
         },
         "reductions_per_second": {
           "anyOf": [
@@ -7499,7 +7483,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "BEAM reductions per second over the measured sample interval."
         },
         "reductions_state": {
           "enum": [
@@ -7572,7 +7557,7 @@
         "interval_ms": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Milliseconds."
         },
         "stable_positive_reductions_denominator": {
           "type": "integer",
@@ -7738,12 +7723,12 @@
         "working_set_estimated_bytes": {
           "type": "integer",
           "minimum": 0,
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "working_set_budget_bytes": {
           "type": "integer",
           "minimum": 0,
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "observed_resource_count": {
           "type": "integer",
@@ -7781,7 +7766,7 @@
         "observed_count_including_observer": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Count."
         },
         "retention_semantics": {
           "const": "current_context_only"
@@ -7801,32 +7786,32 @@
             "observed_count_including_observer": {
               "type": "integer",
               "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "description": "Count."
             },
             "scan_budget_count": {
               "type": "integer",
               "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "description": "Count."
             },
             "tracked_field_count": {
               "type": "integer",
               "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "description": "Count."
             },
             "retained_sample_count": {
               "type": "integer",
               "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "description": "Count."
             },
             "working_set_estimated_bytes": {
               "type": "integer",
               "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "description": "Bytes."
             },
             "working_set_budget_bytes": {
               "type": "integer",
               "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "description": "Bytes."
             }
           },
           "required": [
@@ -7966,8 +7951,7 @@
           "anyOf": [
             {
               "type": "integer",
-              "minimum": 0,
-              "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+              "minimum": 0
             },
             {
               "type": "null"
@@ -7989,7 +7973,7 @@
               "offset_ms": {
                 "type": "integer",
                 "minimum": 0,
-                "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+                "description": "Milliseconds."
               }
             },
             "required": [
@@ -8154,7 +8138,7 @@
         "binary_reference_bytes": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Bytes."
         }
       },
       "required": [
@@ -8354,12 +8338,12 @@
         "working_set_estimated_bytes": {
           "type": "integer",
           "minimum": 0,
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "working_set_budget_bytes": {
           "type": "integer",
           "minimum": 0,
-          "description": "Bytes; not a percentage of host physical memory."
+          "description": "Bytes."
         },
         "observed_resource_count": {
           "type": "integer",
@@ -8403,15 +8387,15 @@
         },
         "scan_started_monotonic_ms": {
           "type": "integer",
-          "description": "VM-local monotonic milliseconds; may be negative and cannot be compared across VM instances."
+          "description": "VM-local monotonic milliseconds; values may be negative and are comparable only within one VM instance."
         },
         "scan_finished_monotonic_ms": {
           "type": "integer",
-          "description": "VM-local monotonic milliseconds; may be negative and cannot be compared across VM instances."
+          "description": "VM-local monotonic milliseconds; values may be negative and are comparable only within one VM instance."
         },
         "sample_monotonic_ms": {
           "type": "integer",
-          "description": "VM-local monotonic milliseconds; may be negative and cannot be compared across VM instances."
+          "description": "VM-local monotonic milliseconds; values may be negative and are comparable only within one VM instance."
         },
         "complete": {
           "type": "boolean"
@@ -8472,12 +8456,12 @@
         "interval_ms": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Milliseconds."
         },
         "requested_duration_ms": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Milliseconds."
         },
         "born_pids": {
           "type": "array",
@@ -8524,27 +8508,27 @@
         "observed_count_including_observer": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Count."
         },
         "process_scanned_count": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Count."
         },
         "process_eligible_count": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Count."
         },
         "unattributed_process_count": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Count."
         },
         "observed_local_table_count": {
           "type": "integer",
           "minimum": 0,
-          "description": "Milliseconds; measured intervals are not assumed equal to requested durations."
+          "description": "Count."
         },
         "resource": {
           "enum": [

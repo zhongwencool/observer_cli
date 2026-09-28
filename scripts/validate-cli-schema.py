@@ -21,6 +21,123 @@ def load(path: Path):
         return json.load(stream)
 
 
+def schema_unit_errors(schema):
+    """Check unit annotations separately: valid numeric types do not imply valid units."""
+    errors = []
+    definitions = schema.get("$defs", {})
+    opaque_counter = "Opaque scheduler wall-time counter units; compare only within the same sampling window, not elapsed milliseconds."
+
+    def walk(value, path=(), field=None):
+        if isinstance(value, dict):
+            description = value.get("description", "")
+            lower = description.lower()
+            location = "/" + "/".join(map(str, path))
+            is_counter = path == ("$defs", "schedulerCounter", "properties", "value")
+            if "millisecond" in lower and not (field or "").endswith("_ms"):
+                if not (is_counter and description == opaque_counter):
+                    errors.append(f"{location}: time unit on a non-millisecond field")
+            if "monotonic" in lower and "monotonic" not in (field or ""):
+                errors.append(f"{location}: monotonic time annotation on a non-time field")
+            if "garbage_collection_info" in path and description:
+                errors.append(f"{location}: raw OTP GC fields must not inherit guessed units")
+            if description and any(unit in lower for unit in ("bytes", "milliseconds", "count", "words", "bits")):
+                if path and (len(path) < 2 or path[-2] != "properties"):
+                    errors.append(f"{location}: numeric unit annotation belongs on its named property, not a shared subschema")
+            for key, child in value.items():
+                if key == "properties":
+                    for name, prop in child.items():
+                        walk(prop, path + (key, name), name)
+                elif key != "description":
+                    walk(child, path + (key,), field)
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                walk(child, path + (index,), field)
+
+    walk(schema)
+
+    def require(path, expected):
+        value = schema
+        try:
+            for part in path:
+                value = value[part]
+            actual = value.get("description")
+        except (KeyError, IndexError, TypeError):
+            actual = None
+        if actual != expected:
+            location = "/" + "/".join(map(str, path))
+            errors.append(f"{location}: expected unit annotation {expected!r}, got {actual!r}")
+
+    def prop(name, field, expected):
+        require(("$defs", name, "properties", field), expected)
+
+    prop("schedulerCounter", "value", opaque_counter)
+    require(("$defs", "portOption", "properties", "value", "properties", "seconds"), "Seconds.")
+    for name in ("mnesiaItem", "etsItem"):
+        prop(name, "size", "Table object count.")
+    for field in ("memory_bytes", "disk_bytes"):
+        prop("mnesiaItem", field, "Bytes.")
+    require(("$defs", "stateShape", "oneOf", 1, "properties", "size_bytes"), "Bytes.")
+    require(("$defs", "stateShape", "oneOf", 2, "properties", "size_bits"), "Bits.")
+    require(("$defs", "stateShape", "oneOf", 5, "properties", "size"),
+            "Container element count; null when the list size is unavailable.")
+    for field in ("memory", "binary_memory", "total_heap_size"):
+        prop("processItem", field + "_delta", "Signed byte change over the measured sample interval.")
+        prop("processItem", field + "_per_second", "Bytes per second over the measured sample interval.")
+    for field, unit in (("message_queue_len", "message count"), ("reductions", "BEAM reduction count")):
+        delta_description = ("BEAM reduction count increase over the measured sample interval; reset counters are excluded."
+                             if field == "reductions" else f"Signed change in {unit} over the measured sample interval.")
+        prop("processItem", field + "_delta", delta_description)
+        prop("processItem", field + "_per_second", f"{(unit[0].upper() + unit[1:])} per second over the measured sample interval.")
+    for name in ("trendMetrics", "trendRates"):
+        for field in definitions.get(name, {}).get("properties", {}):
+            if field.endswith("_state"):
+                continue
+            units = {"memory_words": "machine words", "message_queue_len": "messages", "size": "table objects",
+                     **{name: "bytes" for name in ("memory_bytes", "queue_size", "memory", "input", "output",
+                         "total_bytes", "processes_bytes", "processes_used_bytes", "system_bytes",
+                         "atom_bytes", "atom_used_bytes", "binary_bytes", "code_bytes", "ets_bytes")}}
+            if field not in units:
+                errors.append(f"{name}/{field}: declare this metric's producer unit explicitly")
+                continue
+            unit = units[field]
+            expected = (f"Signed change in {unit} over the measured sample interval." if name == "trendMetrics" else
+                        f"{(unit[0].upper() + unit[1:])} per second over the measured sample interval.")
+            prop(name, field, expected)
+    return errors
+
+
+def schema_unit_negative_cases(schema):
+    """Mutate valid schema annotations without changing any accepted data types."""
+    locations = [
+        ("resourceCounts", ("properties", "process", "properties", "observed_count_including_observer")),
+        ("mnesiaItem", ("properties", "memory_bytes", "anyOf", 0)),
+        ("findingEvidence", ("properties", "sample_index")),
+        ("allocator", ("properties", "cache_hit_rates", "items", "properties", "instance")),
+        ("processItem", ("properties", "garbage_collection_info", "properties", "heap_size")),
+        ("schedulerCounter", ("properties", "value")),
+        ("portOption", ("properties", "value", "properties", "seconds")),
+        ("stateShape", ("oneOf", 2, "properties", "size_bits")),
+    ]
+    for name, tail in locations:
+        altered = copy.deepcopy(schema)
+        value = altered["$defs"][name]
+        for part in tail:
+            value = value[part]
+        value["description"] = "Milliseconds; measured intervals are not assumed equal to requested durations."
+        yield name + "/" + "/".join(map(str, tail)), altered
+    for name, field, description in [
+        ("processItem", "memory_delta", "VM-local monotonic milliseconds; may be negative and cannot be compared across VM instances."),
+        ("processItem", "reductions_delta", "VM-local monotonic milliseconds; may be negative and cannot be compared across VM instances."),
+        ("trendRates", "memory_bytes", "Bytes; not a percentage of host physical memory."),
+        ("trendRates", "memory_words", "Bytes per second over the measured sample interval."),
+        ("trendMetrics", "size", "Signed change in bytes over the measured sample interval."),
+        ("trendRates", "message_queue_len", "Messages."),
+    ]:
+        altered = copy.deepcopy(schema)
+        altered["$defs"][name]["properties"][field]["description"] = description
+        yield name + "/" + field, altered
+
+
 def pointer(root, path):
     value = root
     for part in path.split("/")[1:]:
@@ -123,7 +240,13 @@ def main():
     schema = load(args.schema)
     Draft202012Validator.check_schema(schema)
     validator = Draft202012Validator(schema, format_checker=FormatChecker(formats=["date-time"]))
-    failures = []
+    failures = schema_unit_errors(schema)
+    unit_negative_count = 0
+    if args.self_test and not failures:
+        for path, malformed_schema in schema_unit_negative_cases(schema):
+            unit_negative_count += 1
+            if not schema_unit_errors(malformed_schema):
+                failures.append(f"schema: corrupted unit annotation at {path} was accepted")
     for executable in args.escript:
         with zipfile.ZipFile(executable) as archive:
             names = [name for name in archive.namelist() if name.endswith("/priv/schema/observer_cli.cli.v1.schema.json")]
@@ -149,7 +272,7 @@ def main():
     if failures:
         print("\n".join(failures), file=sys.stderr)
         return 1
-    print(f"Validated {count} emitted responses, rejected {negative_count} negative cases, verified {len(args.escript)} packaged schemas.")
+    print(f"Validated {count} emitted responses, rejected {negative_count} negative cases, verified {len(args.escript)} packaged schemas; rejected {unit_negative_count} schema-unit mutations.")
     return 0
 
 
