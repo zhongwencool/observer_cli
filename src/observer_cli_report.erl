@@ -104,14 +104,18 @@ rule_scope(_) ->
 actions(Actions) ->
     [
         [
-            compact(maps:without([<<"argv">>], Action), 2),
+            line([<<"  ">>, text(maps:get(<<"purpose">>, Action, <<"Suggested observation">>))]),
             line([
-                <<"  argv (requires explicit original target binding): ">>,
-                text(maps:get(<<"argv">>, Action, []))
-            ])
+                <<"    observer_cli ">>,
+                join([shell_argument(A) || A <- maps:get(<<"argv">>, Action, [])], <<" ">>)
+            ]),
+            <<"    Bind the original explicit target and cookie source; do not run against saved context.">>
         ]
      || Action <- Actions
     ].
+
+shell_argument(Argument) ->
+    [<<"'">>, binary:replace(text(Argument), <<"'">>, <<"'\\''">>, [global]), <<"'">>].
 
 findings([]) ->
     <<"  none">>;

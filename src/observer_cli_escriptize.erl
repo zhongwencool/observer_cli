@@ -73,6 +73,7 @@
     request_options/1,
     snapshot_response/1,
     diagnose_response/1,
+    add_next_actions/1,
     active_options/1,
     random_cookie/1,
     connect_before/3,
@@ -1102,7 +1103,9 @@ run_diagnose(Target, Options, Remaining) ->
     Request = maps:with([observe, deep, app], Options),
     case target_dispatch(Target, diagnose, Request, Options, Policy, Remaining) of
         {ok, Response} ->
-            validated_response(diagnose, Policy, Target, Response, fun diagnose_response/1);
+            validated_response(diagnose, Policy, Target, Response, fun(Validated) ->
+                diagnose_response(add_next_actions(Validated))
+            end);
         invalid ->
             {error, schema, invalid_diagnose_response};
         Error ->
@@ -1151,6 +1154,15 @@ target_dispatch(Target, Command, Request, Options, Policy, Remaining) ->
 
 diagnose_response(Response) ->
     dispatch_response(Response).
+
+%% Derived on the controller after evidence validation; target wire data stays
+%% compatible with controllers that require the original diagnostic data keys.
+add_next_actions(#{<<"data">> := #{<<"findings">> := Findings} = Data} = Response) ->
+    Response#{
+        <<"data">> := Data#{<<"next_actions">> => observer_cli_actions:from_findings(Findings)}
+    };
+add_next_actions(Response) ->
+    Response.
 
 with_target(Options, Fun) ->
     case node() of
@@ -3288,7 +3300,7 @@ valid_complete_resource_wrapper(Wrapper) ->
     end.
 
 valid_diagnose_data(#{<<"data">> := Data} = Response) ->
-    lists:sort(maps:keys(Data)) =:=
+    lists:sort(maps:keys(maps:remove(<<"next_actions">>, Data))) =:=
         [
             <<"context">>,
             <<"findings">>,
@@ -3306,7 +3318,13 @@ valid_diagnose_data(#{<<"data">> := Data} = Response) ->
         is_list(maps:get(<<"findings">>, Data)) andalso
         is_list(maps:get(<<"suspects">>, Data)) andalso
         is_list(maps:get(<<"skipped">>, Data)) andalso
-        is_binary(maps:get(<<"summary">>, Data)) andalso valid_findings(Response).
+        is_binary(maps:get(<<"summary">>, Data)) andalso valid_findings(Response) andalso
+        valid_next_actions(Data).
+
+valid_next_actions(#{<<"next_actions">> := Actions, <<"findings">> := Findings}) ->
+    observer_cli_actions:valid(Actions, Findings);
+valid_next_actions(_) ->
+    true.
 
 valid_findings(#{<<"data">> := #{<<"findings">> := Findings}} = Response) ->
     lists:all(

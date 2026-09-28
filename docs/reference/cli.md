@@ -309,6 +309,15 @@ findings; the summary states how many findings remain available.
 
 ## 6. Inspect resources and trace
 
+Diagnosis may include `data.next_actions`, derived by the controller from
+validated findings. Each action provides an ID, purpose, command-relative `argv`,
+risk and authorization metadata, and `target_binding=same_explicit_target`.
+Keep the original explicit node and cookie-source selector when constructing the
+next invocation; the argv intentionally contains neither credentials nor a saved
+context fallback. These are suggestions, never automatically executed commands.
+Existing `recommendations` remain available. No CLI action is invented for an
+unavailable capability (for example, identifying arbitrary atom-creation paths).
+
 Run one narrow command for the domain indicated by the diagnosis.
 
 ### Snapshot and VM health

@@ -219,6 +219,26 @@ controller_boundary_helpers_test() ->
             )
     end.
 
+diagnostic_next_actions_are_optional_and_validated_test() ->
+    Legacy = diagnostic_response(complete, [#{<<"id">> => <<"vm.process_limit_pressure">>}]),
+    Response = observer_cli_escriptize:add_next_actions(Legacy),
+    Data = maps:get(<<"data">>, Response),
+    Actions = maps:get(<<"next_actions">>, Data),
+    ?assertEqual(3, length(Actions)),
+    ?assertEqual(ok, observer_cli_escriptize:validate_response(diagnose, redact, node(), Legacy)),
+    ?assertEqual(ok, observer_cli_escriptize:validate_response(diagnose, redact, node(), Response)),
+    ?assertMatch(
+        {error, _},
+        observer_cli_escriptize:validate_response(
+            diagnose,
+            redact,
+            node(),
+            Response#{<<"data">> := Data#{<<"next_actions">> := [#{<<"argv">> => [<<"trace">>]}]}}
+        )
+    ),
+    Empty = observer_cli_cli:response(diagnose, error, null, null, null, []),
+    ?assertEqual(Empty, observer_cli_escriptize:add_next_actions(Empty)).
+
 public_cookie_selector_preserves_unicode_test() ->
     ?assertEqual(
         #{<<"type">> => <<"file">>, <<"path">> => <<"/tmp/é中文.cookie"/utf8>>},
