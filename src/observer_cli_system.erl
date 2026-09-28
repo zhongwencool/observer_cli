@@ -162,9 +162,7 @@ collect_distribution_info() ->
                     {ok, []} ->
                         [empty_distribution_info("no connected nodes")];
                     {ok, NodesInfo} ->
-                        [collect_distribution_node_info(NodeInfo) || NodeInfo <- NodesInfo];
-                    _ ->
-                        [empty_distribution_info("dist unavailable")]
+                        [collect_distribution_node_info(NodeInfo) || NodeInfo <- NodesInfo]
                 end
         end
     catch
