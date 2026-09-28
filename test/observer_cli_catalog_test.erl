@@ -94,6 +94,14 @@ trace_contract_test() ->
     ?assertNot(lists:member(pid, observer_cli_catalog:allowed_options(trace_stop_all))),
     ?assert(lists:member(all, observer_cli_catalog:allowed_options(trace))).
 
+rate_description_preserves_breaker_semantics_test() ->
+    {ok, Call} = observer_cli_catalog:describe(["trace", "call"]),
+    Summary = maps:get(<<"summary">>, option(Call, <<"rate">>)),
+    ?assertNotEqual(nomatch, binary:match(Summary, <<"burst-breaker">>)),
+    ?assertNotEqual(nomatch, binary:match(Summary, <<"not a pacer">>)),
+    ?assertNotEqual(nomatch, binary:match(Summary, <<"trip event">>)),
+    ?assertEqual(nomatch, binary:match(Summary, <<"rate cap">>)).
+
 identifier_policy_test() ->
     lists:foreach(
         fun(Id) ->

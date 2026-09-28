@@ -275,7 +275,10 @@ option_definitions() ->
             syntax => <<"integer milliseconds, Nms, or Ns">>
         },
         value(pid, <<"One live target-local raw PID, not a redacted alias">>),
-        (value(rate, <<"Trace event rate cap">>))#{
+        (value(
+            rate,
+            <<"Recon burst-breaker threshold, not a pacer; the trip event is retained and capture can exceed N events">>
+        ))#{
             syntax => <<"N/s">>, minimum => 1, maximum => 200
         },
         flag(
