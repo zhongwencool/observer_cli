@@ -219,6 +219,31 @@ controller_boundary_helpers_test() ->
             )
     end.
 
+output_capability_precedes_all_command_work_test() ->
+    Commands = [snapshot, diagnose, memory, schedulers, trace, status, connect, disconnect],
+    case code:ensure_loaded(json) of
+        {error, _} ->
+            lists:foreach(
+                fun(Command) ->
+                    ?assertEqual(
+                        {error, capability, json_unavailable},
+                        observer_cli_escriptize:run_command(Command, #{json => true})
+                    )
+                end,
+                Commands
+            ),
+            ?assertEqual(nonode@nohost, node());
+        {module, json} ->
+            lists:foreach(
+                fun(Command) ->
+                    ?assertEqual(
+                        ok, observer_cli_escriptize:ensure_output_format(Command, #{json => true})
+                    )
+                end,
+                Commands
+            )
+    end.
+
 command_output_and_error_paths_test() ->
     Response = observer_cli_cli:response(
         memory, complete, null, null, #{<<"value">> => 1}, []

@@ -664,7 +664,13 @@ limit_help() ->
 parse_args(Options) ->
     observer_cli_cli:parse(Options).
 
-run_command(snapshot, Options) ->
+run_command(Command, Options) ->
+    case ensure_output_format(command_identity(Command, arguments(Options)), Options) of
+        ok -> run_command_ready(Command, Options);
+        Error -> Error
+    end.
+
+run_command_ready(snapshot, Options) ->
     with_target(Options, fun(Target, _Capabilities, Remaining) ->
         run_snapshot(
             Target,
@@ -673,17 +679,17 @@ run_command(snapshot, Options) ->
             Remaining
         )
     end);
-run_command(diagnose, Options) ->
+run_command_ready(diagnose, Options) ->
     with_target(Options, fun(Target, _Capabilities, Remaining) ->
         run_diagnose(Target, Options, Remaining)
     end);
-run_command(connect, Options) ->
+run_command_ready(connect, Options) ->
     run_connect(Options);
-run_command(status, Options) ->
+run_command_ready(status, Options) ->
     run_status(Options);
-run_command(disconnect, Options) ->
+run_command_ready(disconnect, Options) ->
     run_disconnect(Options);
-run_command(Command, Options) ->
+run_command_ready(Command, Options) ->
     with_target(Options, fun(Target, _Capabilities, Remaining) ->
         run_dispatch(
             Target,

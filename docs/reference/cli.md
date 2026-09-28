@@ -550,6 +550,10 @@ margin; `trace stop --all` requires at least five seconds. For example:
 observer_cli diagnose --observe 30s --timeout 40s --format term
 ```
 
+Output capability is checked before connecting, collecting, tracing, or writing
+saved context. In particular, an OTP 26 controller rejects JSON before target
+work starts; select text or term, or use an OTP 27+ controller.
+
 ### Standard streams
 
 | Situation | stdout | stderr |
