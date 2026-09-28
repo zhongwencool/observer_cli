@@ -93,6 +93,9 @@ jobs:
           "$RUNNER_TEMP/schema-venv/bin/python" scripts/validate-cli-schema.py \
             --fixtures "$RUNNER_TEMP/schema-fixtures" --self-test \
             --escript _build/default/bin/observer_cli
+          scripts/cli-agent-smoke.py --require-json --fixtures "$RUNNER_TEMP/agent-fixtures"
+          "$RUNNER_TEMP/schema-venv/bin/python" scripts/validate-cli-schema.py \
+            --fixtures "$RUNNER_TEMP/agent-fixtures" --self-test
       - name: Upload coverage reports to Codecov
         if: matrix.otp == '29'
         uses: codecov/codecov-action@v7
@@ -147,6 +150,10 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/schema-venv"
           "$RUNNER_TEMP/schema-venv/bin/python" -m pip install -r scripts/schema-requirements.txt
           "$RUNNER_TEMP/schema-venv/bin/python" scripts/validate-cli-schema.py --escript observer_cli
+          OBSERVER_CLI_BIN="$PWD/observer_cli" scripts/cli-agent-smoke.py \
+            --require-json --fixtures "$RUNNER_TEMP/mix-agent-fixtures"
+          "$RUNNER_TEMP/schema-venv/bin/python" scripts/validate-cli-schema.py \
+            --fixtures "$RUNNER_TEMP/mix-agent-fixtures" --self-test
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

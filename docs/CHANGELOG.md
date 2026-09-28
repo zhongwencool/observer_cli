@@ -2,6 +2,20 @@
 
 Release and maintenance changes, newest first.
 
+## Unreleased
+
+- Added concise operator reports with text-only `--verbose`, explicit partial
+  log capture warnings, truthful diagnostic summaries and actionable recovery.
+- Added offline command descriptions, bundled schema export and controller-side
+  bounded next-action proposals with explicit target binding.
+- Expanded the v1 response schema and added formal positive/negative validation,
+  Rebar/Mix packaging checks and isolated real-command agent workflows.
+- Fixed encoder preflight, orphan target options, invalid trace error identities,
+  public help spelling and Unicode context paths/metadata. New saved contexts
+  use UTF-8 version 2; version 1 remains readable.
+- Preserved target protocol 1, trace authorization, default redaction and
+  observation budgets. No TUI redesign, daemon, shared limiter or release change.
+
 ## 2.0.0 (release candidate)
 
 - Added `mix escript.build` as an alternative source build for the controller,

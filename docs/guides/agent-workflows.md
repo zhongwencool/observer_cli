@@ -102,3 +102,38 @@ review. Identifier redaction is not general-purpose secret removal.
 
 See the [CLI reference](cli.md) for output streams, exit statuses and command
 limits, and [Core concepts](core-concepts.md) for trust and observer effects.
+
+## Coordinate multiple agents safely
+
+Use `--node` and exactly one cookie-source option on **every remote invocation**.
+`connect` is a human convenience that writes one user-global selector, not a
+per-task binding or a daemon. Concurrent agents must not change that selector to
+select their own targets. Stateless observations leave it unchanged.
+
+Start with one active observation per target. Do not fan out deep captures,
+inventories, or sampling windows merely because each request has a deadline:
+per-request heap, scan and output limits do not bound aggregate target load.
+There is no general target-wide concurrency limiter. Trace has its own
+single-flight admission, which is not a license to parallelize other work.
+
+Use these conservative orchestration rules:
+
+1. Prefer a quick diagnosis followed by one narrow observation. Request deep
+   evidence only for a specific unanswered question.
+2. Choose a command timeout that covers its sampling and cleanup requirements.
+   Allow additional outer-process time for startup, encoding and final cleanup;
+   killing the controller is not proof that delivered target work was retracted.
+3. Preserve stdout, stderr and exit status separately. Exit `1` is findings, not
+   a transport failure. Never discard a report merely because its exit is nonzero.
+4. Do not retry argument/capability errors unchanged. Preserve partial evidence;
+   retry a connection failure only after correcting its cause or confirming work
+   did not start. Use bounded retries, not an unbounded polling loop.
+5. Stop on cleanup uncertainty or internal/schema errors. Escalate for inspection
+   before another invasive command; never append trace consent or run
+   `trace stop --all` automatically.
+
+For regression acceptance, `scripts/cli-agent-smoke.py` exercises the built
+escript against its own node, EPMD, log file and temporary configuration. It can
+save actual envelopes for `scripts/validate-cli-schema.py`. OTP 26 checks are
+reported separately: JSON is unavailable there, while text/term remain supported.
+These tests are not a production-scale load test or a distributed security sandbox.
