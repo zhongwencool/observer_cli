@@ -982,11 +982,8 @@ decode_context(
         <<"cookie_source">> := Source
     } = Context
 ) when
-    map_size(Context) =:= 4,
-    is_binary(Node),
-    is_binary(Mode),
-    is_map(Source),
-    (Version =:= 1 orelse Version =:= 2)
+    map_size(Context) =:= 4 andalso is_binary(Node) andalso is_binary(Mode) andalso
+        is_map(Source) andalso (Version =:= 1 orelse Version =:= 2)
 ->
     case Version of
         1 -> decode_context_fields(Node, Mode, Source, latin1);
