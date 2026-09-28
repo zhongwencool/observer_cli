@@ -21,6 +21,7 @@
 -export([flush_redraw_timer/1]).
 -export([render_menu/2]).
 -export([render_top_menu/2]).
+-export([render_sampling_menu/2]).
 -export([render_menu_header/3]).
 -export([layout_base_width/0]).
 -export([layout_width/0]).
@@ -169,6 +170,64 @@ render_top_menu(Type, Text) ->
     UpTime = uptime(),
     TitleWidth = layout_base_width() + 146 - erlang:length(UpTime) + layout_extra_width(),
     render_menu_header(Title, Text, TitleWidth).
+
+%% Sampling metadata belongs beside navigation when it fits. Unlike the legacy
+%% menu formatter, measure visible characters rather than ANSI escape bytes.
+-spec render_sampling_menu(atom(), iodata()) -> {non_neg_integer(), iodata()}.
+render_sampling_menu(Type, Text) ->
+    Mnesia =
+        case ets:info(schema, owner) of
+            undefined -> "";
+            _ -> "Mnesia(M)"
+        end,
+    Title = [Item || Item <- get_menu_title(Type, Mnesia), visible_length(Item) > 1],
+    [{width_color, Color, Time, TimeWidth}] = uptime(),
+    Available = layout_width() - visible_length(Title) - TimeWidth - 6,
+    Full = unicode:characters_to_list(Text),
+    Compact = lists:foldl(
+        fun({From, To}, Acc) ->
+            lists:flatten(string:replace(Acc, From, To, all))
+        end,
+        Full,
+        [{"Refresh:", "Ref:"}, {" | ", " "}]
+    ),
+    {Inline, Overflow} =
+        case {length(Full) =< Available, length(Compact) =< Available} of
+            {true, _} -> {Full, []};
+            {false, true} -> {Compact, []};
+            _ -> {"", wrap_sampling_text(Full, layout_width() - 3)}
+        end,
+    Left = [
+        Title,
+        ?RESET,
+        case Inline of
+            "" -> "";
+            _ -> [" ", Inline]
+        end
+    ],
+    Padding = layout_width() - visible_length(Left) - TimeWidth - 5,
+    Header = [
+        "|",
+        Left,
+        lists:duplicate(max(Padding, 0), $\s),
+        " | ",
+        Color,
+        io_lib:format("~-*ts", [TimeWidth, Time]),
+        ?RESET,
+        "|\n"
+    ],
+    {length(Overflow), [Header | [?render([?W(Line, layout_width() - 3)]) || Line <- Overflow]]}.
+
+wrap_sampling_text(Text, Width) when length(Text) =< Width -> [Text];
+wrap_sampling_text(Text, Width) ->
+    {Prefix, _} = lists:split(Width, Text),
+    Split =
+        case string:rchr(Prefix, $\s) of
+            0 -> Width;
+            Pos -> Pos
+        end,
+    {Line, Rest} = lists:split(Split, Text),
+    [string:trim(Line, trailing) | wrap_sampling_text(string:trim(Rest, leading), Width)].
 
 -spec render_menu_header(iodata(), iodata(), pos_integer()) -> iolist().
 render_menu_header(Title, Text, TitleWidth) ->

@@ -513,7 +513,7 @@ render_sys_info(System, CPU, Memory, Statistics) ->
         ?W("CPU's and Threads", CpuTitleW),
         ?W("State", CpuStateTitleW),
         ?W("Memory Usage", MemoryTitleW),
-        ?W("State", MemoryStateTitleW),
+        ?W("Size (allocated)", MemoryStateTitleW),
         ?W("Statistics", StatisticsTitleW),
         ?W("State", StatisticsStateTitleW)
     ]),

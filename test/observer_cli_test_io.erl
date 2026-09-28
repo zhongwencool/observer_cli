@@ -162,7 +162,7 @@ line_widths(IoData) ->
     [length(Line) || Line <- non_empty_lines(IoData)].
 
 plain(IoData) ->
-    binary_to_list(
+    unicode:characters_to_list(
         strip_valid_ansi(unicode:characters_to_binary(IoData))
     ).
 

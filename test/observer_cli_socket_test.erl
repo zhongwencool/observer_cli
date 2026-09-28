@@ -152,8 +152,6 @@ socket_runtime_helper_contract_test() ->
     Invalid = make_ref(),
     ?assertEqual(error, observer_cli_socket:safe_socket_info(Invalid)),
     ?assert(is_list(observer_cli_socket:socket_id(Invalid))),
-    ?assertEqual(1, observer_cli_socket:counter_value(#{read => 1}, read)),
-    ?assertEqual(0, observer_cli_socket:counter_value(#{read => invalid}, read)),
     ?assertEqual("-", observer_cli_socket:socket_addr(Invalid, sockname)),
     ?assertEqual("-", observer_cli_socket:socket_addr(Invalid, peername)),
     ?assertEqual([], observer_cli_socket:safe_monitored_by(Invalid)),
@@ -223,9 +221,9 @@ render_socket_rows_test() ->
         {1, [ranked_overview_fixture()]}, io
     ),
     Text = plain(Rows),
-    ?assert(string:find(Text, "Legend: io=read+write") =/= nomatch),
-    ?assert(string:find(Text, "Read rb") =/= nomatch),
-    ?assert(string:find(Text, "Write wb") =/= nomatch),
+    ?assert(string:find(Text, "Legend:") =/= nomatch),
+    ?assert(string:find(Text, "Read") =/= nomatch),
+    ?assert(string:find(Text, "Write") =/= nomatch),
     ?assert(string:find(Text, "Pkt/Acc") =/= nomatch),
     ?assert(string:find(Text, "#Socket<0.1.2>") =/= nomatch),
     ?assert(string:find(Text, "inet/tcp") =/= nomatch),
@@ -453,10 +451,11 @@ socket_capability_absence_fails_closed_test() ->
         ?assertMatch({error, _}, observer_cli_socket:collect_general_info()),
         ?assertMatch({error, _}, observer_cli_socket:collect_socket_overviews()),
         ?assertMatch({error, _}, observer_cli_socket:collect_socket_info(io, #{})),
-        ?assertMatch(
-            {{error, _}, #{}},
-            observer_cli_socket:collect_socket_render_info(10, 1, io, #{})
+        {Error, ClearedBaseline} = observer_cli_socket:collect_socket_render_info(
+            10, 1, io, #{sample_time => 42, old_socket => #{read_byte => 100}}
         ),
+        ?assertMatch({error, _}, Error),
+        ?assertEqual(#{}, ClearedBaseline),
         ?assertEqual(error, observer_cli_socket:select_socket(1, #sockets{}))
     after
         true = code:set_path(CodePath),

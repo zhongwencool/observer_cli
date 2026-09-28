@@ -21,7 +21,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Keep otp as the major for stable check names and release artifacts.
           - otp: '29'
+            otp_version: '29.1.1'
             rebar3: '3.27'
             other_otp: '26'
           - otp: '28'
@@ -30,7 +32,7 @@ jobs:
             rebar3: '3.22'
           - otp: '26'
             rebar3: '3.22'
-            other_otp: '29'
+            other_otp: '29.1.1'
     steps:
       - uses: actions/checkout@v7
       - name: Install cross-OTP target
@@ -46,7 +48,7 @@ jobs:
           echo "OBSERVER_CLI_CROSS_OTP_ERL=$RUNNER_TEMP/cross-otp/bin/erl" >> "$GITHUB_ENV"
       - uses: erlef/setup-beam@v1
         with:
-          otp-version: ${{matrix.otp}}
+          otp-version: ${{matrix.otp_version || matrix.otp}}
           rebar3-version: ${{matrix.rebar3}}
       - name: formatting
         run: rebar3 fmt --check
@@ -117,7 +119,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: erlef/setup-beam@v1
         with:
-          otp-version: '29'
+          otp-version: '29.1.1'
           elixir-version: '1.20'
           rebar3-version: '3.27'
       - name: Mix escript and release smoke

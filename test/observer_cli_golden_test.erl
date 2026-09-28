@@ -40,7 +40,7 @@ home_golden_output_fragments_test() ->
         fun() ->
             LayoutWidth = observer_cli_lib:layout_width(),
             Prompt = observer_cli:get_refresh_prompt(proc_count, memory, 1500, 10),
-            Menu = observer_cli_lib:render_menu(home, Prompt),
+            {0, Menu} = observer_cli_lib:render_sampling_menu(home, Prompt),
             Footer = observer_cli:render_footer(),
             StableInfo = observer_cli:get_stable_system_info(),
             SystemLines = observer_cli:render_system_line(
@@ -60,7 +60,7 @@ home_golden_output_fragments_test() ->
                 "App(A)",
                 "Doc(D)",
                 "Plugin(P)",
-                "recon:proc_count(memory, 10) Interval:1500ms",
+                "recon:proc_count(memory, 10) | Refresh:1500ms",
                 "q(quit)",
                 "p(pause)",
                 "F/B(page forward/back)",
@@ -69,9 +69,9 @@ home_golden_output_fragments_test() ->
                 "Name|>Label|>Initial Call",
                 "Current Function",
                 "Count/Limit",
-                "Reds(Total/SinceLastCall)",
+                "Reds total",
                 "Persistent Terms",
-                "IO/GC:(1500ms)"
+                "IO/GC since sample"
             ]),
             observer_cli_test_io:assert_ansi_boundaries(Output),
             ?assertEqual(LayoutWidth, observer_cli_lib:visible_length(TopTitle)),
