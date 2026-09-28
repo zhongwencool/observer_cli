@@ -2,6 +2,7 @@
   extras: [
     {"README.md", title: "Home"},
     {"./docs/reference/cli.md", title: "CLI"},
+    {"./docs/guides/agent-workflows.md", title: "Agent workflows"},
     {"./docs/reference/tui.md", title: "Reference"},
     {"./docs/reference/tui-plugins.md", title: "TUI plugins"},
     {"./docs/explanation/core-concepts.md", title: "Core concepts"},
@@ -52,7 +53,7 @@
   api_reference: false,
   warnings_as_errors: true,
   groups_for_extras: [
-    {"CLI", ~r"/reference/cli\.md$"},
+    {"CLI", ~r"/(?:reference/cli|guides/agent-workflows)\.md$"},
     {"TUI", ~r"/reference/tui(?:-plugins)?\.md$"},
     {"Core concepts", ~r"/explanation/core-concepts\.md$"},
     {"Project", ~r"(?:/CHANGELOG\.md|^LICENSE)$"}
