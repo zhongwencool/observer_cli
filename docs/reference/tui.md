@@ -412,8 +412,8 @@ identified rather than omitted.
 
 ## System
 
-The System page is a current snapshot. Its refresh interval controls redraw;
-the page does not calculate interval deltas.
+The System page shows current snapshots, except distribution packet rates,
+which use successive samples and their actual elapsed monotonic time.
 
 ### Runtime, OS, and memory fields
 
@@ -441,7 +441,7 @@ System `Processes` and `Atoms` use the allocated-memory keys `processes` and
 | --- | --- | --- |
 | `Processes`, `Ports`, `Atoms`, `ETS` | Current count / limit and percent used | Corresponding `system_info/1` count and limit keys |
 | `Dirty CPU schedulers`, `Online dirty CPU schedulers` | Configured and online dirty-CPU scheduler counts | `system_info/1` |
-| `Distribution buffer busy limit` | Configured distribution busy limit in bytes, rendered as a raw integer | `system_info(dist_buf_busy_limit)` |
+| `Dist busy limit (bytes)` | Configured distribution busy limit in bytes, rendered as a raw integer | `system_info(dist_buf_busy_limit)` |
 | `Modules` | Loaded module count | `length(code:all_loaded())` |
 | `Run Queue` | Runnable normal and dirty-CPU work | `statistics(run_queue)` |
 
@@ -461,18 +461,32 @@ Rows cover `binary_alloc`, `driver_alloc`, `eheap_alloc`, `ets_alloc`,
 
 | Field | Meaning and unit | Source |
 | --- | --- | --- |
-| `Health` | `down` when state is not `up`; `unknown` without a queue value; `warn` at a computed ratio of at least 85%; otherwise `ok` | Derived |
 | `Node` | Connected distributed node | `net_kernel:nodes_info()` |
-| `Dist Queue` | Pending-output value / `dist_buf_busy_limit` | `dist_get_stat/1`, `system_info(dist_buf_busy_limit)` |
-| `Percent` | The TUI's computed pending-output / busy-limit ratio | Derived |
+| `State`, `Type` | Connection state and type, not a health assessment | `net_kernel:nodes_info()` |
+| `Rx pkt/s`, `Tx pkt/s` | Received/sent distribution packets per second, not application messages or byte throughput | Deltas of the first two counters in `dist_get_stat/1`, divided by elapsed seconds |
+| `Pending pkts` | Pending output packets at this sample | Fourth element of `dist_get_stat/1` |
+| `Recent pkts (old>new)` | Up to three consecutive pending-packet samples, oldest to newest | Current connection's sampling history |
 | `Address` | Distribution address and port | `net_kernel:nodes_info()` |
-| `In`, `Out` | Cumulative distribution connection bytes | `net_kernel:nodes_info()` |
-| `Type`, `State` | Distribution connection type and state | `net_kernel:nodes_info()` |
 
-On supported OTP 26–29 releases, the fourth `dist_get_stat/1` value is pending
-output packets. It is not an output-queue byte count, even though the TUI
-compares it with `dist_buf_busy_limit`. Disabled distribution and no connected
-nodes produce explicit sentinel rows.
+Rates show `-` on the first sample, after reconnection, counter reset, or an
+invalid time interval. A missing sample breaks continuity: recovery starts a
+new baseline rather than interpolating across the gap. Unavailable packet
+statistics show `N/A`, never a fabricated zero. Leaving the System page resets
+its sampling history. Changing the refresh interval uses actual elapsed time.
+If a history does not fit its column, `... > latest` preserves the newest
+observation and explicitly elides the older samples.
+
+The packet statistics use OTP internals and are capability-checked. Disabled
+distribution, no connected nodes, and unavailable distribution information
+produce explicit sentinel rows. A disappearing peer does not crash the page.
+
+Pending packets and their history are observations, not capacity utilization
+or a health score. Nonzero samples do not establish continuous blocking between
+samples. The busy limit is an independent byte-valued configuration in the
+runtime limits section; packet counts are never divided by it. The TUI does not
+install a system monitor or infer backpressure events. The CLI's controller
+queue bytes remain separate context-only observations, not the same metric as
+pending packets.
 
 ### Allocator cache fields
 

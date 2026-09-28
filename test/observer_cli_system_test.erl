@@ -144,7 +144,7 @@ render_sys_info_runtime_limits_test() ->
             ),
             Output = lists:flatten(Line),
             ?assert(string:find(Output, "System Statistics / Limit") =/= nomatch),
-            ?assert(string:find(Output, "Distribution buffer busy limit") =/= nomatch),
+            ?assert(string:find(Output, "Dist busy limit (bytes)") =/= nomatch),
             ?assert(string:find(Output, "Dirty CPU schedulers") =/= nomatch),
             ?assert(string:find(Output, "Modules") =/= nomatch),
             ?assertEqual(nomatch, string:find(Output, "Up time")),
@@ -213,11 +213,9 @@ collect_system_info_test() ->
             {
                 _Node,
                 #{
-                    queue_size := _,
-                    queue_limit := _,
+                    pending_packets := _,
+                    stats := _,
                     address := _,
-                    in := _,
-                    out := _,
                     type := _,
                     state := _
                 }
@@ -346,87 +344,178 @@ get_address_unknown_test() ->
     Info = [{address, #net_address{address = undefined}}],
     ?assertEqual("unknown", observer_cli_system:get_address(Info)).
 
-render_dist_node_info_unsupported_queue_test() ->
-    Lines = observer_cli_system:render_dist_node_info([
-        {node(), #{
-            queue_size => not_found,
-            queue_limit => 1024,
-            address => "unknown",
-            in => 0,
-            out => 0,
-            type => normal,
-            state => up
-        }}
-    ]),
-    ?assert(string:find(lists:flatten(Lines), "unsupp") =/= nomatch).
+render_dist_node_info_unavailable_test() ->
+    {Rows, _} = observer_cli_system:sample_distribution(
+        [
+            {node(), #{
+                stats => unavailable,
+                pending_packets => unavailable,
+                address => "unknown",
+                type => normal,
+                state => up
+            }}
+        ],
+        #{}
+    ),
+    Output = lists:flatten(observer_cli_system:render_dist_node_info(Rows)),
+    ?assert(string:find(Output, "N/A") =/= nomatch),
+    ?assertEqual(nomatch, string:find(Output, "Health")),
+    ?assertEqual(nomatch, string:find(Output, "%")).
 
 render_dist_node_info_empty_test() ->
-    Lines = observer_cli_system:render_dist_node_info([]),
-    Output = lists:flatten(Lines),
-    ?assert(string:find(Output, "Health") =/= nomatch),
-    ?assert(string:find(Output, "ok") =/= nomatch),
+    Output = lists:flatten(observer_cli_system:render_dist_node_info([])),
+    ?assertEqual(nomatch, string:find(Output, "Health")),
     ?assert(string:find(Output, atom_to_list(node())) =/= nomatch),
     ?assert(string:find(Output, "no connected nodes") =/= nomatch).
 
 render_dist_node_info_disabled_test() ->
-    Lines = observer_cli_system:render_dist_node_info([
-        {nonode@nohost, #{
-            health => unknown,
-            queue_size => undefined,
-            queue_limit => undefined,
-            address => "dist disabled",
-            in => "-",
-            out => "-",
-            type => "-",
-            state => "-"
-        }}
-    ]),
-    Output = lists:flatten(Lines),
-    ?assert(string:find(Output, "unknown") =/= nomatch),
+    Output = lists:flatten(
+        observer_cli_system:render_dist_node_info([
+            {nonode@nohost, #{
+                pending_packets => unavailable,
+                address => "dist disabled",
+                type => "-",
+                state => "-"
+            }}
+        ])
+    ),
     ?assert(string:find(Output, "nonode@nohost") =/= nomatch),
     ?assert(string:find(Output, "dist disabled") =/= nomatch).
 
-render_dist_node_info_warn_health_test() ->
-    Lines = observer_cli_system:render_dist_node_info([
-        {node(), #{
-            queue_size => 850,
-            queue_limit => 1000,
-            address => "unknown",
-            in => 0,
-            out => 0,
-            type => normal,
-            state => up
-        }}
-    ]),
-    Output = lists:flatten(Lines),
-    ?assert(string:find(Output, "warn") =/= nomatch),
-    ?assert(string:find(Output, "85.00%") =/= nomatch).
-
-render_dist_node_info_columns_align_test() ->
-    [Title, Row] = observer_cli_system:render_dist_node_info([
-        {node(), #{
-            health => ok,
-            queue_size => undefined,
-            queue_limit => undefined,
-            address => "no connected nodes",
-            in => "-",
-            out => "-",
-            type => "-",
-            state => "-"
-        }}
-    ]),
+render_dist_node_info_no_health_inference_test() ->
+    {Rows, _} = observer_cli_system:sample_distribution(
+        [dist_sample(conn, 1000, 5, 10, 1000000)], #{}
+    ),
+    [Title, Row] = observer_cli_system:render_dist_node_info(Rows),
+    Output = lists:flatten([Title, Row]),
+    [
+        ?assertEqual(nomatch, string:find(Output, Text))
+     || Text <- ["warn", "Health", "Percent", "%"]
+    ],
+    [
+        ?assert(string:find(Output, Text) =/= nomatch)
+     || Text <-
+            ["Pending pkts", "1000000", "Rx pkt/s", "Tx pkt/s", "Recent pkts (old>new)"]
+    ],
     ?assertEqual(pipe_positions(Title), pipe_positions(Row)).
 
 render_dist_node_info_wide_layout_test() ->
-    Created = ensure_sys_dist(),
-    try
-        Base = dist_node_widths(80),
-        Wide = dist_node_widths(180),
-        ?assertEqual([1, 4, 6, 7, 8, 9], unchanged_columns(Base, Wide, [1, 4, 6, 7, 8, 9])),
-        ?assertEqual([2, 3, 5], wider_columns(Base, Wide, [2, 3, 5]))
-    after
-        maybe_delete_sys_dist(Created)
+    Base = dist_node_widths(80),
+    Wide = dist_node_widths(180),
+    ?assertEqual([2, 3, 4, 5, 8], unchanged_columns(Base, Wide, [2, 3, 4, 5, 8])),
+    ?assertEqual([1, 6, 7], wider_columns(Base, Wide, [1, 6, 7])).
+
+render_dist_node_info_bounded_layout_test() ->
+    [
+        observer_cli_test_io:with_geometry(40, Width, [], fun() ->
+            [{Node, Info}] = dist_node_fixture(),
+            Lines = observer_cli_system:render_dist_node_info([
+                {Node, Info#{
+                    recent_pending := [123456789, 234567890, 345678901],
+                    pending_packets := 345678901
+                }}
+            ]),
+            [Title, Row] = Lines,
+            ?assertEqual(pipe_positions(Title), pipe_positions(Row)),
+            ?assert(lists:all(fun(N) -> N =< Width end, observer_cli_test_io:line_widths(Lines))),
+            ?assert(string:find(lists:flatten(Row), "345678901") =/= nomatch),
+            observer_cli_test_io:assert_ansi_boundaries(Lines)
+        end)
+     || Width <- [139, 180, 201]
+    ].
+
+get_dist_stats_unavailable_test() ->
+    case ets:info(sys_dist) of
+        undefined ->
+            ?assertEqual(unavailable, observer_cli_system:get_dist_stats(peer)),
+            ets:new(sys_dist, [named_table, set, {keypos, 2}]),
+            try
+                [
+                    begin
+                        ets:insert(sys_dist, Tuple),
+                        ?assertEqual(unavailable, observer_cli_system:get_dist_stats(peer))
+                    end
+                 || Tuple <- [
+                        {connection, peer, invalid_handle},
+                        {barred_connection, peer},
+                        {changed_shape, peer, invalid_handle}
+                    ]
+                ]
+            after
+                ets:delete(sys_dist)
+            end;
+        _ ->
+            ok
     end.
+
+sample_distribution_rates_and_history_test() ->
+    {_, First} = observer_cli_system:sample_distribution([dist_sample(conn, 1000, 10, 20, 8)], #{}),
+    ?assertEqual("-", maps:get(rx_rate, maps:get(peer, First))),
+    {_, Second} = observer_cli_system:sample_distribution(
+        [dist_sample(conn, 3000, 16, 28, 21)], First
+    ),
+    ?assertMatch(
+        #{rx_rate := 3.0, tx_rate := 4.0, recent_pending := [8, 21]}, maps:get(peer, Second)
+    ),
+    {_, Third} = observer_cli_system:sample_distribution(
+        [dist_sample(conn, 4000, 16, 28, 38)], Second
+    ),
+    ?assertMatch(
+        #{rx_rate := +0.0, tx_rate := +0.0, recent_pending := [8, 21, 38]}, maps:get(peer, Third)
+    ),
+    {Rows, Fourth} = observer_cli_system:sample_distribution(
+        [dist_sample(conn, 4500, 17, 29, 0)], Third
+    ),
+    ?assertMatch(
+        #{rx_rate := 2.0, tx_rate := 2.0, recent_pending := [21, 38, 0]}, maps:get(peer, Fourth)
+    ),
+    ?assert(
+        string:find(lists:flatten(observer_cli_system:render_dist_node_info(Rows)), "21 > 38 > 0") =/=
+            nomatch
+    ).
+
+sample_distribution_discontinuity_test() ->
+    {_, First} = observer_cli_system:sample_distribution([dist_sample(conn, 1000, 10, 20, 8)], #{}),
+    [
+        begin
+            {_, Next} = observer_cli_system:sample_distribution([Sample], First),
+            ?assertMatch(
+                #{rx_rate := "-", tx_rate := "-", recent_pending := [0]}, maps:get(peer, Next)
+            )
+        end
+     || Sample <- [
+            dist_sample(new_conn, 2000, 100, 200, 0),
+            dist_sample(conn, 2000, 9, 30, 0),
+            dist_sample(conn, 2000, 11, 19, 0),
+            dist_sample(conn, 1000, 11, 21, 0),
+            dist_sample(conn, 999, 11, 21, 0)
+        ]
+    ],
+    ?assertEqual({[], #{}}, observer_cli_system:sample_distribution([], First)),
+    {peer, Info} = dist_sample(conn, 2000, 11, 21, 0),
+    [
+        begin
+            {_, Gap} = observer_cli_system:sample_distribution([{peer, Failed}], First),
+            ?assertMatch(#{rx_rate := "N/A", recent_pending := []}, maps:get(peer, Gap)),
+            {_, Recovered} = observer_cli_system:sample_distribution(
+                [dist_sample(conn, 3000, 12, 22, 0)], Gap
+            ),
+            ?assertMatch(#{rx_rate := "-", recent_pending := [0]}, maps:get(peer, Recovered))
+        end
+     || Failed <- [
+            Info#{stats := unavailable, pending_packets := unavailable}, Info#{state := pending}
+        ]
+    ].
+
+dist_sample(Connection, Time, Rx, Tx, Pending) ->
+    {peer, #{
+        stats => {ok, Connection, Rx, Tx, Pending},
+        sampled_at => Time,
+        pending_packets => Pending,
+        state => up,
+        type => normal,
+        address => "127.0.0.1:1234"
+    }}.
 
 render_worker_redraw_test() ->
     Cmd = "printf 'header\\n 1 2 3 4\\n'",
@@ -466,13 +555,37 @@ render_worker_empty_sys_dist_test() ->
 
 render_dist_node_info_live_peer_test() ->
     with_distribution(fun() ->
-        {ok, Peer, Node} = peer:start_link(#{name => peer:random_name("observer_cli_sys")}),
+        {ok, Peer, Node} = peer:start_link(#{
+            name => peer:random_name("observer_cli_sys"),
+            connection => standard_io,
+            args => ["+S", "2"]
+        }),
         try
+            pong = net_adm:ping(Node),
             ?assertMatch([_ | _], ets:lookup(sys_dist, Node)),
             NodesInfo = observer_cli_system:collect_distribution_info(),
             ?assertMatch([_ | _], NodesInfo),
             Lines = observer_cli_system:render_dist_node_info(NodesInfo),
-            ?assert(string:find(lists:flatten(Lines), "%") =/= nomatch)
+            ?assertEqual(nomatch, string:find(lists:flatten(Lines), "%")),
+            ?assertMatch({ok, _, _, _, _}, observer_cli_system:get_dist_stats(Node)),
+            {_, Baseline} = observer_cli_system:sample_distribution(NodesInfo, #{}),
+            [Node = erpc:call(Node, erlang, node, []) || _ <- lists:seq(1, 10)],
+            timer:sleep(20),
+            {_, Next} = observer_cli_system:sample_distribution(
+                observer_cli_system:collect_distribution_info(), Baseline
+            ),
+            ?assert(is_float(maps:get(rx_rate, maps:get(Node, Next)))),
+            ?assert(is_float(maps:get(tx_rate, maps:get(Node, Next)))),
+            ?assert(maps:get(rx_rate, maps:get(Node, Next)) > 0),
+            ?assert(maps:get(tx_rate, maps:get(Node, Next)) > 0),
+            true = erlang:disconnect_node(Node),
+            ?assertEqual(unavailable, observer_cli_system:get_dist_stats(Node)),
+            pong = net_adm:ping(Node),
+            {_, Reconnected} = observer_cli_system:sample_distribution(
+                observer_cli_system:collect_distribution_info(), Next
+            ),
+            ?assertEqual("-", maps:get(rx_rate, maps:get(Node, Reconnected))),
+            ?assertEqual(1, length(maps:get(recent_pending, maps:get(Node, Reconnected))))
         after
             peer:stop(Peer)
         end
@@ -648,13 +761,13 @@ statistics_fixture() ->
 dist_node_fixture() ->
     [
         {'very_long_fake_node_for_layout@127.0.0.1', #{
-            queue_size => 1,
-            queue_limit => 1024,
+            pending_packets => 1,
+            recent_pending => [0, 1, 1],
             address => "127.0.0.1:1234",
-            in => 1,
-            out => 2,
+            rx_rate => 1.0,
+            tx_rate => 2.0,
             type => normal,
-            state => connected
+            state => up
         }}
     ].
 
@@ -712,9 +825,12 @@ system_private_helper_contract_test() ->
     ?assertEqual(undefined, observer_cli_system:maybe_system_info(not_a_system_info_key)),
     Created = ensure_sys_dist(),
     try
-        ?assertEqual(not_found, observer_cli_system:get_dist_queue_size(missing_node)),
+        ?assertEqual(unavailable, observer_cli_system:get_dist_stats(missing_node)),
         ets:insert(sys_dist, {dummy}),
-        ?assertMatch([{_, #{health := ok}}], observer_cli_system:collect_distribution_info())
+        ?assertMatch(
+            [{_, #{address := "no connected nodes"}}],
+            observer_cli_system:collect_distribution_info()
+        )
     after
         maybe_delete_sys_dist(Created)
     end,

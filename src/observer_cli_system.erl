@@ -28,7 +28,8 @@
     render_dist_node_info/1,
     get_address/1,
     render_worker/3,
-    get_dist_queue_size/1,
+    get_dist_stats/1,
+    sample_distribution/2,
     format_count_limit/2,
     collect_runtime_info/0,
     alloc_info/0,
@@ -75,7 +76,12 @@ manager(Pid, #view_opts{sys = AllocatorOpts} = ViewOpts) ->
     end.
 
 render_worker(Cmd, Interval, LastTimeRef) ->
-    SystemInfo = collect_system_info(Cmd),
+    render_worker(Cmd, Interval, LastTimeRef, #{}).
+
+render_worker(Cmd, Interval, LastTimeRef, Previous) ->
+    Collected = collect_system_info(Cmd),
+    {DistInfo, NextSamples} = sample_distribution(maps:get(dist_nodes_info, Collected), Previous),
+    SystemInfo = Collected#{dist_nodes_info := DistInfo},
     Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
     Menu = observer_cli_lib:render_top_menu(allocator, Text),
     LastLine = observer_cli_lib:render_footer("q(quit)"),
@@ -83,8 +89,8 @@ render_worker(Cmd, Interval, LastTimeRef) ->
     NextTimeRef = observer_cli_lib:next_redraw(LastTimeRef, Interval),
     receive
         quit -> quit;
-        {new_interval, NewInterval} -> render_worker(Cmd, NewInterval, NextTimeRef);
-        redraw -> render_worker(Cmd, Interval, NextTimeRef)
+        {new_interval, NewInterval} -> render_worker(Cmd, NewInterval, NextTimeRef, NextSamples);
+        redraw -> render_worker(Cmd, Interval, NextTimeRef, NextSamples)
     end.
 
 collect_system_info(Cmd) ->
@@ -147,131 +153,141 @@ render_cache_hit_section(#{allocator_info := #{cache_hit_info := CacheHitInfo}})
     render_cache_hit_rates(CacheHitInfo, erlang:length(CacheHitInfo)).
 
 collect_distribution_info() ->
-    case ets:info(sys_dist, size) of
-        undefined ->
-            [empty_distribution_info(unknown, "dist disabled")];
-        0 ->
-            [empty_distribution_info(ok, "no connected nodes")];
-        _ ->
-            Limit = erlang:system_info(dist_buf_busy_limit),
-            case net_kernel:nodes_info() of
-                {ok, []} ->
-                    [empty_distribution_info(ok, "no connected nodes")];
-                {ok, DistNodesInfo} ->
-                    [
-                        collect_distribution_node_info(DistNodeInfo, Limit)
-                     || DistNodeInfo <- DistNodesInfo
-                    ]
-            end
+    try
+        case ets:info(sys_dist, size) of
+            undefined ->
+                [empty_distribution_info("dist disabled")];
+            _ ->
+                case net_kernel:nodes_info() of
+                    {ok, []} ->
+                        [empty_distribution_info("no connected nodes")];
+                    {ok, NodesInfo} ->
+                        [collect_distribution_node_info(NodeInfo) || NodeInfo <- NodesInfo]
+                end
+        end
+    catch
+        _:_ -> [empty_distribution_info("dist unavailable")]
     end.
 
-empty_distribution_info(Health, Detail) ->
+empty_distribution_info(Detail) ->
     {node(), #{
-        health => Health,
-        queue_size => undefined,
-        queue_limit => undefined,
+        stats => unavailable,
+        pending_packets => unavailable,
         address => Detail,
-        in => "-",
-        out => "-",
         type => "-",
         state => "-"
     }}.
 
-collect_distribution_node_info({Node, Info}, Limit) ->
+collect_distribution_node_info({Node, Info}) ->
+    Stats = get_dist_stats(Node),
+    Pending =
+        case Stats of
+            {ok, _, _, _, Count} -> Count;
+            unavailable -> unavailable
+        end,
     {Node, #{
-        queue_size => get_dist_queue_size(Node),
-        queue_limit => Limit,
+        stats => Stats,
+        sampled_at => erlang:monotonic_time(millisecond),
+        pending_packets => Pending,
         address => get_address(Info),
-        in => proplists:get_value(in, Info),
-        out => proplists:get_value(out, Info),
-        type => proplists:get_value(type, Info),
-        state => proplists:get_value(state, Info)
+        type => proplists:get_value(type, Info, "-"),
+        state => proplists:get_value(state, Info, "-")
     }}.
 
+%% Keep only the current peers and at most three observations per connection.
+%% Rates use the same packet counters as pending_packets, not carrier-specific
+%% net_kernel In/Out counters. Missing samples break continuity rather than
+%% interpolating across an unobserved gap or a reconnected node.
+sample_distribution(NodesInfo, Previous) ->
+    Sampled = [
+        {Node, sample_distribution_node(Info, maps:get(Node, Previous, #{}))}
+     || {Node, Info} <- NodesInfo
+    ],
+    {Sampled, maps:from_list(Sampled)}.
+
+sample_distribution_node(#{state := up, stats := {ok, _, _, _, Pending}} = Info, Previous) ->
+    Initial = Info#{rx_rate => "-", tx_rate => "-", recent_pending => [Pending]},
+    case {Info, Previous} of
+        {#{stats := {ok, Conn, Rx, Tx, _}, sampled_at := Now}, #{
+            state := up,
+            stats := {ok, Conn, OldRx, OldTx, _},
+            sampled_at := Then,
+            recent_pending := Recent
+        }} when
+            Now > Then, Rx >= OldRx, Tx >= OldTx
+        ->
+            Initial#{
+                rx_rate := (Rx - OldRx) * 1000 / (Now - Then),
+                tx_rate := (Tx - OldTx) * 1000 / (Now - Then),
+                recent_pending := lists:nthtail(max(0, length(Recent) - 2), Recent) ++ [Pending]
+            };
+        _ ->
+            Initial
+    end;
+sample_distribution_node(Info, _Previous) ->
+    Info#{rx_rate => "N/A", tx_rate => "N/A", recent_pending => []}.
+
 render_dist_node_info([]) ->
-    render_dist_node_info([empty_distribution_info(ok, "no connected nodes")]);
+    render_dist_node_info([empty_distribution_info("no connected nodes")]);
 render_dist_node_info(DistNodesInfo) ->
-    [HealthW, NodeW, QueueW, PercentW, AddressW, InW, OutW, TypeW, StateW] = dist_node_widths(),
-    Title = ?render([
-        ?UNDERLINE,
-        ?W2(?GRAY_BG, "Health", HealthW),
-        ?UNDERLINE,
-        ?W2(?GRAY_BG, "Node", NodeW),
-        ?UNDERLINE,
-        ?W2(?GRAY_BG, "Dist Queue", QueueW),
-        ?UNDERLINE,
-        ?W2(?GRAY_BG, "Percent", PercentW),
-        ?UNDERLINE,
-        ?W2(?GRAY_BG, "Address", AddressW),
-        ?UNDERLINE,
-        ?W2(?GRAY_BG, "In", InW),
-        ?UNDERLINE,
-        ?W2(?GRAY_BG, "Out", OutW),
-        ?UNDERLINE,
-        ?W2(?GRAY_BG, "Type", TypeW),
-        ?UNDERLINE,
-        ?W2(?GRAY_BG, "State", StateW)
-    ]),
-    View = lists:map(
-        fun({Node, Info}) ->
-            State = maps:get(state, Info),
-            Type = maps:get(type, Info),
-            Address = maps:get(address, Info),
-            In = maps:get(in, Info),
-            Out = maps:get(out, Info),
-            QueueSize = maps:get(queue_size, Info),
-            Limit = maps:get(queue_limit, Info),
-            Health = maps:get(health, Info, dist_node_health(Info)),
-            ?render([
-                ?W2(dist_health_color(Health), Health, HealthW),
-                ?W2(?RESET, Node, NodeW),
-                ?W2(?RESET, dist_queue_text(QueueSize, Limit), QueueW),
-                ?W2(?RESET, dist_percent_text(QueueSize, Limit), PercentW),
-                ?W2(?RESET, Address, AddressW),
-                ?W2(?RESET, In, InW),
-                ?W2(?RESET, Out, OutW),
-                ?W2(?RESET, Type, TypeW),
-                ?W2(?RESET, State, StateW)
-            ])
-        end,
-        lists:sort(DistNodesInfo)
+    Widths = observer_cli_lib:weighted_widths(
+        [28, 8, 11, 11, 14, 25, 25, 7],
+        [4, 0, 0, 0, 0, 2, 4, 0]
     ),
+    Headers = [
+        "Node",
+        "State",
+        "Rx pkt/s",
+        "Tx pkt/s",
+        "Pending pkts",
+        "Recent pkts (old>new)",
+        "Address",
+        "Type"
+    ],
+    Title = ?render(
+        lists:append([
+            [?UNDERLINE, ?W2(?GRAY_BG, Header, Width)]
+         || {Header, Width} <- lists:zip(Headers, Widths)
+        ])
+    ),
+    View = [
+        render_dist_node_row(Node, Info, Widths)
+     || {Node, Info} <- lists:sort(DistNodesInfo)
+    ],
     [Title | View].
 
-dist_node_widths() ->
-    observer_cli_lib:weighted_widths(
-        [7, 28, 14, 7, 20, 10, 10, 7, 8],
-        [0, 4, 1, 0, 4, 0, 0, 0, 0]
-    ).
+render_dist_node_row(Node, Info, Widths) ->
+    Values = [
+        Node,
+        maps:get(state, Info),
+        dist_rate_text(maps:get(rx_rate, Info, "-")),
+        dist_rate_text(maps:get(tx_rate, Info, "-")),
+        dist_packet_text(maps:get(pending_packets, Info, unavailable)),
+        dist_recent_text(maps:get(recent_pending, Info, []), lists:nth(6, Widths)),
+        maps:get(address, Info),
+        maps:get(type, Info)
+    ],
+    ?render([
+        ?W2(?RESET, Value, Width)
+     || {Value, Width} <- lists:zip(Values, Widths)
+    ]).
 
-dist_node_health(#{state := State}) when State =/= up ->
-    down;
-dist_node_health(#{queue_size := QueueSize}) when not is_integer(QueueSize) ->
-    unknown;
-dist_node_health(#{queue_size := QueueSize, queue_limit := Limit}) when
-    is_integer(QueueSize), is_integer(Limit), Limit > 0, QueueSize / Limit >= 0.85
-->
-    warn;
-dist_node_health(_Info) ->
-    ok.
+dist_rate_text(Rate) when is_float(Rate) ->
+    float_to_list(Rate, [{decimals, 1}]);
+dist_rate_text(Text) ->
+    Text.
 
-dist_health_color(ok) -> ?GREEN;
-dist_health_color(warn) -> ?YELLOW;
-dist_health_color(down) -> ?RED;
-dist_health_color(unknown) -> ?YELLOW.
+dist_packet_text(Count) when is_integer(Count), Count >= 0 -> integer_to_list(Count);
+dist_packet_text(_) -> "N/A".
 
-dist_queue_text(undefined, undefined) ->
+dist_recent_text([], _Width) ->
     "-";
-dist_queue_text(QueueSize, Limit) ->
-    observer_cli_lib:to_list(QueueSize) ++ "/" ++ observer_cli_lib:to_list(Limit).
-
-dist_percent_text(undefined, undefined) ->
-    "-";
-dist_percent_text(QueueSize, Limit) when is_integer(QueueSize), is_integer(Limit), Limit > 0 ->
-    Float = QueueSize / Limit,
-    [erlang:float_to_list(Float * 100, [{decimals, 2}]), $%];
-dist_percent_text(_QueueSize, _Limit) ->
-    "unsupported".
+dist_recent_text(Recent, Width) ->
+    Text = lists:flatten(lists:join(" > ", [integer_to_list(N) || N <- Recent])),
+    case length(Text) =< Width of
+        true -> Text;
+        false -> "... > " ++ integer_to_list(lists:last(Recent))
+    end.
 
 get_address(Info) ->
     #net_address{address = Address} = proplists:get_value(address, Info, #net_address{}),
@@ -288,14 +304,31 @@ get_address(Info) ->
             "unknown"
     end.
 
-get_dist_queue_size(Node) ->
-    case ets:lookup(sys_dist, Node) of
-        [] ->
-            not_found;
-        [Dist] ->
-            ConnId = element(3, Dist),
-            {ok, _, _, Size} = erlang:dist_get_stat(ConnId),
-            Size
+%% Both sys_dist and dist_get_stat are OTP internals. A disappearing
+%% connection, unsupported runtime, or changed tuple shape must not kill the UI.
+get_dist_stats(Node) ->
+    try
+        case ets:lookup(sys_dist, Node) of
+            [Dist] when tuple_size(Dist) >= 3, element(1, Dist) =:= connection ->
+                ConnId = element(3, Dist),
+                case erlang:dist_get_stat(ConnId) of
+                    {ok, Rx, Tx, Pending} when
+                        is_integer(Rx),
+                        Rx >= 0,
+                        is_integer(Tx),
+                        Tx >= 0,
+                        is_integer(Pending),
+                        Pending >= 0
+                    ->
+                        {ok, ConnId, Rx, Tx, Pending};
+                    _ ->
+                        unavailable
+                end;
+            _ ->
+                unavailable
+        end
+    catch
+        _:_ -> unavailable
     end.
 
 render_cache_hit_rates(CacheHitInfo, Len) when Len =< 8 ->
@@ -567,8 +600,7 @@ render_runtime_limit_info(SysInfo) ->
         [
             {"Processes", format_count_limit(process_count, process_limit, SysInfo)},
             {"Dirty CPU schedulers", to_list(proplists:get_value(dirty_cpu_schedulers, SysInfo))},
-            {"Distribution buffer busy limit",
-                to_list(proplists:get_value(dist_buf_busy_limit, SysInfo))}
+            {"Dist busy limit (bytes)", to_list(proplists:get_value(dist_buf_busy_limit, SysInfo))}
         ],
         [
             {"Ports", format_count_limit(port_count, port_limit, SysInfo)},
