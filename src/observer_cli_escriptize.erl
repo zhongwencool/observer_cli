@@ -370,10 +370,13 @@ command_help("snapshot") ->
 command_help("diagnose") ->
     remote_help(
         "diagnose [DIAGNOSTIC OPTIONS]",
-        "Run evidence-backed diagnostics. With no mode option, perform a quick\n"
-        "point-in-time diagnosis. Exit 1 means a complete report found warnings\n"
-        "or critical findings.",
+        "Run evidence-backed diagnostics. Quick mode evaluates process, port, atom,\n"
+        "and ETS limit pressure only. Observation also evaluates supported scheduler\n"
+        "pressure rules; growth and backlog trends are context, not root causes.\n"
+        "No findings is not proof of node health. Exit 1 means complete findings.",
         "  --observe DURATION     Sample for 5s..60s\n"
+        "                        Temporarily register scheduler wall-time measurement;\n"
+        "                        cleanup releases this worker's registration only.\n"
         "  --deep                 Add deep resource observation; requires --observe\n"
         "  --app APP              Observe one application; requires --observe\n"
         "  --include-identifiers  Include real node, PID, name, and MFA identifiers\n",
@@ -392,7 +395,9 @@ command_help("memory") ->
 command_help("schedulers") ->
     remote_help(
         "schedulers [--duration DURATION]",
-        "Measure normal and dirty scheduler utilization and run queues.",
+        "Measure normal and dirty scheduler utilization and run queues.\n"
+        "Temporarily register scheduler wall-time measurement; cleanup releases only\n"
+        "this worker's registration, preserving other tools' registrations.",
         "  --duration DURATION  250ms..10s; 1500ms by default\n",
         "  observer_cli schedulers --duration 2s\n"
     );
@@ -488,7 +493,7 @@ command_help("otp-state") ->
 command_help("supervision-tree") ->
     remote_help(
         "supervision-tree --app APP",
-        "Show the bounded supervision tree rooted in one running application.",
+        "Show one application's root and direct children only; not recursive.",
         "  --app APP  Application name; required\n",
         "  observer_cli supervision-tree --app my_app\n"
     );

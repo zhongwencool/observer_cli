@@ -34,6 +34,20 @@ header_and_safety_test() ->
     ]),
     ?assertEqual(nomatch, binary:match(Text, <<27>>)).
 
+diagnostic_rule_scope_test() ->
+    lists:foreach(
+        fun({Ruleset, Text}) ->
+            Report = observer_cli_report:render(
+                response(<<"diagnose">>, #{<<"ruleset">> => Ruleset})
+            ),
+            includes(Report, [Text])
+        end,
+        [
+            {<<"observer_cli.quick">>, <<"limit pressure only">>},
+            {<<"observer_cli.observation">>, <<"not root causes">>}
+        ]
+    ).
+
 memory_report_test() ->
     Data = #{
         <<"memory">> => #{

@@ -253,6 +253,21 @@ output_capability_precedes_all_command_work_test() ->
             )
     end.
 
+help_describes_diagnostic_scope_test() ->
+    lists:foreach(
+        fun({Command, Expected}) ->
+            {ok, Help} = observer_cli_test_io:capture_with_geometry(24, 80, [], fun() ->
+                observer_cli_escriptize:main([Command, "--help"])
+            end),
+            ?assertNotEqual(nomatch, binary:match(iolist_to_binary(Help), Expected))
+        end,
+        [
+            {"diagnose", <<"No findings is not proof of node health">>},
+            {"schedulers", <<"preserving other tools' registrations">>},
+            {"supervision-tree", <<"direct children only; not recursive">>}
+        ]
+    ).
+
 recovery_help_commands_are_executable_test() ->
     Commands = [
         connect,

@@ -79,6 +79,7 @@ diagnosis(Data, Capture) ->
         findings(maps:get(<<"findings">>, Data, [])),
         <<"Coverage:">>,
         coverage(Capture),
+        rule_scope(maps:get(<<"ruleset">>, Data, null)),
         compact(maps:with([<<"ruleset">>, <<"ruleset_version">>, <<"sampling_plan">>], Data), 2),
         line([<<"Skipped: ">>, value(maps:get(<<"skipped">>, Data, []))]),
         <<"No findings is not proof of node health; only evaluated rules are covered.">>,
@@ -88,6 +89,17 @@ diagnosis(Data, Capture) ->
         <<"Key context:">>,
         compact(maps:get(<<"context">>, Data, #{}), 2)
     ].
+
+rule_scope(<<"observer_cli.quick">>) ->
+    <<"Evaluated rules: process, port, atom, and ETS limit pressure only.">>;
+rule_scope(Ruleset) when
+    Ruleset =:= <<"observer_cli.observation">>;
+    Ruleset =:= <<"observer_cli.deep_observation">>;
+    Ruleset =:= <<"observer_cli.application_observation">>
+->
+    <<"Evaluated rules: VM limit and supported scheduler pressure; growth/backlog trends are context, not root causes.">>;
+rule_scope(_) ->
+    <<"Rule scope: use the reported ruleset and skipped rules; do not infer unreported checks.">>.
 
 actions(Actions) ->
     [
@@ -122,6 +134,16 @@ recommendations(Findings) ->
 coverage(Capture) when is_map(Capture) ->
     Probes = maps:get(<<"probes">>, Capture, []),
     [
+        line([
+            <<"completed probes: ">>,
+            join(
+                [
+                    text(maps:get(<<"id">>, P, null))
+                 || P <- Probes, maps:get(<<"status">>, P, <<"unknown">>) =:= <<"ok">>
+                ],
+                <<", ">>
+            )
+        ]),
         [
             line([
                 <<"probe ">>,

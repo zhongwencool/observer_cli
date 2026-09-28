@@ -279,6 +279,12 @@ observer_cli diagnose --observe 10s --app kernel
 | `--app APP` | Requires `--observe`; conflicts with `--deep`; adds bounded application evidence |
 | `--include-identifiers` | Reveals identifiers that diagnosis redacts by default |
 
+Observation temporarily registers scheduler wall-time measurement for its worker.
+Cleanup releases only that registration; another tool's registration remains
+unchanged. Coordinate sampling work because each observation adds target load.
+Growth/backlog trends remain context unless the reported ruleset explicitly
+provides a calibrated finding; no findings is not a health certificate.
+
 Observation adds trends for global memory and stable resources. New, terminated,
 or replaced resources are not treated as growth in one resource. Deep mode does
 more work but does not relax scan budgets.
