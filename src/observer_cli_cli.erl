@@ -132,7 +132,7 @@ parse_command(Command, [], Positionals, Options) ->
                 options => Options
             }};
         {error, Reason} ->
-            argument_error(Reason)
+            argument_error(Reason, Command, Options)
     end;
 parse_command(Command, [Argument | Rest], Positionals, Options) ->
     case option(Argument) of
@@ -295,30 +295,24 @@ validate_runtime_options(processes, Options) ->
 validate_runtime_options(applications, Options) ->
     case only_options(applications, Options, [sort, limit]) of
         true ->
-            validate_list_options(
-                Options, ["memory", "process_count", "reductions", "message_queue_len"]
-            );
+            validate_list_options(Options, sort_keys(applications));
         false ->
             {error, unsupported_command_option}
     end;
 validate_runtime_options(Command, Options) when Command =:= ets; Command =:= mnesia ->
     case only_options(Command, Options, [sort, limit]) of
-        true -> validate_list_options(Options, ["memory", "size"]);
+        true -> validate_list_options(Options, sort_keys(Command));
         false -> {error, unsupported_command_option}
     end;
 validate_runtime_options(network, Options) ->
-    validate_counter_list_options(
-        network, Options, ["oct", "recv_oct", "send_oct", "cnt", "recv_cnt", "send_cnt"]
-    );
+    validate_counter_list_options(network, Options, sort_keys(network));
 validate_runtime_options(ports, Options) ->
     case only_options(ports, Options, [sort, limit]) of
-        true -> validate_list_options(Options, ["queue_size", "memory", "input", "output", "io"]);
+        true -> validate_list_options(Options, sort_keys(ports));
         false -> {error, unsupported_command_option}
     end;
 validate_runtime_options(sockets, Options) ->
-    validate_counter_list_options(
-        sockets, Options, ["io", "read_bytes", "write_bytes", "packets", "waits", "fails"]
-    );
+    validate_counter_list_options(sockets, Options, sort_keys(sockets));
 validate_runtime_options(process, Options) ->
     validate_target_options(process, Options, [info]);
 validate_runtime_options(port, Options) ->
@@ -514,13 +508,7 @@ validate_observation_timeout(Options, _Duration) ->
     validate_target_options(Options).
 
 validate_processes_options(Options) ->
-    case
-        validate_list_values(
-            Options, [
-                "memory", "message_queue_len", "reductions", "binary_memory", "total_heap_size"
-            ]
-        )
-    of
+    case validate_list_values(Options, sort_keys(processes)) of
         ok ->
             case maps:find(duration, Options) of
                 {ok, _} ->
@@ -1304,6 +1292,62 @@ schema() -> ?SCHEMA.
 argument_error(Reason) ->
     {error, #{category => argument, exit_code => 2, reason => Reason}}.
 
+%% Keep recovery hints on the same sort definitions used by validation.
+sort_keys(processes) ->
+    ["memory", "message_queue_len", "reductions", "binary_memory", "total_heap_size"];
+sort_keys(applications) ->
+    ["memory", "process_count", "reductions", "message_queue_len"];
+sort_keys(Command) when Command =:= ets; Command =:= mnesia -> ["memory", "size"];
+sort_keys(network) ->
+    ["oct", "recv_oct", "send_oct", "cnt", "recv_cnt", "send_cnt"];
+sort_keys(ports) ->
+    ["queue_size", "memory", "input", "output", "io"];
+sort_keys(sockets) ->
+    ["io", "read_bytes", "write_bytes", "packets", "waits", "fails"].
+
+argument_error(Reason, Command, Options) ->
+    {error, Error} = argument_error(Reason),
+    case invalid_option_constraint(Command, Reason) of
+        {Key, Constraint} when is_map_key(Key, Options) ->
+            {error, Error#{
+                message_reason =>
+                    {invalid_option_value, Reason, Key, maps:get(Key, Options), Constraint}
+            }};
+        _ ->
+            {error, Error}
+    end.
+
+invalid_option_constraint(Command, invalid_sort) ->
+    {sort, unicode:characters_to_binary(lists:join(", ", sort_keys(Command)))};
+invalid_option_constraint(trace, invalid_limit) ->
+    {limit, <<"an integer from 1 to 1000">>};
+invalid_option_constraint(_, invalid_limit) ->
+    {limit, <<"an integer from 1 to 200">>};
+invalid_option_constraint(trace, invalid_duration) ->
+    {duration, <<"100ms..60s (integer milliseconds, Nms, or Ns)">>};
+invalid_option_constraint(_, invalid_duration) ->
+    {duration, <<"250ms..10s (integer milliseconds, Nms, or Ns)">>};
+invalid_option_constraint(_, invalid_timeout) ->
+    {timeout, <<"1ms..120s (integer milliseconds, Nms, or Ns)">>};
+invalid_option_constraint(_, invalid_observation_duration) ->
+    {observe, <<"5s..60s (integer milliseconds, Nms, or Ns)">>};
+invalid_option_constraint(_, invalid_rate) ->
+    {rate, <<"N/s where N is an integer from 1 to 200">>};
+invalid_option_constraint(_, invalid_behavior) ->
+    {behavior, <<"gen_server, gen_statem, or gen_event">>};
+invalid_option_constraint(_, invalid_tail) ->
+    {tail, <<"an integer from 1 to 2000">>};
+invalid_option_constraint(_, timeout_too_short) ->
+    {timeout, <<"at least the sampling duration plus 5s">>};
+invalid_option_constraint(_, trace_timeout_too_short) ->
+    {timeout, <<"at least the trace duration plus 7s">>};
+invalid_option_constraint(_, trace_stop_timeout_too_short) ->
+    {timeout, <<"at least 5s">>};
+invalid_option_constraint(_, otp_state_timeout_too_short) ->
+    {timeout, <<"at least 10s">>};
+invalid_option_constraint(_, _) ->
+    none.
+
 -spec response(
     atom() | binary(),
     complete | partial | error | binary(),
@@ -1891,6 +1935,10 @@ outcome_binary(Outcome) when is_atom(Outcome) ->
 outcome_binary(Outcome) when is_binary(Outcome) ->
     Outcome.
 
+reason_code({invalid_option_value, Reason, _Key, _Value, _Constraint}) ->
+    reason_code(Reason);
+reason_code({contextual_error, Reason, _Context}) ->
+    reason_code(Reason);
 reason_code({Code, _Detail}) when is_atom(Code) ->
     atom_to_binary(Code);
 reason_code({Code, _Left, _Right}) when is_atom(Code) ->
@@ -1902,6 +1950,31 @@ reason_code(Code) when is_binary(Code) ->
 reason_code(_Reason) ->
     <<"unknown_error">>.
 
+reason_message({invalid_option_value, _Reason, Key, Value, Constraint}) ->
+    iolist_to_binary([
+        <<"invalid ">>,
+        option_text(Key),
+        <<" value \"">>,
+        escape_text(Value),
+        <<"\"; expected ">>,
+        Constraint
+    ]);
+reason_message({contextual_error, Reason, #{redacted := true}}) ->
+    iolist_to_binary([
+        reason_message(Reason),
+        <<"; configured target and cookie source withheld by identifier policy">>
+    ]);
+reason_message({contextual_error, Reason, Context}) ->
+    iolist_to_binary([
+        reason_message(Reason),
+        <<"; configured target: ">>,
+        <<"node=">>,
+        escape_text(maps:get(node, Context)),
+        <<", name_mode=">>,
+        escape_text(maps:get(name_mode, Context)),
+        <<", cookie_source=">>,
+        cookie_source_text(maps:get(cookie_source, Context))
+    ]);
 reason_message({unknown_option, Option}) ->
     iolist_to_binary([<<"unknown option: ">>, escape_text(Option)]);
 reason_message({unknown_command, Command}) ->
@@ -1972,6 +2045,12 @@ reason_message(invalid_tail) ->
     <<"--tail must be an integer from 1 to 2000">>;
 reason_message(invalid_refresh_interval) ->
     <<"REFRESH_MS must be an integer of at least 1000">>;
+reason_message(cookie_source_unavailable) ->
+    <<"cookie source unavailable; set the configured environment variable or make the configured file readable before retrying">>;
+reason_message(cookie_file_permissions) ->
+    <<"cookie file permissions are unsafe; remove all group and other permission bits (normally chmod 600)">>;
+reason_message(invalid_cookie) ->
+    <<"cookie source must contain 1..255 printable ASCII bytes; verify its contents without putting the value in command arguments">>;
 reason_message(connection_failed) ->
     <<"target connection failed; check node name, name mode, EPMD, network, and cookie">>;
 reason_message(tui_start_failed) ->

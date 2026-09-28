@@ -376,6 +376,147 @@ command_output_and_error_paths_test() ->
     end),
     assert_halt(2, fun() -> observer_cli_escriptize:main(["unknown", "--help"]) end).
 
+actionable_argument_output_test() ->
+    lists:foreach(
+        fun(Format) ->
+            Output = iolist_to_binary(
+                assert_halt(2, fun() ->
+                    observer_cli_escriptize:main(["processes", "--sort", "cpu", "--format", Format])
+                end)
+            ),
+            ?assertNotEqual(nomatch, binary:match(Output, <<"cpu">>)),
+            ?assertNotEqual(nomatch, binary:match(Output, <<"binary_memory">>)),
+            case Format of
+                "term" ->
+                    {ok, Tokens, _} = erl_scan:string(binary_to_list(Output)),
+                    {ok, Response} = erl_parse:parse_term(Tokens),
+                    [Issue] = maps:get(<<"issues">>, Response),
+                    ?assertEqual(<<"invalid_sort">>, maps:get(<<"reason_code">>, Issue)),
+                    ?assertEqual(2, observer_cli_escriptize:response_exit_code(Response));
+                "text" ->
+                    ok
+            end
+        end,
+        ["text", "term"]
+    ).
+
+connection_failure_context_test() ->
+    Root = temporary_directory("observer_cli_failure_context"),
+    PreviousConfigHome = set_config_home(Root),
+    Env = "OBSERVER_CLI_FAILURE_CONTEXT_COOKIE",
+    PreviousEnv = os:getenv(Env),
+    Options = #{
+        node => "selected@host.example", name_mode => "long", cookie_env => Env, format => "term"
+    },
+    true = os:unsetenv(Env),
+    try
+        ok = observer_cli_cli:save_context(Options),
+        Results = [
+            observer_cli_escriptize:run_command(connect, Options),
+            observer_cli_escriptize:run_command(status, #{format => "term"}),
+            observer_cli_escriptize:run_command(processes, #{format => "term"})
+        ],
+        lists:foreach(
+            fun({error, connection, Reason}) ->
+                Issue = observer_cli_cli:error(connection, Reason),
+                Message = maps:get(<<"message">>, Issue),
+                ?assertEqual(<<"cookie_source_unavailable">>, maps:get(<<"reason_code">>, Issue)),
+                ?assertNotEqual(nomatch, binary:match(Message, <<"selected@host.example">>)),
+                ?assertNotEqual(nomatch, binary:match(Message, <<"name_mode=long">>)),
+                ?assertNotEqual(nomatch, binary:match(Message, list_to_binary(Env)))
+            end,
+            Results
+        ),
+        [{error, connection, OriginalReason} | _] = Results,
+        ok = observer_cli_cli:save_context(Options#{node => "changed@other.example"}),
+        Output = iolist_to_binary(
+            assert_halt(3, fun() ->
+                observer_cli_escriptize:command_error(status, term, connection, OriginalReason)
+            end)
+        ),
+        ?assertEqual(nomatch, binary:match(Output, <<"changed@other.example">>)),
+        {ok, Tokens, _} = erl_scan:string(binary_to_list(Output)),
+        {ok, Response} = erl_parse:parse_term(Tokens),
+        ?assertEqual(6, map_size(Response)),
+        ?assertEqual(
+            #{<<"target">> => null, <<"capture">> => null}, maps:get(<<"meta">>, Response)
+        ),
+        true = os:putenv(Env, "secret cookie contents invalid\n"),
+        {error, connection, InvalidReason} = observer_cli_escriptize:run_command(connect, Options),
+        InvalidIssue = observer_cli_cli:error(connection, InvalidReason),
+        ?assertEqual(<<"invalid_cookie">>, maps:get(<<"reason_code">>, InvalidIssue)),
+        ?assertEqual(
+            nomatch, binary:match(term_to_binary(InvalidIssue), <<"secret cookie contents">>)
+        ),
+        true = os:putenv(Env, "super_secret_cookie_value"),
+        {error, connection, FailedReason} = observer_cli_escriptize:run_command(
+            memory,
+            Options#{
+                node => "observer_cli_nonexistent_failure_target@localhost",
+                name_mode => "short",
+                timeout => "1000ms"
+            }
+        ),
+        FailedIssue = observer_cli_cli:error(connection, FailedReason),
+        ?assertEqual(<<"connection_failed">>, maps:get(<<"reason_code">>, FailedIssue)),
+        ?assertEqual(
+            nomatch, binary:match(term_to_binary(FailedIssue), <<"super_secret_cookie_value">>)
+        )
+    after
+        case PreviousEnv of
+            false -> os:unsetenv(Env);
+            Value -> os:putenv(Env, Value)
+        end,
+        restore_config_home(PreviousConfigHome),
+        file:del_dir_r(Root)
+    end.
+
+connection_failure_redaction_test() ->
+    Root = temporary_directory("observer_cli_failure_redaction"),
+    Path = filename:join(Root, "private-cookie"),
+    Options = #{node => "private@host", cookie_file => Path, format => "term"},
+    try
+        {error, connection, FileReason} = observer_cli_escriptize:run_command(memory, Options),
+        FileMessage = maps:get(<<"message">>, observer_cli_cli:error(connection, FileReason)),
+        ?assertNotEqual(nomatch, binary:match(FileMessage, unicode:characters_to_binary(Path))),
+        lists:foreach(
+            fun({Command, Extra}) ->
+                {error, connection, Reason} = observer_cli_escriptize:run_command(
+                    Command, maps:merge(Options, Extra)
+                ),
+                Message = maps:get(<<"message">>, observer_cli_cli:error(connection, Reason)),
+                ?assertNotEqual(
+                    nomatch, binary:match(Message, <<"withheld by identifier policy">>)
+                ),
+                ?assertEqual(nomatch, binary:match(Message, <<"private@host">>)),
+                ?assertEqual(nomatch, binary:match(Message, unicode:characters_to_binary(Path)))
+            end,
+            [{snapshot, #{}}, {diagnose, #{}}, {memory, #{redact => true}}]
+        ),
+        {error, connection, IncludedReason} = observer_cli_escriptize:run_command(
+            snapshot, Options#{include_identifiers => true}
+        ),
+        IncludedMessage = maps:get(
+            <<"message">>, observer_cli_cli:error(connection, IncludedReason)
+        ),
+        ?assertNotEqual(nomatch, binary:match(IncludedMessage, <<"private@host">>)),
+        ok = file:write_file(Path, <<"private_cookie_value">>),
+        ok = file:change_mode(Path, 8#644),
+        {error, connection, PermissionReason} = observer_cli_escriptize:run_command(
+            memory, Options
+        ),
+        PermissionIssue = observer_cli_cli:error(connection, PermissionReason),
+        ?assertEqual(<<"cookie_file_permissions">>, maps:get(<<"reason_code">>, PermissionIssue)),
+        ?assertNotEqual(
+            nomatch, binary:match(maps:get(<<"message">>, PermissionIssue), <<"chmod 600">>)
+        ),
+        ?assertEqual(
+            nomatch, binary:match(term_to_binary(PermissionIssue), <<"private_cookie_value">>)
+        )
+    after
+        file:del_dir_r(Root)
+    end.
+
 assert_halt(Expected, Fun) ->
     {ok, Output} = observer_cli_test_io:capture_with_geometry(
         24,
@@ -4716,8 +4857,11 @@ response_validation_boundaries_test() ->
     ),
     MissingEnv = "OBSERVER_CLI_MISSING_VALIDATION_COOKIE",
     true = os:unsetenv(MissingEnv),
-    ?assertEqual(
-        {error, connection, cookie_source_unavailable},
+    ?assertMatch(
+        {error, connection,
+            {contextual_error, cookie_source_unavailable, #{
+                node := <<"target@host">>, name_mode := <<"short">>
+            }}},
         observer_cli_escriptize:probe_options(
             #{node => "target@host", cookie_env => MissingEnv}, fun(_, _, _) -> ok end
         )

@@ -152,14 +152,14 @@ main_options(Options) ->
                         unknown,
                         requested_format(Options),
                         maps:get(category, Error),
-                        maps:get(reason, Error)
+                        maps:get(message_reason, Error, maps:get(reason, Error))
                     );
                 Command ->
                     command_error(
                         Command,
                         requested_format(Options),
                         maps:get(category, Error),
-                        maps:get(reason, Error)
+                        maps:get(message_reason, Error, maps:get(reason, Error))
                     )
             end
     end.
@@ -673,7 +673,7 @@ run_command(Command, Options) ->
     end.
 
 run_command_ready(snapshot, Options) ->
-    with_target(Options, fun(Target, _Capabilities, Remaining) ->
+    with_target(diagnostic_connection_options(Options), fun(Target, _Capabilities, Remaining) ->
         run_snapshot(
             Target,
             Options,
@@ -682,7 +682,7 @@ run_command_ready(snapshot, Options) ->
         )
     end);
 run_command_ready(diagnose, Options) ->
-    with_target(Options, fun(Target, _Capabilities, Remaining) ->
+    with_target(diagnostic_connection_options(Options), fun(Target, _Capabilities, Remaining) ->
         run_diagnose(Target, Options, Remaining)
     end);
 run_command_ready(connect, Options) ->
@@ -701,6 +701,9 @@ run_command_ready(Command, Options) ->
             Remaining
         )
     end).
+
+diagnostic_connection_options(Options) ->
+    Options#{redact => not maps:get(include_identifiers, Options, false)}.
 
 arguments(Options) -> maps:get(arguments, Options, []).
 
@@ -1178,28 +1181,71 @@ active_options(Options) ->
 probe_options(Options, Fun) ->
     case node() of
         nonode@nohost ->
-            case {observer_cli_cli:target(Options), observer_cli_cli:cookie_source(Options)} of
-                {{ok, {TargetText, NameMode}}, {ok, CookieBinary}} ->
-                    case observer_cli_cli:timeout(Options) of
-                        {ok, Timeout} ->
-                            Target = list_to_atom(TargetText),
-                            Cookie = binary_to_atom(CookieBinary),
-                            probe_target(Target, NameMode, Cookie, Timeout, Fun);
-                        {error, Reason} ->
-                            {error, argument, Reason}
-                    end;
-                {{error, no_active_context}, _Cookie} ->
+            case observer_cli_cli:target(Options) of
+                {ok, {TargetText, NameMode}} ->
+                    %% The effective selector is captured before credential resolution.
+                    %% Never re-read a saved context after a failed invocation.
+                    Context = connection_context(TargetText, NameMode, Options),
+                    contextual_connection_error(
+                        probe_cookie(Options, TargetText, NameMode, Fun), Context
+                    );
+                {error, no_active_context} ->
                     {error, capability, no_active_context};
-                {{error, Reason}, _Cookie} ->
-                    {error, argument, Reason};
-                {_Target, {error, missing_cookie_source}} ->
-                    {error, argument, missing_cookie_source};
-                {_Target, {error, Reason}} ->
-                    {error, connection, Reason}
+                {error, Reason} ->
+                    {error, argument, Reason}
             end;
         _Distributed ->
             {error, controller, controller_already_distributed}
     end.
+
+probe_cookie(Options, TargetText, NameMode, Fun) ->
+    case observer_cli_cli:cookie_source(Options) of
+        {ok, CookieBinary} ->
+            case observer_cli_cli:timeout(Options) of
+                {ok, Timeout} ->
+                    probe_target(
+                        list_to_atom(TargetText),
+                        NameMode,
+                        binary_to_atom(CookieBinary),
+                        Timeout,
+                        Fun
+                    );
+                {error, Reason} ->
+                    {error, argument, Reason}
+            end;
+        {error, missing_cookie_source} ->
+            {error, argument, missing_cookie_source};
+        {error, Reason} ->
+            {error, connection, Reason}
+    end.
+
+connection_context(_TargetText, _NameMode, #{redact := true}) ->
+    #{redacted => true};
+connection_context(TargetText, NameMode, Options) ->
+    #{
+        node => public_text(TargetText),
+        name_mode =>
+            case NameMode of
+                shortnames -> <<"short">>;
+                longnames -> <<"long">>
+            end,
+        cookie_source =>
+            case Options of
+                #{cookie_env := Name} ->
+                    #{<<"type">> => <<"env">>, <<"name">> => public_text(Name)};
+                #{cookie_file := Path} ->
+                    #{<<"type">> => <<"file">>, <<"path">> => public_text(Path)};
+                _ ->
+                    #{<<"type">> => <<"env">>, <<"name">> => <<"not configured">>}
+            end
+    }.
+
+contextual_connection_error({error, Category, Reason}, Context) when
+    Category =:= connection; Category =:= distribution
+->
+    {error, Category, {contextual_error, Reason, Context}};
+contextual_connection_error(Outcome, _Context) ->
+    Outcome.
 
 -ifdef(TEST).
 connect_target(Target, NameMode, Cookie, Timeout, RandomFun, ConnectFun, Fun) ->

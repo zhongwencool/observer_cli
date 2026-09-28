@@ -644,8 +644,17 @@ no saved context succeeds.
 | `trace_timeout_too_short` | Allow the trace duration plus seven seconds. |
 | `trace_stop_timeout_too_short` | Use at least five seconds for trace cleanup. |
 | Schema incompatibility | Use the same observer_cli build on controller and target. |
-| Scan-budget refusal | Narrow the command or limit instead of repeatedly forcing the scan. |
+| Scan-budget refusal | A smaller `--limit` only caps returned rows; it does not reduce pre-enumeration resource-count admission. Use a known `process PID_OR_NAME` or `port PORT_ID`, omit optional `--deep`, or investigate a lower-cost domain. Do not repeatedly retry the same refused inventory. |
 | Exit `4` cleanup failure | Preserve all output and confirm target state before another invasive action. |
+
+Parameter errors include the rejected non-secret option value and its command-specific
+accepted values or range. Their stable `reason_code` and exit status remain unchanged.
+Connection errors include the already resolved node, naming mode, and configured
+cookie source **name or path**, never the cookie value. These are selector hints,
+not evidence that the target was reached or an OTP version was observed. `--redact` hides
+these selector hints; snapshot and diagnose also hide them by default unless
+`--include-identifiers` is explicitly selected. A failed invocation does not reload saved context
+to construct its error, so a concurrent selector change cannot mislabel the failure.
 
 Local information forms do not connect to a target:
 

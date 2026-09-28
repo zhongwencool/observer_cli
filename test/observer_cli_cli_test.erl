@@ -2299,10 +2299,103 @@ log_source(Id, Addressable, Kind, Supported, Reason) ->
 byte_count(Binary, Byte) ->
     length(binary:matches(Binary, <<Byte>>)).
 
-assert_argument_error(Reason, Result) ->
+actionable_argument_messages_test() ->
+    Trace = ["trace", "call", "erlang:node/0", "--pid", "<0.1.0>", "--replace-existing-trace"],
+    Cases = [
+        {
+            ["processes", "--sort", "cpu"],
+            invalid_sort,
+            <<"cpu">>,
+            <<"memory, message_queue_len, reductions, binary_memory, total_heap_size">>
+        },
+        {
+            ["applications", "--sort", "cpu"],
+            invalid_sort,
+            <<"cpu">>,
+            <<"memory, process_count, reductions, message_queue_len">>
+        },
+        {["ets", "--sort", "owner"], invalid_sort, <<"owner">>, <<"memory, size">>},
+        {
+            ["network", "--sort", "io"],
+            invalid_sort,
+            <<"io">>,
+            <<"oct, recv_oct, send_oct, cnt, recv_cnt, send_cnt">>
+        },
+        {
+            ["ports", "--sort", "cpu"],
+            invalid_sort,
+            <<"cpu">>,
+            <<"queue_size, memory, input, output, io">>
+        },
+        {
+            ["sockets", "--sort", "oct"],
+            invalid_sort,
+            <<"oct">>,
+            <<"io, read_bytes, write_bytes, packets, waits, fails">>
+        },
+        {["processes", "--limit", "201"], invalid_limit, <<"201">>, <<"1 to 200">>},
+        {Trace ++ ["--limit", "1001"], invalid_limit, <<"1001">>, <<"1 to 1000">>},
+        {["schedulers", "--duration", "1ms"], invalid_duration, <<"1ms">>, <<"250ms..10s">>},
+        {Trace ++ ["--duration", "61s"], invalid_duration, <<"61s">>, <<"100ms..60s">>},
+        {["memory", "--timeout", "121s"], invalid_timeout, <<"121s">>, <<"1ms..120s">>},
+        {["diagnose", "--observe", "4s"], invalid_observation_duration, <<"4s">>, <<"5s..60s">>},
+        {Trace ++ ["--rate", "201/s"], invalid_rate, <<"201/s">>, <<"1 to 200">>},
+        {
+            ["otp-state", "server", "--behavior", "actor"],
+            invalid_behavior,
+            <<"actor">>,
+            <<"gen_server, gen_statem, or gen_event">>
+        },
+        {["logs", "--tail", "2001"], invalid_tail, <<"2001">>, <<"1 to 2000">>},
+        {
+            ["schedulers", "--duration", "2s", "--timeout", "6s"],
+            timeout_too_short,
+            <<"6s">>,
+            <<"duration plus 5s">>
+        },
+        {
+            Trace ++ ["--duration", "2s", "--timeout", "8s"],
+            trace_timeout_too_short,
+            <<"8s">>,
+            <<"duration plus 7s">>
+        },
+        {
+            ["trace", "stop", "--all", "--timeout", "4s"],
+            trace_stop_timeout_too_short,
+            <<"4s">>,
+            <<"at least 5s">>
+        },
+        {
+            ["otp-state", "server", "--behavior", "gen_server", "--timeout", "9s"],
+            otp_state_timeout_too_short,
+            <<"9s">>,
+            <<"at least 10s">>
+        }
+    ],
+    lists:foreach(
+        fun({Args, Reason, BadValue, Constraint}) ->
+            {error, Error} = observer_cli_cli:parse(Args),
+            assert_argument_error(Reason, {error, Error}),
+            Issue = observer_cli_cli:error(argument, maps:get(message_reason, Error)),
+            ?assertEqual(atom_to_binary(Reason, utf8), maps:get(<<"reason_code">>, Issue)),
+            Message = maps:get(<<"message">>, Issue),
+            ?assertNotEqual(nomatch, binary:match(Message, BadValue)),
+            ?assertNotEqual(nomatch, binary:match(Message, Constraint))
+        end,
+        Cases
+    ),
+    {error, Unsafe} = observer_cli_cli:parse(["processes", "--sort", "bad\n\e[31m"]),
+    UnsafeMessage = maps:get(
+        <<"message">>, observer_cli_cli:error(argument, maps:get(message_reason, Unsafe))
+    ),
+    ?assertEqual(nomatch, binary:match(UnsafeMessage, <<10>>)),
+    ?assertEqual(nomatch, binary:match(UnsafeMessage, <<27>>)).
+
+assert_argument_error(Reason, {error, Error}) ->
+    %% Recovery text is an internal addition; the original parser contract stays exact.
     ?assertEqual(
-        {error, #{category => argument, exit_code => 2, reason => Reason}},
-        Result
+        #{category => argument, exit_code => 2, reason => Reason},
+        maps:remove(message_reason, Error)
     ).
 
 with_cookie_file(Contents, Mode, Fun) ->
