@@ -219,6 +219,20 @@ controller_boundary_helpers_test() ->
             )
     end.
 
+public_cookie_selector_preserves_unicode_test() ->
+    ?assertEqual(
+        #{<<"type">> => <<"file">>, <<"path">> => <<"/tmp/é中文.cookie"/utf8>>},
+        observer_cli_escriptize:public_cookie_source(#{cookie_file => "/tmp/é中文.cookie"})
+    ),
+    ?assertEqual(
+        #{<<"type">> => <<"env">>, <<"name">> => <<"é_COOKIE"/utf8>>},
+        observer_cli_escriptize:public_cookie_source(#{cookie_env => "é_COOKIE"})
+    ),
+    ?assertEqual(
+        #{<<"type">> => <<"file">>, <<"path">> => <<"invalid-text">>},
+        observer_cli_escriptize:public_cookie_source(#{cookie_file => [16#110000]})
+    ).
+
 output_capability_precedes_all_command_work_test() ->
     Commands = [snapshot, diagnose, memory, schedulers, trace, logs, status, connect, disconnect],
     lists:foreach(

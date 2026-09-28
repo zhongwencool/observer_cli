@@ -40,6 +40,7 @@
     pointer_exists/2,
     public_value/2,
     public_text/1,
+    public_cookie_source/1,
     command_format/1,
     command_identity/2,
     command_display/1,
@@ -910,9 +911,15 @@ public_capabilities(_Capabilities) ->
     null.
 
 public_cookie_source(#{cookie_env := Name}) ->
-    #{<<"type">> => <<"env">>, <<"name">> => public_text(Name)};
+    #{<<"type">> => <<"env">>, <<"name">> => public_selector_text(Name)};
 public_cookie_source(#{cookie_file := Path}) ->
-    #{<<"type">> => <<"file">>, <<"path">> => public_text(Path)}.
+    #{<<"type">> => <<"file">>, <<"path">> => public_selector_text(Path)}.
+
+public_selector_text(Text) ->
+    case unicode:characters_to_binary(Text) of
+        Binary when is_binary(Binary) -> Binary;
+        _ -> <<"invalid-text">>
+    end.
 
 public_text(Text) ->
     try list_to_binary(Text) of
@@ -1237,9 +1244,9 @@ connection_context(TargetText, NameMode, Options) ->
         cookie_source =>
             case Options of
                 #{cookie_env := Name} ->
-                    #{<<"type">> => <<"env">>, <<"name">> => public_text(Name)};
+                    #{<<"type">> => <<"env">>, <<"name">> => public_selector_text(Name)};
                 #{cookie_file := Path} ->
-                    #{<<"type">> => <<"file">>, <<"path">> => public_text(Path)};
+                    #{<<"type">> => <<"file">>, <<"path">> => public_selector_text(Path)};
                 _ ->
                     #{<<"type">> => <<"env">>, <<"name">> => <<"not configured">>}
             end
