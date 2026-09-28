@@ -297,6 +297,7 @@ usage() ->
         "\n"
         "Output options:\n"
         "  --format FORMAT     text, term, or json; text by default\n"
+        "  --verbose           Full text evidence; not valid with JSON or term\n"
         "  --json              Alias for --format json (OTP 27+ controller)\n"
         "  --redact            Hide target identifiers\n"
         "  --include-identifiers\n"
@@ -630,7 +631,8 @@ remote_help(Usage, Description, Options, Examples) ->
         "  Use the context saved by connect, or pass --node NODE and exactly one of\n",
         "  --cookie-env NAME or --cookie-file PATH. --name-mode accepts short or long.\n",
         "\nOutput options:\n",
-        "  --format text|term|json, --json\n",
+        "  --format text|term|json, --json\n"
+        "  --verbose shows detailed text; JSON and term always retain full evidence.\n",
         "  --redact hides identifiers for inspection and trace commands.\n",
         "  --include-identifiers reveals them for snapshot and diagnose.\n",
         "  --timeout DURATION sets the command deadline, up to 120s.\n",
@@ -832,7 +834,7 @@ run_disconnect_ready() ->
 
 ensure_output_format(Command, Options) ->
     Response = observer_cli_cli:response(Command, complete, null, null, null, []),
-    case observer_cli_cli:encode(command_format(Options), Response) of
+    case observer_cli_cli:encode(command_format(Options), Response, Options) of
         {ok, _Output} ->
             ok;
         {error, EncodeError} ->
@@ -3468,7 +3470,7 @@ controller_stopped(Deadline) ->
 -spec command_output(map(), map(), non_neg_integer()) -> no_return().
 command_output(Options, Response, ExitCode) ->
     Format = command_format(Options),
-    case observer_cli_cli:encode(Format, Response) of
+    case observer_cli_cli:encode(Format, Response, Options) of
         {ok, Output} ->
             output_put_chars(command_output_device(Format, Response), Output),
             exit_with_code(ExitCode);

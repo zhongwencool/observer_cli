@@ -488,10 +488,16 @@ Remote commands accept:
 | Option | Default | Constraint |
 | --- | --- | --- |
 | `--format text\|term\|json` | `text` | Select one encoding |
+| `--verbose` | Off | Detailed text evidence; cannot be combined with JSON or term |
 | `--json` | Off | Alias for JSON; requires OTP 27 or newer on the controller |
 | `--redact` | See below | Hide identifiers in inspection and trace output |
 | `--include-identifiers` | See below | Reveal snapshot and diagnosis identifiers |
 | `--timeout DURATION` | Command-dependent | Positive duration, at most `120s` |
+
+Default text is a concise operator report: outcome and coverage first, compact
+resource comparisons, and diagnosis findings before supporting context. Use
+`--verbose` for the detailed text tree. Neither mode changes collection or
+budgets; JSON and term always retain the complete structured evidence.
 
 Text is for operators. Do not scrape it. Term output is one consultable Erlang
 map followed by a period. JSON contains the same data as one object and uses the

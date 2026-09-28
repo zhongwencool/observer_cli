@@ -48,6 +48,40 @@ reserved_command_words_test() ->
         Commands
     ).
 
+verbose_is_text_only_test() ->
+    ?assertMatch(
+        {ok, #{options := #{verbose := true}}}, observer_cli_cli:parse(["memory", "--verbose"])
+    ),
+    ?assertMatch({ok, _}, observer_cli_cli:parse(["trace", "stop", "--all", "--verbose"])),
+    lists:foreach(
+        fun(Args) ->
+            ?assertMatch(
+                {error, #{reason := verbose_text_only}},
+                observer_cli_cli:parse(["memory", "--verbose" | Args])
+            )
+        end,
+        [["--json"], ["--format", "json"], ["--format", "term"]]
+    ),
+    Response = observer_cli_cli:response(
+        memory,
+        complete,
+        null,
+        null,
+        #{
+            <<"memory">> => #{
+                <<"beam">> => #{<<"total_bytes">> => 123},
+                <<"allocator">> => #{<<"allocator_detail">> => 456}
+            }
+        },
+        []
+    ),
+    {ok, Brief} = observer_cli_cli:encode(text, Response),
+    {ok, Verbose} = observer_cli_cli:encode(text, Response, #{verbose => true}),
+    ?assertEqual(nomatch, binary:match(Brief, <<"allocator_detail">>)),
+    ?assertNotEqual(nomatch, binary:match(Brief, <<"total_bytes">>)),
+    ?assertNotEqual(nomatch, binary:match(Verbose, <<"allocator_detail">>)),
+    ?assertNotEqual(nomatch, binary:match(Brief, <<"outcome=complete">>)).
+
 orphan_target_options_are_rejected_test() ->
     lists:foreach(
         fun(Options) ->
@@ -1240,7 +1274,7 @@ encoder_cap_and_text_escaping_test() ->
     ),
     ?assertEqual(
         {error, #{category => schema, exit_code => 4, reason => response_too_large}},
-        observer_cli_cli:encode(text, Oversized)
+        observer_cli_cli:encode(text, Oversized, #{verbose => true})
     ),
     Dynamic = <<"safe", 27, "]0;title", 7, 10>>,
     ?assertEqual(<<"safe\\x1B]0;title\\x07\\x0A">>, observer_cli_cli:escape_text(Dynamic)),
@@ -1362,7 +1396,7 @@ logs_maximum_envelope_stays_within_encoder_cap_test() ->
             ok
     end.
 
-health_command_text_reports_test() ->
+health_command_verbose_reports_test() ->
     Response = observer_cli_cli:response(
         diagnose,
         complete,
@@ -1405,7 +1439,7 @@ health_command_text_reports_test() ->
         },
         []
     ),
-    {ok, Text} = observer_cli_cli:encode(text, Response),
+    {ok, Text} = observer_cli_cli:encode(text, Response, #{verbose => true}),
     lists:foreach(
         fun(Fragment) -> ?assertNotEqual(nomatch, binary:match(Text, Fragment)) end,
         [
@@ -1433,7 +1467,7 @@ health_command_text_reports_test() ->
     lists:foreach(
         fun(Command) ->
             HealthResponse = Response#{<<"command">> := atom_to_binary(Command)},
-            {ok, HealthText} = observer_cli_cli:encode(text, HealthResponse),
+            {ok, HealthText} = observer_cli_cli:encode(text, HealthResponse, #{verbose => true}),
             ?assertMatch(<<"observer_cli ", _/binary>>, HealthText),
             ?assertEqual(nomatch, binary:match(HealthText, <<"#{">>))
         end,
@@ -1612,7 +1646,7 @@ text_encoder_public_edge_contract_test() ->
         #{<<"values">> => [#{}, [], <<>>, 1.5, {sample, json}, [<<"nested">>]]},
         []
     ),
-    {ok, ValuesText} = observer_cli_cli:encode(text, Values),
+    {ok, ValuesText} = observer_cli_cli:encode(text, Values, #{verbose => true}),
     lists:foreach(
         fun(Fragment) -> ?assertNotEqual(nomatch, binary:match(ValuesText, Fragment)) end,
         [

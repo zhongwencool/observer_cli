@@ -22,6 +22,7 @@
     response/6,
     error/2,
     encode/2,
+    encode/3,
     exit_code/1,
     escape_text/1
 ]).
@@ -215,7 +216,8 @@ trace_mode_keys(Options) ->
         json,
         timeout,
         redact,
-        include_identifiers
+        include_identifiers,
+        verbose
     ],
     lists:sort(maps:keys(maps:without(Global, Options))).
 
@@ -246,6 +248,10 @@ validate_format_options(_Command, #{format := Format}) when
     Format =/= "text", Format =/= "json", Format =/= "term"
 ->
     {error, {unsupported_format, Format}};
+validate_format_options(_Command, #{verbose := true, json := true}) ->
+    {error, verbose_text_only};
+validate_format_options(_Command, #{verbose := true, format := Format}) when Format =/= "text" ->
+    {error, verbose_text_only};
 validate_format_options(Command, Options) ->
     validate_runtime_options(Command, Options).
 
@@ -447,9 +453,9 @@ only_options(Command, Options, CommandOptions) ->
 global_options(connect) ->
     remote_options();
 global_options(status) ->
-    [format, json, timeout];
+    [format, json, timeout, verbose];
 global_options(disconnect) ->
-    [format, json];
+    [format, json, verbose];
 global_options(logs) ->
     remote_options();
 global_options(_Command) ->
@@ -463,7 +469,8 @@ remote_options() ->
         name_mode,
         format,
         json,
-        timeout
+        timeout,
+        verbose
     ].
 
 validate_diagnose_options(Options) ->
@@ -1246,6 +1253,7 @@ option("--cookie-file") -> {value, cookie_file};
 option("--name-mode") -> {value, name_mode};
 option("--format") -> {value, format};
 option("--json") -> {flag, json};
+option("--verbose") -> {flag, verbose};
 option("--timeout") -> {value, timeout};
 option("--redact") -> {flag, redact};
 option("--include-identifiers") -> {flag, include_identifiers};
@@ -1324,7 +1332,11 @@ error(Category, Reason) ->
         <<"message">> => reason_message(Reason)
     }.
 
--spec encode(text | term | json, map()) -> {ok, binary()} | {error, map()}.
+-spec encode(text | term | json, map(), map()) -> {ok, binary()} | {error, map()}.
+encode(text, Response, #{verbose := true}) -> encode(verbose, Response);
+encode(Format, Response, _Options) -> encode(Format, Response).
+
+-spec encode(text | verbose | term | json, map()) -> {ok, binary()} | {error, map()}.
 encode(text, #{
     <<"command">> := Command,
     <<"data">> := #{
@@ -1406,7 +1418,16 @@ encode(text, #{<<"command">> := <<"logs">>, <<"data">> := Data} = Response) when
     is_map(Data)
 ->
     capped(iolist_to_binary(logs_text(Response, Data)));
-encode(text, #{<<"command">> := Command} = Response) ->
+encode(text, Response) ->
+    capped(observer_cli_report:render(Response, report_width()));
+encode(verbose, #{<<"command">> := Command} = Response) when
+    Command =:= <<"logs">>;
+    Command =:= <<"connect">>;
+    Command =:= <<"status">>;
+    Command =:= <<"disconnect">>
+->
+    encode(text, Response);
+encode(verbose, #{<<"command">> := Command} = Response) ->
     capped(
         iolist_to_binary([
             <<"observer_cli ">>,
@@ -1434,6 +1455,12 @@ encode(json, Response) ->
     end;
 encode(_Format, _Response) ->
     {error, controller_error(format, unsupported_format)}.
+
+report_width() ->
+    case io:columns() of
+        {ok, Width} when is_integer(Width), Width > 0 -> Width;
+        _ -> 80
+    end.
 
 -spec command_name(atom() | binary()) -> binary().
 command_name(Command) when is_atom(Command) -> command_name(atom_to_binary(Command));
@@ -1891,6 +1918,8 @@ reason_message({unsupported_format, Format}) ->
     iolist_to_binary([<<"unsupported format: ">>, escape_text(Format)]);
 reason_message({unsupported_name_mode, Mode}) ->
     iolist_to_binary([<<"unsupported name mode: ">>, escape_text(Mode)]);
+reason_message(verbose_text_only) ->
+    <<"--verbose is only supported with --format text; JSON and term already contain complete evidence">>;
 reason_message(json_unavailable) ->
     <<"JSON output requires OTP 27 or newer">>;
 reason_message(command_unavailable) ->
