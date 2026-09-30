@@ -198,7 +198,9 @@ Override it when necessary:
 ```
 
 The controller and target must use the same name mode. An explicit `--node`
-without a cookie source is rejected.
+without a cookie source is rejected. Conversely, `--cookie-env`, `--cookie-file`,
+and `--name-mode` require an explicit `--node`; they never silently override or
+get ignored by saved context. Run `connect` again to update the saved selector.
 
 ## 4. Connect and check status
 
@@ -229,6 +231,9 @@ For example, macOS normally resolves it to
 `~/Library/Application Support/observer_cli/context.etf`. The directory is mode
 `0700`; the regular, non-symlink file is mode `0600`, size-limited, safely
 decoded, and replaced atomically only after controller cleanup succeeds.
+New selectors use UTF-8 strings in internal context version 2, including cookie
+paths with non-ASCII characters. Legacy version 1 selectors remain readable;
+after downgrading to an older CLI, run `connect` again to recreate its selector.
 
 A reachable target with a missing or incompatible diagnostics bundle is still
 saved. `connect` and `status` report that state as a warning. Diagnostic and
@@ -274,6 +279,12 @@ observer_cli diagnose --observe 10s --app kernel
 | `--app APP` | Requires `--observe`; conflicts with `--deep`; adds bounded application evidence |
 | `--include-identifiers` | Reveals identifiers that diagnosis redacts by default |
 
+Observation temporarily registers scheduler wall-time measurement for its worker.
+Cleanup releases only that registration; another tool's registration remains
+unchanged. Coordinate sampling work because each observation adds target load.
+Growth/backlog trends remain context unless the reported ruleset explicitly
+provides a calibrated finding; no findings is not a health certificate.
+
 Observation adds trends for global memory and stable resources. New, terminated,
 or replaced resources are not treated as growth in one resource. Deep mode does
 more work but does not relax scan budgets.
@@ -292,9 +303,20 @@ reason codes. Command `data` may also retain domain-specific status or reason
 details. Probe failures are not duplicated in `issues` or diagnosis
 `data.skipped`. Incomplete required coverage suppresses findings and produces a
 partial result. "No findings" means only that the covered rules found nothing;
-it does not certify that the node is healthy.
+it does not certify that the node is healthy. If required evidence is complete but
+an optional probe fails, the report remains partial and retains its supported
+findings; the summary states how many findings remain available.
 
 ## 6. Inspect resources and trace
+
+Diagnosis may include `data.next_actions`, derived by the controller from
+validated findings. Each action provides an ID, purpose, command-relative `argv`,
+risk and authorization metadata, and `target_binding=same_explicit_target`.
+Keep the original explicit node and cookie-source selector when constructing the
+next invocation; the argv intentionally contains neither credentials nor a saved
+context fallback. These are suggestions, never automatically executed commands.
+Existing `recommendations` remain available. No CLI action is invented for an
+unavailable capability (for example, identifying arbitrary atom-creation paths).
 
 Run one narrow command for the domain indicated by the diagnosis.
 
@@ -419,6 +441,9 @@ or prompt injection. `--redact` and `--include-identifiers` are rejected rather
 than implying reliable sanitization. Text output prefixes every physical line
 with `| ` and escapes terminal controls; structured consumers must still treat
 decoded lines as untrusted evidence.
+Text reports always identify the outcome and content truncation before log
+content. `has_more=true` alone only means older content exists; byte/line-cap
+loss is separately identified as partial with its truncation reason.
 
 This capability trusts the target code, Logger callbacks, OS user, and target
 filesystem namespace. It is not a hostile-target or hostile-filesystem
@@ -473,15 +498,42 @@ observer_cli trace stop --all
 
 ## 7. Use output and exit contracts
 
+### Offline capability discovery
+
+```sh
+observer_cli describe --json
+observer_cli describe trace call --json
+observer_cli describe processes --format term
+observer_cli describe --schema --json
+```
+
+`describe` is local: it never connects, resolves cookies, or reads/writes saved
+context. It describes noninteractive commands, arguments, defaults, bounds,
+machine-readable constraints, identifier policy, side effects and authorization.
+The parser and catalog share public names, option spellings and sort values;
+complex domain safety checks remain in the command implementation.
+
+Ordinary descriptions use the six-field response envelope. `--schema --json`
+instead exports the complete bundled JSON Schema document directly, for offline
+validation; it accepts no command arguments. JSON still requires OTP 27+, while
+text and term descriptions work on OTP 26. Use `describe COMMAND --verbose` for
+full operator-readable metadata. TUI is deliberately excluded from this catalog.
+
 Remote commands accept:
 
 | Option | Default | Constraint |
 | --- | --- | --- |
 | `--format text\|term\|json` | `text` | Select one encoding |
+| `--verbose` | Off | Detailed text evidence; cannot be combined with JSON or term |
 | `--json` | Off | Alias for JSON; requires OTP 27 or newer on the controller |
 | `--redact` | See below | Hide identifiers in inspection and trace output |
 | `--include-identifiers` | See below | Reveal snapshot and diagnosis identifiers |
 | `--timeout DURATION` | Command-dependent | Positive duration, at most `120s` |
+
+Default text is a concise operator report: outcome and coverage first, compact
+resource comparisons, and diagnosis findings before supporting context. Use
+`--verbose` for the detailed text tree. Neither mode changes collection or
+budgets; JSON and term always retain the complete structured evidence.
 
 Text is for operators. Do not scrape it. Term output is one consultable Erlang
 map followed by a period. JSON contains the same data as one object and uses the
@@ -507,6 +559,11 @@ The normative machine-readable definition is the JSON Schema 2020-12 document
 at
 [`priv/schema/observer_cli.cli.v1.schema.json`](https://raw.githubusercontent.com/zhongwencool/observer_cli/v2.0.0/priv/schema/observer_cli.cli.v1.schema.json).
 It is included in Hex and release artifacts.
+The schema specifies command payloads, finding evidence, resource fields,
+unavailable states, and trace/log completion boundaries. CI validates emitted
+fixtures and deliberate malformed variants with a pinned Draft 2020-12
+validator, then checks the exact schema packaged by Rebar and Mix. Relational
+safety checks such as target binding and cleanup remain in the controller.
 
 The `schema` value is the observer_cli protocol identity, not a JSON Schema
 dialect. JSON follows RFC 8259 and capture timestamps use RFC 3339. The schema groups
@@ -549,6 +606,10 @@ margin; `trace stop --all` requires at least five seconds. For example:
 ```sh
 observer_cli diagnose --observe 30s --timeout 40s --format term
 ```
+
+Output capability is checked before connecting, collecting, tracing, or writing
+saved context. In particular, an OTP 26 controller rejects JSON before target
+work starts; select text or term, or use an OTP 27+ controller.
 
 ### Standard streams
 
@@ -624,8 +685,17 @@ no saved context succeeds.
 | `trace_timeout_too_short` | Allow the trace duration plus seven seconds. |
 | `trace_stop_timeout_too_short` | Use at least five seconds for trace cleanup. |
 | Schema incompatibility | Use the same observer_cli build on controller and target. |
-| Scan-budget refusal | Narrow the command or limit instead of repeatedly forcing the scan. |
+| Scan-budget refusal | A smaller `--limit` only caps returned rows; it does not reduce pre-enumeration resource-count admission. Use a known `process PID_OR_NAME` or `port PORT_ID`, omit optional `--deep`, or investigate a lower-cost domain. Do not repeatedly retry the same refused inventory. |
 | Exit `4` cleanup failure | Preserve all output and confirm target state before another invasive action. |
+
+Parameter errors include the rejected non-secret option value and its command-specific
+accepted values or range. Their stable `reason_code` and exit status remain unchanged.
+Connection errors include the already resolved node, naming mode, and configured
+cookie source **name or path**, never the cookie value. These are selector hints,
+not evidence that the target was reached or an OTP version was observed. `--redact` hides
+these selector hints; snapshot and diagnose also hide them by default unless
+`--include-identifiers` is explicitly selected. A failed invocation does not reload saved context
+to construct its error, so a concurrent selector change cannot mislabel the failure.
 
 Local information forms do not connect to a target:
 

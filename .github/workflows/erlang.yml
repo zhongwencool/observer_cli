@@ -84,6 +84,18 @@ jobs:
         run: |
           epmd -daemon
           rebar3 as test do eunit, covertool generate
+      - name: Validate response schemas and Rebar packaging
+        if: matrix.otp == '29'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/schema-venv"
+          "$RUNNER_TEMP/schema-venv/bin/python" -m pip install -r scripts/schema-requirements.txt
+          scripts/schema-fixtures.escript "$RUNNER_TEMP/schema-fixtures"
+          "$RUNNER_TEMP/schema-venv/bin/python" scripts/validate-cli-schema.py \
+            --fixtures "$RUNNER_TEMP/schema-fixtures" --self-test \
+            --escript _build/default/bin/observer_cli
+          scripts/cli-agent-smoke.py --require-json --fixtures "$RUNNER_TEMP/agent-fixtures"
+          "$RUNNER_TEMP/schema-venv/bin/python" scripts/validate-cli-schema.py \
+            --fixtures "$RUNNER_TEMP/agent-fixtures" --self-test
       - name: Upload coverage reports to Codecov
         if: matrix.otp == '29'
         uses: codecov/codecov-action@v7
@@ -133,6 +145,15 @@ jobs:
           mix release
           mix run --no-start -e 'true = :crypto in Application.spec(:observer_cli, :applications)'
           _build/prod/rel/observer_cli/bin/observer_cli eval ':crypto.strong_rand_bytes(1)'
+      - name: Validate Mix schema packaging
+        run: |
+          python3 -m venv "$RUNNER_TEMP/schema-venv"
+          "$RUNNER_TEMP/schema-venv/bin/python" -m pip install -r scripts/schema-requirements.txt
+          "$RUNNER_TEMP/schema-venv/bin/python" scripts/validate-cli-schema.py --escript observer_cli
+          OBSERVER_CLI_BIN="$PWD/observer_cli" scripts/cli-agent-smoke.py \
+            --require-json --fixtures "$RUNNER_TEMP/mix-agent-fixtures"
+          "$RUNNER_TEMP/schema-venv/bin/python" scripts/validate-cli-schema.py \
+            --fixtures "$RUNNER_TEMP/mix-agent-fixtures" --self-test
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

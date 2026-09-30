@@ -174,8 +174,10 @@ warning when process, port, atom, or ETS use exceeds 85 percent of its VM limit
 and a critical finding at or above 95 percent.
 
 `--observe` takes five planned samples. It enables scheduler wall-time
-measurement for the capture and disables it during cleanup; it does not restore
-a setting another tool already enabled. Observation tracks stable resource
+measurement for its worker and releases that registration during cleanup.
+Other processes' measurement registrations remain unchanged; measurement can
+remain enabled while another tool holds a registration. Observation still
+consumes target resources and should be coordinated with other diagnostics. Observation tracks stable resource
 identities so creation, termination, or replacement is not mistaken for growth.
 
 `--observe ... --deep` takes seven samples and requests a separately admitted

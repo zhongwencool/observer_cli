@@ -48,6 +48,78 @@ reserved_command_words_test() ->
         Commands
     ).
 
+describe_parses_without_target_options_test() ->
+    lists:foreach(
+        fun(Args) -> ?assertMatch({ok, #{command := describe}}, observer_cli_cli:parse(Args)) end,
+        [
+            ["describe"],
+            ["describe", "memory"],
+            ["describe", "trace", "call", "--json"],
+            ["describe", "--schema", "--format", "json"]
+        ]
+    ),
+    lists:foreach(
+        fun(Args) -> ?assertMatch({error, _}, observer_cli_cli:parse(Args)) end,
+        [
+            ["describe", "tui"],
+            ["describe", "--schema"],
+            ["describe", "memory", "--schema", "--json"],
+            ["describe", "--node", "n@host", "--cookie-env", "COOKIE"]
+        ]
+    ).
+
+verbose_is_text_only_test() ->
+    ?assertMatch(
+        {ok, #{options := #{verbose := true}}}, observer_cli_cli:parse(["memory", "--verbose"])
+    ),
+    ?assertMatch({ok, _}, observer_cli_cli:parse(["trace", "stop", "--all", "--verbose"])),
+    lists:foreach(
+        fun(Args) ->
+            ?assertMatch(
+                {error, #{reason := verbose_text_only}},
+                observer_cli_cli:parse(["memory", "--verbose" | Args])
+            )
+        end,
+        [["--json"], ["--format", "json"], ["--format", "term"]]
+    ),
+    Response = observer_cli_cli:response(
+        memory,
+        complete,
+        null,
+        null,
+        #{
+            <<"memory">> => #{
+                <<"beam">> => #{<<"total_bytes">> => 123},
+                <<"allocator">> => #{<<"allocator_detail">> => 456}
+            }
+        },
+        []
+    ),
+    {ok, Brief} = observer_cli_cli:encode(text, Response),
+    {ok, Verbose} = observer_cli_cli:encode(text, Response, #{verbose => true}),
+    ?assertEqual(nomatch, binary:match(Brief, <<"allocator_detail">>)),
+    ?assertNotEqual(nomatch, binary:match(Brief, <<"total_bytes">>)),
+    ?assertNotEqual(nomatch, binary:match(Verbose, <<"allocator_detail">>)),
+    ?assertNotEqual(nomatch, binary:match(Brief, <<"outcome=complete">>)).
+
+orphan_target_options_are_rejected_test() ->
+    lists:foreach(
+        fun(Options) ->
+            ?assertMatch(
+                {error, #{reason := target_option_requires_node}},
+                observer_cli_cli:parse(["memory" | Options])
+            )
+        end,
+        [["--cookie-env", "COOKIE"], ["--cookie-file", "/missing"], ["--name-mode", "long"]]
+    ),
+    ?assertMatch({ok, _}, observer_cli_cli:parse(["memory"])),
+    ?assertMatch(
+        {ok, _},
+        observer_cli_cli:parse([
+            "memory", "--node", "n@host", "--cookie-env", "COOKIE", "--name-mode", "long"
+        ])
+    ).
+
 positional_tui_forms_are_unknown_commands_test() ->
     ?assertMatch(
         {error, #{reason := {unknown_command, "target@host"}}},
@@ -839,6 +911,29 @@ context_option_validation_test() ->
         })
     ).
 
+unicode_context_round_trip_test() ->
+    lists:foreach(
+        fun(Source) ->
+            Options = Source#{node => "target@host", name_mode => "short"},
+            Context = observer_cli_cli:context_term(Options),
+            ?assertEqual(2, maps:get(<<"version">>, Context)),
+            with_context_path(fun(Path) ->
+                ?assertEqual(ok, observer_cli_cli:write_context(Path, Context)),
+                {ok, Stored} = observer_cli_cli:read_context(Path),
+                ?assertEqual({ok, Options}, observer_cli_cli:decode_context(Stored))
+            end)
+        end,
+        [#{cookie_file => "/tmp/中文/é.cookie"}, #{cookie_env => "中文_COOKIE"}]
+    ),
+    Legacy = context_term(<<"target@host">>, <<"file">>, <<"/tmp/", 233, ".cookie">>),
+    ?assertMatch({ok, #{cookie_file := "/tmp/é.cookie"}}, observer_cli_cli:decode_context(Legacy)),
+    Invalid = Legacy#{<<"version">> := 2},
+    ?assertEqual({error, invalid_context}, observer_cli_cli:decode_context(Invalid)),
+    ?assertEqual(
+        {error, invalid_context},
+        observer_cli_cli:save_context(#{node => "target@host", cookie_file => [47, 16#110000]})
+    ).
+
 context_file_test() ->
     with_context_path(fun(Path) ->
         Secret = <<"must_not_be_stored">>,
@@ -1199,7 +1294,7 @@ encoder_cap_and_text_escaping_test() ->
     ),
     ?assertEqual(
         {error, #{category => schema, exit_code => 4, reason => response_too_large}},
-        observer_cli_cli:encode(text, Oversized)
+        observer_cli_cli:encode(text, Oversized, #{verbose => true})
     ),
     Dynamic = <<"safe", 27, "]0;title", 7, 10>>,
     ?assertEqual(<<"safe\\x1B]0;title\\x07\\x0A">>, observer_cli_cli:escape_text(Dynamic)),
@@ -1222,6 +1317,34 @@ encoder_cap_and_text_escaping_test() ->
     ?assertEqual(nomatch, binary:match(Text, <<7>>)),
     ?assertEqual(nomatch, binary:match(Text, <<"schema:">>)),
     ?assertEqual(nomatch, binary:match(Text, <<"meta:">>)).
+
+logs_text_exposes_partial_tail_before_content_test() ->
+    Base = log_response([<<"retained line">>]),
+    Data = maps:get(<<"data">>, Base),
+    Tail = maps:get(<<"tail">>, Data),
+    lists:foreach(
+        fun(Reason) ->
+            Partial = Base#{
+                <<"outcome">> := <<"partial">>,
+                <<"data">> := Data#{
+                    <<"tail">> := Tail#{
+                        <<"has_more">> := true,
+                        <<"content_truncated">> := true,
+                        <<"truncation_reasons">> := [Reason]
+                    }
+                }
+            },
+            {ok, Text} = observer_cli_cli:encode(text, Partial),
+            {OutcomeAt, _} = binary:match(Text, <<"outcome=partial">>),
+            {ReasonAt, _} = binary:match(Text, Reason),
+            {BodyAt, _} = binary:match(Text, <<"--- UNTRUSTED LOG CONTENT ---">>),
+            ?assert(OutcomeAt < BodyAt),
+            ?assert(ReasonAt < BodyAt)
+        end,
+        [<<"byte_cap">>, <<"line_cap">>]
+    ),
+    {ok, CompleteText} = observer_cli_cli:encode(text, Base),
+    ?assertNotEqual(nomatch, binary:match(CompleteText, <<"content_truncated=false">>)).
 
 logs_text_encoder_isolates_untrusted_lines_test() ->
     Response = log_response([
@@ -1293,7 +1416,7 @@ logs_maximum_envelope_stays_within_encoder_cap_test() ->
             ok
     end.
 
-health_command_text_reports_test() ->
+health_command_verbose_reports_test() ->
     Response = observer_cli_cli:response(
         diagnose,
         complete,
@@ -1336,7 +1459,7 @@ health_command_text_reports_test() ->
         },
         []
     ),
-    {ok, Text} = observer_cli_cli:encode(text, Response),
+    {ok, Text} = observer_cli_cli:encode(text, Response, #{verbose => true}),
     lists:foreach(
         fun(Fragment) -> ?assertNotEqual(nomatch, binary:match(Text, Fragment)) end,
         [
@@ -1364,7 +1487,7 @@ health_command_text_reports_test() ->
     lists:foreach(
         fun(Command) ->
             HealthResponse = Response#{<<"command">> := atom_to_binary(Command)},
-            {ok, HealthText} = observer_cli_cli:encode(text, HealthResponse),
+            {ok, HealthText} = observer_cli_cli:encode(text, HealthResponse, #{verbose => true}),
             ?assertMatch(<<"observer_cli ", _/binary>>, HealthText),
             ?assertEqual(nomatch, binary:match(HealthText, <<"#{">>))
         end,
@@ -1543,7 +1666,7 @@ text_encoder_public_edge_contract_test() ->
         #{<<"values">> => [#{}, [], <<>>, 1.5, {sample, json}, [<<"nested">>]]},
         []
     ),
-    {ok, ValuesText} = observer_cli_cli:encode(text, Values),
+    {ok, ValuesText} = observer_cli_cli:encode(text, Values, #{verbose => true}),
     lists:foreach(
         fun(Fragment) -> ?assertNotEqual(nomatch, binary:match(ValuesText, Fragment)) end,
         [
@@ -2196,10 +2319,103 @@ log_source(Id, Addressable, Kind, Supported, Reason) ->
 byte_count(Binary, Byte) ->
     length(binary:matches(Binary, <<Byte>>)).
 
-assert_argument_error(Reason, Result) ->
+actionable_argument_messages_test() ->
+    Trace = ["trace", "call", "erlang:node/0", "--pid", "<0.1.0>", "--replace-existing-trace"],
+    Cases = [
+        {
+            ["processes", "--sort", "cpu"],
+            invalid_sort,
+            <<"cpu">>,
+            <<"memory, message_queue_len, reductions, binary_memory, total_heap_size">>
+        },
+        {
+            ["applications", "--sort", "cpu"],
+            invalid_sort,
+            <<"cpu">>,
+            <<"memory, process_count, reductions, message_queue_len">>
+        },
+        {["ets", "--sort", "owner"], invalid_sort, <<"owner">>, <<"memory, size">>},
+        {
+            ["network", "--sort", "io"],
+            invalid_sort,
+            <<"io">>,
+            <<"oct, recv_oct, send_oct, cnt, recv_cnt, send_cnt">>
+        },
+        {
+            ["ports", "--sort", "cpu"],
+            invalid_sort,
+            <<"cpu">>,
+            <<"queue_size, memory, input, output, io">>
+        },
+        {
+            ["sockets", "--sort", "oct"],
+            invalid_sort,
+            <<"oct">>,
+            <<"io, read_bytes, write_bytes, packets, waits, fails">>
+        },
+        {["processes", "--limit", "201"], invalid_limit, <<"201">>, <<"1 to 200">>},
+        {Trace ++ ["--limit", "1001"], invalid_limit, <<"1001">>, <<"1 to 1000">>},
+        {["schedulers", "--duration", "1ms"], invalid_duration, <<"1ms">>, <<"250ms..10s">>},
+        {Trace ++ ["--duration", "61s"], invalid_duration, <<"61s">>, <<"100ms..60s">>},
+        {["memory", "--timeout", "121s"], invalid_timeout, <<"121s">>, <<"1ms..120s">>},
+        {["diagnose", "--observe", "4s"], invalid_observation_duration, <<"4s">>, <<"5s..60s">>},
+        {Trace ++ ["--rate", "201/s"], invalid_rate, <<"201/s">>, <<"1 to 200">>},
+        {
+            ["otp-state", "server", "--behavior", "actor"],
+            invalid_behavior,
+            <<"actor">>,
+            <<"gen_server, gen_statem, or gen_event">>
+        },
+        {["logs", "--tail", "2001"], invalid_tail, <<"2001">>, <<"1 to 2000">>},
+        {
+            ["schedulers", "--duration", "2s", "--timeout", "6s"],
+            timeout_too_short,
+            <<"6s">>,
+            <<"duration plus 5s">>
+        },
+        {
+            Trace ++ ["--duration", "2s", "--timeout", "8s"],
+            trace_timeout_too_short,
+            <<"8s">>,
+            <<"duration plus 7s">>
+        },
+        {
+            ["trace", "stop", "--all", "--timeout", "4s"],
+            trace_stop_timeout_too_short,
+            <<"4s">>,
+            <<"at least 5s">>
+        },
+        {
+            ["otp-state", "server", "--behavior", "gen_server", "--timeout", "9s"],
+            otp_state_timeout_too_short,
+            <<"9s">>,
+            <<"at least 10s">>
+        }
+    ],
+    lists:foreach(
+        fun({Args, Reason, BadValue, Constraint}) ->
+            {error, Error} = observer_cli_cli:parse(Args),
+            assert_argument_error(Reason, {error, Error}),
+            Issue = observer_cli_cli:error(argument, maps:get(message_reason, Error)),
+            ?assertEqual(atom_to_binary(Reason, utf8), maps:get(<<"reason_code">>, Issue)),
+            Message = maps:get(<<"message">>, Issue),
+            ?assertNotEqual(nomatch, binary:match(Message, BadValue)),
+            ?assertNotEqual(nomatch, binary:match(Message, Constraint))
+        end,
+        Cases
+    ),
+    {error, Unsafe} = observer_cli_cli:parse(["processes", "--sort", "bad\n\e[31m"]),
+    UnsafeMessage = maps:get(
+        <<"message">>, observer_cli_cli:error(argument, maps:get(message_reason, Unsafe))
+    ),
+    ?assertEqual(nomatch, binary:match(UnsafeMessage, <<10>>)),
+    ?assertEqual(nomatch, binary:match(UnsafeMessage, <<27>>)).
+
+assert_argument_error(Reason, {error, Error}) ->
+    %% Recovery text is an internal addition; the original parser contract stays exact.
     ?assertEqual(
-        {error, #{category => argument, exit_code => 2, reason => Reason}},
-        Result
+        #{category => argument, exit_code => 2, reason => Reason},
+        maps:remove(message_reason, Error)
     ).
 
 with_cookie_file(Contents, Mode, Fun) ->

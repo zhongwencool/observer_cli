@@ -219,6 +219,175 @@ controller_boundary_helpers_test() ->
             )
     end.
 
+describe_is_local_and_exports_the_packaged_schema_test() ->
+    Directory = temporary_directory("observer_cli_describe_local"),
+    PreviousHome = set_config_home(Directory),
+    try
+        Before = {node(), observer_cli_cli:load_context()},
+        {ok, Response, 0} = observer_cli_escriptize:run_command(describe, #{
+            arguments => ["trace", "call"]
+        }),
+        ?assertEqual(
+            #{<<"target">> => null, <<"capture">> => null}, maps:get(<<"meta">>, Response)
+        ),
+        ?assertEqual(<<"trace_call">>, maps:get(<<"id">>, maps:get(<<"data">>, Response))),
+        ?assertEqual(Before, {node(), observer_cli_cli:load_context()}),
+        case code:ensure_loaded(json) of
+            {module, json} ->
+                {schema, Bytes} = observer_cli_escriptize:run_command(describe, #{
+                    schema => true, json => true
+                }),
+                ?assertEqual(observer_cli_catalog:schema(), {ok, Bytes}),
+                Output = assert_halt(0, fun() ->
+                    observer_cli_escriptize:main(["describe", "--schema", "--json"])
+                end),
+                ?assertEqual(Bytes, iolist_to_binary(Output));
+            {error, _} ->
+                ?assertEqual(
+                    {error, capability, json_unavailable},
+                    observer_cli_escriptize:run_command(describe, #{schema => true, json => true})
+                )
+        end
+    after
+        restore_config_home(PreviousHome),
+        file:del_dir_r(Directory)
+    end.
+
+diagnostic_next_actions_are_optional_and_validated_test() ->
+    Legacy = diagnostic_response(complete, [#{<<"id">> => <<"vm.process_limit_pressure">>}]),
+    Response = observer_cli_escriptize:add_next_actions(Legacy),
+    Data = maps:get(<<"data">>, Response),
+    Actions = maps:get(<<"next_actions">>, Data),
+    ?assertEqual(3, length(Actions)),
+    ?assertEqual(ok, observer_cli_escriptize:validate_response(diagnose, redact, node(), Legacy)),
+    ?assertEqual(ok, observer_cli_escriptize:validate_response(diagnose, redact, node(), Response)),
+    ?assertMatch(
+        {error, _},
+        observer_cli_escriptize:validate_response(
+            diagnose,
+            redact,
+            node(),
+            Response#{<<"data">> := Data#{<<"next_actions">> := [#{<<"argv">> => [<<"trace">>]}]}}
+        )
+    ),
+    Empty = observer_cli_cli:response(diagnose, error, null, null, null, []),
+    ?assertEqual(Empty, observer_cli_escriptize:add_next_actions(Empty)).
+
+public_cookie_selector_preserves_unicode_test() ->
+    ?assertEqual(
+        #{<<"type">> => <<"file">>, <<"path">> => <<"/tmp/é中文.cookie"/utf8>>},
+        observer_cli_escriptize:public_cookie_source(#{cookie_file => "/tmp/é中文.cookie"})
+    ),
+    ?assertEqual(
+        #{<<"type">> => <<"env">>, <<"name">> => <<"é_COOKIE"/utf8>>},
+        observer_cli_escriptize:public_cookie_source(#{cookie_env => "é_COOKIE"})
+    ),
+    ?assertEqual(
+        #{<<"type">> => <<"file">>, <<"path">> => <<"invalid-text">>},
+        observer_cli_escriptize:public_cookie_source(#{cookie_file => [16#110000]})
+    ).
+
+output_capability_precedes_all_command_work_test() ->
+    Commands = [snapshot, diagnose, memory, schedulers, trace, logs, status, connect, disconnect],
+    lists:foreach(
+        fun(Command) ->
+            ?assertEqual(ok, observer_cli_escriptize:ensure_output_format(Command, #{})),
+            ?assertEqual(
+                ok, observer_cli_escriptize:ensure_output_format(Command, #{format => "term"})
+            )
+        end,
+        Commands
+    ),
+    case code:ensure_loaded(json) of
+        {error, _} ->
+            lists:foreach(
+                fun(Command) ->
+                    ?assertEqual(
+                        {error, capability, json_unavailable},
+                        observer_cli_escriptize:run_command(Command, #{json => true})
+                    )
+                end,
+                Commands
+            ),
+            ?assertEqual(nonode@nohost, node());
+        {module, json} ->
+            lists:foreach(
+                fun(Command) ->
+                    ?assertEqual(
+                        ok, observer_cli_escriptize:ensure_output_format(Command, #{json => true})
+                    )
+                end,
+                Commands
+            )
+    end.
+
+help_describes_diagnostic_scope_test() ->
+    lists:foreach(
+        fun({Command, Expected}) ->
+            {ok, Help} = observer_cli_test_io:capture_with_geometry(24, 80, [], fun() ->
+                observer_cli_escriptize:main([Command, "--help"])
+            end),
+            ?assertNotEqual(nomatch, binary:match(iolist_to_binary(Help), Expected))
+        end,
+        [
+            {"diagnose", <<"No findings is not proof of node health">>},
+            {"schedulers", <<"preserving other tools' registrations">>},
+            {"supervision-tree", <<"direct children only; not recursive">>}
+        ]
+    ).
+
+recovery_help_commands_are_executable_test() ->
+    Commands = [
+        connect,
+        status,
+        disconnect,
+        snapshot,
+        diagnose,
+        memory,
+        schedulers,
+        distribution,
+        processes,
+        process,
+        applications,
+        ets,
+        mnesia,
+        network,
+        ports,
+        port,
+        sockets,
+        otp_state,
+        supervision_tree,
+        logs,
+        trace_call,
+        trace_stop_all
+    ],
+    lists:foreach(
+        fun(Command) ->
+            Hint = observer_cli_escriptize:command_help_command(Command),
+            ["observer_cli" | Args] = string:tokens(binary_to_list(Hint), " "),
+            {ok, Help} = observer_cli_test_io:capture_with_geometry(24, 80, [], fun() ->
+                observer_cli_escriptize:main(Args)
+            end),
+            ?assertNotEqual(nomatch, binary:match(iolist_to_binary(Help), <<"Usage:">>))
+        end,
+        Commands
+    ),
+    ?assertEqual(<<"supervision-tree">>, observer_cli_escriptize:command_display(supervision_tree)).
+
+invalid_trace_action_preserves_error_contract_test() ->
+    lists:foreach(
+        fun(Args) ->
+            Output = assert_halt(2, fun() ->
+                observer_cli_escriptize:main(Args ++ ["--format", "term"])
+            end),
+            {ok, Tokens, _} = erl_scan:string(binary_to_list(iolist_to_binary(Output))),
+            {ok, Response} = erl_parse:parse_term(Tokens),
+            ?assertEqual(null, maps:get(<<"command">>, Response)),
+            ?assertEqual(<<"error">>, maps:get(<<"outcome">>, Response))
+        end,
+        [["trace"], ["trace", "bogus"], ["--bogus", "trace"]]
+    ).
+
 command_output_and_error_paths_test() ->
     Response = observer_cli_cli:response(
         memory, complete, null, null, #{<<"value">> => 1}, []
@@ -289,6 +458,147 @@ command_output_and_error_paths_test() ->
         observer_cli_escriptize:main(["memory"])
     end),
     assert_halt(2, fun() -> observer_cli_escriptize:main(["unknown", "--help"]) end).
+
+actionable_argument_output_test() ->
+    lists:foreach(
+        fun(Format) ->
+            Output = iolist_to_binary(
+                assert_halt(2, fun() ->
+                    observer_cli_escriptize:main(["processes", "--sort", "cpu", "--format", Format])
+                end)
+            ),
+            ?assertNotEqual(nomatch, binary:match(Output, <<"cpu">>)),
+            ?assertNotEqual(nomatch, binary:match(Output, <<"binary_memory">>)),
+            case Format of
+                "term" ->
+                    {ok, Tokens, _} = erl_scan:string(binary_to_list(Output)),
+                    {ok, Response} = erl_parse:parse_term(Tokens),
+                    [Issue] = maps:get(<<"issues">>, Response),
+                    ?assertEqual(<<"invalid_sort">>, maps:get(<<"reason_code">>, Issue)),
+                    ?assertEqual(2, observer_cli_escriptize:response_exit_code(Response));
+                "text" ->
+                    ok
+            end
+        end,
+        ["text", "term"]
+    ).
+
+connection_failure_context_test() ->
+    Root = temporary_directory("observer_cli_failure_context"),
+    PreviousConfigHome = set_config_home(Root),
+    Env = "OBSERVER_CLI_FAILURE_CONTEXT_COOKIE",
+    PreviousEnv = os:getenv(Env),
+    Options = #{
+        node => "selected@host.example", name_mode => "long", cookie_env => Env, format => "term"
+    },
+    true = os:unsetenv(Env),
+    try
+        ok = observer_cli_cli:save_context(Options),
+        Results = [
+            observer_cli_escriptize:run_command(connect, Options),
+            observer_cli_escriptize:run_command(status, #{format => "term"}),
+            observer_cli_escriptize:run_command(processes, #{format => "term"})
+        ],
+        lists:foreach(
+            fun({error, connection, Reason}) ->
+                Issue = observer_cli_cli:error(connection, Reason),
+                Message = maps:get(<<"message">>, Issue),
+                ?assertEqual(<<"cookie_source_unavailable">>, maps:get(<<"reason_code">>, Issue)),
+                ?assertNotEqual(nomatch, binary:match(Message, <<"selected@host.example">>)),
+                ?assertNotEqual(nomatch, binary:match(Message, <<"name_mode=long">>)),
+                ?assertNotEqual(nomatch, binary:match(Message, list_to_binary(Env)))
+            end,
+            Results
+        ),
+        [{error, connection, OriginalReason} | _] = Results,
+        ok = observer_cli_cli:save_context(Options#{node => "changed@other.example"}),
+        Output = iolist_to_binary(
+            assert_halt(3, fun() ->
+                observer_cli_escriptize:command_error(status, term, connection, OriginalReason)
+            end)
+        ),
+        ?assertEqual(nomatch, binary:match(Output, <<"changed@other.example">>)),
+        {ok, Tokens, _} = erl_scan:string(binary_to_list(Output)),
+        {ok, Response} = erl_parse:parse_term(Tokens),
+        ?assertEqual(6, map_size(Response)),
+        ?assertEqual(
+            #{<<"target">> => null, <<"capture">> => null}, maps:get(<<"meta">>, Response)
+        ),
+        true = os:putenv(Env, "secret cookie contents invalid\n"),
+        {error, connection, InvalidReason} = observer_cli_escriptize:run_command(connect, Options),
+        InvalidIssue = observer_cli_cli:error(connection, InvalidReason),
+        ?assertEqual(<<"invalid_cookie">>, maps:get(<<"reason_code">>, InvalidIssue)),
+        ?assertEqual(
+            nomatch, binary:match(term_to_binary(InvalidIssue), <<"secret cookie contents">>)
+        ),
+        true = os:putenv(Env, "super_secret_cookie_value"),
+        {error, connection, FailedReason} = observer_cli_escriptize:run_command(
+            memory,
+            Options#{
+                node => "observer_cli_nonexistent_failure_target@localhost",
+                name_mode => "short",
+                timeout => "1000ms"
+            }
+        ),
+        FailedIssue = observer_cli_cli:error(connection, FailedReason),
+        ?assertEqual(<<"connection_failed">>, maps:get(<<"reason_code">>, FailedIssue)),
+        ?assertEqual(
+            nomatch, binary:match(term_to_binary(FailedIssue), <<"super_secret_cookie_value">>)
+        )
+    after
+        case PreviousEnv of
+            false -> os:unsetenv(Env);
+            Value -> os:putenv(Env, Value)
+        end,
+        restore_config_home(PreviousConfigHome),
+        file:del_dir_r(Root)
+    end.
+
+connection_failure_redaction_test() ->
+    Root = temporary_directory("observer_cli_failure_redaction"),
+    Path = filename:join(Root, "private-cookie"),
+    Options = #{node => "private@host", cookie_file => Path, format => "term"},
+    try
+        {error, connection, FileReason} = observer_cli_escriptize:run_command(memory, Options),
+        FileMessage = maps:get(<<"message">>, observer_cli_cli:error(connection, FileReason)),
+        ?assertNotEqual(nomatch, binary:match(FileMessage, unicode:characters_to_binary(Path))),
+        lists:foreach(
+            fun({Command, Extra}) ->
+                {error, connection, Reason} = observer_cli_escriptize:run_command(
+                    Command, maps:merge(Options, Extra)
+                ),
+                Message = maps:get(<<"message">>, observer_cli_cli:error(connection, Reason)),
+                ?assertNotEqual(
+                    nomatch, binary:match(Message, <<"withheld by identifier policy">>)
+                ),
+                ?assertEqual(nomatch, binary:match(Message, <<"private@host">>)),
+                ?assertEqual(nomatch, binary:match(Message, unicode:characters_to_binary(Path)))
+            end,
+            [{snapshot, #{}}, {diagnose, #{}}, {memory, #{redact => true}}]
+        ),
+        {error, connection, IncludedReason} = observer_cli_escriptize:run_command(
+            snapshot, Options#{include_identifiers => true}
+        ),
+        IncludedMessage = maps:get(
+            <<"message">>, observer_cli_cli:error(connection, IncludedReason)
+        ),
+        ?assertNotEqual(nomatch, binary:match(IncludedMessage, <<"private@host">>)),
+        ok = file:write_file(Path, <<"private_cookie_value">>),
+        ok = file:change_mode(Path, 8#644),
+        {error, connection, PermissionReason} = observer_cli_escriptize:run_command(
+            memory, Options
+        ),
+        PermissionIssue = observer_cli_cli:error(connection, PermissionReason),
+        ?assertEqual(<<"cookie_file_permissions">>, maps:get(<<"reason_code">>, PermissionIssue)),
+        ?assertNotEqual(
+            nomatch, binary:match(maps:get(<<"message">>, PermissionIssue), <<"chmod 600">>)
+        ),
+        ?assertEqual(
+            nomatch, binary:match(term_to_binary(PermissionIssue), <<"private_cookie_value">>)
+        )
+    after
+        file:del_dir_r(Root)
+    end.
 
 assert_halt(Expected, Fun) ->
     {ok, Output} = observer_cli_test_io:capture_with_geometry(
@@ -4630,8 +4940,11 @@ response_validation_boundaries_test() ->
     ),
     MissingEnv = "OBSERVER_CLI_MISSING_VALIDATION_COOKIE",
     true = os:unsetenv(MissingEnv),
-    ?assertEqual(
-        {error, connection, cookie_source_unavailable},
+    ?assertMatch(
+        {error, connection,
+            {contextual_error, cookie_source_unavailable, #{
+                node := <<"target@host">>, name_mode := <<"short">>
+            }}},
         observer_cli_escriptize:probe_options(
             #{node => "target@host", cookie_env => MissingEnv}, fun(_, _, _) -> ok end
         )

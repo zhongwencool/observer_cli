@@ -40,6 +40,7 @@
     pointer_exists/2,
     public_value/2,
     public_text/1,
+    public_cookie_source/1,
     command_format/1,
     command_identity/2,
     command_display/1,
@@ -72,6 +73,7 @@
     request_options/1,
     snapshot_response/1,
     diagnose_response/1,
+    add_next_actions/1,
     active_options/1,
     random_cookie/1,
     connect_before/3,
@@ -140,6 +142,9 @@ main_options(Options) ->
         }} ->
             CommandIdentity = command_identity(Command, Arguments),
             case run_command(Command, CommandOptions#{arguments => Arguments}) of
+                {schema, SchemaBytes} ->
+                    output_put_chars(standard_io, SchemaBytes),
+                    exit_with_code(0);
                 {ok, Response, ExitCode} ->
                     command_output(CommandOptions, Response, ExitCode);
                 {error, Category, Reason} ->
@@ -152,14 +157,14 @@ main_options(Options) ->
                         unknown,
                         requested_format(Options),
                         maps:get(category, Error),
-                        maps:get(reason, Error)
+                        maps:get(message_reason, Error, maps:get(reason, Error))
                     );
                 Command ->
                     command_error(
                         Command,
                         requested_format(Options),
                         maps:get(category, Error),
-                        maps:get(reason, Error)
+                        maps:get(message_reason, Error, maps:get(reason, Error))
                     )
             end
     end.
@@ -281,6 +286,7 @@ usage() ->
         "  tui NODE            Open the terminal UI; see 'tui --help'\n"
         "\n"
         "Help and version:\n"
+        "  describe [COMMAND] Inspect offline command capabilities\n"
         "  --help, -h          Show this overview\n"
         "  help COMMAND        Show command help (also COMMAND --help)\n"
         "  --version           Show local bundle, protocol, schema, and OTP\n"
@@ -297,6 +303,7 @@ usage() ->
         "\n"
         "Output options:\n"
         "  --format FORMAT     text, term, or json; text by default\n"
+        "  --verbose           Full text evidence; not valid with JSON or term\n"
         "  --json              Alias for --format json (OTP 27+ controller)\n"
         "  --redact            Hide target identifiers\n"
         "  --include-identifiers\n"
@@ -311,6 +318,17 @@ usage() ->
         "Run 'observer_cli COMMAND --help' for options and examples.\n"
     ).
 
+command_help("describe") ->
+    io:put_chars(
+        "Usage:\n  observer_cli describe [COMMAND [SUBCOMMAND]] [--format text|term|json]\n"
+        "  observer_cli describe --schema --json\n\n"
+        "Describe noninteractive commands without connecting or reading credentials.\n"
+        "Use --verbose for full text metadata. JSON and term include all constraints.\n"
+        "--schema exports the bundled JSON Schema itself, not a response envelope;\n"
+        "it requires JSON output and no command arguments. JSON requires OTP 27+.\n"
+        "Examples:\n  observer_cli describe trace call --json\n"
+        "  observer_cli describe processes --format term\n"
+    );
 command_help("connect") ->
     io:put_chars(
         "Usage:\n"
@@ -369,10 +387,13 @@ command_help("snapshot") ->
 command_help("diagnose") ->
     remote_help(
         "diagnose [DIAGNOSTIC OPTIONS]",
-        "Run evidence-backed diagnostics. With no mode option, perform a quick\n"
-        "point-in-time diagnosis. Exit 1 means a complete report found warnings\n"
-        "or critical findings.",
+        "Run evidence-backed diagnostics. Quick mode evaluates process, port, atom,\n"
+        "and ETS limit pressure only. Observation also evaluates supported scheduler\n"
+        "pressure rules; growth and backlog trends are context, not root causes.\n"
+        "No findings is not proof of node health. Exit 1 means complete findings.",
         "  --observe DURATION     Sample for 5s..60s\n"
+        "                        Temporarily register scheduler wall-time measurement;\n"
+        "                        cleanup releases this worker's registration only.\n"
         "  --deep                 Add deep resource observation; requires --observe\n"
         "  --app APP              Observe one application; requires --observe\n"
         "  --include-identifiers  Include real node, PID, name, and MFA identifiers\n",
@@ -391,7 +412,9 @@ command_help("memory") ->
 command_help("schedulers") ->
     remote_help(
         "schedulers [--duration DURATION]",
-        "Measure normal and dirty scheduler utilization and run queues.",
+        "Measure normal and dirty scheduler utilization and run queues.\n"
+        "Temporarily register scheduler wall-time measurement; cleanup releases only\n"
+        "this worker's registration, preserving other tools' registrations.",
         "  --duration DURATION  250ms..10s; 1500ms by default\n",
         "  observer_cli schedulers --duration 2s\n"
     );
@@ -487,7 +510,7 @@ command_help("otp-state") ->
 command_help("supervision-tree") ->
     remote_help(
         "supervision-tree --app APP",
-        "Show the bounded supervision tree rooted in one running application.",
+        "Show one application's root and direct children only; not recursive.",
         "  --app APP  Application name; required\n",
         "  observer_cli supervision-tree --app my_app\n"
     );
@@ -630,7 +653,8 @@ remote_help(Usage, Description, Options, Examples) ->
         "  Use the context saved by connect, or pass --node NODE and exactly one of\n",
         "  --cookie-env NAME or --cookie-file PATH. --name-mode accepts short or long.\n",
         "\nOutput options:\n",
-        "  --format text|term|json, --json\n",
+        "  --format text|term|json, --json\n"
+        "  --verbose shows detailed text; JSON and term always retain full evidence.\n",
         "  --redact hides identifiers for inspection and trace commands.\n",
         "  --include-identifiers reveals them for snapshot and diagnose.\n",
         "  --timeout DURATION sets the command deadline, up to 120s.\n",
@@ -664,8 +688,27 @@ limit_help() ->
 parse_args(Options) ->
     observer_cli_cli:parse(Options).
 
-run_command(snapshot, Options) ->
-    with_target(Options, fun(Target, _Capabilities, Remaining) ->
+run_command(Command, Options) ->
+    case ensure_output_format(command_identity(Command, arguments(Options)), Options) of
+        ok -> run_command_ready(Command, Options);
+        Error -> Error
+    end.
+
+run_command_ready(describe, #{schema := true}) ->
+    case observer_cli_catalog:schema() of
+        {ok, Bytes} when byte_size(Bytes) =< ?MAX_RESPONSE_BYTES -> {schema, Bytes};
+        {ok, _} -> {error, schema, response_too_large};
+        {error, Reason} -> {error, internal, Reason}
+    end;
+run_command_ready(describe, Options) ->
+    case observer_cli_catalog:describe(arguments(Options)) of
+        {ok, Data} ->
+            {ok, observer_cli_cli:response(describe, complete, null, null, Data, []), 0};
+        {error, Reason} ->
+            {error, argument, Reason}
+    end;
+run_command_ready(snapshot, Options) ->
+    with_target(diagnostic_connection_options(Options), fun(Target, _Capabilities, Remaining) ->
         run_snapshot(
             Target,
             Options,
@@ -673,17 +716,17 @@ run_command(snapshot, Options) ->
             Remaining
         )
     end);
-run_command(diagnose, Options) ->
-    with_target(Options, fun(Target, _Capabilities, Remaining) ->
+run_command_ready(diagnose, Options) ->
+    with_target(diagnostic_connection_options(Options), fun(Target, _Capabilities, Remaining) ->
         run_diagnose(Target, Options, Remaining)
     end);
-run_command(connect, Options) ->
+run_command_ready(connect, Options) ->
     run_connect(Options);
-run_command(status, Options) ->
+run_command_ready(status, Options) ->
     run_status(Options);
-run_command(disconnect, Options) ->
+run_command_ready(disconnect, Options) ->
     run_disconnect(Options);
-run_command(Command, Options) ->
+run_command_ready(Command, Options) ->
     with_target(Options, fun(Target, _Capabilities, Remaining) ->
         run_dispatch(
             Target,
@@ -693,6 +736,9 @@ run_command(Command, Options) ->
             Remaining
         )
     end).
+
+diagnostic_connection_options(Options) ->
+    Options#{redact => not maps:get(include_identifiers, Options, false)}.
 
 arguments(Options) -> maps:get(arguments, Options, []).
 
@@ -825,8 +871,8 @@ run_disconnect_ready() ->
     end.
 
 ensure_output_format(Command, Options) ->
-    Response = observer_cli_cli:response(Command, complete, null, null, #{}, []),
-    case observer_cli_cli:encode(command_format(Options), Response) of
+    Response = observer_cli_cli:response(Command, complete, null, null, null, []),
+    case observer_cli_cli:encode(command_format(Options), Response, Options) of
         {ok, _Output} ->
             ok;
         {error, EncodeError} ->
@@ -894,9 +940,15 @@ public_capabilities(_Capabilities) ->
     null.
 
 public_cookie_source(#{cookie_env := Name}) ->
-    #{<<"type">> => <<"env">>, <<"name">> => public_text(Name)};
+    #{<<"type">> => <<"env">>, <<"name">> => public_selector_text(Name)};
 public_cookie_source(#{cookie_file := Path}) ->
-    #{<<"type">> => <<"file">>, <<"path">> => public_text(Path)}.
+    #{<<"type">> => <<"file">>, <<"path">> => public_selector_text(Path)}.
+
+public_selector_text(Text) ->
+    case unicode:characters_to_binary(Text) of
+        Binary when is_binary(Binary) -> Binary;
+        _ -> <<"invalid-text">>
+    end.
 
 public_text(Text) ->
     try list_to_binary(Text) of
@@ -1079,7 +1131,9 @@ run_diagnose(Target, Options, Remaining) ->
     Request = maps:with([observe, deep, app], Options),
     case target_dispatch(Target, diagnose, Request, Options, Policy, Remaining) of
         {ok, Response} ->
-            validated_response(diagnose, Policy, Target, Response, fun diagnose_response/1);
+            validated_response(diagnose, Policy, Target, Response, fun(Validated) ->
+                diagnose_response(add_next_actions(Validated))
+            end);
         invalid ->
             {error, schema, invalid_diagnose_response};
         Error ->
@@ -1129,6 +1183,15 @@ target_dispatch(Target, Command, Request, Options, Policy, Remaining) ->
 diagnose_response(Response) ->
     dispatch_response(Response).
 
+%% Derived on the controller after evidence validation; target wire data stays
+%% compatible with controllers that require the original diagnostic data keys.
+add_next_actions(#{<<"data">> := #{<<"findings">> := Findings} = Data} = Response) ->
+    Response#{
+        <<"data">> := Data#{<<"next_actions">> => observer_cli_actions:from_findings(Findings)}
+    };
+add_next_actions(Response) ->
+    Response.
+
 with_target(Options, Fun) ->
     case node() of
         nonode@nohost -> with_active_target(Options, Fun);
@@ -1170,28 +1233,71 @@ active_options(Options) ->
 probe_options(Options, Fun) ->
     case node() of
         nonode@nohost ->
-            case {observer_cli_cli:target(Options), observer_cli_cli:cookie_source(Options)} of
-                {{ok, {TargetText, NameMode}}, {ok, CookieBinary}} ->
-                    case observer_cli_cli:timeout(Options) of
-                        {ok, Timeout} ->
-                            Target = list_to_atom(TargetText),
-                            Cookie = binary_to_atom(CookieBinary),
-                            probe_target(Target, NameMode, Cookie, Timeout, Fun);
-                        {error, Reason} ->
-                            {error, argument, Reason}
-                    end;
-                {{error, no_active_context}, _Cookie} ->
+            case observer_cli_cli:target(Options) of
+                {ok, {TargetText, NameMode}} ->
+                    %% The effective selector is captured before credential resolution.
+                    %% Never re-read a saved context after a failed invocation.
+                    Context = connection_context(TargetText, NameMode, Options),
+                    contextual_connection_error(
+                        probe_cookie(Options, TargetText, NameMode, Fun), Context
+                    );
+                {error, no_active_context} ->
                     {error, capability, no_active_context};
-                {{error, Reason}, _Cookie} ->
-                    {error, argument, Reason};
-                {_Target, {error, missing_cookie_source}} ->
-                    {error, argument, missing_cookie_source};
-                {_Target, {error, Reason}} ->
-                    {error, connection, Reason}
+                {error, Reason} ->
+                    {error, argument, Reason}
             end;
         _Distributed ->
             {error, controller, controller_already_distributed}
     end.
+
+probe_cookie(Options, TargetText, NameMode, Fun) ->
+    case observer_cli_cli:cookie_source(Options) of
+        {ok, CookieBinary} ->
+            case observer_cli_cli:timeout(Options) of
+                {ok, Timeout} ->
+                    probe_target(
+                        list_to_atom(TargetText),
+                        NameMode,
+                        binary_to_atom(CookieBinary),
+                        Timeout,
+                        Fun
+                    );
+                {error, Reason} ->
+                    {error, argument, Reason}
+            end;
+        {error, missing_cookie_source} ->
+            {error, argument, missing_cookie_source};
+        {error, Reason} ->
+            {error, connection, Reason}
+    end.
+
+connection_context(_TargetText, _NameMode, #{redact := true}) ->
+    #{redacted => true};
+connection_context(TargetText, NameMode, Options) ->
+    #{
+        node => public_text(TargetText),
+        name_mode =>
+            case NameMode of
+                shortnames -> <<"short">>;
+                longnames -> <<"long">>
+            end,
+        cookie_source =>
+            case Options of
+                #{cookie_env := Name} ->
+                    #{<<"type">> => <<"env">>, <<"name">> => public_selector_text(Name)};
+                #{cookie_file := Path} ->
+                    #{<<"type">> => <<"file">>, <<"path">> => public_selector_text(Path)};
+                _ ->
+                    #{<<"type">> => <<"env">>, <<"name">> => <<"not configured">>}
+            end
+    }.
+
+contextual_connection_error({error, Category, Reason}, Context) when
+    Category =:= connection; Category =:= distribution
+->
+    {error, Category, {contextual_error, Reason, Context}};
+contextual_connection_error(Outcome, _Context) ->
+    Outcome.
 
 -ifdef(TEST).
 connect_target(Target, NameMode, Cookie, Timeout, RandomFun, ConnectFun, Fun) ->
@@ -3222,7 +3328,7 @@ valid_complete_resource_wrapper(Wrapper) ->
     end.
 
 valid_diagnose_data(#{<<"data">> := Data} = Response) ->
-    lists:sort(maps:keys(Data)) =:=
+    lists:sort(maps:keys(maps:remove(<<"next_actions">>, Data))) =:=
         [
             <<"context">>,
             <<"findings">>,
@@ -3240,7 +3346,13 @@ valid_diagnose_data(#{<<"data">> := Data} = Response) ->
         is_list(maps:get(<<"findings">>, Data)) andalso
         is_list(maps:get(<<"suspects">>, Data)) andalso
         is_list(maps:get(<<"skipped">>, Data)) andalso
-        is_binary(maps:get(<<"summary">>, Data)) andalso valid_findings(Response).
+        is_binary(maps:get(<<"summary">>, Data)) andalso valid_findings(Response) andalso
+        valid_next_actions(Data).
+
+valid_next_actions(#{<<"next_actions">> := Actions, <<"findings">> := Findings}) ->
+    observer_cli_actions:valid(Actions, Findings);
+valid_next_actions(_) ->
+    true.
 
 valid_findings(#{<<"data">> := #{<<"findings">> := Findings}} = Response) ->
     lists:all(
@@ -3462,7 +3574,7 @@ controller_stopped(Deadline) ->
 -spec command_output(map(), map(), non_neg_integer()) -> no_return().
 command_output(Options, Response, ExitCode) ->
     Format = command_format(Options),
-    case observer_cli_cli:encode(Format, Response) of
+    case observer_cli_cli:encode(Format, Response, Options) of
         {ok, Output} ->
             output_put_chars(command_output_device(Format, Response), Output),
             exit_with_code(ExitCode);
@@ -3508,12 +3620,10 @@ command_error(Command, Format, Category, Reason) ->
             output_encode_error(EncodeError)
     end.
 
-command_display(trace_call) -> <<"trace call">>;
-command_display(trace_stop_all) -> <<"trace stop">>;
-command_display(otp_state) -> <<"otp-state">>;
-command_display(Command) -> atom_to_binary(Command).
+command_display(Command) -> observer_cli_cli:command_name(Command).
 
 response_command_name(unknown) -> null;
+response_command_name(trace) -> null;
 response_command_name(Command) -> Command.
 
 error_exit_code(Command, Category, Reason) ->
@@ -3525,11 +3635,7 @@ error_response(Command, Category, Reason) ->
     ]).
 
 command_help_command(unknown) -> <<"observer_cli --help">>;
-command_help_command(tui) -> <<"observer_cli tui --help">>;
-command_help_command(trace_call) -> <<"observer_cli trace call --help">>;
-command_help_command(trace_stop_all) -> <<"observer_cli trace stop --help">>;
-command_help_command(otp_state) -> <<"observer_cli otp-state --help">>;
-command_help_command(Command) -> <<"observer_cli ", (atom_to_binary(Command))/binary, " --help">>.
+command_help_command(Command) -> <<"observer_cli ", (command_display(Command))/binary, " --help">>.
 
 command_format(#{json := true}) -> json;
 command_format(#{format := "json"}) -> json;

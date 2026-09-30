@@ -219,6 +219,9 @@ sorting. Follow the [1.x plugin migration table](https://hexdocs.pm/observer_cli
 
 ## Next steps
 
+- [Agent workflows](https://hexdocs.pm/observer_cli/agent-workflows.html): keep trusted
+  follow-up selectors separate from response-local aliases and share redacted evidence.
+
 - [CLI](https://hexdocs.pm/observer_cli/cli.md): install both sides, connect, diagnose, automate,
   interpret output, and troubleshoot a complete first workflow.
 - [TUI reference](https://hexdocs.pm/observer_cli/tui.md): start the interface and look up every

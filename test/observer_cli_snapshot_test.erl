@@ -17,6 +17,22 @@
     code_change/3
 ]).
 
+scheduler_capture_preserves_other_registration_test() ->
+    erlang:system_flag(scheduler_wall_time, true),
+    try
+        ?assertMatch(
+            #{<<"status">> := <<"ok">>},
+            observer_cli_snapshot:dispatch(
+                self(), schedulers, #{duration_ms => 250}, #{
+                    timeout_ms => 5000, identifier_policy => include
+                }
+            )
+        ),
+        ?assert(is_list(erlang:statistics(scheduler_wall_time)))
+    after
+        erlang:system_flag(scheduler_wall_time, false)
+    end.
+
 capabilities_test() ->
     Capabilities = observer_cli_snapshot:capabilities(),
     ?assertEqual(#{bundle_version => <<"2.0.0">>, protocol_version => 1}, Capabilities),
@@ -2843,7 +2859,10 @@ deep_snapshot_controller_disconnect_cleans_probe_worker_test() ->
 local_snapshot_text_and_term_envelopes_test() ->
     Response = snapshot(#{}),
     {ok, Text} = observer_cli_cli:encode(text, Response),
-    ?assertMatch(<<"observer_cli snapshot\n", _/binary>>, Text),
+    ?assertMatch(<<"observer_cli snapshot | outcome=complete\n", _/binary>>, Text),
+    {ok, Verbose} = observer_cli_cli:encode(text, Response, #{verbose => true}),
+    ?assertMatch(<<"observer_cli snapshot\n", _/binary>>, Verbose),
+    ?assertNotEqual(nomatch, binary:match(Text, <<"completed probes:">>)),
     ?assertNotEqual(nomatch, binary:match(Text, <<"snapshot_version: 1">>)),
     ?assertEqual(nomatch, binary:match(Text, <<"observer_cli.cli/v1">>)),
     ?assertEqual(nomatch, binary:match(Text, <<"issues:">>)),

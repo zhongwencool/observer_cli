@@ -111,7 +111,8 @@ schema_contract() ->
             <<"resourceListCommand">>,
             <<"resourceDetailCommand">>,
             <<"traceCommand">>,
-            <<"logsCommand">>
+            <<"logsCommand">>,
+            <<"describeCommand">>
         ]
     ),
     PreCommand = maps:get(<<"preCommandError">>, Definitions),
@@ -134,7 +135,8 @@ schema_commands(Definitions) ->
                 <<"resourceListCommand">>,
                 <<"resourceDetailCommand">>,
                 <<"traceCommand">>,
-                <<"logsCommand">>
+                <<"logsCommand">>,
+                <<"describeCommand">>
             ]
         ])
     ).
@@ -166,7 +168,8 @@ cli_response_commands() ->
         "port",
         "otp-state",
         "supervision-tree",
-        "logs"
+        "logs",
+        "describe"
     ],
     lists:sort(
         [
@@ -174,3 +177,20 @@ cli_response_commands() ->
          || Command <- Commands
         ] ++ [<<"trace_call">>, <<"trace_stop_all">>]
     ).
+
+context_name_modes_use_public_spelling_test_() ->
+    case code:ensure_loaded(json) of
+        {module, json} ->
+            fun() ->
+                {ok, Bytes} = file:read_file(schema_path()),
+                Schema = json:decode(Bytes),
+                Defs = maps:get(<<"$defs">>, Schema),
+                Properties = maps:get(<<"properties">>, maps:get(<<"contextData">>, Defs)),
+                ?assertEqual(
+                    [<<"short">>, <<"long">>],
+                    maps:get(<<"enum">>, maps:get(<<"name_mode">>, Properties))
+                )
+            end;
+        {error, _} ->
+            fun() -> ok end
+    end.

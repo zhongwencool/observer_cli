@@ -7,6 +7,7 @@
 -export([
     parse/1,
     command/1,
+    command_name/1,
     schema/0,
     target/1,
     cookie_source/1,
@@ -21,6 +22,7 @@
     response/6,
     error/2,
     encode/2,
+    encode/3,
     exit_code/1,
     escape_text/1
 ]).
@@ -130,7 +132,7 @@ parse_command(Command, [], Positionals, Options) ->
                 options => Options
             }};
         {error, Reason} ->
-            argument_error(Reason)
+            argument_error(Reason, Command, Options)
     end;
 parse_command(Command, [Argument | Rest], Positionals, Options) ->
     case option(Argument) of
@@ -158,6 +160,17 @@ add_option(_Command, _Rest, _Positionals, Options, Key, _Value) when is_map_key(
 add_option(Command, Rest, Positionals, Options, Key, Value) ->
     parse_command(Command, Rest, Positionals, Options#{Key => Value}).
 
+validate_command(describe, Arguments, Options) ->
+    case validate_options(describe, Options) of
+        ok ->
+            case {maps:get(schema, Options, false), Arguments} of
+                {true, []} -> ok;
+                {true, _} -> {error, schema_export_no_command};
+                {false, _} -> validate_arguments(describe, Arguments)
+            end;
+        Error ->
+            Error
+    end;
 validate_command(trace, Arguments, Options) ->
     case validate_options(trace, Options) of
         ok -> validate_trace_command(Arguments, Options);
@@ -214,7 +227,8 @@ trace_mode_keys(Options) ->
         json,
         timeout,
         redact,
-        include_identifiers
+        include_identifiers,
+        verbose
     ],
     lists:sort(maps:keys(maps:without(Global, Options))).
 
@@ -245,9 +259,27 @@ validate_format_options(_Command, #{format := Format}) when
     Format =/= "text", Format =/= "json", Format =/= "term"
 ->
     {error, {unsupported_format, Format}};
+validate_format_options(_Command, #{verbose := true, json := true}) ->
+    {error, verbose_text_only};
+validate_format_options(_Command, #{verbose := true, format := Format}) when Format =/= "text" ->
+    {error, verbose_text_only};
 validate_format_options(Command, Options) ->
     validate_runtime_options(Command, Options).
 
+validate_runtime_options(describe, Options) ->
+    case only_options(describe, Options, [schema]) of
+        false ->
+            {error, unsupported_command_option};
+        true ->
+            case
+                maps:get(schema, Options, false) andalso
+                    not (maps:get(json, Options, false) orelse
+                        maps:get(format, Options, "text") =:= "json")
+            of
+                true -> {error, schema_export_requires_json};
+                false -> ok
+            end
+    end;
 validate_runtime_options(schedulers, Options) ->
     case only_options(schedulers, Options, [duration]) of
         true ->
@@ -288,30 +320,24 @@ validate_runtime_options(processes, Options) ->
 validate_runtime_options(applications, Options) ->
     case only_options(applications, Options, [sort, limit]) of
         true ->
-            validate_list_options(
-                Options, ["memory", "process_count", "reductions", "message_queue_len"]
-            );
+            validate_list_options(Options, sort_keys(applications));
         false ->
             {error, unsupported_command_option}
     end;
 validate_runtime_options(Command, Options) when Command =:= ets; Command =:= mnesia ->
     case only_options(Command, Options, [sort, limit]) of
-        true -> validate_list_options(Options, ["memory", "size"]);
+        true -> validate_list_options(Options, sort_keys(Command));
         false -> {error, unsupported_command_option}
     end;
 validate_runtime_options(network, Options) ->
-    validate_counter_list_options(
-        network, Options, ["oct", "recv_oct", "send_oct", "cnt", "recv_cnt", "send_cnt"]
-    );
+    validate_counter_list_options(network, Options, sort_keys(network));
 validate_runtime_options(ports, Options) ->
     case only_options(ports, Options, [sort, limit]) of
-        true -> validate_list_options(Options, ["queue_size", "memory", "input", "output", "io"]);
+        true -> validate_list_options(Options, sort_keys(ports));
         false -> {error, unsupported_command_option}
     end;
 validate_runtime_options(sockets, Options) ->
-    validate_counter_list_options(
-        sockets, Options, ["io", "read_bytes", "write_bytes", "packets", "waits", "fails"]
-    );
+    validate_counter_list_options(sockets, Options, sort_keys(sockets));
 validate_runtime_options(process, Options) ->
     validate_target_options(process, Options, [info]);
 validate_runtime_options(port, Options) ->
@@ -443,27 +469,7 @@ only_options(Command, Options, CommandOptions) ->
         maps:keys(Options)
     ).
 
-global_options(connect) ->
-    remote_options();
-global_options(status) ->
-    [format, json, timeout];
-global_options(disconnect) ->
-    [format, json];
-global_options(logs) ->
-    remote_options();
-global_options(_Command) ->
-    remote_options() ++ [redact, include_identifiers].
-
-remote_options() ->
-    [
-        node,
-        cookie_env,
-        cookie_file,
-        name_mode,
-        format,
-        json,
-        timeout
-    ].
+global_options(Command) -> observer_cli_catalog:common_options(Command).
 
 validate_diagnose_options(Options) ->
     Observe = maps:find(observe, Options),
@@ -506,13 +512,7 @@ validate_observation_timeout(Options, _Duration) ->
     validate_target_options(Options).
 
 validate_processes_options(Options) ->
-    case
-        validate_list_values(
-            Options, [
-                "memory", "message_queue_len", "reductions", "binary_memory", "total_heap_size"
-            ]
-        )
-    of
+    case validate_list_values(Options, sort_keys(processes)) of
         ok ->
             case maps:find(duration, Options) of
                 {ok, _} ->
@@ -561,6 +561,11 @@ validate_otp_state_timeout(#{timeout := _} = Options) ->
 validate_otp_state_timeout(Options) ->
     validate_target_options(Options).
 
+validate_arguments(describe, Arguments) ->
+    case observer_cli_catalog:describe(Arguments) of
+        {ok, _} -> ok;
+        {error, _} -> {error, unknown_describe_command}
+    end;
 validate_arguments(process, [_Target]) ->
     ok;
 validate_arguments(process, _Arguments) ->
@@ -643,6 +648,12 @@ validate_target_without_timeout(#{node := _Node} = Options) ->
         {ok, {_Target, _Mode}} -> ok;
         {error, Reason} -> {error, Reason}
     end;
+validate_target_without_timeout(Options) when
+    is_map_key(cookie_env, Options);
+    is_map_key(cookie_file, Options);
+    is_map_key(name_mode, Options)
+->
+    {error, target_option_requires_node};
 validate_target_without_timeout(_Options) ->
     ok.
 
@@ -764,9 +775,19 @@ context_options(_Options) ->
 
 -spec save_context(map()) -> ok | {error, atom()}.
 save_context(Options) ->
-    case context_options(Options) of
-        {ok, ContextOptions} -> write_context(context_path(), context_term(ContextOptions));
-        Error -> Error
+    try
+        case context_options(Options) of
+            {ok, ContextOptions} ->
+                Context = context_term(ContextOptions),
+                case byte_size(term_to_binary(Context)) =< ?MAX_CONTEXT_BYTES of
+                    true -> write_context(context_path(), Context);
+                    false -> {error, context_too_large}
+                end;
+            Error ->
+                Error
+        end
+    catch
+        error:_ -> {error, invalid_context}
     end.
 
 -spec load_context() -> {ok, map()} | {error, atom()}.
@@ -802,18 +823,24 @@ mode_text(longnames) -> "long".
 
 context_term(#{node := Node, name_mode := Mode, cookie_env := Name}) ->
     #{
-        <<"version">> => 1,
-        <<"node">> => list_to_binary(Node),
-        <<"name_mode">> => list_to_binary(Mode),
-        <<"cookie_source">> => #{<<"type">> => <<"env">>, <<"name">> => list_to_binary(Name)}
+        <<"version">> => 2,
+        <<"node">> => context_binary(Node),
+        <<"name_mode">> => context_binary(Mode),
+        <<"cookie_source">> => #{<<"type">> => <<"env">>, <<"name">> => context_binary(Name)}
     };
 context_term(#{node := Node, name_mode := Mode, cookie_file := Path}) ->
     #{
-        <<"version">> => 1,
-        <<"node">> => list_to_binary(Node),
-        <<"name_mode">> => list_to_binary(Mode),
-        <<"cookie_source">> => #{<<"type">> => <<"file">>, <<"path">> => list_to_binary(Path)}
+        <<"version">> => 2,
+        <<"node">> => context_binary(Node),
+        <<"name_mode">> => context_binary(Mode),
+        <<"cookie_source">> => #{<<"type">> => <<"file">>, <<"path">> => context_binary(Path)}
     }.
+
+context_binary(Text) ->
+    case unicode:characters_to_binary(Text) of
+        Binary when is_binary(Binary) -> Binary;
+        _ -> error(badarg)
+    end.
 
 write_context(Path, Context) ->
     Dir = filename:dirname(Path),
@@ -958,18 +985,33 @@ decode_context_binary({error, _Reason}) ->
 
 decode_context(
     #{
-        <<"version">> := 1,
+        <<"version">> := Version,
         <<"node">> := Node,
         <<"name_mode">> := Mode,
         <<"cookie_source">> := Source
     } = Context
-) when map_size(Context) =:= 4, is_binary(Node), is_binary(Mode), is_map(Source) ->
-    decode_context_fields(Node, Mode, Source);
+) when
+    map_size(Context) =:= 4 andalso is_binary(Node) andalso is_binary(Mode) andalso
+        is_map(Source) andalso (Version =:= 1 orelse Version =:= 2)
+->
+    case Version of
+        1 -> decode_context_fields(Node, Mode, Source, latin1);
+        2 -> decode_context_fields(Node, Mode, Source)
+    end;
 decode_context(_Context) ->
     {error, invalid_context}.
 
 decode_context_fields(Node, Mode, Source) ->
-    try {binary_to_list(Node), binary_to_list(Mode), decode_context_source(Source)} of
+    decode_context_fields(Node, Mode, Source, utf8).
+
+decode_context_fields(Node, Mode, Source, Encoding) ->
+    try
+        {
+            unicode:characters_to_list(Node, Encoding),
+            unicode:characters_to_list(Mode, Encoding),
+            decode_context_source(Source, Encoding)
+        }
+    of
         {NodeText, ModeText, {ok, SourceOptions}} ->
             Options = SourceOptions#{node => NodeText, name_mode => ModeText},
             case context_options(Options) of
@@ -982,18 +1024,31 @@ decode_context_fields(Node, Mode, Source) ->
         _:_ -> {error, invalid_context}
     end.
 
-decode_context_source(#{<<"type">> := <<"env">>, <<"name">> := Name} = Source) when
+-ifdef(TEST).
+decode_context_source(Source) ->
+    decode_context_source(Source, utf8).
+-endif.
+
+decode_context_source(#{<<"type">> := <<"env">>, <<"name">> := Name} = Source, Encoding) when
     map_size(Source) =:= 2, is_binary(Name)
 ->
-    {ok, #{cookie_env => binary_to_list(Name)}};
-decode_context_source(#{<<"type">> := <<"file">>, <<"path">> := Path} = Source) when
-    map_size(Source) =:= 2, is_binary(Path)
-->
-    case filename:pathtype(binary_to_list(Path)) of
-        absolute -> {ok, #{cookie_file => binary_to_list(Path)}};
+    case unicode:characters_to_list(Name, Encoding) of
+        Text when is_list(Text) -> {ok, #{cookie_env => Text}};
         _ -> error
     end;
-decode_context_source(_Source) ->
+decode_context_source(#{<<"type">> := <<"file">>, <<"path">> := Path} = Source, Encoding) when
+    map_size(Source) =:= 2, is_binary(Path)
+->
+    case unicode:characters_to_list(Path, Encoding) of
+        Text when is_list(Text) ->
+            case filename:pathtype(Text) of
+                absolute -> {ok, #{cookie_file => Text}};
+                _ -> error
+            end;
+        _ ->
+            error
+    end;
+decode_context_source(_Source, _Encoding) ->
     error.
 
 delete_context(Path) ->
@@ -1186,61 +1241,62 @@ integer_at_least(Text, Minimum) ->
 multiply_duration(Value, Multiplier) when is_integer(Value) -> Value * Multiplier;
 multiply_duration(error, _Multiplier) -> error.
 
-option("--node") -> {value, node};
-option("--cookie-env") -> {value, cookie_env};
-option("--cookie-file") -> {value, cookie_file};
-option("--name-mode") -> {value, name_mode};
-option("--format") -> {value, format};
-option("--json") -> {flag, json};
-option("--timeout") -> {value, timeout};
-option("--redact") -> {flag, redact};
-option("--include-identifiers") -> {flag, include_identifiers};
-option("--deep") -> {flag, deep};
-option("--sort") -> {value, sort};
-option("--limit") -> {value, limit};
-option("--duration") -> {value, duration};
-option("--info") -> {flag, info};
-option("--app") -> {value, app};
-option("--observe") -> {value, observe};
-option("--pid") -> {value, pid};
-option("--rate") -> {value, rate};
-option("--replace-existing-trace") -> {flag, replace_existing_trace};
-option("--all") -> {flag, all};
-option("--behavior") -> {value, behavior};
-option("--handler") -> {value, handler};
-option("--tail") -> {value, tail};
-option([$-, $- | _]) -> unknown;
-option(_Argument) -> positional.
+option(Argument) -> observer_cli_catalog:option(Argument).
 
 -spec command(string()) -> atom() | undefined.
-command("connect") -> connect;
-command("status") -> status;
-command("disconnect") -> disconnect;
-command("snapshot") -> snapshot;
-command("memory") -> memory;
-command("schedulers") -> schedulers;
-command("distribution") -> distribution;
-command("processes") -> processes;
-command("process") -> process;
-command("applications") -> applications;
-command("ets") -> ets;
-command("mnesia") -> mnesia;
-command("network") -> network;
-command("ports") -> ports;
-command("port") -> port;
-command("sockets") -> sockets;
-command("otp-state") -> otp_state;
-command("supervision-tree") -> supervision_tree;
-command("logs") -> logs;
-command("trace") -> trace;
-command("diagnose") -> diagnose;
-command(_Argument) -> undefined.
+command(Argument) -> observer_cli_catalog:command(Argument).
 
 -spec schema() -> binary().
 schema() -> ?SCHEMA.
 
 argument_error(Reason) ->
     {error, #{category => argument, exit_code => 2, reason => Reason}}.
+
+%% Keep recovery hints on the same sort definitions used by validation.
+sort_keys(Command) -> observer_cli_catalog:sort_keys(Command).
+
+argument_error(Reason, Command, Options) ->
+    {error, Error} = argument_error(Reason),
+    case invalid_option_constraint(Command, Reason) of
+        {Key, Constraint} when is_map_key(Key, Options) ->
+            {error, Error#{
+                message_reason =>
+                    {invalid_option_value, Reason, Key, maps:get(Key, Options), Constraint}
+            }};
+        _ ->
+            {error, Error}
+    end.
+
+invalid_option_constraint(Command, invalid_sort) ->
+    {sort, unicode:characters_to_binary(lists:join(", ", sort_keys(Command)))};
+invalid_option_constraint(trace, invalid_limit) ->
+    {limit, <<"an integer from 1 to 1000">>};
+invalid_option_constraint(_, invalid_limit) ->
+    {limit, <<"an integer from 1 to 200">>};
+invalid_option_constraint(trace, invalid_duration) ->
+    {duration, <<"100ms..60s (integer milliseconds, Nms, or Ns)">>};
+invalid_option_constraint(_, invalid_duration) ->
+    {duration, <<"250ms..10s (integer milliseconds, Nms, or Ns)">>};
+invalid_option_constraint(_, invalid_timeout) ->
+    {timeout, <<"1ms..120s (integer milliseconds, Nms, or Ns)">>};
+invalid_option_constraint(_, invalid_observation_duration) ->
+    {observe, <<"5s..60s (integer milliseconds, Nms, or Ns)">>};
+invalid_option_constraint(_, invalid_rate) ->
+    {rate, <<"N/s where N is an integer from 1 to 200">>};
+invalid_option_constraint(_, invalid_behavior) ->
+    {behavior, <<"gen_server, gen_statem, or gen_event">>};
+invalid_option_constraint(_, invalid_tail) ->
+    {tail, <<"an integer from 1 to 2000">>};
+invalid_option_constraint(_, timeout_too_short) ->
+    {timeout, <<"at least the sampling duration plus 5s">>};
+invalid_option_constraint(_, trace_timeout_too_short) ->
+    {timeout, <<"at least the trace duration plus 7s">>};
+invalid_option_constraint(_, trace_stop_timeout_too_short) ->
+    {timeout, <<"at least 5s">>};
+invalid_option_constraint(_, otp_state_timeout_too_short) ->
+    {timeout, <<"at least 10s">>};
+invalid_option_constraint(_, _) ->
+    none.
 
 -spec response(
     atom() | binary(),
@@ -1270,7 +1326,11 @@ error(Category, Reason) ->
         <<"message">> => reason_message(Reason)
     }.
 
--spec encode(text | term | json, map()) -> {ok, binary()} | {error, map()}.
+-spec encode(text | term | json, map(), map()) -> {ok, binary()} | {error, map()}.
+encode(text, Response, #{verbose := true}) -> encode(verbose, Response);
+encode(Format, Response, _Options) -> encode(Format, Response).
+
+-spec encode(text | verbose | term | json, map()) -> {ok, binary()} | {error, map()}.
 encode(text, #{
     <<"command">> := Command,
     <<"data">> := #{
@@ -1352,7 +1412,18 @@ encode(text, #{<<"command">> := <<"logs">>, <<"data">> := Data} = Response) when
     is_map(Data)
 ->
     capped(iolist_to_binary(logs_text(Response, Data)));
-encode(text, #{<<"command">> := Command} = Response) ->
+encode(text, #{<<"command">> := <<"describe">>, <<"data">> := #{<<"name">> := _}} = Response) ->
+    encode(verbose, Response);
+encode(text, Response) ->
+    capped(observer_cli_report:render(Response, report_width()));
+encode(verbose, #{<<"command">> := Command} = Response) when
+    Command =:= <<"logs">>;
+    Command =:= <<"connect">>;
+    Command =:= <<"status">>;
+    Command =:= <<"disconnect">>
+->
+    encode(text, Response);
+encode(verbose, #{<<"command">> := Command} = Response) ->
     capped(
         iolist_to_binary([
             <<"observer_cli ">>,
@@ -1381,9 +1452,22 @@ encode(json, Response) ->
 encode(_Format, _Response) ->
     {error, controller_error(format, unsupported_format)}.
 
-text_command(<<"trace_call">>) -> <<"trace call">>;
-text_command(<<"trace_stop_all">>) -> <<"trace stop">>;
-text_command(Command) -> escape_text(Command).
+report_width() ->
+    case io:columns() of
+        {ok, Width} when is_integer(Width), Width > 0 -> Width;
+        _ -> 80
+    end.
+
+-spec command_name(atom() | binary()) -> binary().
+command_name(Command) when is_atom(Command) -> observer_cli_catalog:public_name(Command);
+command_name(Command) when is_binary(Command) ->
+    try
+        observer_cli_catalog:public_name(binary_to_existing_atom(Command, utf8))
+    catch
+        error:badarg -> Command
+    end.
+
+text_command(Command) -> escape_text(command_name(Command)).
 
 logs_text(Response, Data) ->
     Meta = maps:get(<<"meta">>, Response),
@@ -1393,10 +1477,10 @@ logs_text(Response, Data) ->
     Tail = maps:get(<<"tail">>, Data),
     [
         <<"observer_cli logs\n">>,
+        logs_failure_text(Response, Tail),
         logs_target_text(Target),
         logs_source_text(Selected, Sources),
-        logs_tail_text(Tail),
-        logs_failure_text(Response, Tail)
+        logs_tail_text(Tail)
     ].
 
 logs_target_text(#{<<"node">> := Node, <<"otp_release">> := Otp}) ->
@@ -1491,9 +1575,7 @@ logs_line_text(Line) when is_binary(Line) ->
 logs_line_text(#{<<"encoding">> := <<"base64">>, <<"data">> := Data}) ->
     <<"base64:", Data/binary>>.
 
-logs_failure_text(_Response, Tail) when Tail =/= null ->
-    [];
-logs_failure_text(Response, null) ->
+logs_failure_text(Response, Tail) ->
     Capture = maps:get(<<"capture">>, maps:get(<<"meta">>, Response)),
     Reason =
         case Capture of
@@ -1505,7 +1587,22 @@ logs_failure_text(Response, null) ->
         escape_text(maps:get(<<"outcome">>, Response)),
         <<" reason=">>,
         text_scalar(Reason),
-        <<"\n">>
+        <<"\n">>,
+        case Tail of
+            null ->
+                [];
+            _ ->
+                [
+                    <<"content_truncated=">>,
+                    text_scalar(maps:get(<<"content_truncated">>, Tail)),
+                    <<" truncation_reasons=">>,
+                    lists:join(<<",">>, [
+                        escape_text(R)
+                     || R <- maps:get(<<"truncation_reasons">>, Tail)
+                    ]),
+                    <<"\n">>
+                ]
+        end
     ].
 
 cookie_source_text(#{<<"type">> := <<"env">>, <<"name">> := Name}) ->
@@ -1791,6 +1888,10 @@ outcome_binary(Outcome) when is_atom(Outcome) ->
 outcome_binary(Outcome) when is_binary(Outcome) ->
     Outcome.
 
+reason_code({invalid_option_value, Reason, _Key, _Value, _Constraint}) ->
+    reason_code(Reason);
+reason_code({contextual_error, Reason, _Context}) ->
+    reason_code(Reason);
 reason_code({Code, _Detail}) when is_atom(Code) ->
     atom_to_binary(Code);
 reason_code({Code, _Left, _Right}) when is_atom(Code) ->
@@ -1802,6 +1903,31 @@ reason_code(Code) when is_binary(Code) ->
 reason_code(_Reason) ->
     <<"unknown_error">>.
 
+reason_message({invalid_option_value, _Reason, Key, Value, Constraint}) ->
+    iolist_to_binary([
+        <<"invalid ">>,
+        option_text(Key),
+        <<" value \"">>,
+        escape_text(Value),
+        <<"\"; expected ">>,
+        Constraint
+    ]);
+reason_message({contextual_error, Reason, #{redacted := true}}) ->
+    iolist_to_binary([
+        reason_message(Reason),
+        <<"; configured target and cookie source withheld by identifier policy">>
+    ]);
+reason_message({contextual_error, Reason, Context}) ->
+    iolist_to_binary([
+        reason_message(Reason),
+        <<"; configured target: ">>,
+        <<"node=">>,
+        escape_text(maps:get(node, Context)),
+        <<", name_mode=">>,
+        escape_text(maps:get(name_mode, Context)),
+        <<", cookie_source=">>,
+        cookie_source_text(maps:get(cookie_source, Context))
+    ]);
 reason_message({unknown_option, Option}) ->
     iolist_to_binary([<<"unknown option: ">>, escape_text(Option)]);
 reason_message({unknown_command, Command}) ->
@@ -1818,6 +1944,14 @@ reason_message({unsupported_format, Format}) ->
     iolist_to_binary([<<"unsupported format: ">>, escape_text(Format)]);
 reason_message({unsupported_name_mode, Mode}) ->
     iolist_to_binary([<<"unsupported name mode: ">>, escape_text(Mode)]);
+reason_message(schema_export_requires_json) ->
+    <<"describe --schema requires --json or --format json">>;
+reason_message(schema_export_no_command) ->
+    <<"describe --schema exports the complete schema; omit command arguments">>;
+reason_message(unknown_describe_command) ->
+    <<"unknown command description; use describe or describe trace">>;
+reason_message(verbose_text_only) ->
+    <<"--verbose is only supported with --format text; JSON and term already contain complete evidence">>;
 reason_message(json_unavailable) ->
     <<"JSON output requires OTP 27 or newer">>;
 reason_message(command_unavailable) ->
@@ -1834,6 +1968,8 @@ reason_message(global_option_before_command) ->
     <<"options must appear after the command name">>;
 reason_message(missing_cookie_source) ->
     <<"--node requires exactly one of --cookie-env or --cookie-file">>;
+reason_message(target_option_requires_node) ->
+    <<"--cookie-env, --cookie-file, and --name-mode require --node; use connect to update the saved target">>;
 reason_message(process_target_required) ->
     <<"process requires one PID_OR_NAME">>;
 reason_message(port_target_required) ->
@@ -1868,6 +2004,12 @@ reason_message(invalid_tail) ->
     <<"--tail must be an integer from 1 to 2000">>;
 reason_message(invalid_refresh_interval) ->
     <<"REFRESH_MS must be an integer of at least 1000">>;
+reason_message(cookie_source_unavailable) ->
+    <<"cookie source unavailable; set the configured environment variable or make the configured file readable before retrying">>;
+reason_message(cookie_file_permissions) ->
+    <<"cookie file permissions are unsafe; remove all group and other permission bits (normally chmod 600)">>;
+reason_message(invalid_cookie) ->
+    <<"cookie source must contain 1..255 printable ASCII bytes; verify its contents without putting the value in command arguments">>;
 reason_message(connection_failed) ->
     <<"target connection failed; check node name, name mode, EPMD, network, and cookie">>;
 reason_message(tui_start_failed) ->
