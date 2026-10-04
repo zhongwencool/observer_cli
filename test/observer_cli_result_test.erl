@@ -274,3 +274,29 @@ focus_context_result(Focus, Context) ->
         <<"meta">> := #{<<"target">> => null, <<"capture">> => #{<<"probes">> => []}}
     },
     observer_cli_result:from_capture(Route, Capture).
+
+port_detail_metric_units_test() ->
+    Response = observer_cli_result:local(<<"inspect port">>, #{
+        <<"resource">> => <<"#Port<0.42>">>,
+        <<"memory">> => 2048,
+        <<"queue_size">> => 0,
+        <<"input">> => 1048576,
+        <<"output">> => null,
+        <<"os_pid">> => 1024,
+        <<"links_total_count">> => 3
+    }),
+    Text = observer_cli_present:render(Response, 80),
+    lists:foreach(
+        fun(Expected) ->
+            ?assertNotEqual(nomatch, binary:match(Text, Expected))
+        end,
+        [
+            <<"memory: 2.0 KiB">>,
+            <<"queue size: 0 B">>,
+            <<"input: 1.0 MiB">>,
+            <<"output: unavailable">>,
+            <<"os pid: 1024">>,
+            <<"links total count: 3">>
+        ]
+    ),
+    ?assertEqual(nomatch, binary:match(Text, <<"os pid: 1.0 KiB">>)).

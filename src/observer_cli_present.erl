@@ -326,6 +326,19 @@ inspect_body(<<"inspect process">>, Data) ->
             )
         )
     ];
+inspect_body(<<"inspect port">>, Data) ->
+    [
+        line([
+            label(K),
+            <<": ">>,
+            case lists:member(K, [<<"memory">>, <<"queue_size">>, <<"input">>, <<"output">>]) of
+                true -> bytes(V);
+                false -> scalar(V)
+            end
+        ])
+     || {K, V} <- lists:sort(maps:to_list(Data)), not is_map(V), not is_list(V)
+    ] ++
+        [<<"Nested evidence is retained in --verbose and JSON.">>];
 inspect_body(_Command, Data) ->
     [
         line([label(K), <<": ">>, scalar(V)])
