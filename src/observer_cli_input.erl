@@ -6,10 +6,17 @@
 -spec parse([string()]) -> {ok, map()} | {error, map()}.
 parse(Arguments) ->
     case collect(Arguments, [], #{}) of
-        {ok, Tokens, #{help := true}} -> parse_help(help_path(Tokens));
-        {ok, [], #{version := true}} -> {ok, #{route => version}};
-        {ok, Tokens, Options} -> parse_path(Tokens, Options);
-        {error, Message} -> failure(null, Message)
+        {ok, Tokens, #{help := true} = Options} ->
+            parse_help(help_path(Tokens), Options);
+        {ok, [], #{version := true} = Options} ->
+            case validate_offline_options(version, Options) of
+                ok -> {ok, #{route => version}};
+                {error, Message} -> failure(null, Message)
+            end;
+        {ok, Tokens, Options} ->
+            parse_path(Tokens, Options);
+        {error, Message} ->
+            failure(null, Message)
     end.
 
 collect([], Positionals, Options) ->
@@ -40,6 +47,23 @@ missing_value(Key) -> {error, <<"Missing value for --", (option_name(Key))/binar
 help_path(["help" | Rest]) -> Rest;
 help_path(Tokens) -> Tokens.
 
+parse_help(Path, Options) ->
+    case validate_offline_options(help, Options) of
+        ok -> parse_help(Path);
+        {error, Message} -> failure(null, Message)
+    end.
+
+validate_offline_options(Kind, Options) ->
+    Unsupported = maps:without([Kind, format], Options),
+    case {map_size(Unsupported), maps:get(format, Options, "text")} of
+        {0, "text"} ->
+            ok;
+        _ ->
+            {error,
+                <<"Help and version accept only text output and no execution options. ",
+                    "Use describe [COMMAND PATH] --json for machine-readable discovery.">>}
+    end.
+
 parse_help([]) ->
     {ok, #{route => help, path => []}};
 parse_help([Family]) when Family =:= "inspect"; Family =:= "trace" ->
@@ -54,7 +78,7 @@ parse_path([], Options) when map_size(Options) =:= 0 -> {ok, #{route => help, pa
 parse_path(Tokens, Options) ->
     case observer_cli_catalog:resolve(Tokens) of
         {ok, help, Path} ->
-            parse_help(Path);
+            parse_help(Path, Options);
         {ok, Id, Arguments} ->
             Descriptor = observer_cli_catalog:descriptor(Id),
             Command = maps:get(<<"name">>, Descriptor),

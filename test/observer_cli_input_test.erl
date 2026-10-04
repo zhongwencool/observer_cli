@@ -139,6 +139,39 @@ legacy_paths_fail_test() ->
     ?assertMatch({ok, #{route := help}}, observer_cli_input:parse(["inspect", "--help"])),
     ?assertMatch({ok, #{route := help}}, observer_cli_input:parse(["inspect"])).
 
+offline_output_preflight_test() ->
+    Invalid = [
+        ["--json"],
+        ["inspect", "--json"],
+        ["trace", "--format", "term"],
+        ["--help", "--json"],
+        ["check", "--help", "--format", "json"],
+        ["--version", "--format", "garbage"],
+        ["--version", "--json"],
+        ["--help", "--version"],
+        ["--node", "app@host"],
+        ["--cookie-env", "COOKIE"],
+        ["inspect", "--node", "app@host", "--cookie-env", "COOKIE"]
+    ],
+    lists:foreach(
+        fun(Args) -> ?assertMatch({error, _}, observer_cli_input:parse(Args)) end, Invalid
+    ),
+    lists:foreach(
+        fun(Args) -> ?assertMatch({ok, #{route := help}}, observer_cli_input:parse(Args)) end,
+        [
+            [],
+            ["--help"],
+            ["inspect"],
+            ["trace", "call", "--help"],
+            ["help", "check"],
+            ["--help", "--format", "text"]
+        ]
+    ),
+    ?assertMatch({ok, #{route := version}}, observer_cli_input:parse(["--version"])),
+    ?assertMatch(
+        {ok, #{route := version}}, observer_cli_input:parse(["--version", "--format", "text"])
+    ).
+
 root_help_budget_test() ->
     Help = observer_cli_catalog:help([]),
     Lines = binary:split(Help, <<"\n">>, [global]),

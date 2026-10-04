@@ -13,6 +13,8 @@ observer_cli [TARGET OPTIONS] COMMAND [ARGUMENTS] [OPTIONS]
 Global options may precede or follow the path. Duplicate, conflicting and
 missing values are rejected before connection. Help, version, description and
 schema export are offline and never resolve credentials or saved state.
+Help and `--version` are text-only; do not combine them with target or execution
+options. Use `describe [COMMAND PATH] --json` for machine-readable discovery.
 
 Explicit selection is atomic:
 
