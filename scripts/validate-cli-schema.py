@@ -157,7 +157,7 @@ def semantic_errors(response):
     if not isinstance(data, dict):
         return []
     errors = []
-    for finding in data.get("findings", []):
+    for finding in (response.get("assessment") or {}).get("findings", data.get("findings", [])):
         for evidence in finding.get("evidence", []):
             try:
                 observed = pointer(response, evidence["path"])
@@ -219,6 +219,9 @@ def negative_cases(response):
     for path, value in paths(response.get("data"), ("data",)):
         if path[-1] == "path" and isinstance(value, str) and value.startswith("/data/"):
             mutations.append((path, "/data/absent_evidence_target"))
+    for path, value in paths(response.get("assessment"), ("assessment",)):
+        if path[-1] == "path" and isinstance(value, str) and value.startswith("/data/"):
+            mutations.append((path, "/data/absent_evidence_target"))
     for path, value in mutations:
         altered = copy.deepcopy(response)
         replace(altered, path, value)
@@ -230,7 +233,7 @@ def negative_cases(response):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--schema", type=Path, default=Path("priv/schema/observer_cli.cli.v1.schema.json"))
+    parser.add_argument("--schema", type=Path, default=Path("priv/schema/observer_cli.cli.v2.schema.json"))
     parser.add_argument("--fixtures", type=Path, help="Directory of emitted .json response fixtures")
     parser.add_argument("--escript", type=Path, action="append", default=[], help="Verify embedded schema equals the normative source (repeatable)")
     parser.add_argument("--self-test", action="store_true", help="Require deliberate corrupted response fixtures to fail")
@@ -249,7 +252,7 @@ def main():
                 failures.append(f"schema: corrupted unit annotation at {path} was accepted")
     for executable in args.escript:
         with zipfile.ZipFile(executable) as archive:
-            names = [name for name in archive.namelist() if name.endswith("/priv/schema/observer_cli.cli.v1.schema.json")]
+            names = [name for name in archive.namelist() if name.endswith("/priv/schema/observer_cli.cli.v2.schema.json")]
             if len(names) != 1:
                 failures.append(f"{executable}: expected exactly one packaged CLI schema")
             elif json.loads(archive.read(names[0])) != schema:

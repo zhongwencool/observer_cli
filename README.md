@@ -1,236 +1,155 @@
 # observer_cli
 
-[![Build Status](https://github.com/zhongwencool/observer_cli/workflows/ci/badge.svg)](https://github.com/zhongwencool/observer_cli/actions)
-[![codecov](https://codecov.io/gh/zhongwencool/observer_cli/branch/main/graph/badge.svg)](https://codecov.io/gh/zhongwencool/observer_cli)
-[![GitHub tag](https://img.shields.io/github/tag/zhongwencool/observer_cli.svg)](https://github.com/zhongwencool/observer_cli)
-[![MIT License](https://img.shields.io/hexpm/l/observer_cli.svg)](https://hex.pm/packages/observer_cli)
-[![Hex.pm Version](https://img.shields.io/hexpm/v/observer_cli.svg)](https://hex.pm/packages/observer_cli)
-[![Hex.pm Downloads](https://img.shields.io/hexpm/dt/observer_cli.svg)](https://hex.pm/packages/observer_cli)
-[![Hex Docs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/observer_cli/)
+**Bounded BEAM investigations for people and automation.**
 
-**Production-ready BEAM diagnostics for operators, automation, and AI agents.**
+Start with a question, inspect the evidence, and choose the next smallest
+observation. People and agents use the same commands; text is concise and JSON
+retains the complete measurements, coverage, and uncertainty.
 
-`observer_cli` inspects live Erlang and Elixir systems through two explicit
-interfaces. The command CLI is the recommended starting point for bounded,
-repeatable diagnostics with stable text, Erlang-term, or JSON output. The TUI
-provides a live terminal workspace for interactive exploration.
+> This checkout implements **3.0.0**, an unreleased breaking redesign. It is not
+> evidence of a published Hex package or GitHub Release. Existing 2.0 users
+> should keep their versioned binary until they migrate.
 
-Both interfaces use Erlang distribution. Connect only to trusted nodes over a
-trusted network: a distribution cookie is not a read-only credential.
+## Start an investigation
 
-![Observer CLI Home page showing live VM health, memory and IO statistics, and
-process rankings](https://raw.githubusercontent.com/zhongwencool/observer_cli/8ec77bc92ea3238f17585f948977d04a6d6ec3fb/docs/assets/tui-home.png)
-
-## Installation
-
-Install `observer_cli` in the target release so command diagnostics can run
-there. Version 2.0 controllers require the matching `2.0.0` target bundle.
-Observer CLI 2.0 supports Erlang/OTP 26–29. JSON output requires OTP 27 or
-newer on the controller; text and Erlang-term output work across the supported
-range.
-
-<!-- tabs-open -->
-### Erlang
-
-Add the dependency to `rebar.config`:
-
-```erlang
-{deps, [
-    {observer_cli, "2.0.0"}
-]}.
-```
-
-Fetch and compile it:
+Prepare a trusted target with the matching `observer_cli` bundle first. Have
+its cookie injected into a protected environment, not pasted into arguments:
 
 ```sh
-rebar3 compile
+export OBSERVER_CLI_NODE='app@host'
+# OBSERVER_CLI_COOKIE is provided by your protected secret source.
+observer_cli check
 ```
 
-### Elixir
-
-Add the dependency to `mix.exs`:
-
-```elixir
-defp deps do
-  [
-    {:observer_cli, "2.0.0"}
-  ]
-end
-```
-
-Fetch and compile it:
+The default check observes for **15 seconds**. It evaluates existing VM-limit
+and scheduler-pressure rules, shows memory and queue evidence, and suggests
+bounded follow-up. No findings is not a certificate of health.
 
 ```sh
-mix deps.get
-mix compile
+observer_cli check cpu --window 5s
+observer_cli check memory
+observer_cli check mailbox
+observer_cli check connections
+
+observer_cli inspect process --sort memory
+observer_cli inspect process --sort reductions-rate --window 5s
+observer_cli inspect process --pid '<0.123.0>'
+observer_cli inspect process --name my_server
 ```
-<!-- tabs-close -->
 
-## Get started
+`memory` always means current bytes. `memory-change` means a signed window
+change. `reductions-rate` means reductions/s over the measured interval, **not
+process CPU time**. Adding a window never silently changes a sort's meaning.
 
-Release downloads are prebuilt escripts, not standalone native binaries. They
-require Erlang/OTP and `escript` on the controller. The command CLI still
-requires the matching `observer_cli` version in the target release; TUI
-auto-load also requires the controller and target to use the same OTP major.
+There is no daemon, persistent connection, saved active target, or global
+`connect`/`disconnect` step. Every command resolves one atomic selector and
+cleans up its temporary hidden controller.
 
-### Download a GitHub Release (recommended)
+## The five entrypoints
 
-On macOS or Linux, the versioned installer selects the escript for the local
-OTP major, verifies its release checksum, and installs it for the current user:
+| Entry | Use it for |
+| --- | --- |
+| `check [cpu\|memory\|mailbox\|connections]` | A bounded overview or focused investigation. |
+| `inspect RESOURCE` | Current facts, rankings, or a selected process/port. |
+| `trace call` / `trace stop` | Explicitly authorized node-global tracing. |
+| `tui` | Continuous interactive exploration. |
+| `describe [COMMAND PATH]` | Offline, incremental capability discovery. |
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/zhongwencool/observer_cli/v2.0.0/install.sh | sh
+observer_cli --help
+observer_cli inspect --help
+observer_cli describe inspect process --json
+observer_cli describe --full --json
+observer_cli describe --schema --json
 ```
 
-Add `$HOME/.local/bin` to `PATH` if the installer asks you to.
+Inspection covers VM facts, memory/allocators, schedulers, distribution, legacy
+inet traffic, processes, applications, ETS, Mnesia, Erlang ports, OTP sockets,
+bounded OTP state shapes, direct supervision children, and retained configured
+logs. It does not invent unsupported resource details.
 
-### Build from source
+## Build this unreleased version
 
-Build the same version from its release tag instead:
+Controllers are escripts, not standalone native executables. Erlang/OTP and
+`escript` must be installed. The supported runtime range remains OTP 26–29;
+JSON requires controller OTP 27+. Text and Erlang-term output work on OTP 26.
 
-```sh
-VERSION=2.0.0
-git clone --branch "v${VERSION}" --depth 1 \
-  https://github.com/zhongwencool/observer_cli.git
-cd observer_cli
-```
-
-<!-- tabs-open -->
-#### Rebar3
+From this checkout:
 
 ```sh
 rebar3 escriptize
 BIN=./_build/default/bin/observer_cli
+"$BIN" --version
+"$BIN" --help
 ```
 
-#### Mix
-
-The CI-tested toolchain is Erlang/OTP 29 with Elixir 1.20:
+Or, with the CI toolchain family OTP 29 / Elixir 1.20:
 
 ```sh
 mix deps.get
 mix escript.build
-BIN=./observer_cli
+./observer_cli --version
 ```
-<!-- tabs-close -->
+
+For a local target application during development, use this checkout as a path
+dependency (Elixir) or a checkout dependency (Rebar). Include `observer_cli` and
+`recon` in the target release. The target must run as a distributed node. A
+3.0.0 controller requires the matching **3.0.0 target bundle, protocol 2**.
+Command diagnostics never upload missing target code.
+
+Versioned release installation instructions apply only after a 3.0.0 release
+has actually been published. No release is created by these build commands.
+
+## Explicit targets and agents
+
+Agents and runbooks bind the target on **every remote invocation**:
 
 ```sh
-mkdir -p "$HOME/.local/bin"
-install -m 0755 "$BIN" "$HOME/.local/bin/observer_cli"
-export PATH="$HOME/.local/bin:$PATH"
-observer_cli --version
+observer_cli check cpu --window 5s \
+  --node 'app@host' --cookie-env OBSERVER_CLI_COOKIE --json
 ```
 
-Save a target without storing its cookie value:
+Global options may appear before or after the command path. An explicit node
+requires exactly one explicit cookie source and cannot borrow environment
+selector components. Without explicit target options, use
+`OBSERVER_CLI_NODE` plus exactly one of `OBSERVER_CLI_COOKIE` or
+`OBSERVER_CLI_COOKIE_FILE`; `OBSERVER_CLI_NAME_MODE` is optional.
+
+Structured responses use `observer_cli.cli/v2`. Execution completeness is
+separate from findings. Exit `0` means complete execution, even with findings;
+use `--fail-on warning|critical` for an explicit runbook finding threshold.
+Preserve stdout, stderr and the exit status, especially for partial results.
+
+Identifiers are included by default for follow-up. Use `--redact` for sharing;
+redacted aliases are response-local and never executable selectors. Counts,
+timing and topology can still be sensitive. Retained logs cannot be reliably
+sanitized and reject redaction.
+
+## Safety and escalation
+
+An Erlang distribution cookie grants trusted-peer code execution, not read-only
+access. Distribution is not encrypted by default. Use only trusted targets and
+networks or separately secured transport.
+
+Default checks do not read messages, dictionaries, table contents, state values,
+logs or trace events. State inspection requires `--allow-state-read`; tracing
+requires its specific global replacement/stop acknowledgement. Suggestions are
+never executed automatically. Coordinate one active observation per target;
+per-request limits do not bound aggregate concurrent load.
 
 ```sh
-export OBSERVER_CLI_COOKIE='replace-me'
-
-observer_cli connect \
-  --node app@host \
-  --cookie-env OBSERVER_CLI_COOKIE
-observer_cli status
-observer_cli diagnose
-observer_cli disconnect
+observer_cli tui --node 'app@host' --cookie-env OBSERVER_CLI_COOKIE
 ```
 
-`connect` stores a target selector, not a persistent connection. Every remote
-command starts a temporary hidden controller, performs bounded work, validates
-the response, and stops the controller before returning.
+The TUI retains its existing pages and plugins. If remote code loading is
+needed, explicitly add `--load-code` and use the same controller/target OTP
+major. Positional cookie values and implicit code loading are not supported.
 
-## What you can do
+## Documentation
 
-- Diagnose capacity pressure with calibrated findings and explicit probe
-  coverage.
-- Inspect memory, allocators, schedulers, distribution, and network activity.
-- Rank processes, applications, ETS tables, Mnesia tables, ports, and sockets.
-- Inspect one process, Erlang port, supervision tree, or bounded OTP state.
-- Read a bounded tail from one trusted plain `logger_std_h` configured file
-  without flushing Logger or accepting an arbitrary path.
-- Capture one exact, bounded function trace with explicit node-global consent.
-- Feed automation and agents a versioned `observer_cli.cli/v1` envelope with
-  stable exit statuses.
-- Explore the same node interactively through detailed TUI pages and plugins.
-
-The normative machine-readable response contract is published as
-[`priv/schema/observer_cli.cli.v1.schema.json`](https://raw.githubusercontent.com/zhongwencool/observer_cli/v2.0.0/priv/schema/observer_cli.cli.v1.schema.json).
-
-## Choose CLI or TUI
-
-| Interface | Choose it for | Start it with |
-| --- | --- | --- |
-| **CLI — recommended** | Production runbooks, automation, incident capture, and AI-agent workflows | `observer_cli diagnose` |
-| TUI | Live exploration, ranking changes, and detail drill-down | `observer_cli tui app@host` |
-
-The CLI requires `observer_cli` 2.0.0 in the target release and does not inject
-missing diagnostic code. The TUI can load its matching interactive bundle on a
-trusted target before starting. The old bare
-`observer_cli NODE [COOKIE REFRESH_MS]` form is not supported; use the explicit
-`tui` command.
-
-TUI auto-load sends controller-compiled BEAM bytecode to the target without
-recompiling it. Build the controller on the same OTP major as the target when
-auto-load is needed; cross-major bytecode loading is outside the supported
-compatibility contract.
-
-`observer_cli logs` returns sensitive, untrusted retained text. It reads only a
-selected handler's configured path, not the handler's private file descriptor
-or rotation archives, and deliberately rejects redaction flags.
-
-### Reading TUI measurements
-
-Home identifies its ranking mode using `recon:proc_count(Type, N)` or
-`recon:proc_window(Type, N, Interval)`, retaining the original Erlang metric names.
-
-- **Memory** is a current value. **Mem change** (and other `change` columns) is a
-  signed change between samples, not a total or a per-second rate.
-- **Reds total** is cumulative. Home's window ranking shows **Reds/s**, using
-  the measured monotonic elapsed time, not the configured refresh interval.
-- **Refresh:1500ms** is a requested delay. **Sample** is the actual
-  time between process-sample or socket-sample batches; collecting and rendering
-  data takes additional time. Home's IO/GC `Total/Delta` is since its own previous
-  sample, not necessarily the process ranking's window. Sampling metadata shares
-  the navigation row; narrow layouts shorten `Refresh` to `Ref` or wrap to a plain
-  line, preserving the recon expression and all warm-up or error states.
-- Window views start with **warming up**. Home excludes newly observed, lost,
-  or reset processes from that ranking and reports `missing` / `reset` counts.
-  Negative memory, heap and queue changes are valid; decreasing reductions are
-  a counter reset. Zero missing/reset counts stay hidden. Pausing is explicit,
-  and resuming warms up again.
-- Socket list `chg` columns are window changes (`chg` abbreviates `change`);
-  **MaxPkt** is a lifetime maximum.
-  Socket details show lifetime totals and `*_max` maxima. **warm** means a new
-  baseline, **miss** means a missing sample/counter, and **reset** means a counter
-  decreased. Optional sendfile counters absent in both samples are omitted;
-  appearing or disappearing counters invalidate the affected delta.
-  Sorting, paging and changing refresh keep the list's baseline. Returning to
-  the list or reconnecting starts fresh; failed enumeration clears the baseline.
-- Home's **Proc used / Atom used** retain `processes_used` / `atom_used`.
-  System's **Size (allocated)** column retains `processes` / `atom`.
-  These are different current-memory measurements, not interchangeable totals.
-
-These labels describe the interactive Home, Sockets and System views; the
-versioned CLI response schema is unchanged.
-
-## Upgrading from 1.x
-
-Version 2.0 changes the TUI plugin callbacks and replaces positional plugin
-sorting. Follow the [1.x plugin migration table](https://hexdocs.pm/observer_cli/tui-plugins.html#migrate-a-1-x-plugin-to-2-0).
-
-## Next steps
-
-- [Agent workflows](https://hexdocs.pm/observer_cli/agent-workflows.html): keep trusted
-  follow-up selectors separate from response-local aliases and share redacted evidence.
-
-- [CLI](https://hexdocs.pm/observer_cli/cli.md): install both sides, connect, diagnose, automate,
-  interpret output, and troubleshoot a complete first workflow.
-- [TUI reference](https://hexdocs.pm/observer_cli/tui.md): start the interface and look up every
-  page, field, source, and shortcut.
-- [TUI plugins](https://hexdocs.pm/observer_cli/tui-plugins.md): add plugin sheets, row
-  drill-down, and process formatters.
-- [Core concepts](https://hexdocs.pm/observer_cli/core-concepts.md): understand execution,
-  compatibility, diagnostic evidence, and safety boundaries.
-
-The generated ExDoc site provides `llms.txt`, a Markdown version of every page,
-and ExDoc's built-in **Copy Markdown** action. Build it locally with
-`rebar3 docs`.
+- [CLI reference](docs/reference/cli.md): paths, options, output, exits and bounds.
+- [Agent workflows](docs/guides/agent-workflows.md): JSON-only follow-up and sharing.
+- [Core concepts](docs/explanation/core-concepts.md): evidence, uncertainty and trust.
+- [Migration](docs/guides/migrate-v3.md): v2 command and contract replacements.
+- [TUI reference](docs/reference/tui.md) and [plugins](docs/reference/tui-plugins.md).
+- [Public JSON Schema](priv/schema/observer_cli.cli.v2.schema.json).
