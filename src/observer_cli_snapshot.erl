@@ -676,7 +676,7 @@ diagnostic_sample(Request, Context) when is_map(Request), is_map(Context) ->
         of
             Result -> Result
         catch
-            throw:{scan_budget_exceeded, Details} ->
+            error:{scan_budget_exceeded, Details} ->
                 Details;
             _Class:_Reason:_Stacktrace ->
                 #{status => error, reason_code => process_inventory_failed}
@@ -858,7 +858,7 @@ diagnostic_socket_scan(Source, Samples) ->
                 {error, Reason} ->
                     #{status => error, reason_code => Reason}
             catch
-                throw:{scan_budget_exceeded, Details} -> Details
+                error:{scan_budget_exceeded, Details} -> Details
             end;
         false ->
             #{status => unavailable, reason_code => scan_budget_exceeded}
@@ -2308,7 +2308,7 @@ capture_scan_inspection(Command, ProbeId, Samples, #{controller := Controller}, 
         try
             OutcomeFun()
         catch
-            throw:{scan_budget_exceeded, Details0} ->
+            error:{scan_budget_exceeded, Details0} ->
                 {unavailable, scan_budget_exceeded, Details0}
         end,
     {Status, Reason, Data, Coverage, ExtraEffects} =
@@ -3594,7 +3594,7 @@ fold_processes(Source, Fun, Acc) ->
     (FoldFun)(BoundedFun, Acc#{path => Path}).
 
 check_scan_count(Count, Budget, Stage) when Count > Budget ->
-    throw(
+    erlang:error(
         {scan_budget_exceeded, #{
             status => unavailable,
             reason_code => scan_budget_exceeded,

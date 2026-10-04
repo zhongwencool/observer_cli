@@ -3159,7 +3159,10 @@ run_remote(TargetNode, ProbeFun, RemoteLoadFun, StartFun) ->
 
 -ifdef(TEST).
 remote_module_available(Node) ->
-    remote_module_available(Node, 10000) =:= true.
+    case remote_module_available(Node, 10000) of
+        true -> true;
+        _ -> false
+    end.
 -endif.
 
 remote_module_available(Node, Timeout) ->

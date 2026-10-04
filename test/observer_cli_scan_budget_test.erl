@@ -55,7 +55,7 @@ process_iterator_caps_callbacks_when_count_grows_test() ->
         monotonic_fun => fun() -> 0 end
     },
     try
-        ?assertThrow(
+        ?assertError(
             {scan_budget_exceeded, #{status := unavailable, admission_stage := post_enumeration}},
             observer_cli_snapshot:collect_process_sample(memory, Source, #{})
         ),
@@ -86,7 +86,7 @@ counter_window_readmits_before_second_scan_test() ->
         monotonic_fun => fun() -> 0 end
     },
     try
-        ?assertThrow(
+        ?assertError(
             {scan_budget_exceeded, #{admission_stage := pre_enumeration}},
             observer_cli_snapshot:collect_counter_resources(network, Source, oct, 20, 250, #{})
         ),
@@ -105,7 +105,7 @@ counter_enumeration_growth_refuses_before_resource_queries_test() ->
     },
     lists:foreach(
         fun({Command, Sort}) ->
-            ?assertThrow(
+            ?assertError(
                 {scan_budget_exceeded, #{admission_stage := post_enumeration}},
                 observer_cli_snapshot:collect_counter_resources(
                     Command, Source, Sort, 20, undefined, #{}
