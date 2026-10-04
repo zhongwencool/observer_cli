@@ -174,6 +174,20 @@ legacy_paths_fail_test() ->
     ?assertMatch({ok, #{route := help}}, observer_cli_input:parse(["inspect", "--help"])),
     ?assertMatch({ok, #{route := help}}, observer_cli_input:parse(["inspect"])).
 
+trace_help_with_argument_test() ->
+    lists:foreach(
+        fun(Args) ->
+            ?assertEqual(
+                {ok, #{route => help, path => ["trace", "call"]}},
+                observer_cli_input:parse(Args)
+            )
+        end,
+        [
+            ["trace", "call", "timer:sleep/1", "--help"],
+            ["help", "trace", "call", "timer:sleep/1"]
+        ]
+    ).
+
 offline_output_preflight_test() ->
     Invalid = [
         ["--json"],

@@ -44,7 +44,8 @@ collect_value([Value | Rest], Positionals, Options, Key) ->
 
 missing_value(Key) -> {error, <<"Missing value for --", (option_name(Key))/binary, ".">>}.
 
-help_path(["help" | Rest]) -> Rest;
+help_path(["help" | Rest]) -> help_path(Rest);
+help_path(["trace", "call", _MFA]) -> ["trace", "call"];
 help_path(Tokens) -> Tokens.
 
 parse_help(Path, Options) ->
@@ -78,7 +79,7 @@ parse_path([], Options) when map_size(Options) =:= 0 -> {ok, #{route => help, pa
 parse_path(Tokens, Options) ->
     case observer_cli_catalog:resolve(Tokens) of
         {ok, help, Path} ->
-            parse_help(Path, Options);
+            parse_help(help_path(Path), Options);
         {ok, Id, Arguments} ->
             Descriptor = observer_cli_catalog:descriptor(Id),
             Command = maps:get(<<"name">>, Descriptor),
