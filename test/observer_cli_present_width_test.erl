@@ -21,6 +21,18 @@ long_utf8_token_preserves_codepoints_test() ->
     Joined = binary:replace(Text, <<"\n">>, <<>>, [global]),
     ?assertNotEqual(nomatch, binary:match(Joined, Token)).
 
+wide_and_combining_tokens_preserve_screen_bound_test() ->
+    lists:foreach(
+        fun(Characters) ->
+            Token = unicode:characters_to_binary(Characters),
+            Text = observer_cli_present:render(response(Token), 80),
+            assert_screen(Text),
+            Joined = binary:replace(Text, <<"\n">>, <<>>, [global]),
+            ?assertNotEqual(nomatch, binary:match(Joined, Token))
+        end,
+        [lists:duplicate(121, 16#754C), lists:flatten(lists:duplicate(61, [$e, 16#301]))]
+    ).
+
 response(Node) ->
     (observer_cli_result:local(<<"check">>, #{<<"context">> => #{}}))#{
         <<"meta">> := #{<<"target">> => #{<<"node">> => Node}, <<"capture">> => null}
@@ -29,4 +41,13 @@ response(Node) ->
 assert_screen(Text) ->
     Lines = binary:split(Text, <<"\n">>, [global]),
     ?assert(length(Lines) - 1 =< 24),
-    ?assert(lists:all(fun(Line) -> length(unicode:characters_to_list(Line)) =< 80 end, Lines)).
+    ?assert(lists:all(fun(Line) -> column_bound(Line) =< 80 end, Lines)).
+
+column_bound(Line) ->
+    lists:sum([
+        case C < 128 of
+            true -> 1;
+            false -> 2
+        end
+     || C <- unicode:characters_to_list(Line)
+    ]).

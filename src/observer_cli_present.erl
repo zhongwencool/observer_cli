@@ -538,11 +538,11 @@ wrap_words([Word | Rest], Width, Line, Acc) ->
             <<>> -> Word;
             _ -> <<Line/binary, " ", Word/binary>>
         end,
-    case length(unicode:characters_to_list(Candidate)) =< Width of
+    case column_bound(Candidate) =< Width of
         true ->
             wrap_words(Rest, Width, Candidate, Acc);
         false when Line =:= <<>> ->
-            {Prefix, Suffix} = lists:split(Width, unicode:characters_to_list(Word)),
+            {Prefix, Suffix} = split_columns(unicode:characters_to_list(Word), Width, []),
             wrap_words(
                 [unicode:characters_to_binary(Suffix) | Rest],
                 Width,
@@ -552,6 +552,22 @@ wrap_words([Word | Rest], Width, Line, Acc) ->
         false ->
             wrap_words([Word | Rest], Width, <<>>, [Line | Acc])
     end.
+
+%% A conservative bound, not exact wcwidth: wide glyphs fit without a Unicode
+%% width dependency. Accents and combining sequences may wrap earlier.
+column_bound(Binary) ->
+    lists:sum([character_columns(C) || C <- unicode:characters_to_list(Binary)]).
+character_columns(C) when C < 128 -> 1;
+character_columns(_) -> 2.
+split_columns([], _Remaining, Acc) ->
+    {lists:reverse(Acc), []};
+split_columns([C | Rest] = Characters, Remaining, Acc) ->
+    Columns = character_columns(C),
+    case Columns =< Remaining of
+        true -> split_columns(Rest, Remaining - Columns, [C | Acc]);
+        false -> {lists:reverse(Acc), Characters}
+    end.
+
 screen_budget(Lines, Budget) when length(Lines) =< Budget -> Lines;
 screen_budget(Lines, Budget) ->
     lists:sublist(Lines, Budget - 1) ++
