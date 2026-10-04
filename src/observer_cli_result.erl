@@ -187,7 +187,16 @@ summary(Id, Capture, #{<<"status">> := Status, <<"findings">> := Findings}) ->
     end;
 summary(Id, Capture, null) ->
     D = observer_cli_catalog:descriptor(Id),
-    Text = maps:get(<<"summary">>, D),
+    Text0 = maps:get(<<"summary">>, D),
+    Text =
+        case {Id, maps:get(<<"command">>, Capture)} of
+            {inspect_process, <<"process">>} ->
+                <<"Safe metadata for the selected process; no messages, dictionary or state values.">>;
+            {inspect_port, <<"port">>} ->
+                <<"Metadata for the selected Erlang port, not a TCP port number.">>;
+            _ ->
+                Text0
+        end,
     case maps:get(<<"outcome">>, Capture) of
         <<"partial">> -> <<"Partial evidence: ", Text/binary>>;
         _ -> Text

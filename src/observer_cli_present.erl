@@ -511,8 +511,11 @@ number(null) -> <<"unavailable">>;
 number(N) when is_integer(N) -> integer_to_binary(N);
 number(N) when is_float(N) -> float_to_binary(N, [{decimals, 2}, compact]);
 number(_) -> <<"unavailable">>.
+scalar(#{<<"module">> := Mod, <<"function">> := Fun, <<"arity">> := Arity}) ->
+    line([text(Mod), <<":">>, text(Fun), <<"/">>, number(Arity)]);
 scalar(V) when is_number(V) -> number(V);
-scalar(V) -> text(V).
+scalar(V) ->
+    text(V).
 text(null) -> <<"unavailable">>;
 text(B) when is_binary(B) -> observer_cli_capture:escape_text(B);
 text(V) -> observer_cli_capture:escape_text(io_lib:format("~tp", [V])).
