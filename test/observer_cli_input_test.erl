@@ -85,6 +85,19 @@ explicit_selectors_test() ->
     ),
     ?assertMatch({error, _}, observer_cli_input:parse(["inspect", "port", "--id", "port-1"])).
 
+trace_pid_preflight_test() ->
+    Prefix = ["trace", "call", "timer:sleep/1", "--replace-existing-trace", "--pid"],
+    lists:foreach(
+        fun(Pid) ->
+            ?assertMatch({error, _}, observer_cli_input:parse(Prefix ++ [Pid]))
+        end,
+        ["pid-1", "all", "init", "<1.2.0>", "<0.1>", "<0.1.0>extra"]
+    ),
+    ?assertMatch(
+        {ok, #{capture_options := #{pid := "<0.123.0>"}}},
+        observer_cli_input:parse(Prefix ++ ["<0.123.0>"])
+    ).
+
 invalid_before_target_test() ->
     Cases = [
         ["check", "--node", "app@host"],

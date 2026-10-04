@@ -169,6 +169,11 @@ finish_parse(Id, Command, Arguments, Options) ->
 
 validate_domain(trace_call, [], _Options) ->
     {error, <<"trace call requires one exact module:function/arity argument.">>};
+validate_domain(trace_call, _Arguments, Options) ->
+    case validate_process_selector(Options) of
+        ok -> validate_target(Options);
+        Error -> Error
+    end;
 validate_domain(Id, _Arguments, Options) when Id =:= inspect_process; Id =:= inspect_state ->
     case validate_process_selector(Options) of
         ok -> validate_selector_mode(Id, Options);
