@@ -5,6 +5,10 @@ set -eu
 ROOT=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
+# Do not let caller VM flags or target selection escape the owned test harness.
+unset ERL_FLAGS ERL_AFLAGS ERL_ZFLAGS ERL_LIBS
+unset OBSERVER_CLI_NODE OBSERVER_CLI_COOKIE OBSERVER_CLI_COOKIE_FILE OBSERVER_CLI_NAME_MODE
+
 rebar3 escriptize
 BIN=${OBSERVER_CLI_BIN:-"$ROOT/_build/default/bin/observer_cli"}
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/observer-cli-smoke.XXXXXX")
@@ -24,6 +28,12 @@ cleanup() {
 
 trap cleanup 0
 trap 'exit 1' HUP INT TERM
+
+mkdir -p "$TMP/home" "$TMP/config"
+HOME="$TMP/home"
+XDG_CONFIG_HOME="$TMP/config"
+ERL_CRASH_DUMP="$TMP/erl_crash.dump"
+export HOME XDG_CONFIG_HOME ERL_CRASH_DUMP
 
 ERL_EPMD_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
 export ERL_EPMD_PORT
