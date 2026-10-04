@@ -94,7 +94,7 @@ def build(private, commands):
     d['capture']['properties']['requested_window_ms'] = {'type': 'integer', 'minimum': 1, 'description': 'Requested observation window in milliseconds; actual capture duration remains separate.'}
     d['pidSelector'] = selector('pid', r'^<0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)>$')
     d['portSelector'] = selector('port', r'^#Port<0\.(0|[1-9][0-9]*)>$')
-    for name in ['processItem', 'currentProcessItem']:
+    for name in ['processItem', 'currentProcessItem', 'hotProcess', 'binaryHolderItem']:
         d[name]['properties']['selector'] = {'$ref': '#/$defs/pidSelector'}
     d['portItem']['properties']['selector'] = {'$ref': '#/$defs/portSelector'}
     # Not-found variants still receive an explicitly null selector.

@@ -7902,6 +7902,9 @@
               "type": "null"
             }
           ]
+        },
+        "selector": {
+          "$ref": "#/$defs/pidSelector"
         }
       },
       "required": [
@@ -8534,6 +8537,9 @@
           "type": "integer",
           "minimum": 0,
           "description": "Bytes."
+        },
+        "selector": {
+          "$ref": "#/$defs/pidSelector"
         }
       },
       "required": [

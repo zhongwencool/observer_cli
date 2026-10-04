@@ -190,3 +190,52 @@ describe_text_retains_complete_contract_test() ->
     Text = observer_cli_present:render(observer_cli_result:local(<<"describe">>, Index), 80),
     ?assertEqual(nomatch, binary:match(Text, <<"constraints">>)),
     ?assert(length(binary:split(Text, <<"\n">>, [global])) =< 24).
+
+nested_process_and_port_selectors_test() ->
+    Pid = <<"<0.123.0>">>,
+    Port = <<"#Port<0.42>">>,
+    ProcessRows = #{<<"items">> => [#{<<"pid">> => Pid}]},
+    PortRows = #{<<"items">> => [#{<<"resource">> => Port}]},
+    CheckData = #{
+        <<"context">> => #{
+            <<"current">> => #{<<"processes">> => ProcessRows},
+            <<"hot_processes_by_reductions">> => ProcessRows,
+            <<"binary_holders">> => ProcessRows
+        }
+    },
+    VmData = #{<<"processes">> => ProcessRows, <<"ports">> => PortRows},
+    lists:foreach(
+        fun(Redacted) ->
+            RedactArgs =
+                case Redacted of
+                    true -> ["--redact"];
+                    false -> []
+                end,
+            {ok, CheckRoute} = observer_cli_input:parse(["check" | RedactArgs]),
+            Capture = (capture(complete, []))#{<<"data">> := CheckData},
+            #{<<"data">> := #{<<"context">> := Context}} =
+                observer_cli_result:from_capture(CheckRoute, Capture),
+            #{
+                <<"current">> := #{<<"processes">> := Current},
+                <<"hot_processes_by_reductions">> := Hot
+            } = Context,
+            assert_row_selector(Current, <<"pid">>, Pid, Redacted),
+            assert_row_selector(Hot, <<"pid">>, Pid, Redacted),
+            assert_row_selector(maps:get(<<"binary_holders">>, Context), <<"pid">>, Pid, Redacted),
+            {ok, VmRoute} = observer_cli_input:parse(["inspect", "vm" | RedactArgs]),
+            VmCapture = Capture#{<<"command">> := <<"snapshot">>, <<"data">> := VmData},
+            #{<<"data">> := #{<<"processes">> := Processes, <<"ports">> := Ports}} =
+                observer_cli_result:from_capture(VmRoute, VmCapture),
+            assert_row_selector(Processes, <<"pid">>, Pid, Redacted),
+            assert_row_selector(Ports, <<"port">>, Port, Redacted)
+        end,
+        [false, true]
+    ).
+
+assert_row_selector(#{<<"items">> := [Item]}, Kind, Value, Redacted) ->
+    Expected =
+        case Redacted of
+            true -> null;
+            false -> #{<<"kind">> => Kind, <<"value">> => Value}
+        end,
+    ?assertEqual(Expected, maps:get(<<"selector">>, Item)).

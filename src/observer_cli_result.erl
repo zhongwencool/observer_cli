@@ -222,6 +222,17 @@ capture_meta(#{id := Id, options := Options}, #{<<"capture">> := Capture} = Meta
 capture_meta(_Route, Meta) ->
     Meta.
 
+selectors(diagnose, Data, Redacted) when is_map(Data) ->
+    nested_selectors(<<"context">>, diagnostic_context, Data, Redacted);
+selectors(diagnostic_context, Data, Redacted) ->
+    Current = nested_selectors(<<"current">>, current_context, Data, Redacted),
+    Activity = nested_selectors(<<"hot_processes_by_reductions">>, processes, Current, Redacted),
+    nested_selectors(<<"binary_holders">>, processes, Activity, Redacted);
+selectors(current_context, Data, Redacted) ->
+    nested_selectors(<<"processes">>, processes, Data, Redacted);
+selectors(snapshot, Data, Redacted) when is_map(Data) ->
+    Processes = nested_selectors(<<"processes">>, processes, Data, Redacted),
+    nested_selectors(<<"ports">>, ports, Processes, Redacted);
 selectors(Id, #{<<"items">> := Items} = Data, Redacted) when
     Id =:= processes orelse Id =:= ports
 ->
@@ -244,6 +255,14 @@ selectors(Id, Data, Redacted) when
     add_selector(Id, Data, Redacted);
 selectors(_Id, Data, _Redacted) ->
     Data.
+
+nested_selectors(Key, Kind, Data, Redacted) ->
+    case maps:find(Key, Data) of
+        {ok, Nested} when is_map(Nested) ->
+            Data#{Key := selectors(Kind, Nested, Redacted)};
+        _ ->
+            Data
+    end.
 
 add_selector(_Id, Item, true) ->
     Item#{<<"selector">> => null};
