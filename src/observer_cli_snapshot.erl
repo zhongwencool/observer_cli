@@ -3834,7 +3834,7 @@ collect_admitted_counter_resources(Command, Source, Sort, Limit, Duration, Conte
             case resource_sample(Command, Source, Context) of
                 {ok, Second, SecondAudit, SecondCoverage} ->
                     Interval =
-                        (maps:get(monotonic_fun, Source))() -
+                        maps:get(sample_monotonic_ms, SecondAudit) -
                             maps:get(sample_monotonic_ms, FirstAudit),
                     Window = counter_window(Command, First, Second),
                     Semantics = requested_rank_semantics(Source),
