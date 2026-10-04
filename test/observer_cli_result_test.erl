@@ -72,6 +72,36 @@ default_report_budget_and_evidence_test() ->
     ?assertNotEqual(nomatch, binary:match(Text, <<"Next: observer_cli inspect process">>)),
     ?assertEqual(nomatch, binary:match(Text, <<"planned_sample_count">>)).
 
+inventory_metric_units_test() ->
+    R = (observer_cli_result:local(<<"inspect network">>, #{}))#{
+        <<"data">> := #{
+            <<"sort">> => <<"oct-rate">>,
+            <<"sort_semantics">> => <<"rate">>,
+            <<"items">> => [
+                #{
+                    <<"resource">> => <<"#Port<0.1>">>,
+                    <<"oct">> => 9000,
+                    <<"oct_per_second">> => 2048.0
+                }
+            ]
+        }
+    },
+    Text = observer_cli_present:render(R, 80),
+    ?assertNotEqual(nomatch, binary:match(Text, <<"bytes/s">>)),
+    ?assertNotEqual(nomatch, binary:match(Text, <<"2.0 KiB">>)),
+    ?assertEqual(nomatch, binary:match(Text, <<"9000">>)).
+
+redacted_actions_preserve_policy_test() ->
+    R = check_result(complete, [], true),
+    lists:foreach(
+        fun(A) ->
+            Argv = maps:get(<<"argv">>, A),
+            ?assert(lists:member(<<"--redact">>, Argv)),
+            ?assertMatch({ok, _}, observer_cli_input:parse([binary_to_list(V) || V <- Argv]))
+        end,
+        maps:get(<<"next_actions">>, R)
+    ).
+
 check_result(Outcome, Findings, Redacted) ->
     Args =
         ["check"] ++

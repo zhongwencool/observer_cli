@@ -496,7 +496,79 @@ constraints(Id) ->
             [] -> [];
             _ -> [#{<<"kind">> => <<"required_options">>, <<"options">> => Required}]
         end,
-    Exclusive ++ Target ++ RequiredRules ++ selector_constraints(Id) ++ window_constraints(Id).
+    Exclusive ++ Target ++ RequiredRules ++ selector_constraints(Id) ++ window_constraints(Id) ++
+        runtime_constraints(Id).
+
+runtime_constraints(Id) when
+    Id =:= check;
+    Id =:= check_cpu;
+    Id =:= check_memory;
+    Id =:= check_mailbox;
+    Id =:= check_connections
+->
+    [
+        timeout_constraint(<<"window">>, 15000, 5000),
+        #{
+            <<"kind">> => <<"risk_when_present">>,
+            <<"when_present">> => [<<"app">>],
+            <<"risk_level">> => <<"high">>
+        }
+    ];
+runtime_constraints(inspect_scheduler) ->
+    [timeout_constraint(<<"window">>, 1500, 5000)];
+runtime_constraints(Id) when
+    Id =:= inspect_process; Id =:= inspect_network; Id =:= inspect_socket
+->
+    [
+        (timeout_constraint(<<"window">>, 0, 5000))#{
+            <<"when_present">> := [<<"timeout">>, <<"window">>]
+        }
+    ];
+runtime_constraints(trace_call) ->
+    [timeout_constraint(<<"duration">>, 10000, 7000)];
+runtime_constraints(trace_stop_all) ->
+    [
+        #{
+            <<"kind">> => <<"minimum_duration">>,
+            <<"when_present">> => [<<"timeout">>],
+            <<"option">> => <<"timeout">>,
+            <<"minimum_ms">> => 5000
+        }
+    ];
+runtime_constraints(inspect_state) ->
+    [
+        #{
+            <<"kind">> => <<"minimum_duration">>,
+            <<"when_present">> => [<<"timeout">>],
+            <<"option">> => <<"timeout">>,
+            <<"minimum_ms">> => 10000
+        }
+    ];
+runtime_constraints(describe) ->
+    [
+        #{
+            <<"kind">> => <<"effective_format">>,
+            <<"when_present">> => [<<"schema">>],
+            <<"format">> => <<"json">>
+        },
+        #{
+            <<"kind">> => <<"positional_count">>,
+            <<"when_present">> => [<<"schema">>],
+            <<"count">> => 0
+        }
+    ];
+runtime_constraints(_) ->
+    [].
+
+timeout_constraint(Sampling, Default, Margin) ->
+    #{
+        <<"kind">> => <<"timeout_margin">>,
+        <<"when_present">> => [<<"timeout">>],
+        <<"option">> => <<"timeout">>,
+        <<"sampling_option">> => Sampling,
+        <<"default_sampling_ms">> => Default,
+        <<"margin_ms">> => Margin
+    }.
 
 selector_constraints(inspect_state) ->
     [
@@ -657,9 +729,19 @@ help(Path) ->
             <<Hint/binary, "\n">>
     end.
 
-option_hint(#{<<"enum">> := Values}) -> [" ", lists:join("|", Values)];
-option_hint(#{<<"kind">> := <<"value">>}) -> " VALUE";
-option_hint(_) -> "".
+option_hint(#{<<"minimum_ms">> := Min, <<"maximum_ms">> := Max} = D) ->
+    Default =
+        case maps:find(<<"default">>, D) of
+            {ok, V} -> io_lib:format("; default ~Bms", [V]);
+            error -> []
+        end,
+    io_lib:format(" VALUE (~Bms..~Bms~ts)", [Min, Max, Default]);
+option_hint(#{<<"enum">> := Values}) ->
+    [" ", lists:join("|", Values)];
+option_hint(#{<<"kind">> := <<"value">>}) ->
+    " VALUE";
+option_hint(_) ->
+    "".
 
 -spec schema() -> {ok, binary()} | {error, schema_unavailable}.
 schema() ->
