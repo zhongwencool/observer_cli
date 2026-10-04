@@ -88,7 +88,7 @@ jobs:
           epmd -daemon
           rebar3 as test do eunit, covertool generate
       - name: Validate response schemas and Rebar packaging
-        if: matrix.otp == '29'
+        if: matrix.otp != '26'
         run: |
           python3 -m venv "$RUNNER_TEMP/schema-venv"
           "$RUNNER_TEMP/schema-venv/bin/python" -m pip install -r scripts/schema-requirements.txt
