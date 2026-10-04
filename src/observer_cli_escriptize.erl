@@ -28,8 +28,10 @@
     run/4,
     run_remote/4,
     remote_module_available/1,
+    remote_module_available/2,
     tui_result/1,
     remote_load/1,
+    remote_load/2,
     run_command/2,
     command_request/3,
     with_target/2,
@@ -184,34 +186,39 @@ start_tui_controller(Target, Mode, Cookie, Options) ->
     end.
 
 connect_tui(Target, Cookie, Options) ->
+    Deadline = erlang:monotonic_time(millisecond) + 10000,
     case random_cookie(fun() -> crypto:strong_rand_bytes(24) end) of
         {ok, Random} ->
             true = erlang:set_cookie(Random),
             true = erlang:set_cookie(Target, Cookie),
-            case connect_before(Target, fun net_kernel:connect_node/1, 10000) of
-                ok -> tui_on_target(Target, capabilities(Target, 10000), Options);
-                Error -> Error
+            case connect_before(Target, fun net_kernel:connect_node/1, remaining(Deadline)) of
+                ok ->
+                    tui_on_target(
+                        Target, capabilities(Target, remaining(Deadline)), Options, Deadline
+                    );
+                Error ->
+                    Error
             end;
         error ->
             {error, controller, random_cookie_unavailable}
     end.
 
-tui_on_target(Target, CapabilityResult, Options) ->
+tui_on_target(Target, CapabilityResult, Options, Deadline) ->
     Load = maps:get(load_code, Options, false),
     case {CapabilityResult, Load} of
         {{ok, _}, _} ->
-            start_installed_tui(Target, Options);
+            start_installed_tui(Target, Options, Deadline);
         {{error, capability, _}, true} ->
-            load_and_start_tui(Target, Options);
+            load_and_start_tui(Target, Options, Deadline);
         {{error, capability, _}, false} ->
             {error, capability, capability_unavailable};
         {Error, _} ->
             Error
     end.
 
-load_and_start_tui(Target, Options) ->
-    try remote_load(Target) of
-        ok -> start_installed_tui(Target, Options#{load_code => false})
+load_and_start_tui(Target, Options, Deadline) ->
+    try remote_load(Target, Deadline) of
+        ok -> start_installed_tui(Target, Options#{load_code => false}, Deadline)
     catch
         error:{remote_otp_mismatch, ControllerOtp, TargetOtp} ->
             {error, connection, {remote_otp_mismatch, ControllerOtp, TargetOtp}};
@@ -219,8 +226,8 @@ load_and_start_tui(Target, Options) ->
             {error, connection, tui_start_failed}
     end.
 
-start_installed_tui(Target, Options) ->
-    case remote_module_available(Target) of
+start_installed_tui(Target, Options, Deadline) ->
+    case remote_module_available(Target, remaining(Deadline)) of
         true ->
             Interval = observer_cli_input:duration_ms(maps:get(interval, Options, "1500ms")),
             try observer_cli:start(Target, [{interval, Interval}]) of
@@ -230,9 +237,11 @@ start_installed_tui(Target, Options) ->
             end;
         false ->
             case maps:get(load_code, Options, false) of
-                true -> load_and_start_tui(Target, Options);
+                true -> load_and_start_tui(Target, Options, Deadline);
                 false -> {error, capability, capability_unavailable}
-            end
+            end;
+        Error ->
+            Error
     end.
 
 %% The interactive RPC returns quit on normal exit, but failures are values too.
@@ -3358,10 +3367,25 @@ run_remote(TargetNode, ProbeFun, RemoteLoadFun, StartFun) ->
 
 -endif.
 
+-ifdef(TEST).
 remote_module_available(Node) ->
-    net_kernel:hidden_connect_node(Node) andalso
-        rpc:call(Node, code, ensure_loaded, [observer_cli]) =:= {module, observer_cli} andalso
-        compatible_capabilities(rpc:call(Node, observer_cli_snapshot, capabilities, [])).
+    remote_module_available(Node, 10000) =:= true.
+-endif.
+
+remote_module_available(Node, Timeout) ->
+    Deadline = erlang:monotonic_time(millisecond) + Timeout,
+    try
+        case erpc:call(Node, code, ensure_loaded, [observer_cli], remaining(Deadline)) of
+            {module, observer_cli} ->
+                compatible_capabilities(
+                    erpc:call(Node, observer_cli_snapshot, capabilities, [], remaining(Deadline))
+                );
+            _ ->
+                false
+        end
+    catch
+        _:_ -> {error, connection, tui_start_failed}
+    end.
 
 -ifdef(TEST).
 maybe_set_target_cookie(_Node, undefined) ->
@@ -3376,14 +3400,19 @@ cookie_atom(Cookie) ->
 
 -endif.
 
-remote_load(Node) when Node =:= node() ->
-    ok;
+-ifdef(TEST).
 remote_load(Node) ->
-    do_remote_load(Node).
+    remote_load(Node, erlang:monotonic_time(millisecond) + 10000).
+-endif.
 
-do_remote_load(Node) ->
+remote_load(Node, _Deadline) when Node =:= node() ->
+    ok;
+remote_load(Node, Deadline) ->
+    do_remote_load(Node, Deadline).
+
+do_remote_load(Node, Deadline) ->
     ControllerOtp = integer_to_list(?OTP_RELEASE),
-    TargetOtp = erpc:call(Node, erlang, system_info, [otp_release]),
+    TargetOtp = erpc:call(Node, erlang, system_info, [otp_release], remaining(Deadline)),
     case TargetOtp of
         ControllerOtp -> ok;
         _ -> erlang:error({remote_otp_mismatch, ControllerOtp, TargetOtp})
@@ -3392,21 +3421,28 @@ do_remote_load(Node) ->
     Formatter = application:get_env(observer_cli, formatter, ?DEFAULT_FORMATTER),
     FormatterApp = maps:get(application, Formatter, observer_cli),
     Apps = lists:usort([observer_cli, recon, FormatterApp]),
-    lists:foreach(fun(Mod) -> remote_load_module(Node, Mod) end, required_modules(Apps)),
-    erpc:call(Node, ?MODULE, ensure_set_env, [
-        observer_cli, application:get_all_env(observer_cli)
-    ]),
+    lists:foreach(fun(Mod) -> remote_load_module(Node, Mod, Deadline) end, required_modules(Apps)),
+    erpc:call(
+        Node,
+        ?MODULE,
+        ensure_set_env,
+        [
+            observer_cli, application:get_all_env(observer_cli)
+        ],
+        remaining(Deadline)
+    ),
     ok.
 
-remote_load_module(Node, Mod) ->
+remote_load_module(Node, Mod, Deadline) ->
     Result =
         try
-            recon:remote_load([Node], Mod)
+            {Mod, Bin, File} = code:get_object_code(Mod),
+            erpc:call(Node, code, load_binary, [Mod, File, Bin], remaining(Deadline))
         catch
             Class:Reason -> {exception, Class, Reason}
         end,
     case Result of
-        {[{module, Mod}], []} ->
+        {module, Mod} ->
             ok;
         _ ->
             erlang:error({remote_load_failed, Node, Mod, Result})

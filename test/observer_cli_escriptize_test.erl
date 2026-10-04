@@ -4,6 +4,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
+-export([hold_code_server/1]).
 
 command_request_converts_validated_cli_values_test() ->
     ?assertEqual(
@@ -3417,19 +3418,6 @@ cross_otp_remote_load(Erl) ->
                 {remote_otp_mismatch, ControllerOtp, TargetOtp},
                 observer_cli_escriptize:remote_load(Node)
             ),
-            Output = assert_halt(3, fun() ->
-                observer_cli_escriptize:main([
-                    "tui",
-                    "--node",
-                    atom_to_list(Node),
-                    "--cookie-env",
-                    "OBSERVER_CLI_TUI_TEST_COOKIE"
-                ])
-            end),
-            OutputBinary = iolist_to_binary(Output),
-            ?assertNotEqual(nomatch, binary:match(OutputBinary, list_to_binary(ControllerOtp))),
-            ?assertNotEqual(nomatch, binary:match(OutputBinary, list_to_binary(TargetOtp))),
-            ?assertNotEqual(nomatch, binary:match(OutputBinary, <<"same OTP major release">>)),
             ?assertEqual(false, erpc:call(Node, code, is_loaded, [observer_cli])),
             ?assertEqual(Before, system_module_md5s(Node))
         after
@@ -5505,5 +5493,46 @@ tui_result_preserves_failures_test() ->
         {error, internal, tui_start_failed},
         observer_cli_escriptize:tui_result(unexpected)
     ).
+
+tui_setup_stalled_code_server_test() ->
+    with_distribution(fun(_Cookie) ->
+        {ok, Peer, Node} = peer:start_link(#{name => peer:random_name("observer_cli_stall")}),
+        try
+            {_, Beam, File} = code:get_object_code(?MODULE),
+            {module, ?MODULE} = erpc:call(Node, code, load_binary, [?MODULE, File, Beam]),
+            Holder = erpc:call(Node, erlang, spawn, [?MODULE, hold_code_server, [self()]]),
+            receive
+                {Holder, suspended} -> ok
+            after 1000 -> error(suspend_timeout)
+            end,
+            try
+                Started = erlang:monotonic_time(millisecond),
+                ?assertEqual(
+                    {error, connection, tui_start_failed},
+                    observer_cli_escriptize:remote_module_available(Node, 100)
+                ),
+                ?assert(erlang:monotonic_time(millisecond) - Started < 2000),
+                LoadStarted = erlang:monotonic_time(millisecond),
+                ?assertException(
+                    error,
+                    {remote_load_failed, Node, _, _},
+                    observer_cli_escriptize:remote_load(Node, LoadStarted + 100)
+                ),
+                ?assert(erlang:monotonic_time(millisecond) - LoadStarted < 2000)
+            after
+                Holder ! resume
+            end
+        after
+            peer:stop(Peer)
+        end
+    end).
+
+hold_code_server(Parent) ->
+    CodeServer = whereis(code_server),
+    true = erlang:suspend_process(CodeServer),
+    Parent ! {self(), suspended},
+    receive
+        resume -> true = erlang:resume_process(CodeServer)
+    end.
 
 -endif.

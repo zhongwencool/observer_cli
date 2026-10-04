@@ -1402,7 +1402,7 @@ get_incremental_stats(SchUsage) ->
     {In, Out, GCs, Words, ScheduleWall}.
 
 update_net_ticktime_from(Node) ->
-    case rpc:call(Node, net_kernel, get_net_ticktime, []) of
+    case rpc:call(Node, net_kernel, get_net_ticktime, [], 5000) of
         NetTickTime when is_integer(NetTickTime), NetTickTime > 0 ->
             accept_net_ticktime_result(net_kernel:set_net_ticktime(NetTickTime), NetTickTime);
         _Invalid ->
