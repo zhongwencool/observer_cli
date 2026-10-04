@@ -579,7 +579,11 @@ target_dispatch(Target, Command, Request, Options, Policy, Remaining) ->
                 _Invalid ->
                     invalid
             catch
-                _Class:_Reason:_Stacktrace -> {error, required_probe, target_dispatch_failed}
+                _Class:_Reason:_Stacktrace when Command =:= trace ->
+                    %% Once dispatched, lost transport cannot confirm global trace cleanup.
+                    {error, cleanup, cleanup_unconfirmed};
+                _Class:_Reason:_Stacktrace ->
+                    {error, required_probe, target_dispatch_failed}
             end;
         {error, Reason} ->
             {error, required_probe, Reason}
