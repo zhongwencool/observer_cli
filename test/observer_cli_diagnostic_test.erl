@@ -652,6 +652,31 @@ application_scan_budget_refusal_is_retained() ->
         ok
     end.
 
+memory_rates_use_memory_probe_timestamps_test() ->
+    Memory = observer_cli_snapshot:diagnostic_memory(#{observe => <<"5s">>}),
+    #{scan_started_monotonic_ms := Started, scan_finished_monotonic_ms := Finished} =
+        maps:get(audit, Memory),
+    ?assert(Finished >= Started),
+    Samples = [
+        #{
+            monotonic_midpoint_ms => 0,
+            memory => #{
+                values => #{total_bytes => 100},
+                audit => #{scan_started_monotonic_ms => 100, scan_finished_monotonic_ms => 300}
+            }
+        },
+        #{
+            monotonic_midpoint_ms => 4000,
+            memory => #{
+                values => #{total_bytes => 4900},
+                audit => #{scan_started_monotonic_ms => 4900, scan_finished_monotonic_ms => 5100}
+            }
+        }
+    ],
+    Trend = observer_cli_diagnostic:map_gauge_trend(Samples, memory, values),
+    ?assertEqual(4800, maps:get(interval_ms, Trend)),
+    ?assertEqual(1000.0, maps:get(total_bytes, maps:get(rates_per_second, Trend))).
+
 partial_observation_retains_independent_evidence_with_valid_pointers_test() ->
     Plan = lists:seq(0, 4000, 1000),
     Gap = #{status => error, reason_code => sampling_gap},

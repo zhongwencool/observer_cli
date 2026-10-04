@@ -718,9 +718,18 @@ focused_probe(Domain, Request, Fun) ->
     end.
 
 diagnostic_memory(#{observe := _}) ->
-    case memory_probe() of
-        {ok, Memory, _} -> #{status => ok, values => maps:get(beam, Memory)};
-        _ -> #{status => error, reason_code => memory_probe_failed}
+    Started = erlang:monotonic_time(millisecond),
+    Result = memory_probe(),
+    Finished = erlang:monotonic_time(millisecond),
+    case Result of
+        {ok, Memory, _} ->
+            #{
+                status => ok,
+                values => maps:get(beam, Memory),
+                audit => diagnostic_scan_audit(Started, Finished)
+            };
+        _ ->
+            #{status => error, reason_code => memory_probe_failed}
     end;
 diagnostic_memory(_Request) ->
     #{status => unavailable, reason_code => observation_not_requested}.
