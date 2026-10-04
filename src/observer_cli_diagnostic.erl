@@ -279,11 +279,7 @@ build_report(Samples, Plan, Timing, Distribution) ->
     ],
     Status = capture_status(RequiredComplete, [ProcessStatus, DistributionStatus | ExtraStatuses]),
     RuntimeSamples = runtime_samples(Samples),
-    Findings =
-        case RequiredComplete of
-            true -> limit_findings(RuntimeSamples);
-            false -> []
-        end,
+    Findings = limit_findings(RuntimeSamples),
     ProcessContext = process_context(Samples),
     Skipped = skipped_checks(Samples),
     observer_cli_capture:response(
@@ -399,11 +395,7 @@ observation_report(Mode, Samples, Plan, Holder, Timing, Distribution) ->
     Status = capture_status(RequiredComplete, OptionalStatuses),
     RuntimeSamples = runtime_samples(Samples),
     Windows = scheduler_windows(Samples),
-    Findings =
-        case RequiredComplete of
-            true -> limit_findings(RuntimeSamples) ++ scheduler_findings(Windows);
-            false -> []
-        end,
+    Findings = limit_findings(RuntimeSamples) ++ scheduler_findings(Windows),
     observer_cli_capture:response(
         diagnose,
         Status,
@@ -1132,9 +1124,12 @@ observation_skipped(Mode, _Samples, _Holder) ->
     [#{id => Id, reason_code => ruleset_not_calibrated} || Id <- Growth] ++
         Binary.
 
-observation_summary(Mode, partial, _Findings, false) ->
+observation_summary(Mode, partial, Findings, false) ->
     iolist_to_binary(
-        io_lib:format("~p diagnostics capture is partial; findings suppressed.", [Mode])
+        io_lib:format(
+            "~p diagnostics capture is partial; required evidence is incomplete; ~B supported finding(s) retained.",
+            [Mode, length(Findings)]
+        )
     );
 observation_summary(Mode, partial, Findings, true) ->
     iolist_to_binary(
@@ -1216,8 +1211,11 @@ limit_finding(Domain, Samples) ->
             Count = maps:get(count_key(Domain), Sample),
             Limit = maps:get(limit_key(Domain), Sample),
             case severity(Count, Limit) of
-                none -> false;
-                Severity -> {true, finding(Domain, Severity, Count, Limit, Sample)}
+                none ->
+                    false;
+                Severity ->
+                    Position = length(lists:takewhile(fun(Item) -> Item =/= Sample end, Samples)),
+                    {true, finding(Domain, Severity, Count, Limit, Sample, Position)}
             end
     end.
 
@@ -1237,7 +1235,7 @@ severity(Count, Limit) when Count * 100 >= Limit * 95 -> critical;
 severity(Count, Limit) when Count * 100 > Limit * 85 -> warning;
 severity(_Count, _Limit) -> none.
 
-finding(Domain, Severity, Count, Limit, Sample) ->
+finding(Domain, Severity, Count, Limit, Sample, Position) ->
     Index = maps:get(sample_index, Sample),
     Ratio = Count / Limit,
     #{
@@ -1255,7 +1253,7 @@ finding(Domain, Severity, Count, Limit, Sample) ->
                 path => iolist_to_binary(
                     io_lib:format(
                         "/data/context/snapshot/runtime_samples/~B/~s_usage_ratio",
-                        [Index, atom_to_list(Domain)]
+                        [Position, atom_to_list(Domain)]
                     )
                 ),
                 sample_index => Index,
@@ -1532,8 +1530,13 @@ skipped_checks(_Samples) ->
     ],
     [#{id => Id, reason_code => ruleset_not_calibrated} || Id <- Growth].
 
-summary(partial, _Findings, false) ->
-    <<"Quick diagnostics capture is partial; findings suppressed.">>;
+summary(partial, Findings, false) ->
+    iolist_to_binary(
+        io_lib:format(
+            "Quick diagnostics capture is partial; required evidence is incomplete; ~B supported finding(s) retained.",
+            [length(Findings)]
+        )
+    );
 summary(partial, Findings, true) ->
     iolist_to_binary(
         io_lib:format(
