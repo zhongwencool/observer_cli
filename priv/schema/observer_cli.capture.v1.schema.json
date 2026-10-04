@@ -8963,7 +8963,7 @@
         "inventory_path": {
           "enum": [
             "otp_process_iterator",
-            "processes_list"
+            "bounded_process_list"
           ]
         },
         "exclusions": {
