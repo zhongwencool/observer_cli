@@ -5491,4 +5491,19 @@ shared_evidence_pointer_contract_test() ->
     ?assertEqual({ok, Root}, observer_cli_snapshot:truncate(Root)),
     ?assertNot(observer_cli_escriptize:pointer_exists(Root, <<>>)).
 
+tui_result_preserves_failures_test() ->
+    ?assertEqual(ok, observer_cli_escriptize:tui_result(quit)),
+    ?assertEqual(
+        {error, connection, tui_start_failed},
+        observer_cli_escriptize:tui_result({badrpc, nodedown})
+    ),
+    ?assertEqual(
+        {error, connection, connection_failed},
+        observer_cli_escriptize:tui_result({error, connection, connection_failed})
+    ),
+    ?assertEqual(
+        {error, internal, tui_start_failed},
+        observer_cli_escriptize:tui_result(unexpected)
+    ).
+
 -endif.

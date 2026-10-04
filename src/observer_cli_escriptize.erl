@@ -28,6 +28,7 @@
     run/4,
     run_remote/4,
     remote_module_available/1,
+    tui_result/1,
     remote_load/1,
     run_command/2,
     command_request/3,
@@ -223,7 +224,7 @@ start_installed_tui(Target, Options) ->
         true ->
             Interval = observer_cli_input:duration_ms(maps:get(interval, Options, "1500ms")),
             try observer_cli:start(Target, [{interval, Interval}]) of
-                _ -> ok
+                Result -> tui_result(Result)
             catch
                 _:_ -> {error, connection, tui_start_failed}
             end;
@@ -233,6 +234,12 @@ start_installed_tui(Target, Options) ->
                 false -> {error, capability, capability_unavailable}
             end
     end.
+
+%% The interactive RPC returns quit on normal exit, but failures are values too.
+tui_result(quit) -> ok;
+tui_result({badrpc, _Reason}) -> {error, connection, tui_start_failed};
+tui_result({error, Category, Reason}) -> {error, Category, Reason};
+tui_result(_Unexpected) -> {error, internal, tui_start_failed}.
 
 -ifdef(TEST).
 run_args(Options, RunFun) ->
