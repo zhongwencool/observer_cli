@@ -43,7 +43,6 @@
     validate_response/4,
     cleanup_outcome/2,
     capability_error/2,
-    probe_response/5,
     command_output_device/2,
     response_command/2,
     valid_probe_reason/2,
@@ -51,7 +50,6 @@
     pointer_exists/2,
     public_value/2,
     public_text/1,
-    public_cookie_source/1,
     command_format/1,
     command_identity/2,
     command_display/1,
@@ -97,11 +95,7 @@
     probe_options/2,
     connect_started/6,
     ensure_net_kernel_name_mode/1,
-    run_connect/1,
     ensure_output_format/2,
-    save_connected_context/2,
-    run_status/1,
-    run_disconnect/0,
     with_active_target/2,
     controller_stopped/1
 ]).
@@ -277,31 +271,7 @@ run_command(Command, Options) ->
         Error -> Error
     end.
 
--ifdef(TEST).
-run_command_ready(describe, #{schema := true}) ->
-    case observer_cli_capture_catalog:schema() of
-        {ok, Bytes} when byte_size(Bytes) =< ?MAX_RESPONSE_BYTES -> {schema, Bytes};
-        {ok, _} -> {error, schema, response_too_large};
-        {error, Reason} -> {error, internal, Reason}
-    end;
-run_command_ready(describe, Options) ->
-    case observer_cli_capture_catalog:describe(arguments(Options)) of
-        {ok, Data} ->
-            {ok, observer_cli_capture:response(describe, complete, null, null, Data, []), 0};
-        {error, Reason} ->
-            {error, argument, Reason}
-    end;
-run_command_ready(connect, Options) ->
-    run_connect(Options);
-run_command_ready(status, Options) ->
-    run_status(Options);
-run_command_ready(disconnect, Options) ->
-    run_disconnect(Options);
-run_command_ready(Command, Options) ->
-    run_capture_ready(Command, Options).
--else.
 run_command_ready(Command, Options) -> run_capture_ready(Command, Options).
--endif.
 
 run_capture_ready(snapshot, Options) ->
     with_target(diagnostic_connection_options(Options), fun(Target, _Capabilities, Remaining) ->
@@ -394,167 +364,6 @@ trace_request(Action, Options) ->
         max => Max,
         replace_existing_trace => maps:get(replace_existing_trace, Options, false)
     }.
-
--ifdef(TEST).
-run_connect(Options) ->
-    case ensure_output_format(connect, Options) of
-        ok -> run_connect_ready(Options);
-        Error -> Error
-    end.
-
-run_connect_ready(Options) ->
-    case observer_cli_capture:context_options(Options) of
-        {ok, ContextOptions} ->
-            Outcome = probe_options(ContextOptions, fun(Target, CapabilityResult, Remaining) ->
-                probe_response(connect, ContextOptions, Target, CapabilityResult, Remaining)
-            end),
-            save_connected_context(ContextOptions, Outcome);
-        {error, Reason} ->
-            {error, argument, Reason}
-    end.
-
-save_connected_context(ContextOptions, {ok, _Response, _ExitCode} = Outcome) ->
-    case observer_cli_capture:save_context(ContextOptions) of
-        ok -> Outcome;
-        {error, Reason} -> {error, internal, Reason}
-    end;
-save_connected_context(_ContextOptions, Error) ->
-    Error.
-
-run_status(Options) ->
-    case observer_cli_capture:load_context() of
-        {ok, ContextOptions} ->
-            ProbeOptions = maps:merge(ContextOptions, maps:with([timeout], Options)),
-            probe_options(ProbeOptions, fun(Target, CapabilityResult, Remaining) ->
-                probe_response(status, ContextOptions, Target, CapabilityResult, Remaining)
-            end);
-        {error, no_active_context} ->
-            {error, capability, no_active_context};
-        {error, Reason} ->
-            {error, internal, Reason}
-    end.
-
--ifdef(TEST).
-run_disconnect() ->
-    run_disconnect(#{}).
--endif.
-
-run_disconnect(Options) ->
-    case ensure_output_format(disconnect, Options) of
-        ok -> run_disconnect_ready();
-        Error -> Error
-    end.
-
-run_disconnect_ready() ->
-    case observer_cli_capture:load_context() of
-        {ok, #{node := Node}} ->
-            case observer_cli_capture:delete_context() of
-                ok -> disconnect_response(public_text(Node));
-                {error, Reason} -> {error, internal, Reason}
-            end;
-        {error, no_active_context} ->
-            disconnect_response(null);
-        {error, Reason} when Reason =:= invalid_context; Reason =:= context_too_large ->
-            case observer_cli_capture:delete_context() of
-                ok -> recovered_disconnect_response();
-                {error, DeleteReason} -> {error, internal, DeleteReason}
-            end;
-        {error, Reason} ->
-            {error, internal, Reason}
-    end.
-
-probe_response(Command, ContextOptions, Target, CapabilityResult, Remaining) when
-    element(1, CapabilityResult) =:= ok;
-    element(1, CapabilityResult) =:= error,
-    element(2, CapabilityResult) =:= capability
-->
-    case target_otp_release(Target, Remaining) of
-        {ok, OtpRelease} ->
-            probe_response(Command, ContextOptions, CapabilityResult, OtpRelease);
-        Error ->
-            Error
-    end;
-probe_response(_Command, _ContextOptions, _Target, {error, _Category, _Reason} = Error, _Remaining) ->
-    Error.
-
-probe_response(Command, ContextOptions, CapabilityResult, OtpRelease) ->
-    #{node := Node, name_mode := NameMode} = ContextOptions,
-    {DiagnosticsModule, Observed, Warnings} = capability_status(CapabilityResult),
-    Expected = public_capabilities(observer_cli_snapshot:capabilities()),
-    NodeBinary = public_text(Node),
-    Response = observer_cli_capture:response(
-        Command,
-        complete,
-        #{<<"node">> => NodeBinary, <<"otp_release">> => OtpRelease},
-        null,
-        #{
-            <<"node">> => NodeBinary,
-            <<"name_mode">> => public_text(NameMode),
-            <<"cookie_source">> => public_cookie_source(ContextOptions),
-            <<"probe">> => <<"succeeded">>,
-            <<"diagnostics_module">> => DiagnosticsModule,
-            <<"expected_capabilities">> => Expected,
-            <<"observed_capabilities">> => Observed,
-            <<"persistent_connection">> => false
-        },
-        Warnings
-    ),
-    {ok, Response, response_exit_code(Response)}.
-
-capability_status({ok, Capabilities}) ->
-    {<<"compatible">>, public_capabilities(Capabilities), []};
-capability_status({error, capability, diagnostics_missing}) ->
-    {<<"missing">>, null, [warning(capability, diagnostics_missing)]};
-capability_status({error, capability, {diagnostics_incompatible, Observed}}) ->
-    {
-        <<"incompatible">>,
-        public_capabilities(Observed),
-        [warning(capability, diagnostics_incompatible)]
-    }.
-
-warning(Category, Reason) ->
-    (observer_cli_capture:error(Category, Reason))#{<<"severity">> => <<"warning">>}.
-
-public_capabilities(Capabilities) when is_map(Capabilities) ->
-    #{
-        <<"protocol_version">> => maps:get(protocol_version, Capabilities, null),
-        <<"bundle_version">> => maps:get(bundle_version, Capabilities, null)
-    };
-public_capabilities(_Capabilities) ->
-    null.
-
-public_cookie_source(#{cookie_env := Name}) ->
-    #{<<"type">> => <<"env">>, <<"name">> => public_selector_text(Name)};
-public_cookie_source(#{cookie_file := Path}) ->
-    #{<<"type">> => <<"file">>, <<"path">> => public_selector_text(Path)}.
-
-disconnect_response(Node) ->
-    Response = observer_cli_capture:response(
-        disconnect,
-        complete,
-        null,
-        null,
-        #{<<"node">> => Node, <<"disconnected">> => true},
-        []
-    ),
-    {ok, Response, response_exit_code(Response)}.
-
-recovered_disconnect_response() ->
-    Response = observer_cli_capture:response(
-        disconnect,
-        complete,
-        null,
-        null,
-        #{
-            <<"node">> => null,
-            <<"disconnected">> => true,
-            <<"recovered_invalid_context">> => true
-        },
-        []
-    ),
-    {ok, Response, response_exit_code(Response)}.
-
--endif.
 
 ensure_output_format(Command, Options) ->
     Response = observer_cli_capture:response(Command, complete, null, null, null, []),
@@ -1071,29 +880,6 @@ capability_probe_error(error, {erpc, noconnection}) ->
     {error, connection, connection_failed};
 capability_probe_error(_Class, _Reason) ->
     {error, required_probe, capability_probe_failed}.
-
--ifdef(TEST).
-target_otp_release(_Target, Timeout) when Timeout =< 0 ->
-    {error, required_probe, target_timeout};
-target_otp_release(Target, Timeout) ->
-    try erpc:call(Target, erlang, system_info, [otp_release], Timeout) of
-        OtpRelease when is_list(OtpRelease) ->
-            target_otp_release_value(unicode:characters_to_binary(OtpRelease));
-        OtpRelease when is_binary(OtpRelease) ->
-            target_otp_release_value(OtpRelease);
-        _Invalid ->
-            {error, required_probe, capability_probe_failed}
-    catch
-        Class:Reason -> capability_probe_error(Class, Reason)
-    end.
-
-target_otp_release_value(OtpRelease) ->
-    case valid_otp_release(OtpRelease) of
-        true -> {ok, OtpRelease};
-        false -> {error, required_probe, capability_probe_failed}
-    end.
-
--endif.
 
 remaining(Deadline) ->
     erlang:max(0, Deadline - erlang:monotonic_time(millisecond)).

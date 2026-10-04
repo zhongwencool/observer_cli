@@ -25,20 +25,8 @@
 
 -ifdef(TEST).
 -export([
-    delete_context/0,
-    load_context/0,
-    save_context/1,
-    context_options/1,
-    context_path/0,
-    write_context/2,
-    read_context/1,
-    decode_context/1,
-    delete_context/1,
     validate_list_values/2,
     validate_scheduler_timeout/2,
-    context_term/1,
-    decode_context_fields/3,
-    decode_context_source/1,
     finish_target/3,
     valid_env_name/1,
     safe_cookie_file_mode/1,
@@ -48,24 +36,14 @@
     duration_ms/1,
     multiply_duration/2,
     reason_code/1,
-    ensure_context_dir/1,
-    safe_context_destination/1,
-    atomic_write_context/2,
-    readable_context_dir/1,
-    read_context_file/1,
-    read_context_bytes/1,
-    decode_context_binary/1,
-    delete_context_file/1,
     read_cookie_bytes/1,
-    read_cookie_file/1,
-    finish_atomic_write/3
+    read_cookie_file/1
 ]).
 -endif.
 
 -define(MAX_RESPONSE_BYTES, 1024 * 1024).
 -define(MAX_NODE_LENGTH, 255).
 -define(MAX_COOKIE_LENGTH, 255).
--define(MAX_CONTEXT_BYTES, 8192).
 -define(SCHEMA, <<"observer_cli.capture/v1">>).
 -define(TRACE_TIMEOUT_MARGIN_MS, 7000).
 -define(TRACE_STOP_TIMEOUT_MS, 5000).
@@ -762,322 +740,6 @@ timeout_value(#{timeout := Text}) ->
             {error, invalid_timeout}
     end.
 
--ifdef(TEST).
--spec context_options(map()) -> {ok, map()} | {error, atom()}.
-context_options(#{node := _Node} = Options) ->
-    case target(Options) of
-        {ok, {Target, NameMode}} ->
-            context_source_options(Options#{node => Target, name_mode => mode_text(NameMode)});
-        Error ->
-            Error
-    end;
-context_options(_Options) ->
-    {error, no_active_context}.
-
--spec save_context(map()) -> ok | {error, atom()}.
-save_context(Options) ->
-    try
-        case context_options(Options) of
-            {ok, ContextOptions} ->
-                Context = context_term(ContextOptions),
-                case byte_size(term_to_binary(Context)) =< ?MAX_CONTEXT_BYTES of
-                    true -> write_context(context_path(), Context);
-                    false -> {error, context_too_large}
-                end;
-            Error ->
-                Error
-        end
-    catch
-        error:_ -> {error, invalid_context}
-    end.
-
--spec load_context() -> {ok, map()} | {error, atom()}.
-load_context() ->
-    case read_context(context_path()) of
-        {ok, Context} -> decode_context(Context);
-        Error -> Error
-    end.
-
--spec delete_context() -> ok | {error, atom()}.
-delete_context() ->
-    delete_context(context_path()).
-
-context_path() ->
-    filename:join(filename:basedir(user_config, "observer_cli"), "context.etf").
-
-context_source_options(#{cookie_env := Name} = Options) ->
-    case valid_env_name(Name) of
-        true -> {ok, maps:without([cookie_file], Options)};
-        false -> {error, invalid_cookie_source}
-    end;
-context_source_options(#{cookie_file := Path} = Options) when is_list(Path), Path =/= [] ->
-    Absolute = filename:absname(Path),
-    case valid_text(Absolute) andalso length(Absolute) =< 4096 of
-        true -> {ok, maps:without([cookie_env], Options#{cookie_file => Absolute})};
-        false -> {error, invalid_cookie_source}
-    end;
-context_source_options(_Options) ->
-    {error, missing_cookie_source}.
-
-mode_text(shortnames) -> "short";
-mode_text(longnames) -> "long".
-
-context_term(#{node := Node, name_mode := Mode, cookie_env := Name}) ->
-    #{
-        <<"version">> => 2,
-        <<"node">> => context_binary(Node),
-        <<"name_mode">> => context_binary(Mode),
-        <<"cookie_source">> => #{<<"type">> => <<"env">>, <<"name">> => context_binary(Name)}
-    };
-context_term(#{node := Node, name_mode := Mode, cookie_file := Path}) ->
-    #{
-        <<"version">> => 2,
-        <<"node">> => context_binary(Node),
-        <<"name_mode">> => context_binary(Mode),
-        <<"cookie_source">> => #{<<"type">> => <<"file">>, <<"path">> => context_binary(Path)}
-    }.
-
-context_binary(Text) ->
-    case unicode:characters_to_binary(Text) of
-        Binary when is_binary(Binary) -> Binary;
-        _ -> error(badarg)
-    end.
-
-write_context(Path, Context) ->
-    Dir = filename:dirname(Path),
-    case ensure_context_dir(Dir) of
-        ok ->
-            case safe_context_destination(Path) of
-                ok -> atomic_write_context(Path, term_to_binary(Context));
-                Error -> Error
-            end;
-        Error ->
-            Error
-    end.
-
-ensure_context_dir(Dir) ->
-    case file:read_link_info(Dir) of
-        {ok, #file_info{type = directory}} ->
-            file:change_mode(Dir, 8#700);
-        {ok, _Info} ->
-            {error, invalid_context_directory};
-        {error, enoent} ->
-            case filelib:ensure_dir(filename:join(Dir, "placeholder")) of
-                ok -> file:change_mode(Dir, 8#700);
-                {error, _Reason} -> {error, context_unavailable}
-            end;
-        {error, _Reason} ->
-            {error, context_unavailable}
-    end.
-
-safe_context_destination(Path) ->
-    case file:read_link_info(Path) of
-        {ok, #file_info{type = regular, mode = Mode}} ->
-            case Mode band 8#777 of
-                8#600 -> ok;
-                _ -> {error, context_file_permissions}
-            end;
-        {ok, _Info} ->
-            {error, invalid_context_file};
-        {error, enoent} ->
-            ok;
-        {error, _Reason} ->
-            {error, context_unavailable}
-    end.
-
-atomic_write_context(Path, Binary) ->
-    Temp =
-        Path ++ ".tmp." ++ os:getpid() ++ "." ++
-            integer_to_list(erlang:unique_integer([positive, monotonic])),
-    case file:open(Temp, [write, binary, raw, exclusive]) of
-        {ok, File} ->
-            Result = atomic_write_open(File, Temp, Path, Binary),
-            _ = file:delete(Temp),
-            Result;
-        {error, _Reason} ->
-            {error, context_unavailable}
-    end.
-
-atomic_write_open(File, Temp, Path, Binary) ->
-    Result =
-        case file:change_mode(Temp, 8#600) of
-            ok -> file:write(File, Binary);
-            Error -> Error
-        end,
-    Close = file:close(File),
-    finish_atomic_write(Temp, Path, {Result, Close}).
-
-finish_atomic_write(Temp, Path, Outcome) ->
-    case Outcome of
-        {ok, ok} ->
-            case file:rename(Temp, Path) of
-                ok -> ok;
-                {error, _Reason} -> {error, context_unavailable}
-            end;
-        _ ->
-            {error, context_unavailable}
-    end.
-
-read_context(Path) ->
-    case readable_context_dir(filename:dirname(Path)) of
-        ok -> read_context_file(Path);
-        Error -> Error
-    end.
-
-readable_context_dir(Dir) ->
-    case file:read_link_info(Dir) of
-        {ok, #file_info{type = directory, mode = Mode}} ->
-            %% Reject group/other write bits, not harmless mode differences.
-            case Mode band 8#022 of
-                0 -> ok;
-                _ -> {error, context_directory_permissions}
-            end;
-        {ok, _Info} ->
-            {error, invalid_context_directory};
-        {error, enoent} ->
-            {error, no_active_context};
-        {error, _Reason} ->
-            {error, context_unavailable}
-    end.
-
-read_context_file(Path) ->
-    case file:read_link_info(Path) of
-        {ok, #file_info{type = regular, mode = Mode, size = Size}} when
-            Size =< ?MAX_CONTEXT_BYTES
-        ->
-            case Mode band 8#022 of
-                0 -> read_context_bytes(Path);
-                _ -> {error, context_file_permissions}
-            end;
-        {ok, #file_info{type = regular}} ->
-            {error, context_too_large};
-        {ok, _Info} ->
-            {error, invalid_context_file};
-        {error, enoent} ->
-            {error, no_active_context};
-        {error, _Reason} ->
-            {error, context_unavailable}
-    end.
-
-read_context_bytes(Path) ->
-    case file:open(Path, [read, binary, raw]) of
-        {ok, File} ->
-            Result = file:read(File, ?MAX_CONTEXT_BYTES + 1),
-            ok = file:close(File),
-            decode_context_binary(Result);
-        {error, _Reason} ->
-            {error, context_unavailable}
-    end.
-
-decode_context_binary({ok, <<131, 80, _/binary>>}) ->
-    {error, invalid_context};
-decode_context_binary({ok, Binary}) when byte_size(Binary) =< ?MAX_CONTEXT_BYTES ->
-    try binary_to_term(Binary, [safe]) of
-        Context -> {ok, Context}
-    catch
-        _:_ -> {error, invalid_context}
-    end;
-decode_context_binary({ok, _Oversized}) ->
-    {error, context_too_large};
-decode_context_binary(eof) ->
-    {error, invalid_context};
-decode_context_binary({error, _Reason}) ->
-    {error, context_unavailable}.
-
-decode_context(
-    #{
-        <<"version">> := Version,
-        <<"node">> := Node,
-        <<"name_mode">> := Mode,
-        <<"cookie_source">> := Source
-    } = Context
-) when
-    map_size(Context) =:= 4 andalso is_binary(Node) andalso is_binary(Mode) andalso
-        is_map(Source) andalso (Version =:= 1 orelse Version =:= 2)
-->
-    case Version of
-        1 -> decode_context_fields(Node, Mode, Source, latin1);
-        2 -> decode_context_fields(Node, Mode, Source)
-    end;
-decode_context(_Context) ->
-    {error, invalid_context}.
-
-decode_context_fields(Node, Mode, Source) ->
-    decode_context_fields(Node, Mode, Source, utf8).
-
-decode_context_fields(Node, Mode, Source, Encoding) ->
-    try
-        {
-            unicode:characters_to_list(Node, Encoding),
-            unicode:characters_to_list(Mode, Encoding),
-            decode_context_source(Source, Encoding)
-        }
-    of
-        {NodeText, ModeText, {ok, SourceOptions}} ->
-            Options = SourceOptions#{node => NodeText, name_mode => ModeText},
-            case context_options(Options) of
-                {ok, Options} -> {ok, Options};
-                _Error -> {error, invalid_context}
-            end;
-        _ ->
-            {error, invalid_context}
-    catch
-        _:_ -> {error, invalid_context}
-    end.
-
--ifdef(TEST).
-decode_context_source(Source) ->
-    decode_context_source(Source, utf8).
--endif.
-
-decode_context_source(#{<<"type">> := <<"env">>, <<"name">> := Name} = Source, Encoding) when
-    map_size(Source) =:= 2, is_binary(Name)
-->
-    case unicode:characters_to_list(Name, Encoding) of
-        Text when is_list(Text) -> {ok, #{cookie_env => Text}};
-        _ -> error
-    end;
-decode_context_source(#{<<"type">> := <<"file">>, <<"path">> := Path} = Source, Encoding) when
-    map_size(Source) =:= 2, is_binary(Path)
-->
-    case unicode:characters_to_list(Path, Encoding) of
-        Text when is_list(Text) ->
-            case filename:pathtype(Text) of
-                absolute -> {ok, #{cookie_file => Text}};
-                _ -> error
-            end;
-        _ ->
-            error
-    end;
-decode_context_source(_Source, _Encoding) ->
-    error.
-
-delete_context(Path) ->
-    case readable_context_dir(filename:dirname(Path)) of
-        ok -> delete_context_file(Path);
-        {error, no_active_context} -> ok;
-        Error -> Error
-    end.
-
-delete_context_file(Path) ->
-    case file:read_link_info(Path) of
-        {ok, #file_info{type = regular}} ->
-            %% Unlinking does not consume the saved target or require file write access.
-            case file:delete(Path) of
-                ok -> ok;
-                {error, enoent} -> ok;
-                {error, _Reason} -> {error, context_unavailable}
-            end;
-        {ok, _Info} ->
-            {error, invalid_context_file};
-        {error, enoent} ->
-            ok;
-        {error, _Reason} ->
-            {error, context_unavailable}
-    end.
-
--endif.
-
 node_parts(Text) when is_list(Text), length(Text) =< ?MAX_NODE_LENGTH ->
     case valid_text(Text) of
         true ->
@@ -1336,83 +998,6 @@ encode(Format, Response, _Options) -> encode(Format, Response).
 -spec encode(text | verbose | term | json, map()) -> {ok, binary()} | {error, map()}.
 encode(text, #{<<"schema">> := <<"observer_cli.cli/v2">>} = Response) ->
     capped(observer_cli_present:render(Response, report_width()));
-encode(text, #{
-    <<"command">> := Command,
-    <<"data">> := #{
-        <<"node">> := Node,
-        <<"probe">> := <<"succeeded">>,
-        <<"diagnostics_module">> := DiagnosticsModule,
-        <<"name_mode">> := NameMode,
-        <<"cookie_source">> := CookieSource,
-        <<"expected_capabilities">> := Expected,
-        <<"observed_capabilities">> := Observed
-    },
-    <<"meta">> := #{<<"target">> := #{<<"otp_release">> := OtpRelease}}
-}) when Command =:= <<"connect">>; Command =:= <<"status">> ->
-    Prefix =
-        case Command of
-            <<"connect">> -> <<"Selected ">>;
-            <<"status">> -> <<"Active ">>
-        end,
-    DiagnosticsHint =
-        case DiagnosticsModule of
-            <<"missing">> ->
-                <<
-                    "Diagnostics are not installed on the target.\n"
-                    "Install the matching observer_cli bundle in the target release.\n"
-                >>;
-            <<"incompatible">> ->
-                <<
-                    "The target diagnostics bundle is incompatible.\n"
-                    "Install the matching observer_cli bundle in the target release.\n"
-                >>;
-            _ ->
-                <<>>
-        end,
-    capped(
-        iolist_to_binary([
-            Prefix,
-            escape_text(Node),
-            <<"; probe succeeded.\ntarget_otp_release=">>,
-            escape_text(OtpRelease),
-            <<"\nname_mode=">>,
-            escape_text(NameMode),
-            <<"\ncookie_source=">>,
-            cookie_source_text(CookieSource),
-            <<"\ndiagnostics_module=">>,
-            DiagnosticsModule,
-            <<"\nexpected_capabilities=">>,
-            capabilities_text(Expected),
-            <<"\nobserved_capabilities=">>,
-            capabilities_text(Observed),
-            <<"\n">>,
-            DiagnosticsHint,
-            <<"No persistent connection is kept.\n">>
-        ])
-    );
-encode(text, #{
-    <<"command">> := <<"disconnect">>,
-    <<"data">> := #{
-        <<"node">> := null,
-        <<"disconnected">> := true,
-        <<"recovered_invalid_context">> := true
-    }
-}) ->
-    {ok, <<"Removed invalid saved target context.\n">>};
-encode(text, #{
-    <<"command">> := <<"disconnect">>,
-    <<"data">> := #{<<"node">> := null, <<"disconnected">> := true}
-}) ->
-    {ok, <<"No active context.\n">>};
-encode(text, #{
-    <<"command">> := <<"disconnect">>,
-    <<"data">> := #{<<"node">> := Node, <<"disconnected">> := true}
-}) ->
-    capped(
-        iolist_to_binary([
-            <<"Removed saved target context for ">>, escape_text(Node), <<".\n">>
-        ])
-    );
 encode(text, #{<<"command">> := <<"logs">>, <<"data">> := Data} = Response) when
     is_map(Data)
 ->
@@ -1424,10 +1009,7 @@ encode(text, Response) ->
 encode(verbose, #{<<"command">> := <<"inspect logs">>} = Response) ->
     encode(text, Response);
 encode(verbose, #{<<"command">> := Command} = Response) when
-    Command =:= <<"logs">>;
-    Command =:= <<"connect">>;
-    Command =:= <<"status">>;
-    Command =:= <<"disconnect">>
+    Command =:= <<"logs">>
 ->
     encode(text, Response);
 encode(verbose, #{<<"command">> := Command} = Response) ->
@@ -1616,18 +1198,6 @@ cookie_source_text(#{<<"type">> := <<"env">>, <<"name">> := Name}) ->
     [<<"env:">>, escape_text(Name)];
 cookie_source_text(#{<<"type">> := <<"file">>, <<"path">> := Path}) ->
     [<<"file:">>, escape_text(Path)].
-
-capabilities_text(null) ->
-    <<"none">>;
-capabilities_text(#{
-    <<"protocol_version">> := Protocol, <<"bundle_version">> := Bundle
-}) ->
-    [
-        <<"protocol=">>,
-        text_scalar(Protocol),
-        <<",bundle=">>,
-        text_scalar(Bundle)
-    ].
 
 render_text_map(Map, Indent, Order) ->
     [render_text_field(Key, maps:get(Key, Map), Indent) || Key <- text_map_keys(Map, Order)].
@@ -1970,13 +1540,13 @@ reason_message(diagnostics_missing) ->
 reason_message(diagnostics_incompatible) ->
     <<"the target observer_cli diagnostics bundle is incompatible">>;
 reason_message(no_active_context) ->
-    <<"no saved target context; run observer_cli connect first">>;
+    <<"no target configured; supply --node with one cookie source or set OBSERVER_CLI_NODE">>;
 reason_message(global_option_before_command) ->
     <<"options must appear after the command name">>;
 reason_message(missing_cookie_source) ->
     <<"--node requires exactly one of --cookie-env or --cookie-file">>;
 reason_message(target_option_requires_node) ->
-    <<"--cookie-env, --cookie-file, and --name-mode require --node; use connect to update the saved target">>;
+    <<"--cookie-env, --cookie-file, and --name-mode require an explicit --node">>;
 reason_message(process_target_required) ->
     <<"process requires one PID_OR_NAME">>;
 reason_message(port_target_required) ->

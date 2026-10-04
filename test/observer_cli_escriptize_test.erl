@@ -206,50 +206,46 @@ controller_boundary_helpers_test() ->
     ?assertEqual(json, observer_cli_escriptize:requested_format(["--format", "json"])),
     ?assertEqual(term, observer_cli_escriptize:requested_format(["x", "--format", "term"])),
     ?assertEqual(text, observer_cli_escriptize:requested_format([])),
-    ?assertEqual(ok, observer_cli_escriptize:ensure_output_format(connect, #{})),
-    ?assertEqual(ok, observer_cli_escriptize:ensure_output_format(disconnect, #{format => "term"})),
+    ?assertEqual(ok, observer_cli_escriptize:ensure_output_format(memory, #{})),
+    ?assertEqual(ok, observer_cli_escriptize:ensure_output_format(memory, #{format => "term"})),
     case code:ensure_loaded(json) of
         {module, json} ->
             ?assertEqual(
-                ok, observer_cli_escriptize:ensure_output_format(connect, #{json => true})
+                ok, observer_cli_escriptize:ensure_output_format(memory, #{json => true})
             );
         {error, _Reason} ->
             ?assertMatch(
                 {error, capability, json_unavailable},
-                observer_cli_escriptize:ensure_output_format(connect, #{json => true})
+                observer_cli_escriptize:ensure_output_format(memory, #{json => true})
             )
     end.
 
 describe_is_local_and_exports_the_packaged_schema_test() ->
     Directory = temporary_directory("observer_cli_describe_local"),
     PreviousHome = set_config_home(Directory),
+    Path = filename:join([Directory, "observer_cli", "context.etf"]),
+    ok = filelib:ensure_dir(Path),
+    Sentinel = <<"legacy context must not be touched">>,
+    ok = file:write_file(Path, Sentinel),
     try
-        Before = {node(), observer_cli_capture:load_context()},
-        {ok, Response, 0} = observer_cli_escriptize:run_command(describe, #{
-            arguments => ["trace", "call"]
-        }),
-        ?assertEqual(
-            #{<<"target">> => null, <<"capture">> => null}, maps:get(<<"meta">>, Response)
-        ),
-        ?assertEqual(<<"trace_call">>, maps:get(<<"id">>, maps:get(<<"data">>, Response))),
-        ?assertEqual(Before, {node(), observer_cli_capture:load_context()}),
+        NodeBefore = node(),
+        _ = assert_halt(0, fun() ->
+            observer_cli_escriptize:main(["describe", "trace", "call", "--format", "term"])
+        end),
         case code:ensure_loaded(json) of
             {module, json} ->
-                {schema, Bytes} = observer_cli_escriptize:run_command(describe, #{
-                    schema => true, json => true
-                }),
-                ?assertEqual(observer_cli_capture_catalog:schema(), {ok, Bytes}),
                 Output = assert_halt(0, fun() ->
                     observer_cli_escriptize:main(["describe", "--schema", "--json"])
                 end),
-                {ok, PublicBytes} = observer_cli_catalog:schema(),
-                ?assertEqual(PublicBytes, iolist_to_binary(Output));
+                {ok, Bytes} = observer_cli_catalog:schema(),
+                ?assertEqual(Bytes, iolist_to_binary(Output));
             {error, _} ->
-                ?assertEqual(
-                    {error, capability, json_unavailable},
-                    observer_cli_escriptize:run_command(describe, #{schema => true, json => true})
-                )
-        end
+                _ = assert_halt(2, fun() ->
+                    observer_cli_escriptize:main(["describe", "--schema", "--json"])
+                end)
+        end,
+        ?assertEqual(NodeBefore, node()),
+        ?assertEqual({ok, Sentinel}, file:read_file(Path))
     after
         restore_config_home(PreviousHome),
         file:del_dir_r(Directory)
@@ -275,22 +271,8 @@ diagnostic_next_actions_are_optional_and_validated_test() ->
     Empty = observer_cli_capture:response(diagnose, error, null, null, null, []),
     ?assertEqual(Empty, observer_cli_escriptize:add_next_actions(Empty)).
 
-public_cookie_selector_preserves_unicode_test() ->
-    ?assertEqual(
-        #{<<"type">> => <<"file">>, <<"path">> => <<"/tmp/é中文.cookie"/utf8>>},
-        observer_cli_escriptize:public_cookie_source(#{cookie_file => "/tmp/é中文.cookie"})
-    ),
-    ?assertEqual(
-        #{<<"type">> => <<"env">>, <<"name">> => <<"é_COOKIE"/utf8>>},
-        observer_cli_escriptize:public_cookie_source(#{cookie_env => "é_COOKIE"})
-    ),
-    ?assertEqual(
-        #{<<"type">> => <<"file">>, <<"path">> => <<"invalid-text">>},
-        observer_cli_escriptize:public_cookie_source(#{cookie_file => [16#110000]})
-    ).
-
 output_capability_precedes_all_command_work_test() ->
-    Commands = [snapshot, diagnose, memory, schedulers, trace, logs, status, connect, disconnect],
+    Commands = [snapshot, diagnose, memory, schedulers, trace, logs],
     lists:foreach(
         fun(Command) ->
             ?assertEqual(ok, observer_cli_escriptize:ensure_output_format(Command, #{})),
@@ -457,10 +439,7 @@ connection_failure_context_test() ->
     },
     true = os:unsetenv(Env),
     try
-        ok = observer_cli_capture:save_context(Options),
         Results = [
-            observer_cli_escriptize:run_command(connect, Options),
-            observer_cli_escriptize:run_command(status, #{format => "term"}),
             observer_cli_escriptize:run_command(processes, Options)
         ],
         lists:foreach(
@@ -475,10 +454,10 @@ connection_failure_context_test() ->
             Results
         ),
         [{error, connection, OriginalReason} | _] = Results,
-        ok = observer_cli_capture:save_context(Options#{node => "changed@other.example"}),
+        %% Later invocations cannot replace the target in an already captured error.
         Output = iolist_to_binary(
             assert_halt(3, fun() ->
-                observer_cli_escriptize:command_error(status, term, connection, OriginalReason)
+                observer_cli_escriptize:command_error(processes, term, connection, OriginalReason)
             end)
         ),
         ?assertEqual(nomatch, binary:match(Output, <<"changed@other.example">>)),
@@ -489,7 +468,9 @@ connection_failure_context_test() ->
             #{<<"target">> => null, <<"capture">> => null}, maps:get(<<"meta">>, Response)
         ),
         true = os:putenv(Env, "secret cookie contents invalid\n"),
-        {error, connection, InvalidReason} = observer_cli_escriptize:run_command(connect, Options),
+        {error, connection, InvalidReason} = observer_cli_escriptize:run_command(
+            processes, Options
+        ),
         InvalidIssue = observer_cli_capture:error(connection, InvalidReason),
         ?assertEqual(<<"invalid_cookie">>, maps:get(<<"reason_code">>, InvalidIssue)),
         ?assertEqual(
@@ -617,7 +598,6 @@ required_modules_test_() ->
         {"invalid remote dispatch contract",
             {timeout, 20000, fun invalid_remote_dispatch_contract/0}},
         {"active context lifecycle", {timeout, 40000, fun active_context_lifecycle/0}},
-        {"connect cleanup preserves context", fun connect_cleanup_preserves_context/0},
         {"connect missing diagnostics", {timeout, 30000, fun connect_missing_diagnostics/0}},
         {"connect incompatible diagnostics",
             {timeout, 30000, fun connect_incompatible_diagnostics/0}},
@@ -3115,26 +3095,6 @@ capability_error_classification_test() ->
     ?assertEqual(
         {error, required_probe, capability_probe_failed},
         observer_cli_escriptize:capability_error(error, remote_crash)
-    ),
-    ?assertEqual(
-        {error, required_probe, target_timeout},
-        observer_cli_escriptize:probe_response(
-            status,
-            #{node => "node@host"},
-            node(),
-            {error, required_probe, target_timeout},
-            0
-        )
-    ),
-    ?assertEqual(
-        {error, connection, connection_failed},
-        observer_cli_escriptize:probe_response(
-            status,
-            #{node => "node@host"},
-            node(),
-            {error, connection, connection_failed},
-            0
-        )
     ).
 
 valid_controller_response(Command, Node) ->
@@ -3613,29 +3573,12 @@ run_rejects_failed_remote_load_test() ->
     ?assertEqual([remote_load_called], drain_run_messages([])).
 
 refuse_pre_distributed_controller() ->
-    Root = temporary_directory("observer_cli_distributed_status_home"),
-    CookieEnv = "OBSERVER_CLI_DISTRIBUTED_STATUS_COOKIE",
-    PreviousConfigHome = set_config_home(Root),
-    true = os:putenv(CookieEnv, "cookie"),
-    try
-        ok = observer_cli_capture:save_context(#{
-            node => "target@host", cookie_env => CookieEnv
-        }),
-        with_distribution(fun(_Cookie) ->
-            ?assertEqual(
-                {error, controller, controller_already_distributed},
-                observer_cli_escriptize:with_target(#{}, fun(_Target, _Capabilities) -> ok end)
-            ),
-            ?assertEqual(
-                {error, controller, controller_already_distributed},
-                observer_cli_escriptize:run_status(#{timeout => "10s"})
-            )
-        end)
-    after
-        true = os:unsetenv(CookieEnv),
-        restore_config_home(PreviousConfigHome),
-        file:del_dir_r(Root)
-    end.
+    with_distribution(fun(_Cookie) ->
+        ?assertEqual(
+            {error, controller, controller_already_distributed},
+            observer_cli_escriptize:with_target(#{}, fun(_Target, _Capabilities) -> ok end)
+        )
+    end).
 
 random_failure_stops_before_connect() ->
     ?assertEqual(nonode@nohost, node()),
@@ -3790,7 +3733,7 @@ active_context_lifecycle() ->
     Root = temporary_directory("observer_cli_legacy_untouched"),
     Previous = set_config_home(Root),
     try
-        Path = observer_cli_capture:context_path(),
+        Path = filename:join(filename:basedir(user_config, "observer_cli"), "context.etf"),
         ok = filelib:ensure_dir(Path),
         Before = <<"legacy sentinel">>,
         ok = file:write_file(Path, Before),
@@ -3802,30 +3745,6 @@ active_context_lifecycle() ->
     after
         restore_config_home(Previous),
         file:delete(Script),
-        file:del_dir_r(Root)
-    end.
-
-connect_cleanup_preserves_context() ->
-    Root = temporary_directory("observer_cli_cleanup_context_home"),
-    PreviousConfigHome = set_config_home(Root),
-    Old = #{node => "old@host", name_mode => "short", cookie_env => "OLD_COOKIE"},
-    New = #{node => "new@host", name_mode => "short", cookie_env => "NEW_COOKIE"},
-    try
-        ok = observer_cli_capture:save_context(Old),
-        Path = observer_cli_capture:context_path(),
-        {ok, Before} = file:read_file(Path),
-        Failure = {error, cleanup, cleanup_unconfirmed},
-        ?assertEqual(
-            Failure, observer_cli_escriptize:save_connected_context(New, Failure)
-        ),
-        ?assertEqual({ok, Before}, file:read_file(Path)),
-        Outcome = {ok, #{}, 0},
-        ?assertEqual(
-            Outcome, observer_cli_escriptize:save_connected_context(New, Outcome)
-        ),
-        ?assertEqual({ok, New}, observer_cli_capture:load_context())
-    after
-        restore_config_home(PreviousConfigHome),
         file:del_dir_r(Root)
     end.
 
@@ -3924,16 +3843,6 @@ direct_remote_command_suite() ->
     PreviousConfigHome = set_config_home(Root),
     true = os:putenv(CookieEnv, atom_to_list(Cookie)),
     try
-        assert_command_ok(
-            connect,
-            #{
-                node => atom_to_list(Target),
-                cookie_env => CookieEnv,
-                arguments => [],
-                timeout => "10s"
-            }
-        ),
-        assert_command_ok(status, #{arguments => [], timeout => "10s"}),
         MainMemory = assert_halt(0, fun() ->
             observer_cli_escriptize:main([
                 "inspect",
@@ -3979,31 +3888,18 @@ direct_remote_command_suite() ->
                 {trace, #{arguments => ["stop"], all => true}}
             ]
         ),
-        assert_command_ok(disconnect, #{arguments => []}),
         CookieFile = filename:join(Root, "target.cookie"),
         ok = file:write_file(CookieFile, atom_to_binary(Cookie)),
         ok = file:change_mode(CookieFile, 8#600),
         assert_command_ok(
-            connect,
+            memory,
             #{
                 node => atom_to_list(Target),
                 cookie_file => CookieFile,
                 arguments => [],
                 timeout => "10s"
             }
-        ),
-        {ok, FileStatus, 0} = observer_cli_escriptize:run_command(status, #{
-            arguments => [], timeout => "10s"
-        }),
-        ?assertMatch(
-            #{
-                <<"data">> := #{
-                    <<"cookie_source">> := #{<<"type">> := <<"file">>, <<"path">> := _}
-                }
-            },
-            FileStatus
-        ),
-        assert_command_ok(disconnect, #{arguments => []})
+        )
     after
         true = os:unsetenv(CookieEnv),
         restore_config_home(PreviousConfigHome),
@@ -4450,15 +4346,6 @@ response_validation_boundaries_test() ->
     ),
     ok = ignore_name_mode_result(shortnames),
     ok = ignore_name_mode_result(longnames),
-    ?assertEqual({error, argument, no_active_context}, observer_cli_escriptize:run_connect(#{})),
-    ?assertMatch(
-        {error, internal, _},
-        observer_cli_escriptize:save_connected_context(
-            #{}, {ok, #{protocol_version => 2}, 0}
-        )
-    ),
-    _ = observer_cli_escriptize:run_status(#{}),
-    _ = observer_cli_escriptize:run_disconnect(),
     _ = observer_cli_escriptize:with_active_target(#{}, fun(_, _, _) -> ok end),
     _ = observer_cli_escriptize:run_snapshot(
         node(), #{include_identifiers => true}, 1, 3000
@@ -4526,26 +4413,6 @@ response_validation_boundaries_test() ->
             )
         )
     end),
-    ?assertMatch(
-        {ok,
-            #{
-                <<"outcome">> := <<"complete">>,
-                <<"issues">> := [#{<<"severity">> := <<"warning">>}],
-                <<"data">> := #{<<"diagnostics_module">> := <<"missing">>}
-            },
-            0},
-        observer_cli_escriptize:probe_response(
-            status,
-            #{
-                node => atom_to_list(node()),
-                name_mode => "short",
-                cookie_env => "OBSERVER_CLI_TEST_COOKIE"
-            },
-            node(),
-            {error, capability, diagnostics_missing},
-            1000
-        )
-    ),
     PartialDispatch = #{
         <<"outcome">> => <<"partial">>,
         <<"issues">> => []
@@ -4589,7 +4456,6 @@ response_validation_boundaries_test() ->
             erlang:monotonic_time(millisecond) + 10
         )
     ),
-    malformed_active_context_contract(),
     ok.
 
 ignore_name_mode_result(Mode) ->
@@ -4597,37 +4463,6 @@ ignore_name_mode_result(Mode) ->
         _ -> ok
     catch
         _:_ -> ok
-    end.
-
-malformed_active_context_contract() ->
-    Root = temporary_directory("observer_cli_malformed_active"),
-    PreviousConfigHome = set_config_home(Root),
-    Path = observer_cli_capture:context_path(),
-    Dir = filename:dirname(Path),
-    ok = filelib:ensure_dir(Path),
-    ok = file:change_mode(Dir, 8#700),
-    ok = file:write_file(Path, <<"invalid">>),
-    ok = file:change_mode(Path, 8#600),
-    try
-        ?assertEqual(
-            {error, internal, invalid_context},
-            observer_cli_escriptize:run_status(#{})
-        ),
-        ?assertEqual(
-            {error, argument, missing_target},
-            observer_cli_escriptize:with_active_target(#{}, fun(_, _, _) -> ok end)
-        ),
-        {ok, Disconnect, 0} = observer_cli_escriptize:run_disconnect(),
-        ?assertEqual(
-            true,
-            maps:get(
-                <<"recovered_invalid_context">>, maps:get(<<"data">>, Disconnect)
-            )
-        ),
-        ?assertEqual({error, enoent}, file:read_file_info(Path))
-    after
-        restore_config_home(PreviousConfigHome),
-        file:del_dir_r(Root)
     end.
 
 validation_payload_contract(Probe) ->
