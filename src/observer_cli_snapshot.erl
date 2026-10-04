@@ -676,6 +676,8 @@ diagnostic_sample(Request, Context) when is_map(Request), is_map(Context) ->
         of
             Result -> Result
         catch
+            throw:{scan_budget_exceeded, Details} ->
+                Details;
             _Class:_Reason:_Stacktrace ->
                 #{status => error, reason_code => process_inventory_failed}
         end,
@@ -831,7 +833,12 @@ diagnostic_socket_scan(Source, Samples) ->
                 ?MAX_WORKING_SET_BYTES
     of
         true ->
-            case socket_sample(Source) of
+            Cap = min(
+                ?SOCKET_SCAN_BUDGET,
+                ?MAX_WORKING_SET_BYTES div
+                    (tracked_counter_fields(sockets) * Samples * ?WORKING_SET_BYTES_PER_FIELD)
+            ),
+            try socket_sample(Source#{scan_budget_count => Cap}) of
                 {ok, Values, Audit, Coverage} ->
                     #{
                         status => ok,
@@ -841,6 +848,8 @@ diagnostic_socket_scan(Source, Samples) ->
                     };
                 {error, Reason} ->
                     #{status => error, reason_code => Reason}
+            catch
+                throw:{scan_budget_exceeded, Details} -> Details
             end;
         false ->
             #{status => unavailable, reason_code => scan_budget_exceeded}
@@ -896,7 +905,7 @@ diagnostic_binary_holders(Request, Context) ->
     case admit_process_scan(Source, binary_memory, 1, 1, {top, 20}) of
         {ok, Admission} ->
             Acc = fold_processes(
-                Source,
+                admitted_process_source(Source, Admission, top),
                 fun(Pid, State) ->
                     case scan_process(Pid, [binary], Source, State) of
                         {ok, Item, Next} ->
@@ -950,7 +959,7 @@ diagnostic_process_inventory(Request, Context) ->
             Started = erlang:monotonic_time(millisecond),
             Initial = inventory_acc(Context, 1),
             Acc = fold_processes(
-                Source,
+                admitted_process_source(Source, Admission, all),
                 fun(Pid, State) ->
                     case
                         scan_process(Pid, [message_queue_len, memory, reductions], Source, State)
@@ -1312,7 +1321,10 @@ capture_processes(Request, Context) when is_map(Request) ->
                         Samples,
                         Context,
                         fun() ->
-                            collect_processes(Source, Sort, Limit, Duration, Context, Admission)
+                            BoundedSource = admitted_process_source(Source, Admission, Retained),
+                            collect_processes(
+                                BoundedSource, Sort, Limit, Duration, Context, Admission
+                            )
                         end
                     );
                 {unavailable, Details} ->
@@ -2283,7 +2295,13 @@ capture_scan_inspection(Command, ProbeId, Samples, #{controller := Controller}, 
     StartedAt = erlang:system_time(millisecond),
     StartedMonotonic = erlang:monotonic_time(millisecond),
     ModuleLoaded = module_loaded(),
-    Outcome = OutcomeFun(),
+    Outcome =
+        try
+            OutcomeFun()
+        catch
+            throw:{scan_budget_exceeded, Details0} ->
+                {unavailable, scan_budget_exceeded, Details0}
+        end,
     {Status, Reason, Data, Coverage, ExtraEffects} =
         case Outcome of
             {ok, Value, Covered} ->
@@ -3097,7 +3115,7 @@ collect_admitted_applications(
             Acc0 = (inventory_acc(Context, 1))#{items => []},
             ProcessStarted = erlang:monotonic_time(millisecond),
             Acc = fold_processes(
-                ProcessSource,
+                admitted_process_source(ProcessSource, ProcessAdmission, all),
                 fun(Pid, State) ->
                     case scan_process(Pid, application_process_keys(), ProcessSource, State) of
                         {ok, Item, Next} -> Next#{items := [Item | maps:get(items, Next)]};
@@ -3539,9 +3557,45 @@ excluded_processes(Context) ->
 maybe_exclude_pid(Pid, Reason, Acc) when is_pid(Pid), node(Pid) =:= node() -> Acc#{Pid => Reason};
 maybe_exclude_pid(_Pid, _Reason, Acc) -> Acc.
 
+admitted_process_source(Source, Admission, Retained) ->
+    Budget = maps:get(scan_budget_count, Admission),
+    Cap =
+        case Retained of
+            all ->
+                min(
+                    Budget,
+                    ?MAX_WORKING_SET_BYTES div
+                        (maps:get(tracked_field_count, Admission) *
+                            maps:get(retained_sample_count, Admission) *
+                            ?WORKING_SET_BYTES_PER_FIELD)
+                );
+            _ ->
+                Budget
+        end,
+    Source#{scan_budget_count => Cap}.
+
 fold_processes(Source, Fun, Acc) ->
+    Budget = maps:get(scan_budget_count, Source, ?PROCESS_SCAN_BUDGET),
+    check_scan_count((maps:get(count_fun, Source))(), Budget, pre_enumeration),
     {Path, FoldFun} = maps:get(fold, Source),
-    (FoldFun)(Fun, Acc#{path => Path}).
+    BoundedFun = fun(Pid, State) ->
+        check_scan_count(maps:get(scanned, State) + 1, Budget, post_enumeration),
+        Fun(Pid, State)
+    end,
+    (FoldFun)(BoundedFun, Acc#{path => Path}).
+
+check_scan_count(Count, Budget, Stage) when Count > Budget ->
+    throw(
+        {scan_budget_exceeded, #{
+            status => unavailable,
+            reason_code => scan_budget_exceeded,
+            admission_stage => Stage,
+            observed_count_including_observer => Count,
+            scan_budget_count => Budget
+        }}
+    );
+check_scan_count(_Count, _Budget, _Stage) ->
+    ok.
 
 process_source(Request) ->
     tag_process_selector(Request, process_source_test(Request, default_process_source())).
@@ -3791,8 +3845,18 @@ collect_counter_resources(Command, Source, Sort, Limit, Duration, Context) ->
                 working_set_budget_bytes => ?MAX_WORKING_SET_BYTES
             }};
         true ->
+            Samples =
+                case Duration of
+                    undefined -> 1;
+                    _ -> 2
+                end,
+            Cap = min(
+                Budget,
+                ?MAX_WORKING_SET_BYTES div
+                    (Fields * Samples * ?WORKING_SET_BYTES_PER_FIELD)
+            ),
             collect_admitted_counter_resources(
-                Command, Source, Sort, Limit, Duration, Context, Estimate
+                Command, Source#{scan_budget_count => Cap}, Sort, Limit, Duration, Context, Estimate
             )
     end.
 
@@ -3903,12 +3967,22 @@ counter_rank_key(Key, current) -> Key;
 counter_rank_key(Key, delta) -> list_to_atom(atom_to_list(Key) ++ "_delta");
 counter_rank_key(Key, rate) -> list_to_atom(atom_to_list(Key) ++ "_per_second").
 
-resource_sample(network, Source, Context) -> network_sample(Source, Context);
-resource_sample(sockets, Source, _Context) -> socket_sample(Source).
+resource_sample(Command, Source, Context) ->
+    Budget = maps:get(scan_budget_count, Source, ?PORT_SCAN_BUDGET),
+    check_scan_count(safe_resource_count(Source), Budget, pre_enumeration),
+    case Command of
+        network -> network_sample(Source, Context);
+        sockets -> socket_sample(Source)
+    end.
 
 network_sample(Source, Context) ->
     case (maps:get(all_fun, Source))() of
         {ok, Ports} when is_list(Ports) ->
+            check_scan_count(
+                length(Ports),
+                maps:get(scan_budget_count, Source, ?PORT_SCAN_BUDGET),
+                post_enumeration
+            ),
             Started = (maps:get(monotonic_fun, Source))(),
             Excluded = observer_port_exclusions(Context),
             {Items, Disappeared, Exclusions} = lists:foldl(
@@ -4026,6 +4100,11 @@ inet_protocol(_) -> undefined.
 socket_sample(Source) ->
     case (maps:get(all_fun, Source))() of
         {ok, Sockets} when is_list(Sockets) ->
+            check_scan_count(
+                length(Sockets),
+                maps:get(scan_budget_count, Source, ?SOCKET_SCAN_BUDGET),
+                post_enumeration
+            ),
             Started = (maps:get(monotonic_fun, Source))(),
             {Items, Disappeared, Coverage} = lists:foldl(
                 fun(Socket, {Acc, Gone, Covered}) ->

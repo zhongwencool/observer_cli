@@ -210,6 +210,7 @@ final_binary_holders(deep, Request, Context) ->
     try
         observer_cli_snapshot:diagnostic_binary_holders(Request, Context)
     catch
+        throw:{scan_budget_exceeded, Details} -> Details;
         _:_ -> #{status => error, reason_code => binary_holder_scan_failed}
     end;
 final_binary_holders(_Mode, _Request, _Context) ->

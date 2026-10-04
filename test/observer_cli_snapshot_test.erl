@@ -1481,6 +1481,7 @@ snapshot_inventory_collector_contract_test() ->
     Sample = observer_cli_snapshot:collect_process_sample(
         memory,
         #{
+            count_fun => fun() -> 1 end,
             fold => {test, Fold},
             info_fun => fun(_, _) -> [{memory, 10}] end,
             monotonic_fun => fun() -> 1 end
@@ -1491,6 +1492,7 @@ snapshot_inventory_collector_contract_test() ->
     SkippedSample = observer_cli_snapshot:collect_process_sample(
         memory,
         #{
+            count_fun => fun() -> 1 end,
             fold => {test, Fold},
             info_fun => fun(_, _) -> undefined end,
             monotonic_fun => fun() -> 1 end
@@ -1501,6 +1503,7 @@ snapshot_inventory_collector_contract_test() ->
     InvalidSample = observer_cli_snapshot:collect_process_sample(
         memory,
         #{
+            count_fun => fun() -> 1 end,
             fold => {test, Fold},
             info_fun => fun(_, _) -> [{memory, invalid}] end,
             monotonic_fun => fun() -> 1 end
@@ -1570,6 +1573,7 @@ snapshot_inventory_collector_contract_test() ->
         )
     ),
     CounterSource = #{
+        count_fun => fun() -> 0 end,
         all_fun => fun() -> {error, failed} end,
         monotonic_fun => fun() -> 1 end
     },
@@ -1618,6 +1622,7 @@ snapshot_inventory_collector_contract_test() ->
     ),
     put(counter_sample_calls, 0),
     DeltaSource = #{
+        count_fun => fun() -> 0 end,
         all_fun => fun() ->
             Calls = get(counter_sample_calls),
             put(counter_sample_calls, Calls + 1),
