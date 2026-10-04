@@ -1,4 +1,4 @@
--module(observer_cli_cli).
+-module(observer_cli_capture).
 
 -ignore_xref({json, encode, 1}).
 
@@ -15,10 +15,6 @@
     trace_duration/1,
     trace_limit/1,
     timeout/1,
-    context_options/1,
-    save_context/1,
-    load_context/0,
-    delete_context/0,
     response/6,
     error/2,
     encode/2,
@@ -29,6 +25,10 @@
 
 -ifdef(TEST).
 -export([
+    delete_context/0,
+    load_context/0,
+    save_context/1,
+    context_options/1,
     context_path/0,
     write_context/2,
     read_context/1,
@@ -66,7 +66,7 @@
 -define(MAX_NODE_LENGTH, 255).
 -define(MAX_COOKIE_LENGTH, 255).
 -define(MAX_CONTEXT_BYTES, 8192).
--define(SCHEMA, <<"observer_cli.cli/v1">>).
+-define(SCHEMA, <<"observer_cli.capture/v1">>).
 -define(TRACE_TIMEOUT_MARGIN_MS, 7000).
 -define(TRACE_STOP_TIMEOUT_MS, 5000).
 
@@ -469,7 +469,7 @@ only_options(Command, Options, CommandOptions) ->
         maps:keys(Options)
     ).
 
-global_options(Command) -> observer_cli_catalog:common_options(Command).
+global_options(Command) -> observer_cli_capture_catalog:common_options(Command).
 
 validate_diagnose_options(Options) ->
     Observe = maps:find(observe, Options),
@@ -562,7 +562,7 @@ validate_otp_state_timeout(Options) ->
     validate_target_options(Options).
 
 validate_arguments(describe, Arguments) ->
-    case observer_cli_catalog:describe(Arguments) of
+    case observer_cli_capture_catalog:describe(Arguments) of
         {ok, _} -> ok;
         {error, _} -> {error, unknown_describe_command}
     end;
@@ -762,6 +762,7 @@ timeout_value(#{timeout := Text}) ->
             {error, invalid_timeout}
     end.
 
+-ifdef(TEST).
 -spec context_options(map()) -> {ok, map()} | {error, atom()}.
 context_options(#{node := _Node} = Options) ->
     case target(Options) of
@@ -1075,6 +1076,8 @@ delete_context_file(Path) ->
             {error, context_unavailable}
     end.
 
+-endif.
+
 node_parts(Text) when is_list(Text), length(Text) =< ?MAX_NODE_LENGTH ->
     case valid_text(Text) of
         true ->
@@ -1241,10 +1244,10 @@ integer_at_least(Text, Minimum) ->
 multiply_duration(Value, Multiplier) when is_integer(Value) -> Value * Multiplier;
 multiply_duration(error, _Multiplier) -> error.
 
-option(Argument) -> observer_cli_catalog:option(Argument).
+option(Argument) -> observer_cli_capture_catalog:option(Argument).
 
 -spec command(string()) -> atom() | undefined.
-command(Argument) -> observer_cli_catalog:command(Argument).
+command(Argument) -> observer_cli_capture_catalog:command(Argument).
 
 -spec schema() -> binary().
 schema() -> ?SCHEMA.
@@ -1253,7 +1256,7 @@ argument_error(Reason) ->
     {error, #{category => argument, exit_code => 2, reason => Reason}}.
 
 %% Keep recovery hints on the same sort definitions used by validation.
-sort_keys(Command) -> observer_cli_catalog:sort_keys(Command).
+sort_keys(Command) -> observer_cli_capture_catalog:sort_keys(Command).
 
 argument_error(Reason, Command, Options) ->
     {error, Error} = argument_error(Reason),
@@ -1331,6 +1334,8 @@ encode(text, Response, #{verbose := true}) -> encode(verbose, Response);
 encode(Format, Response, _Options) -> encode(Format, Response).
 
 -spec encode(text | verbose | term | json, map()) -> {ok, binary()} | {error, map()}.
+encode(text, #{<<"schema">> := <<"observer_cli.cli/v2">>} = Response) ->
+    capped(observer_cli_present:render(Response, report_width()));
 encode(text, #{
     <<"command">> := Command,
     <<"data">> := #{
@@ -1416,6 +1421,8 @@ encode(text, #{<<"command">> := <<"describe">>, <<"data">> := #{<<"name">> := _}
     encode(verbose, Response);
 encode(text, Response) ->
     capped(observer_cli_report:render(Response, report_width()));
+encode(verbose, #{<<"command">> := <<"inspect logs">>} = Response) ->
+    encode(text, Response);
 encode(verbose, #{<<"command">> := Command} = Response) when
     Command =:= <<"logs">>;
     Command =:= <<"connect">>;
@@ -1459,10 +1466,10 @@ report_width() ->
     end.
 
 -spec command_name(atom() | binary()) -> binary().
-command_name(Command) when is_atom(Command) -> observer_cli_catalog:public_name(Command);
+command_name(Command) when is_atom(Command) -> observer_cli_capture_catalog:public_name(Command);
 command_name(Command) when is_binary(Command) ->
     try
-        observer_cli_catalog:public_name(binary_to_existing_atom(Command, utf8))
+        observer_cli_capture_catalog:public_name(binary_to_existing_atom(Command, utf8))
     catch
         error:badarg -> Command
     end.

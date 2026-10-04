@@ -1,9 +1,9 @@
--module(observer_cli_catalog_test).
+-module(observer_cli_capture_catalog_test).
 
 -include_lib("eunit/include/eunit.hrl").
 
 catalog_roundtrip_test() ->
-    Commands = observer_cli_catalog:commands(),
+    Commands = observer_cli_capture_catalog:commands(),
     Ids = [maps:get(<<"id">>, D) || D <- Commands],
     ?assertEqual(23, length(Commands)),
     ?assertEqual(length(Ids), length(lists:usort(Ids))),
@@ -11,14 +11,16 @@ catalog_roundtrip_test() ->
     lists:foreach(
         fun(D) ->
             Tokens = [binary_to_list(T) || T <- maps:get(<<"argv">>, D)],
-            ?assertEqual({ok, D}, observer_cli_catalog:describe(Tokens)),
+            ?assertEqual({ok, D}, observer_cli_capture_catalog:describe(Tokens)),
             Id = binary_to_existing_atom(maps:get(<<"id">>, D), utf8),
-            ?assertEqual(maps:get(<<"name">>, D), observer_cli_catalog:public_name(Id)),
+            ?assertEqual(maps:get(<<"name">>, D), observer_cli_capture_catalog:public_name(Id)),
             Names = [maps:get(<<"name">>, O) || O <- maps:get(<<"options">>, D)],
             ?assertEqual(length(Names), length(lists:usort(Names))),
             lists:foreach(
                 fun(Name) ->
-                    ?assertMatch({_, _}, observer_cli_catalog:option("--" ++ binary_to_list(Name)))
+                    ?assertMatch(
+                        {_, _}, observer_cli_capture_catalog:option("--" ++ binary_to_list(Name))
+                    )
                 end,
                 Names
             )
@@ -26,14 +28,18 @@ catalog_roundtrip_test() ->
         Commands
     ),
     ?assertMatch(
-        {ok, #{<<"commands">> := Commands, <<"target_protocol">> := 1}},
-        observer_cli_catalog:describe([])
+        {ok, #{<<"commands">> := Commands, <<"target_protocol">> := 2}},
+        observer_cli_capture_catalog:describe([])
     ),
-    {ok, #{<<"commands">> := Traces}} = observer_cli_catalog:describe(["trace"]),
+    {ok, #{<<"commands">> := Traces}} = observer_cli_capture_catalog:describe(["trace"]),
     ?assertEqual([<<"trace_call">>, <<"trace_stop_all">>], [maps:get(<<"id">>, D) || D <- Traces]),
-    ?assertEqual({error, unknown_command}, observer_cli_catalog:describe(["tui"])),
-    ?assertEqual({error, unknown_command}, observer_cli_catalog:describe(["trace", "unknown"])),
-    ?assertEqual({error, unknown_command}, observer_cli_catalog:describe(["memory", "extra"])).
+    ?assertEqual({error, unknown_command}, observer_cli_capture_catalog:describe(["tui"])),
+    ?assertEqual(
+        {error, unknown_command}, observer_cli_capture_catalog:describe(["trace", "unknown"])
+    ),
+    ?assertEqual(
+        {error, unknown_command}, observer_cli_capture_catalog:describe(["memory", "extra"])
+    ).
 
 existing_examples_parse_test() ->
     lists:foreach(
@@ -45,57 +51,59 @@ existing_examples_parse_test() ->
                     lists:foreach(
                         fun(Example) ->
                             Tokens = [binary_to_list(T) || T <- Example],
-                            ?assertMatch({ok, #{route := command}}, observer_cli_cli:parse(Tokens))
+                            ?assertMatch(
+                                {ok, #{route := command}}, observer_cli_capture:parse(Tokens)
+                            )
                         end,
                         maps:get(<<"examples">>, D)
                     )
             end
         end,
-        observer_cli_catalog:commands()
+        observer_cli_capture_catalog:commands()
     ).
 
 sort_and_limit_contract_test() ->
     lists:foreach(
         fun(Id) ->
-            Name = binary_to_list(observer_cli_catalog:public_name(Id)),
-            {ok, D} = observer_cli_catalog:describe([Name]),
+            Name = binary_to_list(observer_cli_capture_catalog:public_name(Id)),
+            {ok, D} = observer_cli_capture_catalog:describe([Name]),
             Sort = option(D, <<"sort">>),
             [Default | _] = Values = maps:get(<<"enum">>, Sort),
             ?assertEqual(Default, maps:get(<<"default">>, Sort)),
             lists:foreach(
                 fun(Value) ->
                     ?assertMatch(
-                        {ok, _}, observer_cli_cli:parse([Name, "--sort", binary_to_list(Value)])
+                        {ok, _}, observer_cli_capture:parse([Name, "--sort", binary_to_list(Value)])
                     )
                 end,
                 Values
             ),
-            ?assertMatch({error, _}, observer_cli_cli:parse([Name, "--sort", "unknown"])),
+            ?assertMatch({error, _}, observer_cli_capture:parse([Name, "--sort", "unknown"])),
             Limit = option(D, <<"limit">>),
             ?assertEqual(20, maps:get(<<"default">>, Limit)),
-            ?assertMatch({ok, _}, observer_cli_cli:parse([Name, "--limit", "200"])),
-            ?assertMatch({error, _}, observer_cli_cli:parse([Name, "--limit", "201"]))
+            ?assertMatch({ok, _}, observer_cli_capture:parse([Name, "--limit", "200"])),
+            ?assertMatch({error, _}, observer_cli_capture:parse([Name, "--limit", "201"]))
         end,
         [processes, applications, ets, mnesia, network, ports, sockets]
     ).
 
 trace_contract_test() ->
-    {ok, Call} = observer_cli_catalog:describe(["trace", "call"]),
+    {ok, Call} = observer_cli_capture_catalog:describe(["trace", "call"]),
     ?assertEqual([<<"--replace-existing-trace">>], maps:get(<<"authorization">>, Call)),
     ?assertEqual(true, maps:get(<<"required">>, option(Call, <<"pid">>))),
     ?assertEqual(100, maps:get(<<"default">>, option(Call, <<"limit">>))),
     ?assertEqual(1000, maps:get(<<"maximum">>, option(Call, <<"limit">>))),
     ?assertEqual(10000, maps:get(<<"default">>, option(Call, <<"duration">>))),
     ?assertEqual(60000, maps:get(<<"maximum_ms">>, option(Call, <<"duration">>))),
-    ?assertEqual({ok, 100}, observer_cli_cli:trace_limit(#{})),
-    ?assertEqual({ok, 10000}, observer_cli_cli:trace_duration(#{})),
-    {ok, Stop} = observer_cli_catalog:describe(["trace", "stop"]),
+    ?assertEqual({ok, 100}, observer_cli_capture:trace_limit(#{})),
+    ?assertEqual({ok, 10000}, observer_cli_capture:trace_duration(#{})),
+    {ok, Stop} = observer_cli_capture_catalog:describe(["trace", "stop"]),
     ?assertEqual([<<"--all">>], maps:get(<<"authorization">>, Stop)),
-    ?assertNot(lists:member(pid, observer_cli_catalog:allowed_options(trace_stop_all))),
-    ?assert(lists:member(all, observer_cli_catalog:allowed_options(trace))).
+    ?assertNot(lists:member(pid, observer_cli_capture_catalog:allowed_options(trace_stop_all))),
+    ?assert(lists:member(all, observer_cli_capture_catalog:allowed_options(trace))).
 
 rate_description_preserves_breaker_semantics_test() ->
-    {ok, Call} = observer_cli_catalog:describe(["trace", "call"]),
+    {ok, Call} = observer_cli_capture_catalog:describe(["trace", "call"]),
     Summary = maps:get(<<"summary">>, option(Call, <<"rate">>)),
     ?assertNotEqual(nomatch, binary:match(Summary, <<"burst-breaker">>)),
     ?assertNotEqual(nomatch, binary:match(Summary, <<"not a pacer">>)),
@@ -105,40 +113,42 @@ rate_description_preserves_breaker_semantics_test() ->
 identifier_policy_test() ->
     lists:foreach(
         fun(Id) ->
-            Name = binary_to_list(observer_cli_catalog:public_name(Id)),
-            {ok, D} = observer_cli_catalog:describe([Name]),
+            Name = binary_to_list(observer_cli_capture_catalog:public_name(Id)),
+            {ok, D} = observer_cli_capture_catalog:describe([Name]),
             Policy = maps:get(<<"identifiers">>, D),
             ?assertEqual(<<"redacted">>, maps:get(<<"default">>, Policy)),
             ?assertEqual(false, maps:get(<<"aliases_executable">>, Policy))
         end,
         [snapshot, diagnose]
     ),
-    {ok, Process} = observer_cli_catalog:describe(["processes"]),
+    {ok, Process} = observer_cli_capture_catalog:describe(["processes"]),
     ?assertEqual(<<"included">>, maps:get(<<"default">>, maps:get(<<"identifiers">>, Process))),
-    {ok, Logs} = observer_cli_catalog:describe(["logs"]),
+    {ok, Logs} = observer_cli_capture_catalog:describe(["logs"]),
     ?assertEqual(false, maps:get(<<"redaction_supported">>, maps:get(<<"identifiers">>, Logs))),
-    ?assertNot(lists:member(redact, observer_cli_catalog:allowed_options(logs))).
+    ?assertNot(lists:member(redact, observer_cli_capture_catalog:allowed_options(logs))).
 
 offline_and_format_contract_test() ->
-    {ok, D} = observer_cli_catalog:describe(["describe"]),
+    {ok, D} = observer_cli_capture_catalog:describe(["describe"]),
     ?assertEqual([], maps:get(<<"prerequisites">>, D)),
     ?assertEqual([], maps:get(<<"side_effects">>, D)),
-    ?assertEqual([format, json, verbose, schema], observer_cli_catalog:allowed_options(describe)),
+    ?assertEqual(
+        [format, json, verbose, schema], observer_cli_capture_catalog:allowed_options(describe)
+    ),
     ?assertEqual(27, maps:get(<<"json_minimum_controller_otp">>, maps:get(<<"output">>, D))),
     ?assertEqual(
         <<"--json or --format json; no command arguments">>,
         maps:get(<<"requires">>, option(D, <<"schema">>))
     ),
-    ?assertEqual({flag, verbose}, observer_cli_catalog:option("--verbose")),
-    ?assertEqual({flag, schema}, observer_cli_catalog:option("--schema")),
-    ?assertEqual({value, cookie_file}, observer_cli_catalog:option("--cookie-file")),
-    ?assertEqual(unknown, observer_cli_catalog:option("--unknown")),
-    ?assertEqual(unknown, observer_cli_catalog:option("--中文")),
-    ?assertEqual(positional, observer_cli_catalog:option("processes")),
-    ?assertEqual(<<"unknown">>, observer_cli_catalog:public_name(unknown)).
+    ?assertEqual({flag, verbose}, observer_cli_capture_catalog:option("--verbose")),
+    ?assertEqual({flag, schema}, observer_cli_capture_catalog:option("--schema")),
+    ?assertEqual({value, cookie_file}, observer_cli_capture_catalog:option("--cookie-file")),
+    ?assertEqual(unknown, observer_cli_capture_catalog:option("--unknown")),
+    ?assertEqual(unknown, observer_cli_capture_catalog:option("--中文")),
+    ?assertEqual(positional, observer_cli_capture_catalog:option("processes")),
+    ?assertEqual(<<"unknown">>, observer_cli_capture_catalog:public_name(unknown)).
 
 structured_dependencies_test() ->
-    {ok, Memory} = observer_cli_catalog:describe(["memory"]),
+    {ok, Memory} = observer_cli_capture_catalog:describe(["memory"]),
     MC = maps:get(<<"constraints">>, Memory),
     lists:foreach(
         fun(Source) ->
@@ -165,7 +175,7 @@ structured_dependencies_test() ->
             MC
         )
     ),
-    {ok, Diagnose} = observer_cli_catalog:describe(["diagnose"]),
+    {ok, Diagnose} = observer_cli_capture_catalog:describe(["diagnose"]),
     DC = maps:get(<<"constraints">>, Diagnose),
     lists:foreach(
         fun(Dependent) ->
@@ -187,7 +197,7 @@ structured_dependencies_test() ->
             #{<<"kind">> => <<"mutually_exclusive">>, <<"options">> => [<<"deep">>, <<"app">>]}, DC
         )
     ),
-    {ok, Otp} = observer_cli_catalog:describe(["otp-state"]),
+    {ok, Otp} = observer_cli_capture_catalog:describe(["otp-state"]),
     ?assert(
         lists:member(
             #{
@@ -201,7 +211,7 @@ structured_dependencies_test() ->
     ),
     lists:foreach(
         fun({Tokens, Required}) ->
-            {ok, D} = observer_cli_catalog:describe(Tokens),
+            {ok, D} = observer_cli_capture_catalog:describe(Tokens),
             ?assert(
                 lists:member(
                     #{<<"kind">> => <<"required_options">>, <<"options">> => Required},
@@ -221,7 +231,7 @@ structured_dependencies_test() ->
 structured_timeout_and_format_test() ->
     lists:foreach(
         fun({Tokens, When, Sampling, Margin, Default}) ->
-            {ok, D} = observer_cli_catalog:describe(Tokens),
+            {ok, D} = observer_cli_capture_catalog:describe(Tokens),
             [Constraint] = [
                 C
              || C <- maps:get(<<"constraints">>, D),
@@ -263,9 +273,9 @@ structured_timeout_and_format_test() ->
                 )
             )
         end,
-        observer_cli_catalog:commands()
+        observer_cli_capture_catalog:commands()
     ),
-    {ok, Describe} = observer_cli_catalog:describe(["describe"]),
+    {ok, Describe} = observer_cli_capture_catalog:describe(["describe"]),
     Constraints = maps:get(<<"constraints">>, Describe),
     ?assert(
         lists:member(
@@ -294,7 +304,7 @@ structured_timeout_and_format_test() ->
 risk_level_contract_test() ->
     lists:foreach(
         fun({Tokens, Risk}) ->
-            {ok, D} = observer_cli_catalog:describe(Tokens),
+            {ok, D} = observer_cli_capture_catalog:describe(Tokens),
             ?assertEqual(Risk, maps:get(<<"risk_level">>, D))
         end,
         [
@@ -314,11 +324,11 @@ risk_level_contract_test() ->
     ).
 
 packaged_schema_test() ->
-    {ok, Binary} = observer_cli_catalog:schema(),
+    {ok, Binary} = observer_cli_capture_catalog:schema(),
     ?assertNotEqual(
         nomatch, binary:match(Binary, <<"https://json-schema.org/draft/2020-12/schema">>)
     ),
-    ?assertNotEqual(nomatch, binary:match(Binary, <<"observer_cli.cli/v1">>)).
+    ?assertNotEqual(nomatch, binary:match(Binary, <<"observer_cli.capture/v1">>)).
 
 option(Descriptor, Name) ->
     [Option] = [O || O <- maps:get(<<"options">>, Descriptor), maps:get(<<"name">>, O) =:= Name],

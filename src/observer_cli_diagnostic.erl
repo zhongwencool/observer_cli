@@ -89,7 +89,11 @@ capture_observation(Request, Context, Controller, Observe) ->
             Started = erlang:monotonic_time(millisecond),
             Plan = observation_plan(Started, Duration, Count),
             ModuleLoaded = is_tuple(code:is_loaded(?MODULE)),
-            _ = observer_cli_snapshot:diagnostic_scheduler_flag(true),
+            MeasureSchedulers = scheduler_requested(Request),
+            case MeasureSchedulers of
+                true -> _ = observer_cli_snapshot:diagnostic_scheduler_flag(true);
+                false -> ok
+            end,
             try
                 Samples = capture_observation_samples(Request, Context, Plan),
                 Holder = final_binary_holders(Mode, Request, Context),
@@ -104,12 +108,16 @@ capture_observation(Request, Context, Controller, Observe) ->
                         finished_at => rfc3339(erlang:system_time(millisecond)),
                         duration_ms => Finished - Started,
                         controller => Controller,
-                        module_loaded_before_sample => ModuleLoaded
+                        module_loaded_before_sample => ModuleLoaded,
+                        scheduler_requested => MeasureSchedulers
                     },
                     distribution(Controller)
                 )
             after
-                _ = observer_cli_snapshot:diagnostic_scheduler_flag(false)
+                case MeasureSchedulers of
+                    true -> _ = observer_cli_snapshot:diagnostic_scheduler_flag(false);
+                    false -> ok
+                end
             end;
         error ->
             {probe_error, invalid_duration}
@@ -156,14 +164,16 @@ capture_observation_samples(Request, Context, [Target | Rest], Index, PreviousFi
             SchedulerEnd =
                 case Acc of
                     [] -> undefined;
-                    _ -> safe_scheduler_sample()
+                    _ -> requested_scheduler_sample(Request)
                 end,
             Sample0 = capture_sample(Request, Context, Index, Target),
-            SchedulerBaseline = safe_scheduler_sample(),
+            SchedulerBaseline = requested_scheduler_sample(Request),
             Sample = Sample0#{
                 target_monotonic_ms => Target,
                 scheduler_end => SchedulerEnd,
-                scheduler_baseline => SchedulerBaseline
+                scheduler_baseline => SchedulerBaseline,
+                scheduler_requested => scheduler_requested(Request),
+                focus => maps:get(focus, Request, overview)
             },
             Finish = maps:get(monotonic_finish_ms, Sample, erlang:monotonic_time(millisecond)),
             NextRequest = retain_application_refusal(Request, Sample),
@@ -185,6 +195,15 @@ safe_scheduler_sample() ->
         observer_cli_snapshot:diagnostic_scheduler_sample()
     catch
         _:_ -> #{status => error, reason_code => scheduler_sample_failed}
+    end.
+
+scheduler_requested(Request) ->
+    lists:member(maps:get(focus, Request, overview), [overview, cpu]).
+
+requested_scheduler_sample(Request) ->
+    case scheduler_requested(Request) of
+        true -> safe_scheduler_sample();
+        false -> #{status => unavailable, reason_code => not_requested}
     end.
 
 final_binary_holders(deep, Request, Context) ->
@@ -267,7 +286,7 @@ build_report(Samples, Plan, Timing, Distribution) ->
         end,
     ProcessContext = process_context(Samples),
     Skipped = skipped_checks(Samples),
-    observer_cli_cli:response(
+    observer_cli_capture:response(
         diagnose,
         Status,
         #{
@@ -385,7 +404,7 @@ observation_report(Mode, Samples, Plan, Holder, Timing, Distribution) ->
             true -> limit_findings(RuntimeSamples) ++ scheduler_findings(Windows);
             false -> []
         end,
-    observer_cli_cli:response(
+    observer_cli_capture:response(
         diagnose,
         Status,
         #{
@@ -397,14 +416,7 @@ observation_report(Mode, Samples, Plan, Holder, Timing, Distribution) ->
             finished_at => maps:get(finished_at, Timing),
             duration_ms => maps:get(duration_ms, Timing),
             probes => observation_probe_reports(Mode, Samples, Holder, RequiredComplete),
-            observer_effects => [
-                #{
-                    id => scheduler_wall_time,
-                    temporary_enable => true,
-                    observer_contaminated => true
-                }
-                | observer_effects(Timing)
-            ]
+            observer_effects => observation_scheduler_effect(Timing) ++ observer_effects(Timing)
         },
         #{
             ruleset => ruleset(Mode),
@@ -416,6 +428,8 @@ observation_report(Mode, Samples, Plan, Holder, Timing, Distribution) ->
                 snapshot => #{runtime_samples => RuntimeSamples},
                 trends => observation_trends(Samples),
                 scheduler_windows => Windows,
+                current => current_context(Samples),
+                hot_processes_by_reductions => observation_activity(Samples),
                 application => application_trend(Samples),
                 binary_holders => Holder,
                 distribution => Distribution
@@ -425,6 +439,69 @@ observation_report(Mode, Samples, Plan, Holder, Timing, Distribution) ->
         },
         []
     ).
+
+observation_scheduler_effect(#{scheduler_requested := false}) ->
+    [];
+observation_scheduler_effect(_Timing) ->
+    [
+        #{
+            id => scheduler_wall_time,
+            temporary_enable => true,
+            observer_contaminated => true
+        }
+    ].
+
+current_context([]) ->
+    #{memory => #{}, processes => #{status => unavailable, items => []}};
+current_context(Samples) ->
+    Last = lists:last(Samples),
+    Memory = maps:get(values, maps:get(memory, Last, #{}), #{}),
+    Inventory = maps:get(process_inventory, Last, #{}),
+    Values = maps:get(values, Inventory, #{}),
+    Sort =
+        case maps:get(focus, Last, overview) of
+            memory -> memory_bytes;
+            overview -> memory_bytes;
+            _ -> message_queue_len
+        end,
+    Ranked = maps:fold(
+        fun(Pid, Metrics, Acc) ->
+            lists:sublist(
+                lists:sort(
+                    fun({PA, A}, {PB, B}) ->
+                        VA = maps:get(Sort, A, 0),
+                        VB = maps:get(Sort, B, 0),
+                        VA > VB orelse (VA =:= VB andalso PA < PB)
+                    end,
+                    [{Pid, Metrics} | Acc]
+                ),
+                ?CONTEXT_LIMIT
+            )
+        end,
+        [],
+        Values
+    ),
+    QueuePeak =
+        case maps:get(status, Inventory, unavailable) of
+            ok ->
+                maps:fold(
+                    fun(_Pid, M, Max) -> max(Max, maps:get(message_queue_len, M, 0)) end, 0, Values
+                );
+            _ ->
+                null
+        end,
+    #{
+        memory => Memory,
+        mailbox_peak => QueuePeak,
+        processes => #{
+            status => maps:get(status, Inventory, unavailable),
+            sort_metric => Sort,
+            items => [Metrics#{pid => {identifier, pid, Pid}} || {Pid, Metrics} <- Ranked]
+        }
+    }.
+
+observation_activity([]) -> #{status => unavailable, items => []};
+observation_activity(Samples) -> process_context([hd(Samples), lists:last(Samples)]).
 
 ruleset(observation) -> <<"observer_cli.observation">>;
 ruleset(deep) -> <<"observer_cli.deep_observation">>;
@@ -493,6 +570,8 @@ scheduler_status(Windows) ->
             end
     end.
 
+scheduler_windows([#{scheduler_requested := false} | _]) ->
+    [];
 scheduler_windows(Samples) ->
     scheduler_windows(Samples, []).
 
@@ -1023,6 +1102,8 @@ first_field_reason(Samples, Field) ->
         [] -> capability_unavailable
     end.
 
+scheduler_reason([]) ->
+    not_requested;
 scheduler_reason(Windows) ->
     case
         [
@@ -1046,7 +1127,7 @@ observation_skipped(Mode, _Samples, _Holder) ->
     Binary =
         case Mode of
             deep -> [#{id => binary_retention_suspects, reason_code => ruleset_not_calibrated}];
-            _ -> [#{id => binary_retention_suspects, reason_code => deep_not_requested}]
+            _ -> [#{id => binary_retention_suspects, reason_code => ruleset_not_calibrated}]
         end,
     [#{id => Id, reason_code => ruleset_not_calibrated} || Id <- Growth] ++
         Binary.

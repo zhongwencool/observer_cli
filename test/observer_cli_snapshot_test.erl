@@ -35,7 +35,7 @@ scheduler_capture_preserves_other_registration_test() ->
 
 capabilities_test() ->
     Capabilities = observer_cli_snapshot:capabilities(),
-    ?assertEqual(#{bundle_version => <<"2.0.0">>, protocol_version => 1}, Capabilities),
+    ?assertEqual(#{bundle_version => <<"3.0.0">>, protocol_version => 2}, Capabilities),
     _ = application:load(observer_cli),
     {ok, Version} = application:get_key(observer_cli, vsn),
     ?assertEqual(list_to_binary(Version), maps:get(bundle_version, Capabilities)).
@@ -2024,7 +2024,7 @@ trace_dispatch_uses_cli_envelope_test() ->
         observer_cli_snapshot:dispatch(
             self(), trace, #{action => call}, options(2000, include)
         ),
-    ?assertEqual(<<"observer_cli.cli/v1">>, maps:get(<<"schema">>, Response)),
+    ?assertEqual(<<"observer_cli.capture/v1">>, maps:get(<<"schema">>, Response)),
     assert_cli_envelope(Response),
     ?assertEqual(<<"error">>, maps:get(<<"outcome">>, Response)),
     ?assertEqual(null, response_capture(Response)),
@@ -2858,15 +2858,15 @@ deep_snapshot_controller_disconnect_cleans_probe_worker_test() ->
 
 local_snapshot_text_and_term_envelopes_test() ->
     Response = snapshot(#{}),
-    {ok, Text} = observer_cli_cli:encode(text, Response),
+    {ok, Text} = observer_cli_capture:encode(text, Response),
     ?assertMatch(<<"observer_cli snapshot | outcome=complete\n", _/binary>>, Text),
-    {ok, Verbose} = observer_cli_cli:encode(text, Response, #{verbose => true}),
+    {ok, Verbose} = observer_cli_capture:encode(text, Response, #{verbose => true}),
     ?assertMatch(<<"observer_cli snapshot\n", _/binary>>, Verbose),
     ?assertNotEqual(nomatch, binary:match(Text, <<"completed probes:">>)),
     ?assertNotEqual(nomatch, binary:match(Text, <<"snapshot_version: 1">>)),
-    ?assertEqual(nomatch, binary:match(Text, <<"observer_cli.cli/v1">>)),
+    ?assertEqual(nomatch, binary:match(Text, <<"observer_cli.capture/v1">>)),
     ?assertEqual(nomatch, binary:match(Text, <<"issues:">>)),
-    {ok, Term} = observer_cli_cli:encode(term, Response),
+    {ok, Term} = observer_cli_capture:encode(term, Response),
     {ok, Tokens, _EndLocation} = erl_scan:string(binary_to_list(Term)),
     ?assertEqual({ok, Response}, erl_parse:parse_term(Tokens)).
 
@@ -3376,7 +3376,7 @@ port_detail_is_bounded_and_redacts_inet_identifiers_test() ->
         ),
         lists:foreach(
             fun(Format) ->
-                case observer_cli_cli:encode(Format, Response) of
+                case observer_cli_capture:encode(Format, Response) of
                     {ok, _} -> ok;
                     {error, #{reason := json_unavailable}} when Format =:= json -> ok
                 end
@@ -3486,6 +3486,7 @@ process_window_keeps_rank_when_context_disappears_test() ->
         [Item] = maps:get(<<"items">>, maps:get(<<"data">>, Response)),
         ?assertEqual(list_to_binary(pid_to_list(Pid)), maps:get(<<"pid">>, Item)),
         ?assertEqual(10, maps:get(<<"memory_delta">>, Item)),
+        ?assertEqual(20, maps:get(<<"memory_bytes">>, Item)),
         lists:foreach(
             fun(Key) -> ?assertEqual(null, maps:get(Key, Item)) end,
             [
@@ -3493,7 +3494,6 @@ process_window_keeps_rank_when_context_disappears_test() ->
                 <<"label">>,
                 <<"initial_call">>,
                 <<"current_function">>,
-                <<"memory_bytes">>,
                 <<"reductions">>,
                 <<"message_queue_len">>
             ]
@@ -3595,7 +3595,13 @@ assert_process_window_sort(Sort, Factor) ->
         ?assertEqual(4, maps:get(<<"baseline_count">>, Data)),
         ?assertEqual(1, maps:get(<<"born_count">>, Data)),
         ?assertEqual(1, maps:get(<<"dead_count">>, Data)),
-        ?assertEqual(1, maps:get(<<"reset_count">>, Data)),
+        ?assertEqual(
+            case Sort of
+                reductions -> 1;
+                _ -> 0
+            end,
+            maps:get(<<"reset_count">>, Data)
+        ),
         ?assertEqual(1, maps:get(<<"tracked_field_count">>, Data)),
         ?assertEqual(2, maps:get(<<"retained_sample_count">>, Data)),
         Calls = [
@@ -3791,7 +3797,7 @@ memory_window_keeps_full_baseline_and_stable_pids_test() ->
         ?assertEqual(4, maps:get(<<"baseline_count">>, Data)),
         ?assertEqual(1, maps:get(<<"born_count">>, Data)),
         ?assertEqual(1, maps:get(<<"dead_count">>, Data)),
-        ?assertEqual(1, maps:get(<<"reset_count">>, Data)),
+        ?assertEqual(0, maps:get(<<"reset_count">>, Data)),
         ?assertEqual(2, maps:get(<<"retained_sample_count">>, Data))
     after
         lists:foreach(fun(Pid) -> exit(Pid, kill) end, Pids)
