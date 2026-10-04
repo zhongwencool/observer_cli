@@ -8,6 +8,13 @@ render(#{<<"command">> := <<"inspect logs">>, <<"data">> := Data} = R, _Width) w
         <<"schema">> := observer_cli_capture:schema(), <<"command">> := <<"logs">>
     }),
     binary:replace(Safe, <<"observer_cli logs\n">>, <<"observer_cli inspect logs\n">>);
+render(#{<<"command">> := <<"describe">>, <<"data">> := Data} = R, _Width) when
+    is_map_key(<<"name">>, Data); is_map_key(<<"commands">>, Data)
+->
+    %% Detailed discovery must retain every registry constraint and risk field.
+    %% Reuse the full text encoder rather than duplicating the descriptor format.
+    {ok, Text} = observer_cli_capture:encode(verbose, R),
+    Text;
 render(R, Width0) ->
     Width = max(40, Width0),
     Meta = maps:get(<<"meta">>, R),
@@ -211,10 +218,6 @@ inspect_body(_Command, null) ->
     [];
 inspect_body(<<"describe">>, #{<<"entries">> := Entries}) ->
     [line([maps:get(<<"name">>, E), <<" - ">>, maps:get(<<"summary">>, E)]) || E <- Entries];
-inspect_body(<<"describe">>, #{<<"commands">> := Commands}) ->
-    [line([maps:get(<<"name">>, D), <<" - ">>, maps:get(<<"summary">>, D)]) || D <- Commands];
-inspect_body(<<"describe">>, #{<<"name">> := _}) ->
-    [<<"Use --json or --verbose for options, constraints and authorization.">>];
 inspect_body(<<"inspect vm">>, Data) ->
     Runtime = maps:get(<<"runtime">>, Data, #{}),
     Memory = maps:get(<<"beam">>, maps:get(<<"memory">>, Data, #{}), #{}),

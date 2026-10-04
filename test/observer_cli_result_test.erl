@@ -167,3 +167,26 @@ finding(Severity) ->
         <<"summary">> => <<"Synthetic limit finding">>,
         <<"evidence">> => []
     }.
+
+describe_text_retains_complete_contract_test() ->
+    lists:foreach(
+        fun({Path, Full}) ->
+            {ok, Data} = observer_cli_catalog:describe(Path, Full),
+            Response = observer_cli_result:local(<<"describe">>, Data),
+            {ok, Expected} = observer_cli_capture:encode(verbose, Response),
+            ?assertEqual(Expected, observer_cli_present:render(Response, 80)),
+            ?assertNotEqual(nomatch, binary:match(Expected, <<"constraints">>)),
+            ?assertNotEqual(nomatch, binary:match(Expected, <<"authorization">>)),
+            ?assertNotEqual(nomatch, binary:match(Expected, <<"options">>))
+        end,
+        [
+            {["inspect", "process"], false},
+            {["trace", "call"], false},
+            {["inspect"], false},
+            {[], true}
+        ]
+    ),
+    {ok, Index} = observer_cli_catalog:describe([], false),
+    Text = observer_cli_present:render(observer_cli_result:local(<<"describe">>, Index), 80),
+    ?assertEqual(nomatch, binary:match(Text, <<"constraints">>)),
+    ?assert(length(binary:split(Text, <<"\n">>, [global])) =< 24).
