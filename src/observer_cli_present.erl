@@ -538,9 +538,19 @@ wrap_words([Word | Rest], Width, Line, Acc) ->
             <<>> -> Word;
             _ -> <<Line/binary, " ", Word/binary>>
         end,
-    case length(unicode:characters_to_list(Candidate)) =< Width orelse Line =:= <<>> of
-        true -> wrap_words(Rest, Width, Candidate, Acc);
-        false -> wrap_words([Word | Rest], Width, <<>>, [Line | Acc])
+    case length(unicode:characters_to_list(Candidate)) =< Width of
+        true ->
+            wrap_words(Rest, Width, Candidate, Acc);
+        false when Line =:= <<>> ->
+            {Prefix, Suffix} = lists:split(Width, unicode:characters_to_list(Word)),
+            wrap_words(
+                [unicode:characters_to_binary(Suffix) | Rest],
+                Width,
+                <<>>,
+                [unicode:characters_to_binary(Prefix) | Acc]
+            );
+        false ->
+            wrap_words([Word | Rest], Width, <<>>, [Line | Acc])
     end.
 screen_budget(Lines, Budget) when length(Lines) =< Budget -> Lines;
 screen_budget(Lines, Budget) ->
