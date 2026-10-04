@@ -239,3 +239,38 @@ assert_row_selector(#{<<"items">> := [Item]}, Kind, Value, Redacted) ->
             false -> #{<<"kind">> => Kind, <<"value">> => Value}
         end,
     ?assertEqual(Expected, maps:get(<<"selector">>, Item)).
+
+context_actions_require_measured_evidence_test() ->
+    Missing = #{
+        <<"current">> => #{<<"memory">> => #{}},
+        <<"distribution">> => #{<<"status">> => <<"unavailable">>},
+        <<"trends">> => #{<<"sockets">> => #{<<"status">> => <<"unavailable">>, <<"items">> => []}}
+    },
+    lists:foreach(
+        fun(Focus) ->
+            Result = focus_context_result(Focus, Missing),
+            ?assertEqual([], maps:get(<<"next_actions">>, Result)),
+            ?assertEqual(3, observer_cli_result:exit_code(Result, #{}))
+        end,
+        ["memory", "connections"]
+    ),
+    Memory = focus_context_result("memory", #{
+        <<"current">> => #{<<"memory">> => #{<<"total_bytes">> => 0}}
+    }),
+    ?assertMatch([#{<<"id">> := <<"observe_allocators">>}], maps:get(<<"next_actions">>, Memory)),
+    Connections = focus_context_result("connections", #{
+        <<"distribution">> => #{<<"connected_peer_count">> => 0},
+        <<"trends">> => #{<<"sockets">> => #{<<"status">> => <<"ok">>, <<"items">> => []}}
+    }),
+    ?assertEqual(
+        [<<"observe_peers">>, <<"observe_network">>],
+        [maps:get(<<"id">>, A) || A <- maps:get(<<"next_actions">>, Connections)]
+    ).
+
+focus_context_result(Focus, Context) ->
+    {ok, Route} = observer_cli_input:parse(["check", Focus]),
+    Capture = (capture(partial, []))#{
+        <<"data">> := #{<<"context">> => Context, <<"findings">> => []},
+        <<"meta">> := #{<<"target">> => null, <<"capture">> => #{<<"probes">> => []}}
+    },
+    observer_cli_result:from_capture(Route, Capture).

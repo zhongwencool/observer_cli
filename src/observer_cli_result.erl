@@ -327,11 +327,11 @@ check_actions(Id, #{
                     false -> []
                 end;
             check_memory ->
-                [context_action(allocators)] ++ process_actions(Probes, memory);
+                memory_actions(Data) ++ process_actions(Probes, memory);
             check_mailbox ->
                 process_actions(Probes, mailbox);
             check_connections ->
-                [context_action(peers), context_action(network)];
+                connection_actions(Data);
             check ->
                 process_actions(Probes, memory)
         end,
@@ -339,6 +339,34 @@ check_actions(Id, #{
         true -> lists:sublist(unique_actions(RuleActions ++ ContextActions), 3);
         false -> []
     end.
+
+memory_actions(#{
+    <<"context">> := #{<<"current">> := #{<<"memory">> := #{<<"total_bytes">> := Bytes}}}
+}) when
+    is_number(Bytes)
+->
+    [context_action(allocators)];
+memory_actions(_) ->
+    [].
+
+connection_actions(#{<<"context">> := Context}) ->
+    Peers =
+        case maps:get(<<"distribution">>, Context, #{}) of
+            #{<<"connected_peer_count">> := Count} when is_integer(Count) ->
+                [context_action(peers)];
+            _ ->
+                []
+        end,
+    Sockets = maps:get(<<"sockets">>, maps:get(<<"trends">>, Context, #{}), #{}),
+    Network =
+        case Sockets of
+            #{<<"status">> := <<"ok">>} -> [context_action(network)];
+            #{<<"status">> := <<"partial">>, <<"items">> := [_ | _]} -> [context_action(network)];
+            _ -> []
+        end,
+    Peers ++ Network;
+connection_actions(_) ->
+    [].
 
 process_actions(Probes, Kind) ->
     case probe_available(<<"process_inventory">>, Probes) of
