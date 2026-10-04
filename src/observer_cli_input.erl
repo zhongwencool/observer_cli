@@ -204,10 +204,10 @@ validate_domain(Id, _Arguments, Options) when Id =:= inspect_process; Id =:= ins
         Error -> Error
     end;
 validate_domain(inspect_port, _Arguments, #{id := Port} = Options) ->
-    case re:run(Port, "^#Port<0\\.[0-9]+>$", [{capture, none}]) of
-        match ->
+    case canonical_port(Port) of
+        true ->
             no_list_options(Options, [sort, limit]);
-        nomatch ->
+        false ->
             {error,
                 <<"--id requires a canonical target-local #Port<0.N> value, not a redacted alias.">>}
     end;
@@ -221,10 +221,10 @@ validate_domain(_Id, _Arguments, Options) ->
 validate_process_selector(#{pid := _, name := _}) ->
     {error, <<"--pid and --name are mutually exclusive.">>};
 validate_process_selector(#{pid := Pid}) ->
-    case re:run(Pid, "^<0\\.[0-9]+\\.[0-9]+>$", [{capture, none}]) of
-        match ->
+    case canonical_pid(Pid) of
+        true ->
             ok;
-        nomatch ->
+        false ->
             {error,
                 <<"--pid requires a canonical target-local <0.N.N> PID. A redacted pid-N alias cannot be inspected.">>}
     end;
@@ -235,6 +235,24 @@ validate_process_selector(#{name := Name}) ->
     end;
 validate_process_selector(_) ->
     ok.
+
+canonical_pid("<0." ++ _ = Text) ->
+    try
+        pid_to_list(list_to_pid(Text)) =:= Text
+    catch
+        error:badarg -> false
+    end;
+canonical_pid(_) ->
+    false.
+
+canonical_port("#Port<0." ++ _ = Text) ->
+    try
+        port_to_list(list_to_port(Text)) =:= Text
+    catch
+        error:badarg -> false
+    end;
+canonical_port(_) ->
+    false.
 
 validate_selector_mode(inspect_state, Options) ->
     case maps:is_key(pid, Options) orelse maps:is_key(name, Options) of

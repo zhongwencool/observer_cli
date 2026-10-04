@@ -98,6 +98,41 @@ trace_pid_preflight_test() ->
         observer_cli_input:parse(Prefix ++ ["<0.123.0>"])
     ).
 
+canonical_selector_preflight_test() ->
+    InvalidPids = [
+        "<0.01.0>",
+        "<0.1.00>",
+        "<0.999999999999999999999999.0>",
+        "<0.1.999999999999999999999999>"
+    ],
+    Prefixes = [
+        ["inspect", "process"],
+        ["inspect", "state", "--behavior", "gen_server", "--allow-state-read"],
+        ["trace", "call", "timer:sleep/1", "--replace-existing-trace"]
+    ],
+    lists:foreach(
+        fun(Prefix) ->
+            lists:foreach(
+                fun(Pid) ->
+                    ?assertMatch({error, _}, observer_cli_input:parse(Prefix ++ ["--pid", Pid]))
+                end,
+                InvalidPids
+            )
+        end,
+        Prefixes
+    ),
+    lists:foreach(
+        fun(Port) ->
+            ?assertMatch(
+                {error, _}, observer_cli_input:parse(["inspect", "port", "--id", Port])
+            )
+        end,
+        ["#Port<0.01>", "#Port<0.999999999999999999999999>"]
+    ),
+    ?assertMatch(
+        {ok, _}, observer_cli_input:parse(["inspect", "port", "--id", "#Port<0.123>"])
+    ).
+
 invalid_before_target_test() ->
     Cases = [
         ["check", "--node", "app@host"],
