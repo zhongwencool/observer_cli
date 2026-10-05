@@ -1,304 +1,408 @@
-%% Offline command metadata. Never reads target context or resolves credentials.
+%% Public, task-first command definitions. No target or credential access.
 -module(observer_cli_catalog).
 
 -export([
+    entries/0,
     commands/0,
-    describe/1,
-    public_name/1,
+    describe/2,
+    resolve/1,
+    descriptor/1,
     option/1,
-    allowed_options/1,
+    help/1,
     schema/0,
-    command/1,
-    common_options/1,
-    sort_keys/1
+    legacy_hint/1
 ]).
 
--define(SCHEMA_PATH, "schema/observer_cli.cli.v1.schema.json").
+-define(SCHEMA_PATH, "schema/observer_cli.cli.v2.schema.json").
+
+-spec entries() -> [map()].
+entries() ->
+    [
+        #{name => <<"check">>, summary => <<"Find evidence and the next bounded observation">>},
+        #{name => <<"inspect">>, summary => <<"Inspect runtime facts or one selected resource">>},
+        #{name => <<"trace">>, summary => <<"Explicitly authorize node-global tracing">>},
+        #{name => <<"tui">>, summary => <<"Explore interactively; code loading is opt-in">>},
+        #{
+            name => <<"describe">>,
+            summary => <<"Discover commands offline; add a path for details">>
+        }
+    ].
 
 -spec commands() -> [map()].
-commands() ->
-    [public(descriptor(Id)) || Id <- identities()].
+commands() -> [descriptor(Id) || {Id, _Path, _Capture, _Summary} <- definitions()].
 
--spec describe([string()]) -> {ok, map()} | {error, atom()}.
-describe([]) ->
+-spec resolve([string()]) -> {ok, atom(), [string()]} | {error, binary()}.
+resolve([]) -> {ok, help, []};
+resolve(["help" | Rest]) -> {ok, help, Rest};
+resolve(["describe" | Rest]) -> {ok, describe, Rest};
+resolve([Family]) when Family =:= "inspect"; Family =:= "trace" -> {ok, help, [Family]};
+resolve(["check"]) -> {ok, check, []};
+resolve(["check", Focus]) -> resolve_exact(["check", Focus]);
+resolve(["trace", "call", MFA]) -> {ok, trace_call, [MFA]};
+resolve(Tokens) -> resolve_exact(Tokens).
+
+resolve_exact(Tokens) ->
+    case [Id || {Id, Path, _, _} <- definitions(), Path =:= Tokens] of
+        [Id] -> {ok, Id, []};
+        [] -> {error, unknown_hint(Tokens)}
+    end.
+
+unknown_hint([First | _]) ->
+    case legacy_hint(First) of
+        undefined -> <<"Unknown command path. Run observer_cli --help or inspect --help.">>;
+        Hint -> Hint
+    end;
+unknown_hint([]) ->
+    <<"Run observer_cli --help to choose a task.">>.
+
+-spec describe([string()], boolean()) -> {ok, map()} | {error, binary()}.
+describe([], false) ->
     {ok, #{
-        <<"commands">> => commands(),
-        <<"schema">> => <<"observer_cli.cli/v1">>,
-        <<"target_protocol">> => 1
+        <<"entries">> => [binary_keys(E) || E <- entries()],
+        <<"schema">> => <<"observer_cli.cli/v2">>
     }};
-describe(["trace"]) ->
-    {ok, #{<<"commands">> => [public(descriptor(trace_call)), public(descriptor(trace_stop_all))]}};
-describe(Tokens) when is_list(Tokens) ->
-    case
-        [
+describe([], true) ->
+    {ok, #{<<"commands">> => commands(), <<"schema">> => <<"observer_cli.cli/v2">>}};
+describe([Family], _Full) when Family =:= "inspect"; Family =:= "trace" ->
+    {ok, #{
+        <<"commands">> => [
             D
-         || D <- commands(),
-            maps:get(<<"argv">>, D) =:= [unicode:characters_to_binary(T) || T <- Tokens]
+         || D <- commands(), hd(maps:get(<<"argv">>, D)) =:= list_to_binary(Family)
         ]
-    of
-        [Descriptor] -> {ok, Descriptor};
-        [] -> {error, unknown_command}
+    }};
+describe(Path, _Full) ->
+    case resolve_exact(Path) of
+        {ok, Id, []} -> {ok, descriptor(Id)};
+        Error -> Error
     end.
 
--spec command(string()) -> atom() | undefined.
-command("trace") ->
-    trace;
-command(Text) ->
-    case
-        [
-            Id
-         || Id <- identities(),
-            Id =/= trace_call,
-            Id =/= trace_stop_all,
-            public_name(Id) =:= unicode:characters_to_binary(Text)
-        ]
-    of
-        [Id] -> Id;
-        [] -> undefined
-    end.
+-spec descriptor(atom()) -> map().
+descriptor(Id) ->
+    [{Id, Path, Capture, Summary}] = [D || D = {I, _, _, _} <- definitions(), I =:= Id],
+    Base = capture_descriptor(Capture),
+    Options = [binary_keys(O) || O <- options(Id)],
+    maps:merge(Base, #{
+        <<"id">> => atom_to_binary(Id),
+        <<"name">> => unicode:characters_to_binary(string:join(Path, " ")),
+        <<"argv">> => [unicode:characters_to_binary(P) || P <- Path],
+        <<"summary">> => Summary,
+        <<"positionals">> => positionals(Id),
+        <<"options">> => Options,
+        <<"mutually_exclusive">> => exclusions(Id),
+        <<"constraints">> => constraints(Id),
+        <<"prerequisites">> => prerequisites(Id),
+        <<"identifiers">> => identifiers(Id),
+        <<"authorization">> => authorization(Id),
+        <<"output">> => #{
+            <<"formats">> => output_formats(Id),
+            <<"default">> =>
+                case Id of
+                    tui -> <<"interactive">>;
+                    _ -> <<"text">>
+                end,
+            <<"verbose_format">> =>
+                case Id of
+                    tui -> null;
+                    _ -> <<"text">>
+                end,
+            <<"json_minimum_controller_otp">> => 27,
+            <<"schema_ref">> =>
+                <<"https://raw.githubusercontent.com/zhongwencool/observer_cli/v3.0.0/priv/schema/observer_cli.cli.v2.schema.json">>,
+            <<"response_command">> => unicode:characters_to_binary(string:join(Path, " ")),
+            <<"data_schemas">> => data_schemas(Id, Capture)
+        },
+        <<"examples">> => examples(Id, Path)
+    }).
 
--spec sort_keys(atom()) -> [string()].
-sort_keys(Id) -> [binary_to_list(Key) || Key <- sorts(Id)].
+data_schemas(Id, _Capture) when
+    Id =:= check;
+    Id =:= check_cpu;
+    Id =:= check_memory;
+    Id =:= check_mailbox;
+    Id =:= check_connections
+->
+    [<<"checkData">>];
+data_schemas(inspect_process, _) ->
+    [<<"processesData">>, <<"processData">>];
+data_schemas(inspect_port, _) ->
+    [<<"portsData">>, <<"portData">>];
+data_schemas(tui, _) ->
+    [];
+data_schemas(_, Capture) ->
+    Names = #{
+        snapshot => <<"snapshotData">>,
+        memory => <<"memoryData">>,
+        schedulers => <<"schedulersData">>,
+        distribution => <<"distributionData">>,
+        network => <<"networkData">>,
+        applications => <<"applicationsData">>,
+        ets => <<"etsData">>,
+        mnesia => <<"mnesiaData">>,
+        sockets => <<"socketsData">>,
+        otp_state => <<"otpStateData">>,
+        supervision_tree => <<"supervisionTreeData">>,
+        logs => <<"logsData">>,
+        trace_call => <<"traceData">>,
+        trace_stop_all => <<"traceData">>,
+        describe => <<"describeData">>
+    },
+    [maps:get(Capture, Names)].
 
--spec public_name(atom()) -> binary().
-public_name(otp_state) -> <<"otp-state">>;
-public_name(supervision_tree) -> <<"supervision-tree">>;
-public_name(trace_call) -> <<"trace call">>;
-public_name(trace_stop_all) -> <<"trace stop">>;
-public_name(Id) -> atom_to_binary(Id, utf8).
+capture_descriptor(tui) ->
+    #{<<"risk_level">> => <<"high">>, <<"side_effects">> => [<<"repeated_sampling">>]};
+capture_descriptor(Capture) ->
+    Path = binary:split(observer_cli_capture_catalog:public_name(Capture), <<" ">>, [global]),
+    {ok, D} = observer_cli_capture_catalog:describe([binary_to_list(P) || P <- Path]),
+    D.
+
+definitions() ->
+    [
+        {check, ["check"], diagnose,
+            <<"Observe limits, scheduler pressure, memory and queues for 15s">>},
+        {check_cpu, ["check", "cpu"], diagnose,
+            <<"Measure scheduler pressure and process activity; not process CPU time">>},
+        {check_memory, ["check", "memory"], diagnose,
+            <<"Measure BEAM memory and resource changes; not proof of a leak">>},
+        {check_mailbox, ["check", "mailbox"], diagnose,
+            <<"Inspect mailbox lengths and changes; not a root-cause rule">>},
+        {check_connections, ["check", "connections"], diagnose,
+            <<"Inspect Erlang peers and VM network context; not host network health">>},
+        {inspect_vm, ["inspect", "vm"], snapshot,
+            <<"Collect current bounded VM facts; inventories require --deep">>},
+        {inspect_memory, ["inspect", "memory"], memory,
+            <<"Inspect BEAM memory and allocators, not host RSS">>},
+        {inspect_scheduler, ["inspect", "scheduler"], schedulers,
+            <<"Measure scheduler utilization and observed run queues">>},
+        {inspect_distribution, ["inspect", "distribution"], distribution,
+            <<"Inspect Erlang peers and distribution context">>},
+        {inspect_network, ["inspect", "network"], network,
+            <<"Inspect legacy inet counters, not all host traffic">>},
+        {inspect_process, ["inspect", "process"], processes,
+            <<"List processes; --pid or --name selects one safe metadata detail">>},
+        {inspect_application, ["inspect", "application"], applications,
+            <<"Attribute process counts and resources to applications">>},
+        {inspect_ets, ["inspect", "ets"], ets, <<"Inspect ETS metadata, never table contents">>},
+        {inspect_mnesia, ["inspect", "mnesia"], mnesia,
+            <<"Inspect local Mnesia metadata, never table contents">>},
+        {inspect_port, ["inspect", "port"], ports,
+            <<"List Erlang ports; --id selects one detail, not a TCP port number">>},
+        {inspect_socket, ["inspect", "socket"], sockets,
+            <<"Inspect the OTP socket registry and its counters">>},
+        {inspect_state, ["inspect", "state"], otp_state,
+            <<"Explicitly acquire full OTP state and return value-free shapes">>},
+        {inspect_supervision, ["inspect", "supervision"], supervision_tree,
+            <<"Inspect one application root and direct children only">>},
+        {inspect_logs, ["inspect", "logs"], logs,
+            <<"Read bounded retained sensitive text from one configured handler">>},
+        {trace_call, ["trace", "call"], trace_call,
+            <<"Capture an exact MFA for one PID with node-global replacement consent">>},
+        {trace_stop_all, ["trace", "stop"], trace_stop_all,
+            <<"Explicitly clear node-global legacy tracing; prior state is not restored">>},
+        {tui, ["tui"], tui, <<"Open the terminal UI with protected target options">>},
+        {describe, ["describe"], describe,
+            <<"Discover paths, constraints and risk without contacting a target">>}
+    ].
 
 -spec option(string()) -> {flag | value, atom()} | unknown | positional.
+option("-h") ->
+    {flag, help};
+option("--help") ->
+    {flag, help};
+option("--version") ->
+    {flag, version};
 option("--" ++ Name) ->
-    case
-        [O || O <- option_definitions(), maps:get(name, O) =:= unicode:characters_to_binary(Name)]
-    of
-        [#{key := Key, kind := <<"flag">>}] -> {flag, Key};
-        [#{key := Key, kind := <<"value">>}] -> {value, Key};
+    All = lists:usort(lists:append([options(Id) || {Id, _, _, _} <- definitions()])),
+    case [O || O <- All, maps:get(name, O) =:= unicode:characters_to_binary(Name)] of
+        [#{key := Key, kind := Kind} | _] -> {binary_to_existing_atom(Kind), Key};
         [] -> unknown
     end;
 option(_) ->
     positional.
 
--spec allowed_options(atom()) -> [atom()].
-allowed_options(Id) -> common_options(Id) ++ specific_options(Id).
+options(describe) ->
+    output_options() ++
+        [
+            flag(full, <<"Return every full command descriptor">>),
+            flag(schema, <<"Export the v2 JSON Schema; requires --json and no path">>)
+        ];
+options(tui) ->
+    target_options() ++
+        [
+            flag(load_code, <<"Authorize remote code loading on the same OTP major">>),
+            duration_option(interval, 1000, 120000, 1500, <<"Requested TUI refresh interval">>)
+        ];
+options(Id) ->
+    target_options() ++ output_options() ++ privacy_options(Id) ++ specific_options(Id).
 
-%% erl_prim_loader understands both ordinary files and archived escript paths.
-%% Reading bytes does not require the OTP 27+ json module.
--spec schema() -> {ok, binary()} | {error, schema_unavailable}.
-schema() ->
-    ModulePriv = filename:join([filename:dirname(filename:dirname(code:which(?MODULE))), "priv"]),
-    Dirs =
-        case code:priv_dir(observer_cli) of
-            {error, _} -> [ModulePriv];
-            Priv -> [Priv, ModulePriv]
-        end,
-    read_schema(Dirs).
-
-read_schema([]) ->
-    {error, schema_unavailable};
-read_schema([Dir | Rest]) ->
-    case erl_prim_loader:get_file(filename:join(Dir, ?SCHEMA_PATH)) of
-        {ok, Binary, _Filename} -> {ok, Binary};
-        error -> read_schema(Rest)
-    end.
-
-identities() ->
+target_options() ->
     [
-        connect,
-        status,
-        disconnect,
-        snapshot,
-        memory,
-        schedulers,
-        distribution,
-        processes,
-        process,
-        applications,
-        ets,
-        mnesia,
-        network,
-        ports,
-        port,
-        sockets,
-        otp_state,
-        supervision_tree,
-        logs,
-        trace_call,
-        trace_stop_all,
-        diagnose,
-        describe
+        value(node, <<"Explicit node; requires exactly one explicit cookie source">>),
+        value(
+            cookie_env,
+            <<"Cookie environment variable NAME, never a cookie value; requires --node">>
+        ),
+        value(cookie_file, <<"Owner-only cookie file PATH; requires --node">>),
+        (value(name_mode, <<"Requires --node; otherwise inferred from its host">>))#{
+            enum => [<<"short">>, <<"long">>]
+        }
     ].
 
-descriptor(Id) ->
-    #{
-        id => atom_to_binary(Id, utf8),
-        name => public_name(Id),
-        argv => binary:split(public_name(Id), <<" ">>, [global]),
-        summary => summary(Id),
-        positionals => positionals(Id),
-        options => [command_option(Id, Key) || Key <- allowed_options(Id)],
-        mutually_exclusive => exclusions(Id),
-        constraints => constraints(Id),
-        prerequisites => prerequisites(Id),
-        identifiers => identifiers(Id),
-        risk_level => risk_level(Id),
-        side_effects => effects(Id),
-        authorization => authorization(Id),
-        output => #{
-            formats => [<<"text">>, <<"term">>, <<"json">>],
-            default => <<"text">>,
-            json_minimum_controller_otp => 27,
-            verbose_format => <<"text">>,
-            schema_ref =>
-                <<"https://raw.githubusercontent.com/zhongwencool/observer_cli/v2.0.0/priv/schema/observer_cli.cli.v1.schema.json">>,
-            response_command => atom_to_binary(Id, utf8)
+output_options() ->
+    [
+        (value(format, <<"Output representation">>))#{
+            enum => [<<"text">>, <<"term">>, <<"json">>], default => <<"text">>
         },
-        examples => examples(Id)
+        flag(json, <<"Alias for --format json; controller OTP 27+">>),
+        flag(verbose, <<"Expand text evidence; incompatible with JSON or term">>)
+    ].
+
+privacy_options(inspect_logs) ->
+    [deadline_option()];
+privacy_options(_) ->
+    [
+        flag(redact, <<"Hide identifiers for sharing; aliases cannot address resources">>),
+        deadline_option()
+    ].
+
+deadline_option() ->
+    (duration_option(
+        timeout,
+        1,
+        120000,
+        10000,
+        <<"Overall deadline including cleanup; must cover the observation window">>
+    ))#{
+        default_rule =>
+            <<"check window + 5s; sampled inspect max(10s, window + 5s); trace duration + 7s">>
     }.
 
--spec common_options(atom()) -> [atom()].
-common_options(describe) -> [format, json, verbose];
-common_options(disconnect) -> [format, json, verbose];
-common_options(status) -> [format, json, verbose, timeout];
-common_options(Id) when Id =:= connect; Id =:= logs -> remote_options();
-common_options(_) -> remote_options() ++ [redact, include_identifiers].
-
-remote_options() -> [node, cookie_env, cookie_file, name_mode, format, json, verbose, timeout].
-
-specific_options(snapshot) ->
-    [deep];
-specific_options(diagnose) ->
-    [observe, deep, app];
-specific_options(schedulers) ->
-    [duration];
-specific_options(distribution) ->
-    [limit];
-specific_options(processes) ->
-    [sort, limit, duration];
-specific_options(Id) when Id =:= applications; Id =:= ets; Id =:= mnesia; Id =:= ports ->
-    [sort, limit];
-specific_options(Id) when Id =:= network; Id =:= sockets -> [sort, limit, duration];
-specific_options(process) ->
-    [info];
-specific_options(otp_state) ->
-    [behavior, limit];
-specific_options(supervision_tree) ->
-    [app];
-specific_options(logs) ->
-    [handler, tail];
+specific_options(Id) when
+    Id =:= check;
+    Id =:= check_cpu;
+    Id =:= check_memory;
+    Id =:= check_mailbox;
+    Id =:= check_connections
+->
+    [
+        duration_option(window, 5000, 60000, 15000, <<"Shared observation window; default 15s">>),
+        (value(fail_on, <<"Exit 1 only for a complete check meeting this finding severity">>))#{
+            enum => [<<"warning">>, <<"critical">>]
+        },
+        value(app, <<"Add existing application-scoped observation; not application CPU time">>)
+    ] ++
+        case Id of
+            check_memory ->
+                [flag(deep, <<"Add admitted deep evidence; seven samples; conflicts with --app">>)];
+            _ ->
+                []
+        end;
+specific_options(inspect_vm) ->
+    [flag(deep, <<"Add admitted inventories; never reads state, logs or payloads">>)];
+specific_options(inspect_scheduler) ->
+    [duration_option(window, 250, 10000, 1500, <<"Scheduler measurement window">>)];
+specific_options(inspect_distribution) ->
+    [limit_option(200, 20)];
+specific_options(inspect_process) ->
+    list_options(processes, true) ++
+        [
+            value(pid, <<"Canonical target-local <0.N.N> PID; selects detail">>),
+            value(name, <<"Registered name; selects detail, never an alias lookup">>)
+        ];
+specific_options(inspect_port) ->
+    list_options(ports, false) ++ [value(id, <<"Canonical #Port<0.N> ID; selects detail">>)];
+specific_options(inspect_network) ->
+    list_options(network, true);
+specific_options(inspect_socket) ->
+    list_options(sockets, true);
+specific_options(inspect_application) ->
+    list_options(applications, false);
+specific_options(inspect_ets) ->
+    list_options(ets, false);
+specific_options(inspect_mnesia) ->
+    list_options(mnesia, false);
+specific_options(inspect_state) ->
+    [
+        value(pid, <<"Canonical target-local PID">>),
+        value(name, <<"Registered name">>),
+        (value(behavior, <<"Required operator assertion of behavior">>))#{
+            required => true, enum => [<<"gen_server">>, <<"gen_statem">>, <<"gen_event">>]
+        },
+        (flag(
+            allow_state_read, <<"Authorize full state acquisition before bounded shape reduction">>
+        ))#{
+            required => true
+        },
+        limit_option(200, 20)
+    ];
+specific_options(inspect_supervision) ->
+    [(value(app, <<"Running application; root and direct children only">>))#{required => true}];
+specific_options(inspect_logs) ->
+    [
+        value(handler, <<"Handler ID; required when several sources qualify">>),
+        (value(tail, <<"Physical lines; capped at 64 KiB retained bytes">>))#{
+            minimum => 1, maximum => 2000, default => 200
+        }
+    ];
 specific_options(trace_call) ->
-    [pid, duration, limit, rate, replace_existing_trace];
+    [
+        (value(pid, <<"One live canonical target-local PID">>))#{required => true},
+        (flag(
+            replace_existing_trace, <<"Authorize node-global trace replacement; no restoration">>
+        ))#{
+            required => true
+        },
+        duration_option(duration, 100, 60000, 10000, <<"Bounded call capture duration">>),
+        limit_option(1000, 100),
+        (value(rate, <<"Recon burst breaker, not a pacer; the trip event is retained">>))#{
+            syntax => <<"N/s">>, minimum => 1, maximum => 200
+        }
+    ];
 specific_options(trace_stop_all) ->
-    [all];
-specific_options(trace) ->
-    [pid, duration, limit, rate, replace_existing_trace, all];
-specific_options(describe) ->
-    [schema];
+    [(flag(all, <<"Authorize clearing node-global legacy tracing">>))#{required => true}];
 specific_options(_) ->
     [].
 
-command_option(Id, Key) ->
-    [Base] = [O || #{key := K} = O <- option_definitions(), K =:= Key],
-    maps:merge(maps:remove(key, Base), option_override(Id, Key)).
-
-option_override(Id, sort) ->
-    [Default | _] = Values = sorts(Id),
-    #{enum => Values, default => Default};
-option_override(trace_call, duration) ->
-    #{minimum_ms => 100, maximum_ms => 60000, default => 10000};
-option_override(trace_call, limit) ->
-    #{maximum => 1000, default => 100};
-option_override(schedulers, duration) ->
-    #{default => 1500};
-option_override(otp_state, limit) ->
-    #{requires => <<"--behavior gen_event; output cap only, not an acquisition cap">>};
-option_override(diagnose, deep) ->
-    #{requires => <<"--observe">>};
-option_override(diagnose, app) ->
-    #{requires => <<"--observe">>};
-option_override(supervision_tree, app) ->
-    #{required => true};
-option_override(trace_call, pid) ->
-    #{required => true};
-option_override(trace_call, replace_existing_trace) ->
-    #{required => true};
-option_override(trace_stop_all, all) ->
-    #{required => true};
-option_override(_, _) ->
-    #{}.
-
-option_definitions() ->
+list_options(Capture, Window) ->
+    Values = sort_values(Capture),
     [
-        value(node, <<"Target node; explicit --node requires exactly one cookie source">>),
-        value(cookie_env, <<"Environment variable name, never the cookie value; requires --node">>),
-        value(cookie_file, <<"Protected cookie file path; requires --node">>),
-        (value(name_mode, <<"Distribution naming mode; requires --node">>))#{
-            enum => [<<"short">>, <<"long">>],
-            default_rule => <<"long when host contains a dot or colon; short otherwise">>
+        (value(sort, <<"Metric meaning is fixed; change/rate sorts require --window">>))#{
+            enum => Values, default => hd(Values)
         },
-        (value(format, <<"Output format">>))#{
-            enum => [<<"text">>, <<"term">>, <<"json">>], default => <<"text">>
-        },
-        flag(json, <<"Alias for --format json; requires controller OTP 27 or later">>),
-        flag(verbose, <<"Detailed text evidence only; incompatible with JSON or term">>),
-        (value(
-            timeout,
-            <<
-                "Overall deadline; sampling requires duration + 5s, trace call duration + 7s; "
-                "trace stop minimum 5s and otp-state minimum 10s"
-            >>
-        ))#{
-            minimum_ms => 1,
-            maximum_ms => 120000,
-            default => 10000,
-            default_rule =>
-                <<"max(10s, duration+5s) for sampled commands; max(10s, duration+7s) for trace call; observe+5s for diagnosis">>,
-            syntax => <<"integer milliseconds, Nms, or Ns">>
-        },
-        flag(
-            redact, <<"Replace supported identifiers with response-local non-executable aliases">>
-        ),
-        flag(include_identifiers, <<"Retain real identifiers for trusted follow-up actions">>),
-        flag(deep, <<"Add admitted resource inventories; increases observation cost">>),
-        value(sort, <<"Ranking field; values and default depend on command">>),
-        (value(limit, <<"Maximum returned entries, not a global scan admission limit">>))#{
-            minimum => 1, maximum => 200, default => 20
-        },
-        (value(duration, <<"Sampling window; counters use the actual measured interval">>))#{
-            minimum_ms => 250, maximum_ms => 10000, syntax => <<"integer milliseconds, Nms, or Ns">>
-        },
-        flag(info, <<"Compatibility option for process metadata">>),
-        (value(app, <<"Running application name">>))#{minimum_length => 1, maximum_length => 255},
-        (value(observe, <<"Diagnostic observation window">>))#{
-            minimum_ms => 5000,
-            maximum_ms => 60000,
-            syntax => <<"integer milliseconds, Nms, or Ns">>
-        },
-        value(pid, <<"One live target-local raw PID, not a redacted alias">>),
-        (value(
-            rate,
-            <<"Recon burst-breaker threshold, not a pacer; the trip event is retained and capture can exceed N events">>
-        ))#{
-            syntax => <<"N/s">>, minimum => 1, maximum => 200
-        },
-        flag(
-            replace_existing_trace,
-            <<"Authorize node-global trace replacement; prior trace state is not restored">>
-        ),
-        flag(all, <<"Authorize stopping node-global legacy tracing">>),
-        (value(behavior, <<"Required operator assertion of OTP behavior">>))#{
-            required => true, enum => [<<"gen_server">>, <<"gen_statem">>, <<"gen_event">>]
-        },
-        (value(handler, <<"Logger handler ID; needed when multiple sources qualify">>))#{
-            minimum_length => 1, maximum_length => 255
-        },
-        (value(tail, <<"Physical log lines; read cap 64 KiB and per-line cap 32 KiB">>))#{
-            minimum => 1, maximum => 2000, default => 200
-        },
-        (flag(schema, <<"Export the bundled response JSON Schema without connecting">>))#{
-            requires => <<"--json or --format json; no command arguments">>
-        }
-    ].
+        limit_option(200, 20)
+    ] ++
+        case Window of
+            true ->
+                [
+                    duration_option(
+                        window,
+                        250,
+                        10000,
+                        undefined,
+                        <<"Add sampling; does not change the selected metric">>
+                    )
+                ];
+            false ->
+                []
+        end.
+
+sort_values(processes) ->
+    [
+        <<"memory">>,
+        <<"message_queue_len">>,
+        <<"reductions">>,
+        <<"binary_memory">>,
+        <<"total_heap_size">>,
+        <<"memory-change">>,
+        <<"mailbox-change">>,
+        <<"reductions-rate">>,
+        <<"binary-memory-change">>,
+        <<"heap-change">>
+    ];
+sort_values(Capture) when Capture =:= network; Capture =:= sockets ->
+    Base = [list_to_binary(K) || K <- observer_cli_capture_catalog:sort_keys(Capture)],
+    Base ++ [<<K/binary, "-change">> || K <- Base] ++ [<<K/binary, "-rate">> || K <- Base];
+sort_values(Capture) ->
+    [list_to_binary(K) || K <- observer_cli_capture_catalog:sort_keys(Capture)].
 
 value(Key, Summary) ->
     #{key => Key, name => option_name(Key), kind => <<"value">>, summary => Summary}.
@@ -310,331 +414,389 @@ flag(Key, Summary) ->
         default => false,
         summary => Summary
     }.
-option_name(Key) -> binary:replace(atom_to_binary(Key, utf8), <<"_">>, <<"-">>, [global]).
+option_name(Key) -> binary:replace(atom_to_binary(Key), <<"_">>, <<"-">>, [global]).
+limit_option(Max, Default) ->
+    (value(limit, <<"Returned rows, not a scan-admission bypass">>))#{
+        minimum => 1, maximum => Max, default => Default
+    }.
+duration_option(Key, Min, Max, Default, Summary) ->
+    O = (value(Key, Summary))#{
+        minimum_ms => Min, maximum_ms => Max, syntax => <<"integer milliseconds, Nms, or Ns">>
+    },
+    case Default of
+        undefined -> O;
+        _ -> O#{default => Default}
+    end.
 
-sorts(processes) ->
-    [
-        <<"memory">>,
-        <<"message_queue_len">>,
-        <<"reductions">>,
-        <<"binary_memory">>,
-        <<"total_heap_size">>
-    ];
-sorts(applications) ->
-    [<<"memory">>, <<"process_count">>, <<"reductions">>, <<"message_queue_len">>];
-sorts(Id) when Id =:= ets; Id =:= mnesia -> [<<"memory">>, <<"size">>];
-sorts(network) ->
-    [<<"oct">>, <<"recv_oct">>, <<"send_oct">>, <<"cnt">>, <<"recv_cnt">>, <<"send_cnt">>];
-sorts(ports) ->
-    [<<"queue_size">>, <<"memory">>, <<"input">>, <<"output">>, <<"io">>];
-sorts(sockets) ->
-    [<<"io">>, <<"read_bytes">>, <<"write_bytes">>, <<"packets">>, <<"waits">>, <<"fails">>].
-
-positionals(Id) when Id =:= process; Id =:= otp_state ->
-    [
-        #{
-            name => <<"PID_OR_NAME">>,
-            required => true,
-            policy => <<"Raw local PID or registered process name; never a response-local alias">>
-        }
-    ];
-positionals(port) ->
-    [#{name => <<"PORT">>, required => true, policy => <<"Raw target-local #Port<...> text">>}];
 positionals(trace_call) ->
     [
         #{
-            name => <<"MFA">>,
-            required => true,
-            policy => <<"Exact loaded exported module:function/arity, arity 0..255; no wildcards">>
+            <<"name">> => <<"MFA">>,
+            <<"required">> => true,
+            <<"policy">> => <<"Exact exported module:function/arity; no wildcards">>
         }
     ];
 positionals(describe) ->
-    [
-        #{name => <<"COMMAND">>, required => false},
-        #{name => <<"SUBCOMMAND">>, required => false, requires => <<"COMMAND=trace">>}
-    ];
+    [#{<<"name">> => <<"COMMAND_PATH">>, <<"required">> => false}];
 positionals(_) ->
     [].
 
 exclusions(Id) ->
-    Keys = allowed_options(Id),
+    Names = [maps:get(name, O) || O <- options(Id)],
     [
-        [option_name(A), option_name(B)]
-     || {A, B} <- [{cookie_env, cookie_file}, {redact, include_identifiers}, {limit, rate}],
-        lists:member(A, Keys),
-        lists:member(B, Keys)
+        Pair
+     || Pair <- [
+            [<<"cookie-env">>, <<"cookie-file">>],
+            [<<"pid">>, <<"name">>],
+            [<<"deep">>, <<"app">>],
+            [<<"limit">>, <<"rate">>]
+        ],
+        lists:all(fun(N) -> lists:member(N, Names) end, Pair)
     ] ++
         case Id of
-            diagnose -> [[<<"deep">>, <<"app">>]];
-            _ -> []
-        end ++
-        [
-            [<<"verbose">>, <<"json">>],
-            [<<"verbose">>, <<"format=term">>],
-            [<<"verbose">>, <<"format=json">>],
-            [<<"json">>, <<"format=text|term">>]
-        ].
-
-%% Data-only dependency rules. when_present means ALL listed options were
-%% explicitly supplied; absent defaulted options never create a required timeout.
-constraints(Id) ->
-    Format = [
-        #{kind => <<"effective_format">>, when_present => [<<"verbose">>], format => <<"text">>},
-        #{kind => <<"effective_format">>, when_present => [<<"json">>], format => <<"json">>}
-    ],
-    Keys = allowed_options(Id),
-    Target =
-        case lists:member(node, Keys) of
-            true ->
+            tui ->
+                [];
+            _ ->
                 [
-                    requires([<<"cookie-env">>], [<<"node">>]),
-                    requires([<<"cookie-file">>], [<<"node">>]),
-                    requires([<<"name-mode">>], [<<"node">>]),
-                    #{
-                        kind => <<"exactly_one_option">>,
-                        when_present => [<<"node">>],
-                        options => [<<"cookie-env">>, <<"cookie-file">>]
-                    }
-                ];
-            false ->
-                []
-        end,
+                    [<<"verbose">>, <<"json">>],
+                    [<<"verbose">>, <<"format=json|term">>],
+                    [<<"json">>, <<"format=text|term">>]
+                ]
+        end.
+
+constraints(Id) ->
+    Required = [maps:get(name, O) || O <- options(Id), maps:get(required, O, false)],
     Exclusive = [
-        #{kind => <<"mutually_exclusive">>, options => [option_name(A), option_name(B)]}
-     || {A, B} <- [{cookie_env, cookie_file}, {redact, include_identifiers}, {limit, rate}],
-        lists:member(A, Keys),
-        lists:member(B, Keys)
+        #{<<"kind">> => <<"mutually_exclusive">>, <<"options">> => Pair}
+     || Pair <- exclusions(Id)
     ],
-    Format ++ Target ++ Exclusive ++ command_constraints(Id).
+    Target =
+        case Id of
+            describe ->
+                [];
+            _ ->
+                [
+                    #{
+                        <<"kind">> => <<"exactly_one_option">>,
+                        <<"when_present">> => [<<"node">>],
+                        <<"options">> => [<<"cookie-env">>, <<"cookie-file">>]
+                    }
+                ] ++
+                    [
+                        #{
+                            <<"kind">> => <<"requires_options">>,
+                            <<"when_present">> => [N],
+                            <<"options">> => [<<"node">>]
+                        }
+                     || N <- [<<"cookie-env">>, <<"cookie-file">>, <<"name-mode">>]
+                    ]
+        end,
+    RequiredRules =
+        case Required of
+            [] -> [];
+            _ -> [#{<<"kind">> => <<"required_options">>, <<"options">> => Required}]
+        end,
+    Exclusive ++ Target ++ RequiredRules ++ selector_constraints(Id) ++ window_constraints(Id) ++
+        runtime_constraints(Id).
 
-requires(When, Options) ->
-    #{kind => <<"requires_options">>, when_present => When, options => Options}.
-
-required(Options) -> #{kind => <<"required_options">>, options => Options}.
-
-timeout_margin(When, Sampling, Margin) ->
-    #{
-        kind => <<"timeout_margin">>,
-        when_present => When,
-        option => <<"timeout">>,
-        sampling_option => Sampling,
-        margin_ms => Margin
-    }.
-
-minimum_timeout(Minimum) ->
-    #{
-        kind => <<"minimum_duration">>,
-        when_present => [<<"timeout">>],
-        option => <<"timeout">>,
-        minimum_ms => Minimum
-    }.
-
-command_constraints(connect) ->
-    [required([<<"node">>])];
-command_constraints(diagnose) ->
+runtime_constraints(Id) when
+    Id =:= check;
+    Id =:= check_cpu;
+    Id =:= check_memory;
+    Id =:= check_mailbox;
+    Id =:= check_connections
+->
     [
-        requires([<<"deep">>], [<<"observe">>]),
-        requires([<<"app">>], [<<"observe">>]),
-        #{kind => <<"mutually_exclusive">>, options => [<<"deep">>, <<"app">>]},
-        timeout_margin([<<"timeout">>, <<"observe">>], <<"observe">>, 5000)
-    ];
-command_constraints(otp_state) ->
-    [
-        required([<<"behavior">>]),
+        timeout_constraint(<<"window">>, 15000, 5000),
         #{
-            kind => <<"option_value">>,
-            when_present => [<<"limit">>],
-            option => <<"behavior">>,
-            value => <<"gen_event">>
+            <<"kind">> => <<"risk_when_present">>,
+            <<"when_present">> => [<<"app">>],
+            <<"risk_level">> => <<"high">>
+        }
+    ];
+runtime_constraints(inspect_scheduler) ->
+    [timeout_constraint(<<"window">>, 1500, 5000)];
+runtime_constraints(Id) when
+    Id =:= inspect_process; Id =:= inspect_network; Id =:= inspect_socket
+->
+    [
+        (timeout_constraint(<<"window">>, 0, 5000))#{
+            <<"when_present">> := [<<"timeout">>, <<"window">>]
+        }
+    ];
+runtime_constraints(trace_call) ->
+    [timeout_constraint(<<"duration">>, 10000, 7000)];
+runtime_constraints(trace_stop_all) ->
+    [
+        #{
+            <<"kind">> => <<"minimum_duration">>,
+            <<"when_present">> => [<<"timeout">>],
+            <<"option">> => <<"timeout">>,
+            <<"minimum_ms">> => 5000
+        }
+    ];
+runtime_constraints(inspect_state) ->
+    [
+        #{
+            <<"kind">> => <<"minimum_duration">>,
+            <<"when_present">> => [<<"timeout">>],
+            <<"option">> => <<"timeout">>,
+            <<"minimum_ms">> => 10000
+        }
+    ];
+runtime_constraints(describe) ->
+    [
+        #{
+            <<"kind">> => <<"effective_format">>,
+            <<"when_present">> => [<<"schema">>],
+            <<"format">> => <<"json">>
         },
-        minimum_timeout(10000)
+        #{
+            <<"kind">> => <<"positional_count">>,
+            <<"when_present">> => [<<"schema">>],
+            <<"count">> => 0
+        }
     ];
-command_constraints(supervision_tree) ->
-    [required([<<"app">>])];
-command_constraints(trace_call) ->
+runtime_constraints(_) ->
+    [].
+
+timeout_constraint(Sampling, Default, Margin) ->
+    #{
+        <<"kind">> => <<"timeout_margin">>,
+        <<"when_present">> => [<<"timeout">>],
+        <<"option">> => <<"timeout">>,
+        <<"sampling_option">> => Sampling,
+        <<"default_sampling_ms">> => Default,
+        <<"margin_ms">> => Margin
+    }.
+
+selector_constraints(inspect_state) ->
     [
-        required([<<"pid">>, <<"replace-existing-trace">>]),
-        (timeout_margin([<<"timeout">>], <<"duration">>, 7000))#{default_sampling_ms => 10000}
+        #{<<"kind">> => <<"exactly_one_option">>, <<"options">> => [<<"pid">>, <<"name">>]},
+        #{
+            <<"kind">> => <<"option_value">>,
+            <<"when_present">> => [<<"limit">>],
+            <<"option">> => <<"behavior">>,
+            <<"value">> => <<"gen_event">>
+        }
     ];
-command_constraints(trace_stop_all) ->
-    [required([<<"all">>]), minimum_timeout(5000)];
-command_constraints(schedulers) ->
-    [(timeout_margin([<<"timeout">>], <<"duration">>, 5000))#{default_sampling_ms => 1500}];
-command_constraints(Id) when Id =:= processes; Id =:= network; Id =:= sockets ->
-    [timeout_margin([<<"timeout">>, <<"duration">>], <<"duration">>, 5000)];
-command_constraints(describe) ->
+selector_constraints(inspect_process) ->
     [
-        #{kind => <<"effective_format">>, when_present => [<<"schema">>], format => <<"json">>},
-        #{kind => <<"positional_count">>, when_present => [<<"schema">>], count => 0}
+        #{
+            <<"kind">> => <<"list_options_without_selector">>,
+            <<"options">> => [<<"sort">>, <<"limit">>, <<"window">>],
+            <<"selectors">> => [<<"pid">>, <<"name">>]
+        }
     ];
-command_constraints(_) ->
+selector_constraints(inspect_port) ->
+    [
+        #{
+            <<"kind">> => <<"list_options_without_selector">>,
+            <<"options">> => [<<"sort">>, <<"limit">>],
+            <<"selectors">> => [<<"id">>]
+        }
+    ];
+selector_constraints(_) ->
+    [].
+
+window_constraints(Id) when Id =:= inspect_process; Id =:= inspect_network; Id =:= inspect_socket ->
+    [
+        #{
+            <<"kind">> => <<"sampled_sort_requires_window">>,
+            <<"suffixes">> => [<<"-change">>, <<"-rate">>]
+        }
+    ];
+window_constraints(_) ->
     [].
 
 prerequisites(describe) ->
     [];
-prerequisites(disconnect) ->
-    [];
-prerequisites(status) ->
-    [<<"Saved context from connect; fresh target connection per invocation">>];
-prerequisites(connect) ->
-    [
-        <<"Explicit --node and one cookie source; probe reports whether the diagnostics bundle is available">>
-    ];
 prerequisites(_) ->
     [
-        <<"Explicit --node and one cookie source, or an existing saved context">>,
-        <<"Compatible diagnostics bundle already available on target; no automatic remote code injection">>
+        <<"Explicit atomic target or current process environment; never a saved context">>,
+        <<"Matching observer_cli 3.0.0 bundle and protocol 2; TUI code loading requires --load-code">>
     ].
 
-identifiers(logs) ->
-    #{policy => <<"untrusted_sensitive_text">>, redaction_supported => false};
-identifiers(Id) when Id =:= connect; Id =:= status; Id =:= disconnect; Id =:= describe ->
-    #{policy => <<"context_or_catalog_metadata">>, cookie_values_returned => false};
-identifiers(Id) ->
+identifiers(inspect_logs) ->
+    #{<<"policy">> => <<"untrusted_sensitive_text">>, <<"redaction_supported">> => false};
+identifiers(describe) ->
+    #{<<"policy">> => <<"offline_metadata">>, <<"cookie_values_returned">> => false};
+identifiers(_) ->
     #{
-        default => identifier_default(Id),
-        alias_scope => <<"single_response">>,
-        aliases_executable => false,
-        follow_up =>
-            <<"Use --include-identifiers only in a trusted workflow; preserve explicit target and cookie source">>
+        <<"default">> => <<"included">>,
+        <<"alias_scope">> => <<"single_response">>,
+        <<"aliases_executable">> => false,
+        <<"follow_up">> =>
+            <<"Use typed selectors and preserve the originating explicit target; --redact disables selectors">>
     }.
 
-identifier_default(Id) when Id =:= snapshot; Id =:= diagnose -> <<"redacted">>;
-identifier_default(_) -> <<"included">>.
-
-risk_level(Id) when Id =:= describe; Id =:= disconnect -> <<"local">>;
-risk_level(Id) when
-    Id =:= trace_call;
-    Id =:= trace_stop_all;
-    Id =:= otp_state;
-    Id =:= supervision_tree;
-    Id =:= logs
-->
-    <<"high">>;
-risk_level(_) ->
-    <<"bounded_observation">>.
-
-effects(describe) ->
-    [];
-effects(disconnect) ->
-    [<<"Remove user-global saved context; not a network disconnect">>];
-effects(connect) ->
-    [
-        <<"Create temporary distribution connection and save user-global target selector without cookie value">>
-    ];
-effects(schedulers) ->
-    remote_effects() ++
-        [
-            <<"Enable scheduler wall-time measurement for the worker during sampling and release its registration afterward">>
-        ];
-effects(diagnose) ->
-    remote_effects() ++
-        [
-            <<"Observation samples counters and toggles scheduler wall-time measurement; deep mode adds admitted inventories">>
-        ];
-effects(otp_state) ->
-    remote_effects() ++
-        [
-            <<"Acquire full OTP state before value-free shape reduction; output limit does not bound state acquisition">>
-        ];
-effects(Id) when Id =:= trace_call; Id =:= trace_stop_all ->
-    remote_effects() ++
-        [
-            <<"Clear node-wide legacy process/port trace flags, tracers, and static call patterns; prior state not restored">>,
-            <<"Recon fixed-name tracer/formatter occupants may be terminated; dynamic trace sessions may be affected indirectly">>
-        ];
-effects(_) ->
-    remote_effects().
-
-remote_effects() ->
-    [
-        <<"Temporary distribution controller and bounded diagnostics worker; observation consumes target resources">>
-    ].
+authorization(inspect_state) -> [<<"--allow-state-read">>];
 authorization(trace_call) -> [<<"--replace-existing-trace">>];
 authorization(trace_stop_all) -> [<<"--all">>];
-authorization(otp_state) -> [<<"--behavior">>];
+authorization(tui) -> [<<"--load-code only when remote loading is needed">>];
 authorization(_) -> [].
+output_formats(tui) -> [<<"interactive">>];
+output_formats(_) -> [<<"text">>, <<"term">>, <<"json">>].
 
-summary(connect) ->
-    <<"Probe and save a target selector; does not start a daemon">>;
-summary(status) ->
-    <<"Probe the saved target with a fresh connection">>;
-summary(disconnect) ->
-    <<"Remove the saved target selector">>;
-summary(snapshot) ->
-    <<"Capture bounded runtime facts; deep inventories are opt-in">>;
-summary(memory) ->
-    <<"BEAM memory composition and allocator evidence, not host RSS">>;
-summary(schedulers) ->
-    <<"Sample normal/dirty scheduler utilization and run queues">>;
-summary(distribution) ->
-    <<"Connected visible and hidden Erlang node context">>;
-summary(processes) ->
-    <<"Rank processes by explicit counters or interval observations">>;
-summary(process) ->
-    <<"Safe process metadata and bounded current stacktrace; no mailbox, dictionary, or arbitrary state">>;
-summary(applications) ->
-    <<"Group process metrics by application">>;
-summary(ets) ->
-    <<"ETS metadata only; no table contents">>;
-summary(mnesia) ->
-    <<"Local Mnesia metadata; stopped Mnesia is not_running">>;
-summary(network) ->
-    <<"Legacy inet and VM port-driver counters, not host network traffic">>;
-summary(ports) ->
-    <<"Non-inet Erlang Port metadata, not TCP/UDP port numbers">>;
-summary(port) ->
-    <<"Inspect one raw target-local Erlang Port">>;
-summary(sockets) ->
-    <<"Sockets visible through the OTP socket registry">>;
-summary(otp_state) ->
-    <<"Bounded value-free shapes after full OTP state acquisition">>;
-summary(supervision_tree) ->
-    <<"One application's root and direct children only; not recursive">>;
-summary(logs) ->
-    <<"One-shot retained bytes from a trusted logger_std_h regular file on Linux/macOS; no flush, follow, or rotation archive">>;
-summary(trace_call) ->
-    <<"External/global calls for one PID and exact MFA; identity and relative timing only">>;
-summary(trace_stop_all) ->
-    <<"Stop node-global legacy tracing with explicit authorization">>;
-summary(diagnose) ->
-    <<"Evidence-backed calibrated findings; no findings is not proof of node health">>;
-summary(describe) ->
-    <<"Offline command discovery and bundled schema export; no context or credential reads">>.
-
-examples(connect) ->
-    [[<<"connect">>, <<"--node">>, <<"app@host">>, <<"--cookie-env">>, <<"ERL_COOKIE">>]];
-examples(process) ->
-    [[<<"process">>, <<"my_server">>]];
-examples(port) ->
-    [[<<"port">>, <<"#Port<0.12>">>]];
-examples(otp_state) ->
-    [[<<"otp-state">>, <<"my_server">>, <<"--behavior">>, <<"gen_server">>]];
-examples(supervision_tree) ->
-    [[<<"supervision-tree">>, <<"--app">>, <<"my_app">>]];
-examples(trace_call) ->
+examples(trace_call, Path) ->
     [
         [
-            <<"trace">>,
-            <<"call">>,
-            <<"lists:reverse/1">>,
-            <<"--pid">>,
-            <<"<0.123.0>">>,
-            <<"--replace-existing-trace">>
+            list_to_binary(P)
+         || P <-
+                Path ++
+                    [
+                        "timer:sleep/1",
+                        "--pid",
+                        "<0.123.0>",
+                        "--duration",
+                        "1s",
+                        "--replace-existing-trace"
+                    ]
         ]
     ];
-examples(trace_stop_all) ->
-    [[<<"trace">>, <<"stop">>, <<"--all">>]];
-examples(describe) ->
+examples(trace_stop_all, Path) ->
+    [[list_to_binary(P) || P <- Path ++ ["--all"]]];
+examples(inspect_state, Path) ->
     [
-        [<<"describe">>, <<"trace">>, <<"call">>, <<"--json">>],
-        [<<"describe">>, <<"--schema">>, <<"--json">>]
+        [
+            list_to_binary(P)
+         || P <- Path ++ ["--name", "my_server", "--behavior", "gen_server", "--allow-state-read"]
+        ]
     ];
-examples(Id) ->
-    [[public_name(Id)]].
+examples(inspect_supervision, Path) ->
+    [[list_to_binary(P) || P <- Path ++ ["--app", "kernel"]]];
+examples(_Id, Path) ->
+    [[list_to_binary(P) || P <- Path]].
 
-public(Value) when is_map(Value) ->
-    maps:from_list([{atom_to_binary(Key, utf8), public(Item)} || {Key, Item} <- maps:to_list(Value)]);
-public(Value) when is_list(Value) -> [public(Item) || Item <- Value];
-public(Value) ->
-    Value.
+binary_keys(Map) ->
+    maps:from_list([{atom_to_binary(K), V} || {K, V} <- maps:to_list(maps:remove(key, Map))]).
+
+-spec help([string()]) -> binary().
+help([]) ->
+    iolist_to_binary([
+        "observer_cli - bounded BEAM investigations\n",
+        "Usage: observer_cli [TARGET OPTIONS] COMMAND [OPTIONS]\n\n",
+        [["  ", maps:get(name, E), "  ", maps:get(summary, E), "\n"] || E <- entries()],
+        "\nStart: observer_cli check                  (15-second overview)\n",
+        "Focus: check cpu | memory | mailbox | connections\n",
+        "Next:  inspect process --pid '<0.123.0>'\n",
+        "\nTarget: --node NODE --cookie-env NAME (or --cookie-file PATH)\n",
+        "Shell:  OBSERVER_CLI_NODE + OBSERVER_CLI_COOKIE\n",
+        "        Or OBSERVER_CLI_COOKIE_FILE; choose only one cookie source\n",
+        "Output: --json | --format term | --verbose (text)\n",
+        "Share:  --redact; identifiers are included by default\n",
+        "\nRequires a matching 3.0.0 target; cookies grant trusted-peer authority.\n",
+        "No persistent connection or saved target is used.\n",
+        "Help: COMMAND --help; describe COMMAND --json; --version\n"
+    ]);
+help([Family]) when Family =:= "inspect"; Family =:= "trace" ->
+    {ok, #{<<"commands">> := Commands}} = describe([Family], false),
+    iolist_to_binary([
+        "Choose a path:\n",
+        [["  ", maps:get(<<"name">>, D), " - ", maps:get(<<"summary">>, D), "\n"] || D <- Commands],
+        "Run observer_cli PATH --help for options and examples.\n"
+    ]);
+help(Path) ->
+    case describe(Path, false) of
+        {ok, #{<<"name">> := Name, <<"summary">> := Summary, <<"options">> := Options} = D} ->
+            iolist_to_binary([
+                "Usage: observer_cli ",
+                Name,
+                " [OPTIONS]\n",
+                Summary,
+                "\n\n",
+                [
+                    [
+                        "  --",
+                        maps:get(<<"name">>, O),
+                        option_hint(O),
+                        "\n    ",
+                        maps:get(<<"summary">>, O),
+                        "\n"
+                    ]
+                 || O <- Options
+                ],
+                "\nExamples:\n",
+                [
+                    ["  observer_cli ", lists:join(" ", Args), "\n"]
+                 || Args <- maps:get(<<"examples">>, D)
+                ],
+                "Detailed constraints and risk: describe ",
+                Name,
+                " --json\n"
+            ]);
+        {error, Hint} ->
+            <<Hint/binary, "\n">>
+    end.
+
+option_hint(#{<<"minimum_ms">> := Min, <<"maximum_ms">> := Max} = D) ->
+    Default =
+        case maps:find(<<"default">>, D) of
+            {ok, V} -> io_lib:format("; default ~Bms", [V]);
+            error -> []
+        end,
+    io_lib:format(" VALUE (~Bms..~Bms~ts)", [Min, Max, Default]);
+option_hint(#{<<"enum">> := Values}) ->
+    [" ", lists:join("|", Values)];
+option_hint(#{<<"kind">> := <<"value">>}) ->
+    " VALUE";
+option_hint(_) ->
+    "".
+
+-spec schema() -> {ok, binary()} | {error, schema_unavailable}.
+schema() ->
+    ModulePriv = filename:join([filename:dirname(filename:dirname(code:which(?MODULE))), "priv"]),
+    Dirs =
+        case code:priv_dir(observer_cli) of
+            {error, _} -> [ModulePriv];
+            Priv -> [Priv, ModulePriv]
+        end,
+    read_schema(Dirs).
+read_schema([]) ->
+    {error, schema_unavailable};
+read_schema([Dir | Rest]) ->
+    case erl_prim_loader:get_file(filename:join(Dir, ?SCHEMA_PATH)) of
+        {ok, B, _} -> {ok, B};
+        error -> read_schema(Rest)
+    end.
+
+-spec legacy_hint(string()) -> undefined | binary().
+legacy_hint("connect") ->
+    <<"connect was removed. Pass --node and a cookie source, or set OBSERVER_CLI_NODE and OBSERVER_CLI_COOKIE; then run check.">>;
+legacy_hint("status") ->
+    <<"status was removed. Run check with an explicit target or current shell environment.">>;
+legacy_hint("disconnect") ->
+    <<"disconnect was removed. v3 has no persistent connection; legacy context files are left untouched.">>;
+legacy_hint("diagnose") ->
+    <<"Use check [cpu|memory|mailbox|connections] [--window DURATION]. The default window is 15s.">>;
+legacy_hint("snapshot") ->
+    <<"Use inspect vm [--deep].">>;
+legacy_hint("processes") ->
+    <<"Use inspect process [--sort METRIC] [--window DURATION].">>;
+legacy_hint("process") ->
+    <<"Use inspect process --pid PID or --name NAME.">>;
+legacy_hint("ports") ->
+    <<"Use inspect port.">>;
+legacy_hint("port") ->
+    <<"Use inspect port --id '#Port<0.N>'.">>;
+legacy_hint("applications") ->
+    <<"Use inspect application.">>;
+legacy_hint("sockets") ->
+    <<"Use inspect socket.">>;
+legacy_hint("otp-state") ->
+    <<"Use inspect state (--pid PID | --name NAME) --behavior BEHAVIOR --allow-state-read.">>;
+legacy_hint("supervision-tree") ->
+    <<"Use inspect supervision --app APP.">>;
+legacy_hint("schedulers") ->
+    <<"Use inspect scheduler [--window DURATION].">>;
+legacy_hint(Name) when
+    Name =:= "memory";
+    Name =:= "distribution";
+    Name =:= "network";
+    Name =:= "ets";
+    Name =:= "mnesia";
+    Name =:= "logs"
+->
+    <<"Use inspect ", (list_to_binary(Name))/binary, ".">>;
+legacy_hint(_) ->
+    undefined.

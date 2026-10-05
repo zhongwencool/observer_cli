@@ -14,7 +14,7 @@ render(Response, Width) ->
     Lines = [
         line([
             <<"observer_cli ">>,
-            text(observer_cli_cli:command_name(Command)),
+            text(observer_cli_capture:command_name(Command)),
             <<" | outcome=">>,
             text(maps:get(<<"outcome">>, Response, <<"error">>))
         ]),
@@ -341,8 +341,8 @@ value(List) when is_list(List) ->
 value(Value) ->
     text(Value).
 
-text(Binary) when is_binary(Binary) -> observer_cli_cli:escape_text(Binary);
-text(Value) -> observer_cli_cli:escape_text(io_lib:format("~tp", [Value])).
+text(Binary) when is_binary(Binary) -> observer_cli_capture:escape_text(Binary);
+text(Value) -> observer_cli_capture:escape_text(io_lib:format("~tp", [Value])).
 
 join([], _Separator) -> [];
 join([First | Rest], Separator) -> [First | [[Separator, V] || V <- Rest]].

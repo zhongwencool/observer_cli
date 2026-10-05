@@ -16,7 +16,7 @@ actions_are_valid_bounded_commands_test() ->
     lists:foreach(
         fun(Action) ->
             Args = [binary_to_list(A) || A <- maps:get(<<"argv">>, Action)],
-            ?assertMatch({ok, _}, observer_cli_cli:parse(Args)),
+            ?assertMatch({ok, _}, observer_cli_capture:parse(Args)),
             ?assertEqual(false, maps:get(<<"requires_confirmation">>, Action)),
             ?assertEqual(<<"same_explicit_target">>, maps:get(<<"target_binding">>, Action)),
             ?assertNot(

@@ -501,7 +501,7 @@ internal_markers_do_not_reach_any_encoder_test() ->
             Response = public_error_response(Result),
             lists:foreach(
                 fun(Format) ->
-                    case observer_cli_cli:encode(Format, Response) of
+                    case observer_cli_capture:encode(Format, Response) of
                         {ok, Encoded} ->
                             ?assertEqual(nomatch, binary:match(Encoded, Secret));
                         {error, #{reason := json_unavailable}} when Format =:= json ->
@@ -1016,7 +1016,7 @@ contains_value(_Expected, _Value) ->
     false.
 
 public_error_response({unavailable, Reason, Data, Coverage, [Effect]}) ->
-    Raw = observer_cli_cli:response(
+    Raw = observer_cli_capture:response(
         logs,
         error,
         #{node => node(), otp_release => erlang:system_info(otp_release)},

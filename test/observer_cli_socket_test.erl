@@ -76,6 +76,42 @@ diagnostic_socket_registry_coverage_and_duration_fixture_test() ->
         socket:close(Unregistered)
     end.
 
+diagnostic_counter_rate_uses_matching_sample_instants_test() ->
+    Socket = {'$socket', make_ref()},
+    Clock = fun() ->
+        case get(counter_clock) of
+            undefined -> 0;
+            Value -> Value
+        end
+    end,
+    Source = #{
+        available_fun => fun() -> true end,
+        count_fun => fun() -> 1 end,
+        global_fun => fun() -> #{use_registry => true} end,
+        all_fun => fun() -> {ok, [Socket]} end,
+        info_fun => fun(_Socket) ->
+            Now = Clock(),
+            put(counter_clock, Now + 1000),
+            #{counters => (counter_fixture())#{read_byte := Now, write_byte := 0}}
+        end,
+        sleep_fun => fun(Duration) ->
+            put(counter_clock, Clock() + Duration),
+            ok
+        end,
+        monotonic_fun => Clock
+    },
+    Data = diagnostic_socket_data(#{
+        sort => read_bytes,
+        rank_semantics => rate,
+        limit => 1,
+        duration_ms => 5000,
+        test_socket_source => Source
+    }),
+    ?assertEqual(6000, maps:get(<<"interval_ms">>, Data)),
+    [Item] = maps:get(<<"items">>, Data),
+    ?assertEqual(6000, maps:get(<<"read_bytes_delta">>, Item)),
+    ?assertEqual(1000.0, maps:get(<<"read_bytes_per_second">>, Item)).
+
 diagnostic_socket_enumeration_error_test() ->
     Source = #{
         available_fun => fun() -> true end,

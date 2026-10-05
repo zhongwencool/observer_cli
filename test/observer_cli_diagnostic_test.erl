@@ -407,7 +407,7 @@ zero_reductions_denominator_is_null_test() ->
         exit(Pid, kill)
     end.
 
-required_gap_suppresses_findings_and_optional_refusal_stays_complete_test() ->
+required_gap_retains_supported_findings_and_optional_refusal_stays_complete_test() ->
     Timing = timing(),
     High = sample(0, resources(96, 100), unavailable_inventory()),
     Partial = observer_cli_diagnostic:build_report(
@@ -415,10 +415,11 @@ required_gap_suppresses_findings_and_optional_refusal_stays_complete_test() ->
     ),
     assert_cli_envelope(Partial),
     ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, Partial)),
-    ?assertEqual([], maps:get(findings, report_data(Partial))),
+    ?assertEqual(1, length(maps:get(findings, report_data(Partial)))),
     ?assertEqual([], maps:get(<<"issues">>, Partial)),
     ?assertNotEqual(
-        nomatch, binary:match(maps:get(summary, report_data(Partial)), <<"findings suppressed">>)
+        nomatch,
+        binary:match(maps:get(summary, report_data(Partial)), <<"1 supported finding(s) retained">>)
     ),
     FailedInventory = #{status => error, reason_code => process_inventory_failed},
     OptionalFailure = observer_cli_diagnostic:build_report(
@@ -651,6 +652,58 @@ application_scan_budget_refusal_is_retained() ->
         ok
     end.
 
+memory_rates_use_memory_probe_timestamps_test() ->
+    Memory = observer_cli_snapshot:diagnostic_memory(#{observe => <<"5s">>}),
+    #{scan_started_monotonic_ms := Started, scan_finished_monotonic_ms := Finished} =
+        maps:get(audit, Memory),
+    ?assert(Finished >= Started),
+    Samples = [
+        #{
+            monotonic_midpoint_ms => 0,
+            memory => #{
+                values => #{total_bytes => 100},
+                audit => #{scan_started_monotonic_ms => 100, scan_finished_monotonic_ms => 300}
+            }
+        },
+        #{
+            monotonic_midpoint_ms => 4000,
+            memory => #{
+                values => #{total_bytes => 4900},
+                audit => #{scan_started_monotonic_ms => 4900, scan_finished_monotonic_ms => 5100}
+            }
+        }
+    ],
+    Trend = observer_cli_diagnostic:map_gauge_trend(Samples, memory, values),
+    ?assertEqual(4800, maps:get(interval_ms, Trend)),
+    ?assertEqual(1000.0, maps:get(total_bytes, maps:get(rates_per_second, Trend))).
+
+partial_observation_retains_independent_evidence_with_valid_pointers_test() ->
+    Plan = lists:seq(0, 4000, 1000),
+    Gap = #{status => error, reason_code => sampling_gap},
+    Samples = [Gap | [observation_sample(I, unavailable) || I <- lists:seq(1, 4)]],
+    Report = observer_cli_diagnostic:observation_report(
+        observation, Samples, Plan, unavailable_holder(), timing(), #{}
+    ),
+    ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, Report)),
+    [Finding] = maps:get(findings, report_data(Report)),
+    [Evidence] = maps:get(evidence, Finding),
+    ?assertEqual(1, maps:get(sample_index, Evidence)),
+    ?assertEqual(
+        <<"/data/context/snapshot/runtime_samples/0/process_usage_ratio">>,
+        maps:get(path, Evidence)
+    ),
+    {ok, Normalized} = observer_cli_snapshot:normalize(Report, include),
+    ?assert(observer_cli_escriptize:valid_findings(Normalized)),
+    MemoryFailure = [
+        (observation_sample(I, unavailable))#{memory := #{status => error}}
+     || I <- lists:seq(0, 4)
+    ],
+    MemoryReport = observer_cli_diagnostic:observation_report(
+        observation, MemoryFailure, Plan, unavailable_holder(), timing(), #{}
+    ),
+    ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, MemoryReport)),
+    ?assertEqual(1, length(maps:get(findings, report_data(MemoryReport)))).
+
 observation_required_sets_optional_outcomes_test() ->
     Plan5 = lists:seq(0, 4000, 1000),
     CompleteSamples = [observation_sample(Index, unavailable) || Index <- lists:seq(0, 4)],
@@ -682,9 +735,10 @@ observation_required_sets_optional_outcomes_test() ->
         observation, GapSamples, Plan5, unavailable_holder(), timing(), #{}
     ),
     ?assertEqual(<<"partial">>, maps:get(<<"outcome">>, Gap)),
-    ?assertEqual([], maps:get(findings, report_data(Gap))),
+    ?assertEqual(1, length(maps:get(findings, report_data(Gap)))),
     ?assertNotEqual(
-        nomatch, binary:match(maps:get(summary, report_data(Gap)), <<"findings suppressed">>)
+        nomatch,
+        binary:match(maps:get(summary, report_data(Gap)), <<"1 supported finding(s) retained">>)
     ),
     ?assertMatch(
         #{status := invalid, reason_code := sampling_gap},

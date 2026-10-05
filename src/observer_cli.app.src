@@ -1,6 +1,6 @@
 {application, observer_cli, [
     {description, "Production-ready BEAM diagnostics for operators, automation, and AI agents."},
-    {vsn, "2.0.0"},
+    {vsn, "3.0.0"},
     {modules, [observer_cli]},
     {registered, []},
     {applications, [kernel, stdlib, crypto, recon]},

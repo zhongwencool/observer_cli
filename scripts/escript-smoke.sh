@@ -5,14 +5,19 @@ set -eu
 ROOT=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
+# Do not let caller VM flags or target selection escape the owned test harness.
+unset ERL_FLAGS ERL_AFLAGS ERL_ZFLAGS ERL_LIBS
+unset OBSERVER_CLI_NODE OBSERVER_CLI_COOKIE OBSERVER_CLI_COOKIE_FILE OBSERVER_CLI_NAME_MODE
+
 rebar3 escriptize
 BIN=${OBSERVER_CLI_BIN:-"$ROOT/_build/default/bin/observer_cli"}
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/observer-cli-smoke.XXXXXX")
 TARGET_PID=
 TUI_PID=
+EPMD_PID=
 
 cleanup() {
-    for pid in "$TUI_PID" "$TARGET_PID"; do
+    for pid in "$TUI_PID" "$TARGET_PID" "$EPMD_PID"; do
         [ -z "$pid" ] || {
             kill "$pid" 2>/dev/null || true
             wait "$pid" 2>/dev/null || true
@@ -23,6 +28,17 @@ cleanup() {
 
 trap cleanup 0
 trap 'exit 1' HUP INT TERM
+
+mkdir -p "$TMP/home" "$TMP/config"
+HOME="$TMP/home"
+XDG_CONFIG_HOME="$TMP/config"
+ERL_CRASH_DUMP="$TMP/erl_crash.dump"
+export HOME XDG_CONFIG_HOME ERL_CRASH_DUMP
+
+ERL_EPMD_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+export ERL_EPMD_PORT
+epmd -port "$ERL_EPMD_PORT" -address 127.0.0.1 >"$TMP/epmd.log" 2>&1 &
+EPMD_PID=$!
 
 fail() {
     printf 'not ok - %s\n' "$1" >&2
@@ -74,12 +90,14 @@ check() {
 check_tui_eof() {
     target="observer_cli_smoke_$$@127.0.0.1"
     cookie="observer_cli_smoke_$$"
+    OBSERVER_CLI_SMOKE_COOKIE="$cookie"
+    export OBSERVER_CLI_SMOKE_COOKIE
     target_output="$TMP/tui-target"
     erl -pa \
         "$ROOT/_build/default/lib/observer_cli/ebin" \
         "$ROOT/_build/default/lib/recon/ebin" \
-        -name "$target" -setcookie "$cookie" -noshell \
-        -eval 'io:put_chars("ready\n"), receive after infinity -> ok end.' \
+        -name "$target" -noshell \
+        -eval 'erlang:set_cookie(node(), list_to_atom(os:getenv("OBSERVER_CLI_SMOKE_COOKIE"))), io:put_chars("ready\n"), receive after infinity -> ok end.' \
         >"$target_output" 2>&1 &
     TARGET_PID=$!
 
@@ -96,7 +114,7 @@ check_tui_eof() {
 
     stdout="$TMP/tui-eof.stdout"
     stderr="$TMP/tui-eof.stderr"
-    TERM=xterm-256color "$BIN" tui "$target" "$cookie" 1000 \
+    TERM=xterm-256color "$BIN" tui --node "$target" --cookie-env OBSERVER_CLI_SMOKE_COOKIE --interval 1000ms \
         </dev/null >"$stdout" 2>"$stderr" &
     TUI_PID=$!
 
@@ -124,29 +142,19 @@ check_tui_eof() {
 }
 
 check "top-level help" 0 "Usage:" empty --help
-check "no-argument help" 0 "Usage:" empty
+check "no-argument help" 0 "15-second overview" empty
 check "short help" 0 "Usage:" empty -h
-check "otp-state help" 0 "observer_cli otp-state" empty otp-state --help
-check "logs help" 0 "observer_cli logs" empty logs --help
-check "trace call help" 0 "observer_cli trace call" empty trace call --help
-check "version" 0 "observer_cli 2.0.0" empty --version
-check "unknown option" 2 empty "observer_cli --help" --bogus
-check "removed positional TUI shorthand" 2 empty "unknown command: target@host" target@host
-check "removed gen-server-state command" 2 empty "unknown command: gen-server-state" gen-server-state init
-check "malformed process command" 2 empty "observer_cli process:" process --bogus
-check "logs reject redaction" 2 empty "observer_cli logs:" logs --redact
-check "logs reject invalid tail" 2 empty "observer_cli logs:" logs --tail 0
-check "logs reject arbitrary path" 2 empty "unknown option: --file" logs --file /tmp/app.log
-check \
-    "malformed process term" \
-    2 \
-    '<<"command">> => <<"process">>' \
-    empty \
-    process --bogus --format term
-check \
-    "unsafe trace command" \
-    2 \
-    empty \
-    --replace-existing-trace \
-    trace call erlang:node/0 --pid '<0.1.0>'
+check "state help" 0 "--allow-state-read" empty inspect state --help
+check "logs help" 0 "inspect logs" empty inspect logs --help
+check "trace call help" 0 "trace call" empty trace call --help
+check "version" 0 "observer_cli 3.0.0" empty --version
+check "unknown option" 2 empty "Unknown option" --bogus
+check "removed session" 2 empty "connect was removed" connect
+check "removed resource shorthand" 2 empty "inspect process" processes
+check "logs reject redaction" 2 empty "not supported" inspect logs --redact
+check "logs invalid tail" 2 empty "Invalid --tail" inspect logs --tail 0
+check "rate needs a window" 2 empty "requires --window" inspect process --sort reductions-rate
+check "redacted PID is not executable" 2 empty "redacted pid-N" inspect process --pid pid-1
+check "state consent" 2 empty "--allow-state-read" inspect state --name init --behavior gen_server
+check "trace consent" 2 empty "--replace-existing-trace" trace call erlang:node/0 --pid '<0.1.0>'
 check_tui_eof

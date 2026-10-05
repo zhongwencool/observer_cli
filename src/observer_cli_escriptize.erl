@@ -2,7 +2,16 @@
 
 -include("observer_cli.hrl").
 
--export([main/1]).
+-export([
+    main/1,
+    capture/2,
+    run_tui_options/1,
+    command_output/3,
+    response_exit_code/1,
+    output_encode_error/1,
+    exit_with_code/1,
+    write_stdout/1
+]).
 
 %% for rpc
 -export([ensure_set_env/2]).
@@ -19,7 +28,10 @@
     run/4,
     run_remote/4,
     remote_module_available/1,
+    remote_module_available/2,
+    tui_result/1,
     remote_load/1,
+    remote_load/2,
     run_command/2,
     command_request/3,
     with_target/2,
@@ -31,8 +43,6 @@
     validate_response/4,
     cleanup_outcome/2,
     capability_error/2,
-    probe_response/5,
-    command_output/3,
     command_output_device/2,
     response_command/2,
     valid_probe_reason/2,
@@ -40,7 +50,6 @@
     pointer_exists/2,
     public_value/2,
     public_text/1,
-    public_cookie_source/1,
     command_format/1,
     command_identity/2,
     command_display/1,
@@ -48,7 +57,6 @@
     command_from_args/1,
     requested_format/1,
     command_error/4,
-    output_encode_error/1,
     output_command_encode_error/3,
     valid_target/3,
     valid_otp_release/1,
@@ -56,7 +64,6 @@
     valid_probe/1,
     valid_issues/1,
     valid_issue_class/2,
-    response_exit_code/1,
     valid_command_payload/3,
     valid_list_command_payload/3,
     valid_required_probes/3,
@@ -88,11 +95,7 @@
     probe_options/2,
     connect_started/6,
     ensure_net_kernel_name_mode/1,
-    run_connect/1,
     ensure_output_format/2,
-    save_connected_context/2,
-    run_status/1,
-    run_disconnect/0,
     with_active_target/2,
     controller_stopped/1
 ]).
@@ -105,126 +108,141 @@
 %% @doc escript main
 -spec main([string()]) -> ok | no_return().
 
-main([]) ->
-    usage();
-main(["--help"]) ->
-    usage();
-main(["-h"]) ->
-    usage();
-main(["help"]) ->
-    usage();
-main(["help", Command]) ->
-    help_target([Command]);
-main(["--version"]) ->
-    version();
-main(["version"]) ->
-    root_error({unknown_command, "version"});
-main(Options) ->
-    case requested_help(Options) of
-        true -> help_target(Options);
-        false -> main_options(Options)
+main(Arguments) ->
+    observer_cli_entry:main(Arguments).
+
+%% Only collection primitives are available through this production adapter.
+%% Context administration is not a v3 command or a compatibility executor.
+-spec write_stdout(iodata()) -> ok.
+-ifdef(TEST).
+write_stdout(Output) -> io:put_chars(Output).
+-else.
+write_stdout(Output) -> output_put_chars(standard_io, Output).
+-endif.
+
+-spec capture(atom(), map()) -> {ok, map(), non_neg_integer()} | {error, atom(), term()}.
+capture(Command, Options) ->
+    Allowed = [
+        snapshot,
+        diagnose,
+        memory,
+        schedulers,
+        distribution,
+        processes,
+        process,
+        applications,
+        ets,
+        mnesia,
+        network,
+        ports,
+        port,
+        sockets,
+        otp_state,
+        supervision_tree,
+        logs,
+        trace
+    ],
+    case lists:member(Command, Allowed) of
+        true -> run_command(Command, Options);
+        false -> {error, argument, unknown_command}
     end.
 
-main_options(Options) ->
-    case parse_args(Options) of
-        {ok, #{
-            route := tui,
-            target := TargetNode,
-            cookie := Cookie,
-            interval := Interval
-        }} ->
-            run_tui(TargetNode, Cookie, Interval);
-        {ok, #{
-            route := command,
-            command := Command,
-            arguments := Arguments,
-            options := CommandOptions
-        }} ->
-            CommandIdentity = command_identity(Command, Arguments),
-            case run_command(Command, CommandOptions#{arguments => Arguments}) of
-                {schema, SchemaBytes} ->
-                    output_put_chars(standard_io, SchemaBytes),
-                    exit_with_code(0);
-                {ok, Response, ExitCode} ->
-                    command_output(CommandOptions, Response, ExitCode);
-                {error, Category, Reason} ->
-                    command_error(CommandIdentity, CommandOptions, Category, Reason)
-            end;
-        {error, Error} ->
-            case command_from_args(Options) of
-                undefined ->
-                    command_error(
-                        unknown,
-                        requested_format(Options),
-                        maps:get(category, Error),
-                        maps:get(message_reason, Error, maps:get(reason, Error))
+-spec run_tui_options(map()) -> ok | {error, atom(), term()}.
+run_tui_options(Options) ->
+    case observer_cli_capture:cookie_source(Options) of
+        {ok, Cookie} ->
+            {ok, {Node, Mode}} = observer_cli_capture:target(Options),
+            tui_controller(list_to_atom(Node), Mode, binary_to_atom(Cookie), Options);
+        {error, Reason} ->
+            {error, connection, Reason}
+    end.
+
+tui_controller(Target, Mode, Cookie, Options) ->
+    case node() of
+        nonode@nohost -> start_tui_controller(Target, Mode, Cookie, Options);
+        _ -> {error, controller, controller_already_distributed}
+    end.
+
+start_tui_controller(Target, Mode, Cookie, Options) ->
+    case
+        net_kernel:start(undefined, #{name_domain => Mode, dist_listen => false, hidden => true})
+    of
+        {ok, _} ->
+            Outcome =
+                try
+                    connect_tui(Target, Cookie, Options)
+                catch
+                    _:_ -> {error, connection, tui_start_failed}
+                end,
+            cleanup_outcome(Outcome, stop_controller(1000));
+        _ ->
+            {error, controller, controller_start_failed}
+    end.
+
+connect_tui(Target, Cookie, Options) ->
+    Deadline = erlang:monotonic_time(millisecond) + 10000,
+    case random_cookie(fun() -> crypto:strong_rand_bytes(24) end) of
+        {ok, Random} ->
+            true = erlang:set_cookie(Random),
+            true = erlang:set_cookie(Target, Cookie),
+            case connect_before(Target, fun net_kernel:connect_node/1, remaining(Deadline)) of
+                ok ->
+                    tui_on_target(
+                        Target, capabilities(Target, remaining(Deadline)), Options, Deadline
                     );
-                Command ->
-                    command_error(
-                        Command,
-                        requested_format(Options),
-                        maps:get(category, Error),
-                        maps:get(message_reason, Error, maps:get(reason, Error))
-                    )
-            end
+                Error ->
+                    Error
+            end;
+        error ->
+            {error, controller, random_cookie_unavailable}
     end.
 
-command_identity(trace, ["call" | _]) -> trace_call;
-command_identity(trace, ["stop" | _]) -> trace_stop_all;
-command_identity(Command, _Arguments) -> Command.
+tui_on_target(Target, CapabilityResult, Options, Deadline) ->
+    Load = maps:get(load_code, Options, false),
+    case {CapabilityResult, Load} of
+        {{ok, _}, _} ->
+            start_installed_tui(Target, Options, Deadline);
+        {{error, capability, _}, true} ->
+            load_and_start_tui(Target, Options, Deadline);
+        {{error, capability, _}, false} ->
+            {error, capability, capability_unavailable};
+        {Error, _} ->
+            Error
+    end.
 
-requested_help(Options) ->
-    lists:member("--help", Options) orelse lists:member("-h", Options).
-
-help_target(["tui" | _]) ->
-    tui_help();
-help_target(["trace", "call" | _]) ->
-    trace_call_help();
-help_target(["trace", "stop" | _]) ->
-    trace_stop_help();
-help_target([[$- | _] | _]) ->
-    usage();
-help_target([Command | _]) ->
-    case observer_cli_cli:command(Command) of
-        undefined -> root_error({unknown_command, Command});
-        _ -> command_help(Command)
-    end;
-help_target([]) ->
-    usage().
-
-version() ->
-    #{bundle_version := Version, protocol_version := Protocol} =
-        observer_cli_snapshot:capabilities(),
-    io:put_chars(
-        io_lib:format(
-            "observer_cli ~ts~nschema ~ts~nprotocol ~B~ncontroller OTP ~ts~n",
-            [
-                Version,
-                observer_cli_cli:schema(),
-                Protocol,
-                erlang:system_info(otp_release)
-            ]
-        )
-    ).
-
--spec root_error(term()) -> no_return().
-root_error(Reason) ->
-    command_error(unknown, text, argument, Reason).
-
-run_tui(TargetNode, Cookie, Interval) ->
-    try run(TargetNode, cookie_atom(Cookie), Interval) of
-        Result -> Result
+load_and_start_tui(Target, Options, Deadline) ->
+    try remote_load(Target, Deadline) of
+        ok -> start_installed_tui(Target, Options#{load_code => false}, Deadline)
     catch
-        error:{remote_otp_mismatch, ControllerOtp, TargetOtp}:_Stacktrace ->
-            command_error(
-                tui,
-                text,
-                connection,
-                {remote_otp_mismatch, ControllerOtp, TargetOtp}
-            );
-        _Class:_Reason:_Stacktrace ->
-            command_error(tui, text, connection, tui_start_failed)
+        error:{remote_otp_mismatch, ControllerOtp, TargetOtp} ->
+            {error, connection, {remote_otp_mismatch, ControllerOtp, TargetOtp}};
+        _:_ ->
+            {error, connection, tui_start_failed}
     end.
+
+start_installed_tui(Target, Options, Deadline) ->
+    case remote_module_available(Target, remaining(Deadline)) of
+        true ->
+            Interval = observer_cli_input:duration_ms(maps:get(interval, Options, "1500ms")),
+            try observer_cli:start(Target, [{interval, Interval}]) of
+                Result -> tui_result(Result)
+            catch
+                _:_ -> {error, connection, tui_start_failed}
+            end;
+        false ->
+            case maps:get(load_code, Options, false) of
+                true -> load_and_start_tui(Target, Options, Deadline);
+                false -> {error, capability, capability_unavailable}
+            end;
+        Error ->
+            Error
+    end.
+
+%% The interactive RPC returns quit on normal exit, but failures are values too.
+tui_result(quit) -> ok;
+tui_result({badrpc, _Reason}) -> {error, connection, tui_start_failed};
+tui_result({error, Category, Reason}) -> {error, Category, Reason};
+tui_result(_Unexpected) -> {error, internal, tui_start_failed}.
 
 -ifdef(TEST).
 run_args(Options, RunFun) ->
@@ -233,460 +251,19 @@ run_args(Options, RunFun) ->
             RunFun(TargetNode, cookie_atom(Cookie), Interval);
         {ok, #{route := command} = Command} ->
             {ok, Command};
-        {error, _Reason} ->
-            usage()
+        {error, _} ->
+            io:put_chars(observer_cli_catalog:help([]))
     end.
 -endif.
 
-usage() ->
-    io:put_chars(
-        "Usage:\n"
-        "  observer_cli COMMAND [ARGUMENTS] [OPTIONS]\n"
-        "  observer_cli tui NODE [COOKIE REFRESH_MS]\n"
-        "  observer_cli connect --node NODE\n"
-        "    (--cookie-env NAME | --cookie-file PATH)\n"
-        "\n"
-        "Target context:\n"
-        "  connect             Verify and save a target context\n"
-        "  status              Check the saved target context\n"
-        "  disconnect          Remove the saved target context\n"
-        "\n"
-        "Diagnostics:\n"
-        "  diagnose            Detect likely VM problems and report evidence\n"
-        "  snapshot            Collect a point-in-time VM fact bundle\n"
-        "  logs                Read bounded retained logs from one configured file\n"
-        "\n"
-        "VM health:\n"
-        "  memory              Show VM memory and allocator usage\n"
-        "  schedulers          Measure scheduler utilization and run queues\n"
-        "  distribution        Show connected Erlang nodes\n"
-        "  network             Show VM network I/O\n"
-        "\n"
-        "Runtime resources:\n"
-        "  processes           List top processes\n"
-        "  process PID_OR_NAME Inspect one process\n"
-        "  applications        Group process resources by application\n"
-        "  ets                 List ETS tables\n"
-        "  mnesia              List local Mnesia tables\n"
-        "  ports               List Erlang ports\n"
-        "  port PORT_ID        Inspect one Erlang port\n"
-        "  sockets             List OTP sockets\n"
-        "\n"
-        "OTP structures:\n"
-        "  otp-state PID_OR_NAME\n"
-        "                      Inspect an asserted OTP behavior state shape\n"
-        "  supervision-tree --app APP\n"
-        "                      Show an application supervision tree\n"
-        "\n"
-        "Tracing:\n"
-        "  trace call MFA      Run a bounded function trace\n"
-        "  trace stop --all    Clear all node-static tracing\n"
-        "\n"
-        "Interactive:\n"
-        "  tui NODE            Open the terminal UI; see 'tui --help'\n"
-        "\n"
-        "Help and version:\n"
-        "  describe [COMMAND] Inspect offline command capabilities\n"
-        "  --help, -h          Show this overview\n"
-        "  help COMMAND        Show command help (also COMMAND --help)\n"
-        "  --version           Show local bundle, protocol, schema, and OTP\n"
-        "\n"
-        "Target options:\n"
-        "  --node NODE         Use an explicit target instead of saved context\n"
-        "  --cookie-env NAME   Read the target cookie from an environment variable\n"
-        "  --cookie-file PATH  Read the target cookie from a file\n"
-        "  --name-mode MODE    short or long; inferred from NODE by default\n"
-        "\n"
-        "Identifier policy:\n"
-        "  snapshot and diagnose redact identifiers by default.\n"
-        "  Inspection and tracing include identifiers by default.\n"
-        "\n"
-        "Output options:\n"
-        "  --format FORMAT     text, term, or json; text by default\n"
-        "  --verbose           Full text evidence; not valid with JSON or term\n"
-        "  --json              Alias for --format json (OTP 27+ controller)\n"
-        "  --redact            Hide target identifiers\n"
-        "  --include-identifiers\n"
-        "                      Include identifiers in snapshot or diagnose output\n"
-        "  --timeout DURATION  Set the command deadline, up to 120s\n"
-        "\n"
-        "DURATION accepts milliseconds (1500 or 1500ms) or seconds (2s).\n"
-        "\n"
-        "Exit status: 0 success, 1 diagnose findings, 2 usage/capability,\n"
-        "3 runtime/refusal/partial, 4 internal/schema/cleanup.\n"
-        "\n"
-        "Run 'observer_cli COMMAND --help' for options and examples.\n"
-    ).
-
-command_help("describe") ->
-    io:put_chars(
-        "Usage:\n  observer_cli describe [COMMAND [SUBCOMMAND]] [--format text|term|json]\n"
-        "  observer_cli describe --schema --json\n\n"
-        "Describe noninteractive commands without connecting or reading credentials.\n"
-        "Use --verbose for full text metadata. JSON and term include all constraints.\n"
-        "--schema exports the bundled JSON Schema itself, not a response envelope;\n"
-        "it requires JSON output and no command arguments. JSON requires OTP 27+.\n"
-        "Examples:\n  observer_cli describe trace call --json\n"
-        "  observer_cli describe processes --format term\n"
-    );
-command_help("connect") ->
-    io:put_chars(
-        "Usage:\n"
-        "  observer_cli connect --node NODE\n"
-        "    (--cookie-env NAME | --cookie-file PATH) [OPTIONS]\n"
-        "\n"
-        "Verify the target and save its node and cookie-source metadata.\n"
-        "No cookie or persistent connection is stored. Later commands use this\n"
-        "context by default. The target must already have a compatible\n"
-        "observer_cli diagnostics bundle installed.\n"
-        "\n"
-        "Options:\n"
-        "  --name-mode short|long\n"
-        "  --timeout DURATION      Command deadline, up to 120s\n"
-        "  --format text|term|json\n"
-        "  --json\n"
-        "\n"
-        "DURATION accepts milliseconds (1500 or 1500ms) or seconds (2s).\n"
-        "\n"
-        "Example:\n"
-        "  observer_cli connect --node app@host --cookie-env ERL_COOKIE\n"
-    );
-command_help("status") ->
-    io:put_chars(
-        "Usage:\n"
-        "  observer_cli status [--timeout DURATION]\n"
-        "    [--format text|term|json] [--json]\n"
-        "\n"
-        "Probe the target saved by connect. This starts a fresh connection; connect\n"
-        "does not run a daemon. The result reports target OTP, diagnostics bundle,\n"
-        "name mode, and cookie-source metadata without exposing the cookie.\n"
-        "\n"
-        "Example:\n"
-        "  observer_cli status\n"
-    );
-command_help("disconnect") ->
-    io:put_chars(
-        "Usage:\n"
-        "  observer_cli disconnect [--format text|term|json] [--json]\n"
-        "\n"
-        "Remove the saved target context. This is not a network disconnect operation.\n"
-        "\n"
-        "Example:\n"
-        "  observer_cli disconnect\n"
-    );
-command_help("snapshot") ->
-    remote_help(
-        "snapshot [--deep] [--include-identifiers]",
-        "Collect bounded runtime facts. The default avoids resource inventories;\n"
-        "--deep adds admitted Top-N scans.",
-        "  --deep                 Add process, table, network, port, and socket\n"
-        "                         inventories\n"
-        "  --include-identifiers  Include real node, PID, name, and MFA identifiers\n",
-        "  observer_cli snapshot --deep --format term\n"
-    );
-command_help("diagnose") ->
-    remote_help(
-        "diagnose [DIAGNOSTIC OPTIONS]",
-        "Run evidence-backed diagnostics. Quick mode evaluates process, port, atom,\n"
-        "and ETS limit pressure only. Observation also evaluates supported scheduler\n"
-        "pressure rules; growth and backlog trends are context, not root causes.\n"
-        "No findings is not proof of node health. Exit 1 means complete findings.",
-        "  --observe DURATION     Sample for 5s..60s\n"
-        "                        Temporarily register scheduler wall-time measurement;\n"
-        "                        cleanup releases this worker's registration only.\n"
-        "  --deep                 Add deep resource observation; requires --observe\n"
-        "  --app APP              Observe one application; requires --observe\n"
-        "  --include-identifiers  Include real node, PID, name, and MFA identifiers\n",
-        "  observer_cli diagnose\n"
-        "  observer_cli diagnose --observe 30s --deep --json\n"
-        "  observer_cli diagnose --observe 30s --app kernel\n"
-    );
-command_help("memory") ->
-    remote_help(
-        "memory",
-        "Show point-in-time BEAM memory, allocator, and runtime facts.\n"
-        "This is not host RSS.",
-        "",
-        "  observer_cli memory\n"
-    );
-command_help("schedulers") ->
-    remote_help(
-        "schedulers [--duration DURATION]",
-        "Measure normal and dirty scheduler utilization and run queues.\n"
-        "Temporarily register scheduler wall-time measurement; cleanup releases only\n"
-        "this worker's registration, preserving other tools' registrations.",
-        "  --duration DURATION  250ms..10s; 1500ms by default\n",
-        "  observer_cli schedulers --duration 2s\n"
-    );
-command_help("distribution") ->
-    remote_help(
-        "distribution [--limit N]",
-        "Show connected visible and hidden Erlang nodes and available\n"
-        "distribution context.",
-        limit_help(),
-        "  observer_cli distribution --limit 50\n"
-    );
-command_help("processes") ->
-    remote_help(
-        "processes [--sort KEY] [--limit N] [--duration DURATION]",
-        "List top processes with TUI-style context using bounded explicit-key\n"
-        "inspection. --duration reports interval deltas instead of totals.",
-        "  --sort KEY           memory (default), message_queue_len, reductions,\n"
-        "                       binary_memory, or total_heap_size\n"
-        "  --limit N            1..200; 20 by default\n"
-        "  --duration DURATION  250ms..10s\n",
-        "  observer_cli processes --sort memory --limit 20\n"
-        "  observer_cli processes --sort reductions --duration 1500ms\n"
-    );
-command_help("process") ->
-    remote_help(
-        "process PID_OR_NAME",
-        "Inspect safe metadata for one local PID or registered process name.\n"
-        "A bounded, normalized current stacktrace is included. Messages, the\n"
-        "dictionary, and arbitrary state are not returned.",
-        "",
-        "  observer_cli process \"<0.123.0>\"\n"
-    );
-command_help("applications") ->
-    list_help(
-        "applications",
-        "Group process count, memory, reductions, and message queues by application.",
-        "memory (default), process_count, reductions, message_queue_len"
-    );
-command_help("ets") ->
-    list_help(
-        "ets",
-        "List ETS table metadata without reading table contents.",
-        "memory (default), size"
-    );
-command_help("mnesia") ->
-    list_help(
-        "mnesia",
-        "List local Mnesia table metadata. A stopped Mnesia application is\n"
-        "reported as not_running.",
-        "memory (default), size"
-    );
-command_help("network") ->
-    counter_help(
-        "network",
-        "Show VM port-driver and legacy inet counters, not all host network traffic.",
-        "oct (default), recv_oct, send_oct,\n"
-        "                       cnt, recv_cnt, send_cnt"
-    );
-command_help("ports") ->
-    list_help(
-        "ports",
-        "List non-inet Erlang Port metadata and counters, not TCP or UDP port numbers.",
-        "queue_size (default), memory, input, output, io"
-    );
-command_help("port") ->
-    remote_help(
-        "port '#Port<0.N>' [--redact]",
-        "Inspect one target-local Erlang port by its raw Port text.",
-        "  --redact  Hide port, process, endpoint, interface, and netns identifiers\n",
-        "  observer_cli port '#Port<0.12>'\n"
-    );
-command_help("sockets") ->
-    counter_help(
-        "sockets",
-        "List sockets visible through the OTP socket registry.",
-        "io (default), read_bytes, write_bytes, packets,\n"
-        "                       waits, fails"
-    );
-command_help("otp-state") ->
-    remote_help(
-        "otp-state PID_OR_NAME --behavior BEHAVIOR [--limit N] [--redact]",
-        "Inspect bounded, value-free shapes after a full OTP behavior state copy\n"
-        "on the target. The full-copy acquisition can wait up to 5s.",
-        "  --behavior BEHAVIOR  Required operator assertion: gen_server,\n"
-        "                       gen_statem, or gen_event\n"
-        "  --limit N            gen_event handlers only; 1..200, 20 by default\n"
-        "                       This is an output soft cap, not an acquisition cap\n"
-        "  --timeout DURATION   Overall command deadline; minimum 10s\n"
-        "  --redact             Hide identifiers found in returned shapes\n",
-        "  observer_cli otp-state my_server --behavior gen_server --redact\n"
-        "  observer_cli otp-state alarm_handler --behavior gen_event --limit 50\n"
-    );
-command_help("supervision-tree") ->
-    remote_help(
-        "supervision-tree --app APP",
-        "Show one application's root and direct children only; not recursive.",
-        "  --app APP  Application name; required\n",
-        "  observer_cli supervision-tree --app my_app\n"
-    );
-command_help("logs") ->
-    logs_help();
-command_help("trace") ->
-    io:put_chars(
-        "Usage:\n"
-        "  observer_cli trace call MFA --pid PID --replace-existing-trace\n"
-        "    [OPTIONS] [TARGET OPTIONS] [OUTPUT OPTIONS]\n"
-        "  observer_cli trace stop --all\n"
-        "    [TARGET OPTIONS] [OUTPUT OPTIONS]\n"
-        "\n"
-        "Run or stop bounded node-global call tracing. Calls cover external/global\n"
-        "calls only for one live target-local PID and one loaded, exported MFA;\n"
-        "local intra-module calls are excluded. Events contain identity and\n"
-        "relative timing, never arguments, returns, exceptions, or stacks.\n"
-        "Trace setup and cleanup clear node-wide legacy process/port trace flags\n"
-        "and tracers plus static call patterns without restoring prior state.\n"
-        "Recon 2.5.6 may terminate processes or ports occupying its fixed\n"
-        "tracer/formatter names. Dynamic trace sessions are not directly cleared,\n"
-        "but killing such a fixed-name occupant can disable one.\n"
-        "\n"
-        "Run 'observer_cli trace call --help' or\n"
-        "'observer_cli trace stop --help' for the exact safety contract.\n"
-    );
-command_help(_Command) ->
-    root_error(unknown_command).
-
-logs_help() ->
-    io:put_chars(
-        "Usage:\n"
-        "  observer_cli logs [--handler HANDLER_ID] [--tail LINES]\n"
-        "    [TARGET OPTIONS] [OUTPUT OPTIONS]\n"
-        "\n"
-        "Read retained bytes once from one trusted logger_std_h file handler's\n"
-        "configured path. It does not wait for new lines.\n"
-        "This does not flush Logger buffers, prove a match with the handler's active\n"
-        "file descriptor, or read rotation archives.\n"
-        "Log text is sensitive and untrusted; --redact and --include-identifiers\n"
-        "are rejected rather than implying that arbitrary text can be sanitized.\n"
-        "\n"
-        "Options:\n"
-        "  --handler HANDLER_ID  Select one handler; required when several qualify\n"
-        "  --tail LINES          1..2000 physical lines; 200 by default\n"
-        "  --timeout DURATION    Remote-operation deadline; 10s default, max 120s\n"
-        "  --format text|term|json\n"
-        "  --json\n"
-        "\n"
-        "Only plain regular files on Linux and macOS targets are supported.\n"
-        "The command reads at most 64 KiB and retains at most 32 KiB per line.\n"
-        "\n"
-        "Examples:\n"
-        "  observer_cli logs\n"
-        "  observer_cli logs --handler app_file --tail 500\n"
-    ).
-
-tui_help() ->
-    io:put_chars(
-        "Usage:\n"
-        "  observer_cli tui NODE [COOKIE REFRESH_MS]\n"
-        "\n"
-        "Open the interactive terminal UI. REFRESH_MS defaults to 1500 and must\n"
-        "be at least 1000. The TUI retains automatic remote bundle loading.\n"
-        "\n"
-        "Warning:\n"
-        "  A positional COOKIE is visible in process arguments and shell history.\n"
-        "  Prefer a protected Erlang cookie file or an already matching cookie.\n"
-    ).
-
-trace_call_help() ->
-    remote_help(
-        "trace call MFA --pid PID --replace-existing-trace [OPTIONS]",
-        "Run a bounded call-only trace for one loaded, exported MFA and one live\n"
-        "target-local PID. MFA syntax is module:function/arity. Only external/global\n"
-        "calls are captured; local intra-module calls are excluded.\n"
-        "Setup and teardown clear node-wide legacy process/port trace flags,\n"
-        "tracers, and all static call patterns, including on-load and call-memory.\n"
-        "Prior state is not restored. Recon 2.5.6 may terminate a process or port\n"
-        "occupying a fixed tracer or formatter name.\n"
-        "Dynamic trace sessions are not directly cleared, but killing such an\n"
-        "occupant can disable one.\n"
-        "The acknowledgement flag is therefore required. An explicit overall\n"
-        "timeout must cover the duration plus seven seconds.\n"
-        "Events contain only tracee, MFA, and session-relative offset; arguments,\n"
-        "returns, exceptions, and stacks are never collected. Identifiers are\n"
-        "included by default; use --redact before exporting output.\n"
-        "data.trace.trace_complete=true means normal lifecycle completion with no\n"
-        "detected loss, module change, or interference.\n"
-        "At most 1000 events are returned; inspect status, truncated, and\n"
-        "dropped_count. Duration expiry, manual stop, response-cap loss, a detected\n"
-        "module change or rejected interference can still return\n"
-        "outcome=complete and exit 0 with data.trace.status=partial.\n"
-        "cleanup_unconfirmed is outcome=error/exit 4 and may omit trace data;\n"
-        "target tracing may remain, so retry trace stop --all and verify it.",
-        "  --pid PID                 Live target-local tracee PID; required\n"
-        "  --duration DURATION       100ms..60s; 10s by default\n"
-        "  --limit N                 1..1000 events; 100 by default\n"
-        "  --rate N/s                Recon burst breaker, not a pacer; 1..200/s;\n"
-        "                            trip event included; the first event after an\n"
-        "                            expired window is forwarded and resets the\n"
-        "                            counter to zero; total capture may exceed N\n"
-        "                            across windows; conflicts with --limit\n"
-        "  --replace-existing-trace  Acknowledge node-global replacement\n",
-        "  observer_cli trace call my_mod:my_fun/2 --pid \"<0.123.0>\" \\\n"
-        "    --duration 30s --limit 200 --replace-existing-trace\n"
-    ).
-
-trace_stop_help() ->
-    remote_help(
-        "trace stop --all",
-        "Stop an active observer_cli trace or perform emergency cleanup. This\n"
-        "clears node-wide legacy process/port trace flags, tracers, and all static\n"
-        "call patterns, including on-load and call-memory, without restoring prior\n"
-        "state. With recon 2.5.6, a process or port occupying a fixed tracer or\n"
-        "formatter name may be terminated. Dynamic trace sessions are not directly\n"
-        "cleared, but killing such an occupant can disable one. --all acknowledges\n"
-        "that scope. Explicit timeout minimum: 5s. When trace data is present, the\n"
-        "public stop response has events=[]; captured events are returned only by\n"
-        "the original waiting trace call invocation. With no owned observer_cli\n"
-        "trace, cleanup still runs but reports cleanup_unconfirmed. This is\n"
-        "outcome=error, exit 4. Retry stop and verify target trace state whenever\n"
-        "cleanup is unconfirmed.",
-        "  --all  Acknowledge node-global trace cleanup; required\n",
-        "  observer_cli trace stop --all\n"
-    ).
-
-remote_help(Usage, Description, Options, Examples) ->
-    io:put_chars([
-        "Usage:\n  observer_cli ",
-        Usage,
-        "\n    [TARGET OPTIONS] [OUTPUT OPTIONS]\n\n",
-        Description,
-        "\n\nCommand options:\n",
-        case Options of
-            "" -> "  None\n";
-            _ -> Options
-        end,
-        "\nTarget options:\n",
-        "  Use the context saved by connect, or pass --node NODE and exactly one of\n",
-        "  --cookie-env NAME or --cookie-file PATH. --name-mode accepts short or long.\n",
-        "\nOutput options:\n",
-        "  --format text|term|json, --json\n"
-        "  --verbose shows detailed text; JSON and term always retain full evidence.\n",
-        "  --redact hides identifiers for inspection and trace commands.\n",
-        "  --include-identifiers reveals them for snapshot and diagnose.\n",
-        "  --timeout DURATION sets the command deadline, up to 120s.\n",
-        "  DURATION accepts milliseconds (1500 or 1500ms) or seconds (2s).\n",
-        "\nExamples:\n",
-        Examples
-    ]).
-
-list_help(Command, Description, Sorts) ->
-    remote_help(
-        Command ++ " [--sort KEY] [--limit N]",
-        Description,
-        "  --sort KEY  " ++ Sorts ++ "\n" ++ limit_help(),
-        "  observer_cli " ++ Command ++ " --sort " ++ hd(string:split(Sorts, " ")) ++
-            " --limit 20\n"
-    ).
-
-counter_help(Command, Description, Sorts) ->
-    remote_help(
-        Command ++ " [--sort KEY] [--limit N] [--duration DURATION]",
-        Description,
-        "  --sort KEY           " ++ Sorts ++ "\n" ++
-            "  --limit N            1..200; 20 by default\n" ++
-            "  --duration DURATION  250ms..10s; show interval deltas instead of totals\n",
-        "  observer_cli " ++ Command ++ " --duration 1500ms --limit 20\n"
-    ).
-
-limit_help() ->
-    "  --limit N  1..200; 20 by default\n".
-
+-ifdef(TEST).
 parse_args(Options) ->
-    observer_cli_cli:parse(Options).
+    observer_cli_capture:parse(Options).
+-endif.
+
+command_identity(trace, ["call" | _]) -> trace_call;
+command_identity(trace, ["stop" | _]) -> trace_stop_all;
+command_identity(Command, _Arguments) -> Command.
 
 run_command(Command, Options) ->
     case ensure_output_format(command_identity(Command, arguments(Options)), Options) of
@@ -694,20 +271,9 @@ run_command(Command, Options) ->
         Error -> Error
     end.
 
-run_command_ready(describe, #{schema := true}) ->
-    case observer_cli_catalog:schema() of
-        {ok, Bytes} when byte_size(Bytes) =< ?MAX_RESPONSE_BYTES -> {schema, Bytes};
-        {ok, _} -> {error, schema, response_too_large};
-        {error, Reason} -> {error, internal, Reason}
-    end;
-run_command_ready(describe, Options) ->
-    case observer_cli_catalog:describe(arguments(Options)) of
-        {ok, Data} ->
-            {ok, observer_cli_cli:response(describe, complete, null, null, Data, []), 0};
-        {error, Reason} ->
-            {error, argument, Reason}
-    end;
-run_command_ready(snapshot, Options) ->
+run_command_ready(Command, Options) -> run_capture_ready(Command, Options).
+
+run_capture_ready(snapshot, Options) ->
     with_target(diagnostic_connection_options(Options), fun(Target, _Capabilities, Remaining) ->
         run_snapshot(
             Target,
@@ -716,17 +282,11 @@ run_command_ready(snapshot, Options) ->
             Remaining
         )
     end);
-run_command_ready(diagnose, Options) ->
+run_capture_ready(diagnose, Options) ->
     with_target(diagnostic_connection_options(Options), fun(Target, _Capabilities, Remaining) ->
         run_diagnose(Target, Options, Remaining)
     end);
-run_command_ready(connect, Options) ->
-    run_connect(Options);
-run_command_ready(status, Options) ->
-    run_status(Options);
-run_command_ready(disconnect, Options) ->
-    run_disconnect(Options);
-run_command_ready(Command, Options) ->
+run_capture_ready(Command, Options) ->
     with_target(Options, fun(Target, _Capabilities, Remaining) ->
         run_dispatch(
             Target,
@@ -752,7 +312,9 @@ command_request(port, [Target], Options) ->
     (request_options(Options))#{target => Target};
 command_request(otp_state, [Target], Options) ->
     Behavior = list_to_existing_atom(maps:get(behavior, Options)),
-    Request = #{target => unicode:characters_to_binary(Target), behavior => Behavior},
+    Request = maps:merge(maps:with([selector_kind], Options), #{
+        target => unicode:characters_to_binary(Target), behavior => Behavior
+    }),
     case Behavior of
         gen_event -> Request#{limit => list_to_integer(maps:get(limit, Options, "20"))};
         _ -> Request
@@ -769,10 +331,10 @@ command_request(logs, [], Options) ->
         tail => list_to_integer(maps:get(tail, Options, "200"))
     };
 command_request(schedulers, _Arguments, Options) ->
-    {ok, Duration} = observer_cli_cli:duration(Options),
+    {ok, Duration} = observer_cli_capture:duration(Options),
     #{duration_ms => Duration};
 command_request(Command, _Arguments, Options) when Command =:= snapshot; Command =:= diagnose ->
-    maps:with([deep, observe, app], Options);
+    maps:with([deep, observe, app, focus], Options);
 command_request(_Command, _Arguments, Options) ->
     request_options(Options).
 
@@ -784,18 +346,18 @@ request_options(Options) ->
             ({limit, Value}, Acc) ->
                 Acc#{limit => list_to_integer(Value)};
             ({duration, _Value}, Acc) ->
-                {ok, Duration} = observer_cli_cli:duration(Options),
+                {ok, Duration} = observer_cli_capture:duration(Options),
                 Acc#{duration_ms => Duration};
             (_, Acc) ->
                 Acc
         end,
-        #{},
+        maps:with([rank_semantics, selector_kind], Options),
         maps:to_list(maps:with([sort, limit, duration], Options))
     ).
 
 trace_request(Action, Options) ->
-    {ok, Duration} = observer_cli_cli:trace_duration(Options),
-    {ok, Max} = observer_cli_cli:trace_limit(Options),
+    {ok, Duration} = observer_cli_capture:trace_duration(Options),
+    {ok, Max} = observer_cli_capture:trace_limit(Options),
     #{
         action => Action,
         duration_ms => Duration,
@@ -803,146 +365,14 @@ trace_request(Action, Options) ->
         replace_existing_trace => maps:get(replace_existing_trace, Options, false)
     }.
 
-run_connect(Options) ->
-    case ensure_output_format(connect, Options) of
-        ok -> run_connect_ready(Options);
-        Error -> Error
-    end.
-
-run_connect_ready(Options) ->
-    case observer_cli_cli:context_options(Options) of
-        {ok, ContextOptions} ->
-            Outcome = probe_options(ContextOptions, fun(Target, CapabilityResult, Remaining) ->
-                probe_response(connect, ContextOptions, Target, CapabilityResult, Remaining)
-            end),
-            save_connected_context(ContextOptions, Outcome);
-        {error, Reason} ->
-            {error, argument, Reason}
-    end.
-
-save_connected_context(ContextOptions, {ok, _Response, _ExitCode} = Outcome) ->
-    case observer_cli_cli:save_context(ContextOptions) of
-        ok -> Outcome;
-        {error, Reason} -> {error, internal, Reason}
-    end;
-save_connected_context(_ContextOptions, Error) ->
-    Error.
-
-run_status(Options) ->
-    case observer_cli_cli:load_context() of
-        {ok, ContextOptions} ->
-            ProbeOptions = maps:merge(ContextOptions, maps:with([timeout], Options)),
-            probe_options(ProbeOptions, fun(Target, CapabilityResult, Remaining) ->
-                probe_response(status, ContextOptions, Target, CapabilityResult, Remaining)
-            end);
-        {error, no_active_context} ->
-            {error, capability, no_active_context};
-        {error, Reason} ->
-            {error, internal, Reason}
-    end.
-
--ifdef(TEST).
-run_disconnect() ->
-    run_disconnect(#{}).
--endif.
-
-run_disconnect(Options) ->
-    case ensure_output_format(disconnect, Options) of
-        ok -> run_disconnect_ready();
-        Error -> Error
-    end.
-
-run_disconnect_ready() ->
-    case observer_cli_cli:load_context() of
-        {ok, #{node := Node}} ->
-            case observer_cli_cli:delete_context() of
-                ok -> disconnect_response(public_text(Node));
-                {error, Reason} -> {error, internal, Reason}
-            end;
-        {error, no_active_context} ->
-            disconnect_response(null);
-        {error, Reason} when Reason =:= invalid_context; Reason =:= context_too_large ->
-            case observer_cli_cli:delete_context() of
-                ok -> recovered_disconnect_response();
-                {error, DeleteReason} -> {error, internal, DeleteReason}
-            end;
-        {error, Reason} ->
-            {error, internal, Reason}
-    end.
-
 ensure_output_format(Command, Options) ->
-    Response = observer_cli_cli:response(Command, complete, null, null, null, []),
-    case observer_cli_cli:encode(command_format(Options), Response, Options) of
+    Response = observer_cli_capture:response(Command, complete, null, null, null, []),
+    case observer_cli_capture:encode(command_format(Options), Response, Options) of
         {ok, _Output} ->
             ok;
         {error, EncodeError} ->
             {error, maps:get(category, EncodeError), maps:get(reason, EncodeError)}
     end.
-
-probe_response(Command, ContextOptions, Target, CapabilityResult, Remaining) when
-    element(1, CapabilityResult) =:= ok;
-    element(1, CapabilityResult) =:= error,
-    element(2, CapabilityResult) =:= capability
-->
-    case target_otp_release(Target, Remaining) of
-        {ok, OtpRelease} ->
-            probe_response(Command, ContextOptions, CapabilityResult, OtpRelease);
-        Error ->
-            Error
-    end;
-probe_response(_Command, _ContextOptions, _Target, {error, _Category, _Reason} = Error, _Remaining) ->
-    Error.
-
-probe_response(Command, ContextOptions, CapabilityResult, OtpRelease) ->
-    #{node := Node, name_mode := NameMode} = ContextOptions,
-    {DiagnosticsModule, Observed, Warnings} = capability_status(CapabilityResult),
-    Expected = public_capabilities(observer_cli_snapshot:capabilities()),
-    NodeBinary = public_text(Node),
-    Response = observer_cli_cli:response(
-        Command,
-        complete,
-        #{<<"node">> => NodeBinary, <<"otp_release">> => OtpRelease},
-        null,
-        #{
-            <<"node">> => NodeBinary,
-            <<"name_mode">> => public_text(NameMode),
-            <<"cookie_source">> => public_cookie_source(ContextOptions),
-            <<"probe">> => <<"succeeded">>,
-            <<"diagnostics_module">> => DiagnosticsModule,
-            <<"expected_capabilities">> => Expected,
-            <<"observed_capabilities">> => Observed,
-            <<"persistent_connection">> => false
-        },
-        Warnings
-    ),
-    {ok, Response, response_exit_code(Response)}.
-
-capability_status({ok, Capabilities}) ->
-    {<<"compatible">>, public_capabilities(Capabilities), []};
-capability_status({error, capability, diagnostics_missing}) ->
-    {<<"missing">>, null, [warning(capability, diagnostics_missing)]};
-capability_status({error, capability, {diagnostics_incompatible, Observed}}) ->
-    {
-        <<"incompatible">>,
-        public_capabilities(Observed),
-        [warning(capability, diagnostics_incompatible)]
-    }.
-
-warning(Category, Reason) ->
-    (observer_cli_cli:error(Category, Reason))#{<<"severity">> => <<"warning">>}.
-
-public_capabilities(Capabilities) when is_map(Capabilities) ->
-    #{
-        <<"protocol_version">> => maps:get(protocol_version, Capabilities, null),
-        <<"bundle_version">> => maps:get(bundle_version, Capabilities, null)
-    };
-public_capabilities(_Capabilities) ->
-    null.
-
-public_cookie_source(#{cookie_env := Name}) ->
-    #{<<"type">> => <<"env">>, <<"name">> => public_selector_text(Name)};
-public_cookie_source(#{cookie_file := Path}) ->
-    #{<<"type">> => <<"file">>, <<"path">> => public_selector_text(Path)}.
 
 public_selector_text(Text) ->
     case unicode:characters_to_binary(Text) of
@@ -966,32 +396,6 @@ public_binary_text(Binary) ->
         Binary -> Binary;
         _Invalid -> <<"base64:", (base64:encode(Binary))/binary>>
     end.
-
-disconnect_response(Node) ->
-    Response = observer_cli_cli:response(
-        disconnect,
-        complete,
-        null,
-        null,
-        #{<<"node">> => Node, <<"disconnected">> => true},
-        []
-    ),
-    {ok, Response, response_exit_code(Response)}.
-
-recovered_disconnect_response() ->
-    Response = observer_cli_cli:response(
-        disconnect,
-        complete,
-        null,
-        null,
-        #{
-            <<"node">> => null,
-            <<"disconnected">> => true,
-            <<"recovered_invalid_context">> => true
-        },
-        []
-    ),
-    {ok, Response, response_exit_code(Response)}.
 
 run_snapshot(Target, Options, Request, Remaining) ->
     Policy =
@@ -1052,6 +456,7 @@ dispatch_response(#{<<"outcome">> := Outcome} = Response) when
 dispatch_response(_Invalid) ->
     {error, schema, invalid_command_response}.
 
+-spec response_exit_code(map()) -> non_neg_integer().
 response_exit_code(#{
     <<"outcome">> := <<"complete">>, <<"command">> := <<"diagnose">>, <<"data">> := Data
 }) ->
@@ -1128,7 +533,7 @@ run_diagnose(Target, Options, Remaining) ->
             true -> include;
             false -> redact
         end,
-    Request = maps:with([observe, deep, app], Options),
+    Request = maps:with([observe, deep, app, focus], Options),
     case target_dispatch(Target, diagnose, Request, Options, Policy, Remaining) of
         {ok, Response} ->
             validated_response(diagnose, Policy, Target, Response, fun(Validated) ->
@@ -1174,7 +579,11 @@ target_dispatch(Target, Command, Request, Options, Policy, Remaining) ->
                 _Invalid ->
                     invalid
             catch
-                _Class:_Reason:_Stacktrace -> {error, required_probe, target_dispatch_failed}
+                _Class:_Reason:_Stacktrace when Command =:= trace ->
+                    %% Once dispatched, lost transport cannot confirm global trace cleanup.
+                    {error, cleanup, cleanup_unconfirmed};
+                _Class:_Reason:_Stacktrace ->
+                    {error, required_probe, target_dispatch_failed}
             end;
         {error, Reason} ->
             {error, required_probe, Reason}
@@ -1213,27 +622,17 @@ with_active_target(Options, Fun) ->
                         Error
                 end
             end);
-        {error, no_active_context} ->
-            {error, capability, no_active_context};
         {error, Reason} ->
-            {error, internal, Reason}
+            {error, argument, Reason}
     end.
 
-active_options(#{node := _Node} = Options) ->
-    {ok, Options};
 active_options(Options) ->
-    case observer_cli_cli:load_context() of
-        {ok, ContextOptions} ->
-            CommandOptions = maps:without([cookie_env, cookie_file, name_mode], Options),
-            {ok, maps:merge(ContextOptions, CommandOptions)};
-        Error ->
-            Error
-    end.
+    observer_cli_target:resolve(Options).
 
 probe_options(Options, Fun) ->
     case node() of
         nonode@nohost ->
-            case observer_cli_cli:target(Options) of
+            case observer_cli_capture:target(Options) of
                 {ok, {TargetText, NameMode}} ->
                     %% The effective selector is captured before credential resolution.
                     %% Never re-read a saved context after a failed invocation.
@@ -1251,9 +650,9 @@ probe_options(Options, Fun) ->
     end.
 
 probe_cookie(Options, TargetText, NameMode, Fun) ->
-    case observer_cli_cli:cookie_source(Options) of
+    case observer_cli_capture:cookie_source(Options) of
         {ok, CookieBinary} ->
-            case observer_cli_cli:timeout(Options) of
+            case observer_cli_capture:timeout(Options) of
                 {ok, Timeout} ->
                     probe_target(
                         list_to_atom(TargetText),
@@ -1486,31 +885,11 @@ capability_probe_error(error, {erpc, noconnection}) ->
 capability_probe_error(_Class, _Reason) ->
     {error, required_probe, capability_probe_failed}.
 
-target_otp_release(_Target, Timeout) when Timeout =< 0 ->
-    {error, required_probe, target_timeout};
-target_otp_release(Target, Timeout) ->
-    try erpc:call(Target, erlang, system_info, [otp_release], Timeout) of
-        OtpRelease when is_list(OtpRelease) ->
-            target_otp_release_value(unicode:characters_to_binary(OtpRelease));
-        OtpRelease when is_binary(OtpRelease) ->
-            target_otp_release_value(OtpRelease);
-        _Invalid ->
-            {error, required_probe, capability_probe_failed}
-    catch
-        Class:Reason -> capability_probe_error(Class, Reason)
-    end.
-
-target_otp_release_value(OtpRelease) ->
-    case valid_otp_release(OtpRelease) of
-        true -> {ok, OtpRelease};
-        false -> {error, required_probe, capability_probe_failed}
-    end.
-
 remaining(Deadline) ->
     erlang:max(0, Deadline - erlang:monotonic_time(millisecond)).
 
 command_timeout(Options, Remaining) when Remaining > 0 ->
-    case observer_cli_cli:timeout(Options) of
+    case observer_cli_capture:timeout(Options) of
         {ok, Timeout} -> {ok, min(Timeout, Remaining)};
         Error -> Error
     end;
@@ -1545,7 +924,7 @@ validate_response_map(Command, Policy, Target, Response) ->
     ],
     Checks = [
         lists:sort(maps:keys(Response)) =:= ExpectedKeys,
-        maps:get(<<"schema">>, Response, undefined) =:= <<"observer_cli.cli/v1">>,
+        maps:get(<<"schema">>, Response, undefined) =:= <<"observer_cli.capture/v1">>,
         maps:get(<<"command">>, Response, undefined) =:= atom_to_binary(Command),
         public_value(Response, 0),
         erlang:external_size(Response) =< ?MAX_RESPONSE_BYTES,
@@ -3574,7 +2953,7 @@ controller_stopped(Deadline) ->
 -spec command_output(map(), map(), non_neg_integer()) -> no_return().
 command_output(Options, Response, ExitCode) ->
     Format = command_format(Options),
-    case observer_cli_cli:encode(Format, Response, Options) of
+    case observer_cli_capture:encode(Format, Response, Options) of
         {ok, Output} ->
             output_put_chars(command_output_device(Format, Response), Output),
             exit_with_code(ExitCode);
@@ -3587,21 +2966,22 @@ command_output(Options, Response, ExitCode) ->
 command_output_device(text, #{<<"outcome">> := <<"error">>}) -> standard_error;
 command_output_device(_Format, _Response) -> standard_io.
 
+-ifdef(TEST).
 -spec command_error(atom(), map() | atom(), atom(), term()) -> no_return().
 command_error(Command, Options, Category, Reason) when is_map(Options) ->
     Format = command_format(Options),
     command_error(Command, Format, Category, Reason);
 command_error(unknown, text, Category, Reason) ->
-    Message = maps:get(<<"message">>, observer_cli_cli:error(Category, Reason)),
+    Message = maps:get(<<"message">>, observer_cli_capture:error(Category, Reason)),
     output_format(standard_error, "observer_cli: ~ts~n", [
-        observer_cli_cli:escape_text(Message)
+        observer_cli_capture:escape_text(Message)
     ]),
     output_format(standard_error, "Run 'observer_cli --help' for usage.~n", []),
     exit_with_code(error_exit_code(unknown, Category, Reason));
 command_error(Command, text, Category, Reason) ->
-    Message = maps:get(<<"message">>, observer_cli_cli:error(Category, Reason)),
+    Message = maps:get(<<"message">>, observer_cli_capture:error(Category, Reason)),
     output_format(standard_error, "observer_cli ~ts: ~ts~n", [
-        command_display(Command), observer_cli_cli:escape_text(Message)
+        command_display(Command), observer_cli_capture:escape_text(Message)
     ]),
     case Category of
         argument ->
@@ -3612,7 +2992,7 @@ command_error(Command, text, Category, Reason) ->
     exit_with_code(error_exit_code(Command, Category, Reason));
 command_error(Command, Format, Category, Reason) ->
     Response = error_response(Command, Category, Reason),
-    case observer_cli_cli:encode(Format, Response) of
+    case observer_cli_capture:encode(Format, Response) of
         {ok, Output} ->
             output_put_chars(standard_io, Output),
             exit_with_code(response_exit_code(Response));
@@ -3620,7 +3000,7 @@ command_error(Command, Format, Category, Reason) ->
             output_encode_error(EncodeError)
     end.
 
-command_display(Command) -> observer_cli_cli:command_name(Command).
+command_display(Command) -> observer_cli_capture:command_name(Command).
 
 response_command_name(unknown) -> null;
 response_command_name(trace) -> null;
@@ -3630,12 +3010,14 @@ error_exit_code(Command, Category, Reason) ->
     response_exit_code(error_response(Command, Category, Reason)).
 
 error_response(Command, Category, Reason) ->
-    observer_cli_cli:response(response_command_name(Command), error, null, null, null, [
-        observer_cli_cli:error(Category, Reason)
+    observer_cli_capture:response(response_command_name(Command), error, null, null, null, [
+        observer_cli_capture:error(Category, Reason)
     ]).
 
 command_help_command(unknown) -> <<"observer_cli --help">>;
 command_help_command(Command) -> <<"observer_cli ", (command_display(Command))/binary, " --help">>.
+
+-endif.
 
 command_format(#{json := true}) -> json;
 command_format(#{format := "json"}) -> json;
@@ -3647,13 +3029,13 @@ output_encode_error(EncodeError) ->
     EncodeReason = maps:get(reason, EncodeError),
     Message = maps:get(
         <<"message">>,
-        observer_cli_cli:error(maps:get(category, EncodeError), EncodeReason)
+        observer_cli_capture:error(maps:get(category, EncodeError), EncodeReason)
     ),
     output_format(standard_error, "observer_cli: ~ts~n", [
-        observer_cli_cli:escape_text(Message)
+        observer_cli_capture:escape_text(Message)
     ]),
     exit_with_code(
-        error_exit_code(null, maps:get(category, EncodeError), EncodeReason)
+        observer_cli_capture:exit_code(maps:get(category, EncodeError))
     ).
 
 -spec output_command_encode_error(binary() | atom(), text | term | json, map()) -> no_return().
@@ -3662,8 +3044,8 @@ output_command_encode_error(_Command, json, #{reason := json_unavailable} = Enco
 output_command_encode_error(Command, Format, EncodeError) when Format =:= term; Format =:= json ->
     Category = maps:get(category, EncodeError),
     Reason = maps:get(reason, EncodeError),
-    Response = error_response(Command, Category, Reason),
-    case observer_cli_cli:encode(Format, Response) of
+    Response = observer_cli_result:error(Command, Category, Reason),
+    case observer_cli_capture:encode(Format, Response) of
         {ok, Output} ->
             output_put_chars(standard_io, Output),
             exit_with_code(response_exit_code(Response));
@@ -3673,6 +3055,7 @@ output_command_encode_error(Command, Format, EncodeError) when Format =:= term; 
 output_command_encode_error(_Command, _Format, EncodeError) ->
     output_encode_error(EncodeError).
 
+-spec exit_with_code(non_neg_integer()) -> no_return().
 -ifdef(TEST).
 exit_with_code(Code) ->
     case get(observer_cli_test_halt_fun) of
@@ -3698,6 +3081,7 @@ output_format(Device, Format, Args) ->
     io:format(Device, Format, Args).
 -endif.
 
+-ifdef(TEST).
 command_from_args(["trace", "call" | _]) ->
     trace_call;
 command_from_args(["trace", "stop" | _]) ->
@@ -3707,7 +3091,7 @@ command_from_args(["tui" | _]) ->
 command_from_args([[$- | _] | _] = Arguments) ->
     command_from_arguments(Arguments);
 command_from_args([First | _]) ->
-    observer_cli_cli:command(First);
+    observer_cli_capture:command(First);
 command_from_args([]) ->
     undefined.
 
@@ -3716,7 +3100,7 @@ command_from_arguments(["trace", "call" | _]) ->
 command_from_arguments(["trace", "stop" | _]) ->
     trace_stop_all;
 command_from_arguments([Argument | Rest]) ->
-    case observer_cli_cli:command(Argument) of
+    case observer_cli_capture:command(Argument) of
         undefined -> command_from_arguments(Rest);
         Command -> Command
     end;
@@ -3771,11 +3155,32 @@ run_remote(TargetNode, ProbeFun, RemoteLoadFun, StartFun) ->
     maybe_wait_remote_stop(TargetNode),
     io:format("~p~n", [StartFun()]).
 
-remote_module_available(Node) ->
-    net_kernel:hidden_connect_node(Node) andalso
-        rpc:call(Node, code, ensure_loaded, [observer_cli]) =:= {module, observer_cli} andalso
-        compatible_capabilities(rpc:call(Node, observer_cli_snapshot, capabilities, [])).
+-endif.
 
+-ifdef(TEST).
+remote_module_available(Node) ->
+    case remote_module_available(Node, 10000) of
+        true -> true;
+        _ -> false
+    end.
+-endif.
+
+remote_module_available(Node, Timeout) ->
+    Deadline = erlang:monotonic_time(millisecond) + Timeout,
+    try
+        case erpc:call(Node, code, ensure_loaded, [observer_cli], remaining(Deadline)) of
+            {module, observer_cli} ->
+                compatible_capabilities(
+                    erpc:call(Node, observer_cli_snapshot, capabilities, [], remaining(Deadline))
+                );
+            _ ->
+                false
+        end
+    catch
+        _:_ -> {error, connection, tui_start_failed}
+    end.
+
+-ifdef(TEST).
 maybe_set_target_cookie(_Node, undefined) ->
     ok;
 maybe_set_target_cookie(Node, Cookie) ->
@@ -3786,14 +3191,21 @@ cookie_atom(undefined) ->
 cookie_atom(Cookie) ->
     list_to_atom(Cookie).
 
-remote_load(Node) when Node =:= node() ->
-    ok;
-remote_load(Node) ->
-    do_remote_load(Node).
+-endif.
 
-do_remote_load(Node) ->
+-ifdef(TEST).
+remote_load(Node) ->
+    remote_load(Node, erlang:monotonic_time(millisecond) + 10000).
+-endif.
+
+remote_load(Node, _Deadline) when Node =:= node() ->
+    ok;
+remote_load(Node, Deadline) ->
+    do_remote_load(Node, Deadline).
+
+do_remote_load(Node, Deadline) ->
     ControllerOtp = integer_to_list(?OTP_RELEASE),
-    TargetOtp = erpc:call(Node, erlang, system_info, [otp_release]),
+    TargetOtp = erpc:call(Node, erlang, system_info, [otp_release], remaining(Deadline)),
     case TargetOtp of
         ControllerOtp -> ok;
         _ -> erlang:error({remote_otp_mismatch, ControllerOtp, TargetOtp})
@@ -3802,26 +3214,34 @@ do_remote_load(Node) ->
     Formatter = application:get_env(observer_cli, formatter, ?DEFAULT_FORMATTER),
     FormatterApp = maps:get(application, Formatter, observer_cli),
     Apps = lists:usort([observer_cli, recon, FormatterApp]),
-    lists:foreach(fun(Mod) -> remote_load_module(Node, Mod) end, required_modules(Apps)),
-    erpc:call(Node, ?MODULE, ensure_set_env, [
-        observer_cli, application:get_all_env(observer_cli)
-    ]),
+    lists:foreach(fun(Mod) -> remote_load_module(Node, Mod, Deadline) end, required_modules(Apps)),
+    erpc:call(
+        Node,
+        ?MODULE,
+        ensure_set_env,
+        [
+            observer_cli, application:get_all_env(observer_cli)
+        ],
+        remaining(Deadline)
+    ),
     ok.
 
-remote_load_module(Node, Mod) ->
+remote_load_module(Node, Mod, Deadline) ->
     Result =
         try
-            recon:remote_load([Node], Mod)
+            {Mod, Bin, File} = code:get_object_code(Mod),
+            erpc:call(Node, code, load_binary, [Mod, File, Bin], remaining(Deadline))
         catch
             Class:Reason -> {exception, Class, Reason}
         end,
     case Result of
-        {[{module, Mod}], []} ->
+        {module, Mod} ->
             ok;
         _ ->
             erlang:error({remote_load_failed, Node, Mod, Result})
     end.
 
+-ifdef(TEST).
 random_local_node_name() ->
     {_, {H, M, S}} = calendar:local_time(),
     lists:flatten(
@@ -3857,6 +3277,8 @@ ensure_net_kernel_name_mode(ExpectedMode) ->
                 {net_kernel_start_failed, {name_mode_mismatch, ExpectedMode, ActualMode, Hint}}
             )
     end.
+
+-endif.
 
 %%%===================================================================
 %%% application
@@ -3911,9 +3333,6 @@ wait_for_nodedown(Node) ->
     end.
 -else.
 maybe_stop_remote(_App) ->
-    ok.
-
-maybe_wait_remote_stop(_Node) ->
     ok.
 -endif.
 

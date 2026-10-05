@@ -63,11 +63,12 @@
     "forward/back)"
 ).
 
--spec start() -> no_return() | {badrpc, term()} | {error, connection, connection_failed}.
+-spec start() -> quit.
 start() ->
     start(#view_opts{}).
 
--spec start(Node) -> no_return() | {badrpc, term()} | {error, connection, connection_failed} when
+%% Remote starts pass through RPC replies; the caller must validate their outcome.
+-spec start(Node) -> term() when
     Node :: atom() | non_neg_integer() | view_opts().
 start(Node) when Node =:= node() ->
     start(#view_opts{});
@@ -100,9 +101,7 @@ start(Interval) when is_integer(Interval), Interval >= ?MIN_INTERVAL ->
         port = Interval
     }).
 
--spec start(Node, Cookies | Options) ->
-    no_return() | {badrpc, term()} | {error, connection, connection_failed}
-when
+-spec start(Node, Cookies | Options) -> term() when
     Node :: atom(),
     Cookies :: atom(),
     Options :: proplists:proplist().
@@ -1402,7 +1401,7 @@ get_incremental_stats(SchUsage) ->
     {In, Out, GCs, Words, ScheduleWall}.
 
 update_net_ticktime_from(Node) ->
-    case rpc:call(Node, net_kernel, get_net_ticktime, []) of
+    case rpc:call(Node, net_kernel, get_net_ticktime, [], 5000) of
         NetTickTime when is_integer(NetTickTime), NetTickTime > 0 ->
             accept_net_ticktime_result(net_kernel:set_net_ticktime(NetTickTime), NetTickTime);
         _Invalid ->

@@ -20,3 +20,8 @@ log/
 
 xrefr
 AGENTS.md
+
+# Local Python and Rebar validation artifacts
+__pycache__/
+*.pyc
+rebar3.crashdump

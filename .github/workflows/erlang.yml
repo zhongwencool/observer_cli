@@ -56,6 +56,9 @@ jobs:
         run: rebar3 as ci check
       - name: generated escript smoke
         run: scripts/escript-smoke.sh
+      - name: Check public schema generation
+        if: matrix.otp == '29'
+        run: python3 scripts/generate-cli-schema.py --check
       - name: Ubuntu installer smoke
         if: matrix.otp == '29'
         run: |
@@ -71,12 +74,12 @@ jobs:
           #!/bin/sh
           printf 29
           SH
-          cat > /tmp/release/observer_cli-2.0.0-otp29 <<'SH'
+          cat > /tmp/release/observer_cli-3.0.0-otp29 <<'SH'
           #!/bin/sh
-          printf '%s\n' 'observer_cli 2.0.0' 'controller OTP 29'
+          printf '%s\n' 'observer_cli 3.0.0' 'controller OTP 29'
           SH
-          chmod +x /tmp/bin/curl /tmp/bin/erl /tmp/release/observer_cli-2.0.0-otp29
-          (cd /tmp/release && sha256sum observer_cli-2.0.0-otp29 > SHA256SUMS)
+          chmod +x /tmp/bin/curl /tmp/bin/erl /tmp/release/observer_cli-3.0.0-otp29
+          (cd /tmp/release && sha256sum observer_cli-3.0.0-otp29 > SHA256SUMS)
           HOME=/tmp/home PATH=/tmp/bin:/usr/bin:/bin sh /src/install.sh
           test -x /tmp/home/.local/bin/observer_cli
           SMOKE
@@ -85,7 +88,7 @@ jobs:
           epmd -daemon
           rebar3 as test do eunit, covertool generate
       - name: Validate response schemas and Rebar packaging
-        if: matrix.otp == '29'
+        if: matrix.otp != '26'
         run: |
           python3 -m venv "$RUNNER_TEMP/schema-venv"
           "$RUNNER_TEMP/schema-venv/bin/python" -m pip install -r scripts/schema-requirements.txt
@@ -140,7 +143,7 @@ jobs:
         run: |
           mix deps.get
           mix escript.build
-          erl -noshell -eval '{ok,S}=escript:extract("observer_cli",[]),{archive,A}=lists:keyfind(archive,1,S),{ok,E}=zip:table(A),true=lists:keymember("observer_cli/priv/schema/observer_cli.cli.v1.schema.json",2,E),halt().'
+          erl -noshell -eval '{ok,S}=escript:extract("observer_cli",[]),{archive,A}=lists:keyfind(archive,1,S),{ok,E}=zip:table(A),true=lists:keymember("observer_cli/priv/schema/observer_cli.cli.v2.schema.json",2,E),halt().'
           OBSERVER_CLI_BIN="$PWD/observer_cli" scripts/escript-smoke.sh
           mix release
           mix run --no-start -e 'true = :crypto in Application.spec(:observer_cli, :applications)'

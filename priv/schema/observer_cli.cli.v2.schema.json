@@ -1,26 +1,51 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/zhongwencool/observer_cli/v2.0.0/priv/schema/observer_cli.cli.v1.schema.json",
-  "title": "observer_cli CLI response",
-  "description": "Normative CLI v1 envelope and command payload shapes. Cross-field arithmetic, evidence pointer resolution, identifier policy, target binding, and cleanup relations also remain enforced by the controller; JSON Schema is not a substitute for those semantic checks.",
+  "$id": "https://raw.githubusercontent.com/zhongwencool/observer_cli/v3.0.0/priv/schema/observer_cli.cli.v2.schema.json",
+  "title": "Observer CLI v2 task-first response",
+  "description": "Standalone public response contract. The controller also enforces target binding, evidence pointers, cleanup, redaction and cross-field relationships.",
   "type": "object",
   "required": [
     "schema",
     "command",
     "outcome",
+    "summary",
+    "assessment",
     "data",
     "meta",
-    "issues"
+    "issues",
+    "next_actions"
   ],
   "additionalProperties": false,
   "properties": {
     "schema": {
-      "const": "observer_cli.cli/v1"
+      "const": "observer_cli.cli/v2"
     },
     "command": {
-      "type": [
-        "string",
-        "null"
+      "enum": [
+        null,
+        "check",
+        "check cpu",
+        "check memory",
+        "check mailbox",
+        "check connections",
+        "inspect vm",
+        "inspect memory",
+        "inspect scheduler",
+        "inspect distribution",
+        "inspect network",
+        "inspect process",
+        "inspect application",
+        "inspect ets",
+        "inspect mnesia",
+        "inspect port",
+        "inspect socket",
+        "inspect state",
+        "inspect supervision",
+        "inspect logs",
+        "trace call",
+        "trace stop",
+        "tui",
+        "describe"
       ]
     },
     "outcome": {
@@ -43,6 +68,26 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/issue"
+      }
+    },
+    "summary": {
+      "type": "string"
+    },
+    "assessment": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/assessment"
+        }
+      ]
+    },
+    "next_actions": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "$ref": "#/$defs/nextAction"
       }
     }
   },
@@ -212,25 +257,27 @@
         "properties": {
           "command": {
             "enum": [
-              "snapshot",
-              "diagnose",
-              "memory",
-              "schedulers",
-              "distribution",
-              "processes",
-              "applications",
-              "ets",
-              "mnesia",
-              "network",
-              "ports",
-              "sockets",
-              "process",
-              "port",
-              "otp_state",
-              "supervision_tree",
-              "logs",
-              "trace_call",
-              "trace_stop_all"
+              "check",
+              "check cpu",
+              "check memory",
+              "check mailbox",
+              "check connections",
+              "inspect vm",
+              "inspect memory",
+              "inspect scheduler",
+              "inspect distribution",
+              "inspect network",
+              "inspect process",
+              "inspect application",
+              "inspect ets",
+              "inspect mnesia",
+              "inspect port",
+              "inspect socket",
+              "inspect state",
+              "inspect supervision",
+              "inspect logs",
+              "trace call",
+              "trace stop"
             ]
           },
           "data": {
@@ -245,7 +292,6 @@
       "then": {
         "properties": {
           "meta": {
-            "type": "object",
             "properties": {
               "target": {
                 "$ref": "#/$defs/target"
@@ -257,35 +303,575 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "error"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "next_actions": {
+            "maxItems": 0
+          }
+        }
+      }
     }
   ],
   "oneOf": [
     {
-      "$ref": "#/$defs/contextCommand"
+      "properties": {
+        "command": {
+          "const": "check"
+        },
+        "assessment": {
+          "$ref": "#/$defs/assessment"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/checkData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
     },
     {
-      "$ref": "#/$defs/snapshotDiagnosticCommand"
+      "properties": {
+        "command": {
+          "const": "check cpu"
+        },
+        "assessment": {
+          "$ref": "#/$defs/assessment"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/checkData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
     },
     {
-      "$ref": "#/$defs/vmHealthCommand"
+      "properties": {
+        "command": {
+          "const": "check memory"
+        },
+        "assessment": {
+          "$ref": "#/$defs/assessment"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/checkData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
     },
     {
-      "$ref": "#/$defs/resourceListCommand"
+      "properties": {
+        "command": {
+          "const": "check mailbox"
+        },
+        "assessment": {
+          "$ref": "#/$defs/assessment"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/checkData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
     },
     {
-      "$ref": "#/$defs/resourceDetailCommand"
+      "properties": {
+        "command": {
+          "const": "check connections"
+        },
+        "assessment": {
+          "$ref": "#/$defs/assessment"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/checkData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
     },
     {
-      "$ref": "#/$defs/traceCommand"
+      "properties": {
+        "command": {
+          "const": "inspect vm"
+        },
+        "assessment": {
+          "type": "null"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/snapshotData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
     },
     {
-      "$ref": "#/$defs/logsCommand"
+      "properties": {
+        "command": {
+          "const": "inspect memory"
+        },
+        "assessment": {
+          "type": "null"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/memoryData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
     },
     {
-      "$ref": "#/$defs/preCommandError"
+      "properties": {
+        "command": {
+          "const": "inspect scheduler"
+        },
+        "assessment": {
+          "type": "null"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/schedulersData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
     },
     {
-      "$ref": "#/$defs/describeCommand"
+      "properties": {
+        "command": {
+          "const": "inspect distribution"
+        },
+        "assessment": {
+          "type": "null"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/distributionData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "properties": {
+        "command": {
+          "const": "inspect network"
+        },
+        "assessment": {
+          "type": "null"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/networkData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "properties": {
+        "command": {
+          "const": "inspect process"
+        },
+        "assessment": {
+          "type": "null"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/processesData"
+            },
+            {
+              "$ref": "#/$defs/processData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "properties": {
+        "command": {
+          "const": "inspect application"
+        },
+        "assessment": {
+          "type": "null"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/applicationsData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "properties": {
+        "command": {
+          "const": "inspect ets"
+        },
+        "assessment": {
+          "type": "null"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/etsData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "properties": {
+        "command": {
+          "const": "inspect mnesia"
+        },
+        "assessment": {
+          "type": "null"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/mnesiaData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "properties": {
+        "command": {
+          "const": "inspect port"
+        },
+        "assessment": {
+          "type": "null"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/portsData"
+            },
+            {
+              "$ref": "#/$defs/portData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "properties": {
+        "command": {
+          "const": "inspect socket"
+        },
+        "assessment": {
+          "type": "null"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/socketsData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "properties": {
+        "command": {
+          "const": "inspect state"
+        },
+        "assessment": {
+          "type": "null"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/otpStateData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "properties": {
+        "command": {
+          "const": "inspect supervision"
+        },
+        "assessment": {
+          "type": "null"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/supervisionTreeData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "properties": {
+        "command": {
+          "const": "inspect logs"
+        },
+        "assessment": {
+          "type": "null"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/logsData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "properties": {
+        "command": {
+          "const": "trace call"
+        },
+        "assessment": {
+          "type": "null"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/traceData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "properties": {
+        "command": {
+          "const": "trace stop"
+        },
+        "assessment": {
+          "type": "null"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/traceData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "properties": {
+        "command": {
+          "const": "tui"
+        },
+        "assessment": {
+          "type": "null"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "properties": {
+        "command": {
+          "const": "describe"
+        },
+        "assessment": {
+          "type": "null"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/describeData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "properties": {
+        "command": {
+          "type": "null"
+        },
+        "outcome": {
+          "const": "error"
+        },
+        "data": {
+          "type": "null"
+        },
+        "assessment": {
+          "type": "null"
+        }
+      },
+      "required": [
+        "command"
+      ]
     }
   ],
   "$defs": {
@@ -391,6 +977,11 @@
               }
             ]
           }
+        },
+        "requested_window_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Requested observation window in milliseconds; actual capture duration remains separate."
         }
       }
     },
@@ -516,667 +1107,6 @@
         }
       }
     },
-    "contextCommand": {
-      "oneOf": [
-        {
-          "required": [
-            "command"
-          ],
-          "properties": {
-            "command": {
-              "const": "connect"
-            },
-            "data": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/contextData"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          },
-          "allOf": [
-            {
-              "if": {
-                "properties": {
-                  "data": {
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "data"
-                ]
-              },
-              "then": {
-                "properties": {
-                  "outcome": {
-                    "const": "complete"
-                  },
-                  "meta": {
-                    "type": "object",
-                    "properties": {
-                      "target": {
-                        "$ref": "#/$defs/target"
-                      },
-                      "capture": {
-                        "type": "null"
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          ]
-        },
-        {
-          "required": [
-            "command"
-          ],
-          "properties": {
-            "command": {
-              "const": "status"
-            },
-            "data": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/contextData"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          },
-          "allOf": [
-            {
-              "if": {
-                "properties": {
-                  "data": {
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "data"
-                ]
-              },
-              "then": {
-                "properties": {
-                  "outcome": {
-                    "const": "complete"
-                  },
-                  "meta": {
-                    "type": "object",
-                    "properties": {
-                      "target": {
-                        "$ref": "#/$defs/target"
-                      },
-                      "capture": {
-                        "type": "null"
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          ]
-        },
-        {
-          "required": [
-            "command"
-          ],
-          "properties": {
-            "command": {
-              "const": "disconnect"
-            },
-            "data": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/disconnectData"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          },
-          "allOf": [
-            {
-              "if": {
-                "properties": {
-                  "data": {
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "data"
-                ]
-              },
-              "then": {
-                "properties": {
-                  "outcome": {
-                    "const": "complete"
-                  },
-                  "meta": {
-                    "type": "object",
-                    "properties": {
-                      "target": {
-                        "type": "null"
-                      },
-                      "capture": {
-                        "type": "null"
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          ]
-        }
-      ]
-    },
-    "snapshotDiagnosticCommand": {
-      "oneOf": [
-        {
-          "required": [
-            "command"
-          ],
-          "properties": {
-            "command": {
-              "const": "snapshot"
-            },
-            "data": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/snapshotData"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "required": [
-            "command"
-          ],
-          "properties": {
-            "command": {
-              "const": "diagnose"
-            },
-            "data": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/diagnoseData"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          }
-        }
-      ]
-    },
-    "vmHealthCommand": {
-      "oneOf": [
-        {
-          "required": [
-            "command"
-          ],
-          "properties": {
-            "command": {
-              "const": "memory"
-            },
-            "data": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/memoryData"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "required": [
-            "command"
-          ],
-          "properties": {
-            "command": {
-              "const": "schedulers"
-            },
-            "data": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/schedulersData"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "required": [
-            "command"
-          ],
-          "properties": {
-            "command": {
-              "const": "distribution"
-            },
-            "data": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/distributionData"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          }
-        }
-      ]
-    },
-    "resourceListCommand": {
-      "oneOf": [
-        {
-          "required": [
-            "command"
-          ],
-          "properties": {
-            "command": {
-              "const": "processes"
-            },
-            "data": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/processesData"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "required": [
-            "command"
-          ],
-          "properties": {
-            "command": {
-              "const": "applications"
-            },
-            "data": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/applicationsData"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "required": [
-            "command"
-          ],
-          "properties": {
-            "command": {
-              "const": "ets"
-            },
-            "data": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/etsData"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "required": [
-            "command"
-          ],
-          "properties": {
-            "command": {
-              "const": "mnesia"
-            },
-            "data": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/mnesiaData"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "required": [
-            "command"
-          ],
-          "properties": {
-            "command": {
-              "const": "network"
-            },
-            "data": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/networkData"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "required": [
-            "command"
-          ],
-          "properties": {
-            "command": {
-              "const": "ports"
-            },
-            "data": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/portsData"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "required": [
-            "command"
-          ],
-          "properties": {
-            "command": {
-              "const": "sockets"
-            },
-            "data": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/socketsData"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          }
-        }
-      ]
-    },
-    "resourceDetailCommand": {
-      "oneOf": [
-        {
-          "required": [
-            "command"
-          ],
-          "properties": {
-            "command": {
-              "const": "process"
-            },
-            "data": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/processData"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "required": [
-            "command"
-          ],
-          "properties": {
-            "command": {
-              "const": "port"
-            },
-            "data": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/portData"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "required": [
-            "command"
-          ],
-          "properties": {
-            "command": {
-              "const": "otp_state"
-            },
-            "data": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/otpStateData"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "required": [
-            "command"
-          ],
-          "properties": {
-            "command": {
-              "const": "supervision_tree"
-            },
-            "data": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/supervisionTreeData"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          }
-        }
-      ]
-    },
-    "traceCommand": {
-      "oneOf": [
-        {
-          "required": [
-            "command"
-          ],
-          "properties": {
-            "command": {
-              "const": "trace_call"
-            },
-            "data": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/traceData"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "required": [
-            "command"
-          ],
-          "properties": {
-            "command": {
-              "const": "trace_stop_all"
-            },
-            "data": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/traceData"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          }
-        }
-      ]
-    },
-    "preCommandError": {
-      "required": [
-        "command",
-        "outcome",
-        "data",
-        "meta",
-        "issues"
-      ],
-      "properties": {
-        "command": {
-          "type": "null"
-        },
-        "outcome": {
-          "const": "error"
-        },
-        "data": {
-          "type": "null"
-        },
-        "meta": {
-          "type": "object",
-          "properties": {
-            "target": {
-              "type": "null"
-            },
-            "capture": {
-              "type": "null"
-            }
-          }
-        },
-        "issues": {
-          "type": "array",
-          "contains": {
-            "type": "object",
-            "required": [
-              "severity"
-            ],
-            "properties": {
-              "severity": {
-                "const": "error"
-              }
-            }
-          },
-          "minContains": 1
-        }
-      }
-    },
-    "contextData": {
-      "type": "object",
-      "required": [
-        "node",
-        "name_mode",
-        "cookie_source",
-        "probe",
-        "diagnostics_module",
-        "expected_capabilities",
-        "observed_capabilities",
-        "persistent_connection"
-      ],
-      "properties": {
-        "node": {
-          "type": "string"
-        },
-        "name_mode": {
-          "enum": [
-            "short",
-            "long"
-          ]
-        },
-        "cookie_source": {
-          "$ref": "#/$defs/cookieSource"
-        },
-        "probe": {
-          "const": "succeeded"
-        },
-        "diagnostics_module": {
-          "enum": [
-            "compatible",
-            "missing",
-            "incompatible"
-          ]
-        },
-        "expected_capabilities": {
-          "$ref": "#/$defs/capabilities"
-        },
-        "observed_capabilities": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/capabilities"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "persistent_connection": {
-          "const": false
-        }
-      },
-      "additionalProperties": false
-    },
-    "disconnectData": {
-      "type": "object",
-      "required": [
-        "node",
-        "disconnected"
-      ],
-      "properties": {
-        "node": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "disconnected": {
-          "const": true
-        },
-        "recovered_invalid_context": {
-          "type": "boolean"
-        }
-      }
-    },
     "snapshotData": {
       "type": "object",
       "properties": {
@@ -1222,80 +1152,6 @@
       },
       "required": [
         "snapshot_version"
-      ],
-      "additionalProperties": false
-    },
-    "diagnoseData": {
-      "type": "object",
-      "properties": {
-        "ruleset": {
-          "enum": [
-            "observer_cli.quick",
-            "observer_cli.observation",
-            "observer_cli.deep_observation",
-            "observer_cli.application_observation"
-          ]
-        },
-        "ruleset_version": {
-          "const": 1
-        },
-        "sampling_plan": {
-          "$ref": "#/$defs/samplingPlan"
-        },
-        "findings": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/finding"
-          }
-        },
-        "suspects": {
-          "type": "array",
-          "maxItems": 0
-        },
-        "context": {
-          "$ref": "#/$defs/diagnosticContext"
-        },
-        "skipped": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string",
-                "minLength": 1
-              },
-              "reason_code": {
-                "type": "string",
-                "minLength": 1
-              }
-            },
-            "required": [
-              "id",
-              "reason_code"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "summary": {
-          "type": "string",
-          "minLength": 1
-        },
-        "next_actions": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/nextAction"
-          }
-        }
-      },
-      "required": [
-        "ruleset",
-        "ruleset_version",
-        "sampling_plan",
-        "findings",
-        "suspects",
-        "context",
-        "skipped",
-        "summary"
       ],
       "additionalProperties": false
     },
@@ -1540,59 +1396,6 @@
         "trace"
       ],
       "additionalProperties": false
-    },
-    "logsCommand": {
-      "oneOf": [
-        {
-          "required": [
-            "command"
-          ],
-          "properties": {
-            "command": {
-              "const": "logs"
-            },
-            "data": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/logsData"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          },
-          "allOf": [
-            {
-              "if": {
-                "properties": {
-                  "data": {
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "data"
-                ]
-              },
-              "then": {
-                "properties": {
-                  "meta": {
-                    "type": "object",
-                    "properties": {
-                      "target": {
-                        "$ref": "#/$defs/target"
-                      },
-                      "capture": {
-                        "$ref": "#/$defs/logsCapture"
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          ]
-        }
-      ]
     },
     "logsData": {
       "type": "object",
@@ -3738,6 +3541,9 @@
             }
           ],
           "description": "Bytes per second over the measured sample interval."
+        },
+        "selector": {
+          "$ref": "#/$defs/pidSelector"
         }
       },
       "required": [
@@ -3758,6 +3564,9 @@
           "properties": {
             "status": {
               "const": "not_found"
+            },
+            "selector": {
+              "$ref": "#/$defs/pidSelector"
             }
           },
           "required": [
@@ -4236,6 +4045,251 @@
             "shape_change",
             "counter_reset"
           ]
+        },
+        "recv_oct_delta": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Bytes increase over the measured sample interval; reset counters are unavailable."
+        },
+        "recv_oct_per_second": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Bytes per second over the measured sample interval."
+        },
+        "send_oct_delta": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Bytes increase over the measured sample interval; reset counters are unavailable."
+        },
+        "send_oct_per_second": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Bytes per second over the measured sample interval."
+        },
+        "oct_delta": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Bytes increase over the measured sample interval; reset counters are unavailable."
+        },
+        "oct_per_second": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Bytes per second over the measured sample interval."
+        },
+        "recv_cnt_delta": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Events increase over the measured sample interval; reset counters are unavailable."
+        },
+        "recv_cnt_per_second": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Events per second over the measured sample interval."
+        },
+        "send_cnt_delta": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Events increase over the measured sample interval; reset counters are unavailable."
+        },
+        "send_cnt_per_second": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Events per second over the measured sample interval."
+        },
+        "cnt_delta": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Events increase over the measured sample interval; reset counters are unavailable."
+        },
+        "cnt_per_second": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Events per second over the measured sample interval."
+        },
+        "window_state": {
+          "enum": [
+            "available",
+            "stable",
+            "baseline_missing",
+            "shape_change",
+            "counter_reset"
+          ]
+        },
+        "sample_metric_states": {
+          "type": "object",
+          "properties": {
+            "recv_oct": {
+              "enum": [
+                "available",
+                "counter_reset",
+                "baseline_missing",
+                "shape_change",
+                "capability_unavailable",
+                "invalid_counter",
+                "unavailable",
+                "missing_core",
+                "invalid_optional"
+              ]
+            },
+            "send_oct": {
+              "enum": [
+                "available",
+                "counter_reset",
+                "baseline_missing",
+                "shape_change",
+                "capability_unavailable",
+                "invalid_counter",
+                "unavailable",
+                "missing_core",
+                "invalid_optional"
+              ]
+            },
+            "oct": {
+              "enum": [
+                "available",
+                "counter_reset",
+                "baseline_missing",
+                "shape_change",
+                "capability_unavailable",
+                "invalid_counter",
+                "unavailable",
+                "missing_core",
+                "invalid_optional"
+              ]
+            },
+            "recv_cnt": {
+              "enum": [
+                "available",
+                "counter_reset",
+                "baseline_missing",
+                "shape_change",
+                "capability_unavailable",
+                "invalid_counter",
+                "unavailable",
+                "missing_core",
+                "invalid_optional"
+              ]
+            },
+            "send_cnt": {
+              "enum": [
+                "available",
+                "counter_reset",
+                "baseline_missing",
+                "shape_change",
+                "capability_unavailable",
+                "invalid_counter",
+                "unavailable",
+                "missing_core",
+                "invalid_optional"
+              ]
+            },
+            "cnt": {
+              "enum": [
+                "available",
+                "counter_reset",
+                "baseline_missing",
+                "shape_change",
+                "capability_unavailable",
+                "invalid_counter",
+                "unavailable",
+                "missing_core",
+                "invalid_optional"
+              ]
+            }
+          },
+          "required": [
+            "recv_oct",
+            "send_oct",
+            "oct",
+            "recv_cnt",
+            "send_cnt",
+            "cnt"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -4552,6 +4606,303 @@
             "shape_change",
             "counter_reset"
           ]
+        },
+        "io_delta": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Bytes increase over the measured sample interval; reset counters are unavailable."
+        },
+        "io_per_second": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Bytes per second over the measured sample interval."
+        },
+        "read_bytes_delta": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Bytes increase over the measured sample interval; reset counters are unavailable."
+        },
+        "read_bytes_per_second": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Bytes per second over the measured sample interval."
+        },
+        "write_bytes_delta": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Bytes increase over the measured sample interval; reset counters are unavailable."
+        },
+        "write_bytes_per_second": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Bytes per second over the measured sample interval."
+        },
+        "packets_delta": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Events increase over the measured sample interval; reset counters are unavailable."
+        },
+        "packets_per_second": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Events per second over the measured sample interval."
+        },
+        "waits_delta": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Events increase over the measured sample interval; reset counters are unavailable."
+        },
+        "waits_per_second": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Events per second over the measured sample interval."
+        },
+        "fails_delta": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Events increase over the measured sample interval; reset counters are unavailable."
+        },
+        "fails_per_second": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Events per second over the measured sample interval."
+        },
+        "accepts_delta": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Events increase over the measured sample interval; reset counters are unavailable."
+        },
+        "accepts_per_second": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Events per second over the measured sample interval."
+        },
+        "window_state": {
+          "enum": [
+            "available",
+            "stable",
+            "baseline_missing",
+            "shape_change",
+            "counter_reset"
+          ]
+        },
+        "sample_metric_states": {
+          "type": "object",
+          "properties": {
+            "read_bytes": {
+              "enum": [
+                "available",
+                "counter_reset",
+                "baseline_missing",
+                "shape_change",
+                "capability_unavailable",
+                "invalid_counter",
+                "unavailable",
+                "missing_core",
+                "invalid_optional"
+              ]
+            },
+            "write_bytes": {
+              "enum": [
+                "available",
+                "counter_reset",
+                "baseline_missing",
+                "shape_change",
+                "capability_unavailable",
+                "invalid_counter",
+                "unavailable",
+                "missing_core",
+                "invalid_optional"
+              ]
+            },
+            "io": {
+              "enum": [
+                "available",
+                "counter_reset",
+                "baseline_missing",
+                "shape_change",
+                "capability_unavailable",
+                "invalid_counter",
+                "unavailable",
+                "missing_core",
+                "invalid_optional"
+              ]
+            },
+            "packets": {
+              "enum": [
+                "available",
+                "counter_reset",
+                "baseline_missing",
+                "shape_change",
+                "capability_unavailable",
+                "invalid_counter",
+                "unavailable",
+                "missing_core",
+                "invalid_optional"
+              ]
+            },
+            "accepts": {
+              "enum": [
+                "available",
+                "counter_reset",
+                "baseline_missing",
+                "shape_change",
+                "capability_unavailable",
+                "invalid_counter",
+                "unavailable",
+                "missing_core",
+                "invalid_optional"
+              ]
+            },
+            "waits": {
+              "enum": [
+                "available",
+                "counter_reset",
+                "baseline_missing",
+                "shape_change",
+                "capability_unavailable",
+                "invalid_counter",
+                "unavailable",
+                "missing_core",
+                "invalid_optional"
+              ]
+            },
+            "fails": {
+              "enum": [
+                "available",
+                "counter_reset",
+                "baseline_missing",
+                "shape_change",
+                "capability_unavailable",
+                "invalid_counter",
+                "unavailable",
+                "missing_core",
+                "invalid_optional"
+              ]
+            },
+            "max_packet": {
+              "enum": [
+                "available",
+                "counter_reset",
+                "baseline_missing",
+                "shape_change",
+                "capability_unavailable",
+                "invalid_counter",
+                "unavailable",
+                "missing_core",
+                "invalid_optional"
+              ]
+            }
+          },
+          "required": [
+            "read_bytes",
+            "write_bytes",
+            "io",
+            "packets",
+            "accepts",
+            "waits",
+            "fails",
+            "max_packet"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -4726,6 +5077,9 @@
           "items": {
             "type": "string"
           }
+        },
+        "selector": {
+          "$ref": "#/$defs/portSelector"
         }
       },
       "required": [
@@ -4964,6 +5318,9 @@
           "properties": {
             "status": {
               "const": "not_found"
+            },
+            "selector": {
+              "$ref": "#/$defs/portSelector"
             }
           },
           "required": [
@@ -5174,6 +5531,9 @@
             },
             "monitored_by_truncated": {
               "type": "boolean"
+            },
+            "selector": {
+              "$ref": "#/$defs/portSelector"
             }
           },
           "required": [
@@ -5344,14 +5704,20 @@
             "message_queue_len",
             "reductions",
             "binary_memory",
-            "total_heap_size"
+            "total_heap_size",
+            "memory-change",
+            "mailbox-change",
+            "reductions-rate",
+            "binary-memory-change",
+            "heap-change"
           ]
         },
         "sort_semantics": {
           "enum": [
             "total",
             "delta",
-            "current"
+            "current",
+            "rate"
           ]
         },
         "items": {
@@ -5698,14 +6064,27 @@
             "send_oct",
             "cnt",
             "recv_cnt",
-            "send_cnt"
+            "send_cnt",
+            "oct-change",
+            "recv_oct-change",
+            "send_oct-change",
+            "cnt-change",
+            "recv_cnt-change",
+            "send_cnt-change",
+            "oct-rate",
+            "recv_oct-rate",
+            "send_oct-rate",
+            "cnt-rate",
+            "recv_cnt-rate",
+            "send_cnt-rate"
           ]
         },
         "sort_semantics": {
           "enum": [
             "total",
             "delta",
-            "current"
+            "current",
+            "rate"
           ]
         },
         "items": {
@@ -5851,14 +6230,27 @@
             "write_bytes",
             "packets",
             "waits",
-            "fails"
+            "fails",
+            "io-change",
+            "read_bytes-change",
+            "write_bytes-change",
+            "packets-change",
+            "waits-change",
+            "fails-change",
+            "io-rate",
+            "read_bytes-rate",
+            "write_bytes-rate",
+            "packets-rate",
+            "waits-rate",
+            "fails-rate"
           ]
         },
         "sort_semantics": {
           "enum": [
             "total",
             "delta",
-            "current"
+            "current",
+            "rate"
           ]
         },
         "items": {
@@ -7510,6 +7902,9 @@
               "type": "null"
             }
           ]
+        },
+        "selector": {
+          "$ref": "#/$defs/pidSelector"
         }
       },
       "required": [
@@ -7911,6 +8306,9 @@
         },
         "binary_holders": {
           "$ref": "#/$defs/binaryHolders"
+        },
+        "current": {
+          "$ref": "#/$defs/diagnosticCurrent"
         }
       },
       "required": [
@@ -8139,6 +8537,9 @@
           "type": "integer",
           "minimum": 0,
           "description": "Bytes."
+        },
+        "selector": {
+          "$ref": "#/$defs/pidSelector"
         }
       },
       "required": [
@@ -8415,7 +8816,7 @@
         "inventory_path": {
           "enum": [
             "otp_process_iterator",
-            "processes_list"
+            "bounded_process_list"
           ]
         },
         "exclusions": {
@@ -8639,240 +9040,16 @@
       }
     },
     "commandConstraint": {
-      "oneOf": [
-        {
-          "type": "object",
-          "required": [
-            "kind",
-            "when_present",
-            "options"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "requires_options"
-            },
-            "when_present": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "options": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "kind",
-            "when_present",
-            "options"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "exactly_one_option"
-            },
-            "when_present": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "options": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "kind",
-            "when_present",
-            "format"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "effective_format"
-            },
-            "when_present": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "format": {
-              "enum": [
-                "text",
-                "json",
-                "term"
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "kind",
-            "options"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "required_options"
-            },
-            "options": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "kind",
-            "when_present",
-            "option",
-            "value"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "option_value"
-            },
-            "when_present": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "option": {
-              "type": "string"
-            },
-            "value": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "kind",
-            "options"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "mutually_exclusive"
-            },
-            "options": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "kind",
-            "when_present",
-            "option",
-            "sampling_option",
-            "margin_ms"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "timeout_margin"
-            },
-            "when_present": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "option": {
-              "type": "string"
-            },
-            "sampling_option": {
-              "type": "string"
-            },
-            "margin_ms": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "default_sampling_ms": {
-              "type": "integer",
-              "minimum": 0
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "kind",
-            "when_present",
-            "option",
-            "minimum_ms"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "minimum_duration"
-            },
-            "when_present": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "option": {
-              "type": "string"
-            },
-            "minimum_ms": {
-              "type": "integer",
-              "minimum": 0
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "kind",
-            "when_present",
-            "count"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "positional_count"
-            },
-            "when_present": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "count": {
-              "type": "integer",
-              "minimum": 0
-            }
-          }
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string"
         }
-      ]
+      },
+      "additionalProperties": true
     },
     "commandIdentifierPolicy": {
       "oneOf": [
@@ -8901,7 +9078,7 @@
           "additionalProperties": false,
           "properties": {
             "policy": {
-              "const": "context_or_catalog_metadata"
+              "const": "offline_metadata"
             },
             "cookie_values_returned": {
               "const": false
@@ -8945,7 +9122,8 @@
         "json_minimum_controller_otp",
         "verbose_format",
         "schema_ref",
-        "response_command"
+        "response_command",
+        "data_schemas"
       ],
       "additionalProperties": false,
       "properties": {
@@ -8955,24 +9133,37 @@
             "enum": [
               "text",
               "term",
-              "json"
+              "json",
+              "interactive"
             ]
           }
         },
         "default": {
-          "const": "text"
+          "enum": [
+            "text",
+            "interactive"
+          ]
         },
         "json_minimum_controller_otp": {
           "const": 27
         },
         "verbose_format": {
-          "const": "text"
+          "enum": [
+            "text",
+            null
+          ]
         },
         "schema_ref": {
           "type": "string"
         },
         "response_command": {
           "type": "string"
+        },
+        "data_schemas": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
@@ -9084,7 +9275,38 @@
     "describeData": {
       "oneOf": [
         {
-          "$ref": "#/$defs/commandDescriptor"
+          "type": "object",
+          "required": [
+            "entries",
+            "schema"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "schema": {
+              "const": "observer_cli.cli/v2"
+            },
+            "entries": {
+              "type": "array",
+              "minItems": 5,
+              "maxItems": 5,
+              "items": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "summary"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "summary": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
         },
         {
           "type": "object",
@@ -9093,63 +9315,298 @@
           ],
           "additionalProperties": false,
           "properties": {
+            "schema": {
+              "const": "observer_cli.cli/v2"
+            },
             "commands": {
               "type": "array",
               "items": {
                 "$ref": "#/$defs/commandDescriptor"
               }
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/commandDescriptor"
+        }
+      ]
+    },
+    "diagnosticCurrent": {
+      "type": "object",
+      "required": [
+        "memory",
+        "processes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "memory": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/beamMemory"
             },
-            "schema": {
-              "const": "observer_cli.cli/v1"
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "mailbox_peak": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
             },
-            "target_protocol": {
-              "const": 1
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Maximum observed mailbox message count, excluding observer processes."
+        },
+        "processes": {
+          "type": "object",
+          "required": [
+            "status",
+            "items"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "enum": [
+                "ok",
+                "unavailable",
+                "error",
+                "timeout"
+              ]
+            },
+            "sort_metric": {
+              "enum": [
+                "memory_bytes",
+                "message_queue_len"
+              ]
+            },
+            "items": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "$ref": "#/$defs/currentProcessItem"
+              }
+            }
+          }
+        }
+      }
+    },
+    "currentProcessItem": {
+      "type": "object",
+      "required": [
+        "pid",
+        "memory_bytes",
+        "message_queue_len",
+        "reductions"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "pid": {
+          "type": "string",
+          "minLength": 1
+        },
+        "memory_bytes": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Bytes."
+        },
+        "message_queue_len": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reductions": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "selector": {
+          "$ref": "#/$defs/pidSelector"
+        }
+      }
+    },
+    "assessment": {
+      "type": "object",
+      "required": [
+        "status",
+        "findings"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "findings",
+            "no_findings",
+            "not_evaluated"
+          ]
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/finding"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "no_findings",
+                  "not_evaluated"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "findings": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "findings"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "findings": {
+                "minItems": 1
+              }
             }
           }
         }
       ]
     },
-    "describeCommand": {
+    "checkData": {
+      "type": "object",
+      "properties": {
+        "ruleset": {
+          "enum": [
+            "observer_cli.quick",
+            "observer_cli.observation",
+            "observer_cli.deep_observation",
+            "observer_cli.application_observation"
+          ]
+        },
+        "ruleset_version": {
+          "const": 1
+        },
+        "sampling_plan": {
+          "$ref": "#/$defs/samplingPlan"
+        },
+        "suspects": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "context": {
+          "$ref": "#/$defs/diagnosticContext"
+        },
+        "skipped": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reason_code": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "reason_code"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "ruleset",
+        "ruleset_version",
+        "sampling_plan",
+        "suspects",
+        "context",
+        "skipped"
+      ],
+      "additionalProperties": false
+    },
+    "pidSelector": {
       "oneOf": [
         {
+          "type": "null"
+        },
+        {
+          "type": "object",
           "required": [
-            "command"
+            "kind",
+            "value"
           ],
+          "additionalProperties": false,
           "properties": {
-            "command": {
-              "const": "describe"
+            "kind": {
+              "const": "pid"
             },
-            "outcome": {
-              "enum": [
-                "complete",
-                "error"
-              ]
+            "value": {
+              "type": "string",
+              "pattern": "^<0\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)>$"
+            }
+          }
+        }
+      ]
+    },
+    "portSelector": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "port"
             },
-            "data": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/describeData"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "meta": {
-              "type": "object",
-              "required": [
-                "target",
-                "capture"
-              ],
-              "additionalProperties": false,
-              "properties": {
-                "target": {
-                  "type": "null"
-                },
-                "capture": {
-                  "type": "null"
-                }
-              }
+            "value": {
+              "type": "string",
+              "pattern": "^#Port<0\\.(0|[1-9][0-9]*)>$"
             }
           }
         }
