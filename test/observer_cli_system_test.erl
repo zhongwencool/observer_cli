@@ -129,7 +129,7 @@ render_sys_info_wide_layout_test() ->
 
 render_sys_info_empty_ps_test() ->
     Line = observer_cli_system:render_sys_info(
-        observer_cli_system:collect_sys_info("printf 'header\\n'")
+        observer_cli_system:collect_sys_info(unavailable_metrics())
     ),
     ?assert(string:find(lists:flatten(Line), "System/Architecture") =/= nomatch).
 
@@ -140,7 +140,7 @@ render_sys_info_runtime_limits_test() ->
         [],
         fun() ->
             Line = observer_cli_system:render_sys_info(
-                observer_cli_system:collect_sys_info("printf 'header\\n 1 2 3 4\\n'")
+                observer_cli_system:collect_sys_info(metrics_fixture())
             ),
             Output = lists:flatten(Line),
             ?assert(string:find(Output, "System Statistics / Limit") =/= nomatch),
@@ -155,21 +155,34 @@ render_sys_info_runtime_limits_test() ->
         end
     ).
 
+system_rss_change_remains_visible_in_narrow_value_cell_test() ->
+    observer_cli_test_io:with_geometry(24, 139, [], fun() ->
+        Output = observer_cli_system:render_sys_info(
+            observer_cli_system:collect_sys_info(metrics_fixture())
+        ),
+        observer_cli_test_io:assert_stable_fragments(Output, ["BEAM RSS", "182M +3.0M"])
+    end).
+
 collect_sys_info_test() ->
-    Cmd = "printf 'header\\n 1 2 3 4\\n'",
+    Cmd = metrics_fixture(),
     OsProcessInfo = observer_cli_system:collect_os_process_info(Cmd),
-    ?assertEqual("1%", proplists:get_value(ps_cpu, OsProcessInfo)),
-    ?assertEqual("2%", proplists:get_value(ps_mem, OsProcessInfo)),
-    ?assertEqual(3 * 1024, proplists:get_value(ps_rss, OsProcessInfo)),
-    ?assertEqual(4 * 1024, proplists:get_value(ps_vsz, OsProcessInfo)),
+    ?assertEqual("236.0%", lists:flatten(proplists:get_value(beam_cpu, OsProcessInfo))),
+    ?assertEqual(
+        "182 MiB (+3.0 MiB)",
+        lists:flatten(observer_cli_system:to_list(proplists:get_value(beam_rss, OsProcessInfo)))
+    ),
+    ?assertEqual("1.51s", lists:flatten(proplists:get_value(cpu_window, OsProcessInfo))),
     Info = observer_cli_system:collect_sys_info(Cmd),
-    ?assertEqual("1%", proplists:get_value(ps_cpu, Info)),
-    ?assertEqual("2%", proplists:get_value(ps_mem, Info)),
-    ?assertEqual(3 * 1024, proplists:get_value(ps_rss, Info)),
-    ?assertEqual(4 * 1024, proplists:get_value(ps_vsz, Info)).
+    ?assertEqual("236.0%", lists:flatten(proplists:get_value(beam_cpu, Info))),
+    ?assertEqual(
+        "182 MiB (+3.0 MiB)",
+        lists:flatten(observer_cli_system:to_list(proplists:get_value(beam_rss, Info)))
+    ),
+    ?assertEqual("1.51s", lists:flatten(proplists:get_value(cpu_window, Info))),
+    ?assertEqual("unavailable", proplists:get_value(beam_vsz, Info)).
 
 collect_system_info_test() ->
-    Info = observer_cli_system:collect_system_info("printf 'header\\n 1 2 3 4\\n'"),
+    Info = observer_cli_system:collect_system_info(metrics_fixture()),
     ?assertEqual(
         lists:sort([allocator_info, dist_nodes_info, os_process_info, sys_info]),
         lists:sort(maps:keys(Info))
@@ -194,11 +207,11 @@ collect_system_info_test() ->
     SysInfo = maps:get(sys_info, Info),
     DistNodesInfo = maps:get(dist_nodes_info, Info),
     ?assertEqual(
-        lists:sort([ps_cpu, ps_mem, ps_rss, ps_vsz]),
+        lists:sort([beam_cpu, beam_rss, cpu_window, beam_vsz]),
         lists:sort([Key || {Key, _} <- OsProcessInfo])
     ),
-    ?assertEqual("1%", proplists:get_value(ps_cpu, OsProcessInfo)),
-    ?assertEqual(undefined, proplists:get_value(ps_cpu, SysInfo)),
+    ?assertEqual("236.0%", lists:flatten(proplists:get_value(beam_cpu, OsProcessInfo))),
+    ?assertEqual(undefined, proplists:get_value(beam_cpu, SysInfo)),
     ?assert(lists:keymember(otp_release, 1, SysInfo)),
     ?assert(lists:keymember(schedulers_online, 1, SysInfo)),
     ?assert(lists:keymember(io_input, 1, SysInfo)),
@@ -226,7 +239,7 @@ collect_system_info_test() ->
     ].
 
 render_system_sections_test() ->
-    FullSysInfo = observer_cli_system:collect_sys_info("printf 'header\\n 1 2 3 4\\n'"),
+    FullSysInfo = observer_cli_system:collect_sys_info(metrics_fixture()),
     {OsProcessInfo, SysInfo} = split_os_process_info(FullSysInfo),
     [Sys, Allocator, DistNodes, CacheHit] = observer_cli_system:render_system_sections(#{
         os_process_info => OsProcessInfo,
@@ -518,7 +531,7 @@ dist_sample(Connection, Time, Rx, Tx, Pending) ->
     }}.
 
 render_worker_redraw_test() ->
-    Cmd = "printf 'header\\n 1 2 3 4\\n'",
+    Cmd = unsupported_context(),
     Pid = spawn(fun() -> observer_cli_system:render_worker(Cmd, 1, ?INIT_TIME_REF) end),
     Ref = erlang:monitor(process, Pid),
     Pid ! redraw,
@@ -535,7 +548,7 @@ render_worker_empty_sys_dist_test() ->
         undefined ->
             ets:new(sys_dist, [named_table, public, set]),
             try
-                Cmd = "printf 'header\\n 1 2 3 4\\n'",
+                Cmd = unsupported_context(),
                 Pid = spawn(fun() ->
                     observer_cli_system:render_worker(Cmd, 1, ?INIT_TIME_REF)
                 end),
@@ -773,7 +786,7 @@ dist_node_fixture() ->
 
 split_os_process_info(SysInfo) ->
     lists:partition(
-        fun({Key, _}) -> lists:member(Key, [ps_cpu, ps_mem, ps_rss, ps_vsz]) end,
+        fun({Key, _}) -> lists:member(Key, [beam_cpu, beam_rss, cpu_window, beam_vsz]) end,
         SysInfo
     ).
 
@@ -841,5 +854,18 @@ system_private_helper_contract_test() ->
         _ = erlang:system_flag(multi_scheduling, unblock),
         Previous
     end.
+
+metrics_fixture() ->
+    #{
+        cpu => #{status => available, percent => 236.0, interval_us => 1510000},
+        rss_bytes => 182 * 1048576,
+        rss_delta_bytes => 3 * 1048576
+    }.
+
+unavailable_metrics() ->
+    #{cpu => #{status => unavailable}, rss_bytes => undefined, rss_delta_bytes => undefined}.
+
+unsupported_context() ->
+    #{platform => unsupported, identity => {node(), os:getpid()}, timeout_ms => 500}.
 
 -endif.

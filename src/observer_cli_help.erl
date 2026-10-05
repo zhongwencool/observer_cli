@@ -72,7 +72,7 @@ render_help() ->
         shortcut("K", "open socket API sockets view."),
 
         section("3. HOME(H) Commands"),
-        shortcut("`", "enable/disable schedule usage."),
+        shortcut("`", "enable/disable schedule usage and its Normal/Dirty CPU summary together."),
         shortcut("r", "switch mode to reduction(proc_count)."),
         shortcut("rr", "switch mode to reduction(proc_window)."),
         shortcut("m", "switch mode to memory(proc_count)."),
@@ -94,7 +94,14 @@ render_help() ->
             "choose the <0.431.0> process, the pid does not need to be in the top list."
         ),
 
-        section("5. Reference"),
+        section("5. Runtime Metrics"),
+        "|BEAM CPU: user + system CPU over CPU window; 100% = one logical CPU.\n",
+        "|BEAM RSS: resident OS memory; signed change is not a per-second rate.\n",
+        "|RSS differs from BEAM allocated memory; a difference alone is not a leak.\n",
+        "|CPU window and process Sample are separate; first/invalid windows are not zero.\n",
+        "|Sched busy is scheduler wall time, not OS CPU; its summary never starts sampling.\n",
+
+        section("6. Reference"),
         "|More information about recon:proc_count/2 and recon:proc_window/3 \n",
         "|refer to https://github.com/ferd/recon/blob/master/src/recon.erl  \n",
         "|Any issue please visit: https://github.com/zhongwencool/observer_cli/issues  \n"

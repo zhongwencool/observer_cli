@@ -44,7 +44,7 @@ home_golden_output_fragments_test() ->
             Footer = observer_cli:render_footer(),
             StableInfo = observer_cli:get_stable_system_info(),
             SystemLines = observer_cli:render_system_line(
-                "printf 'header\n 1 2\n'", StableInfo, {ok, 1000, 10}
+                metrics_fixture(), StableInfo, {ok, 1000, 10}
             ),
             MemoryLines = observer_cli:render_memory_process_line({1, 2, 3, 4}, 1500),
             {_, [TopTitle]} = observer_cli:render_top_n_view(
@@ -83,5 +83,12 @@ home_golden_output_fragments_test() ->
             )
         end
     ).
+
+metrics_fixture() ->
+    #{
+        cpu => #{status => available, percent => 236.0, interval_us => 1510000},
+        rss_bytes => 182 * 1048576,
+        rss_delta_bytes => 3 * 1048576
+    }.
 
 -endif.

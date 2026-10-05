@@ -307,7 +307,7 @@ views.
 
 | Key | Accepted value | Default | Purpose |
 | --- | --- | --- | --- |
-| `scheduler_usage` | `enable` or `disable` | `disable` | Initial Home scheduler-wall-time display |
+| `scheduler_usage` | `enable` or `disable` | `disable` | Initial Home scheduler-wall-time rows and Normal/Dirty CPU summary |
 | `default_row_size` | Positive integer | `30` | Row count when terminal height is unavailable |
 | `formatter` | Formatter map | Built-in formatter | Process Messages, Dictionary, and State rendering |
 | `plugins` | List of plugin maps | `[]` | Plugin sheets |

@@ -33,14 +33,17 @@ render_help_grouping_test() ->
     StartSection = section_text(Text, "1. Start Mode", "2. Global Commands"),
     GlobalSection = section_text(Text, "2. Global Commands", "3. HOME(H) Commands"),
     HomeSection = section_text(Text, "3. HOME(H) Commands", "4. Process Select Examples"),
-    ProcessSection = section_text(Text, "4. Process Select Examples", "5. Reference"),
-    ReferenceSection = after_text(Text, "5. Reference"),
+    ProcessSection = section_text(Text, "4. Process Select Examples", "5. Runtime Metrics"),
+    MetricsSection = section_text(Text, "5. Runtime Metrics", "6. Reference"),
+    ReferenceSection = after_text(Text, "6. Reference"),
     ?assert(string:find(StartSection, "observer_cli:start().") =/= nomatch),
     ?assert(string:find(GlobalSection, "pause/unpause") =/= nomatch),
     ?assert(string:find(GlobalSection, "socket API sockets") =/= nomatch),
     ?assertEqual(nomatch, string:find(HomeSection, "pause/unpause")),
     ?assert(string:find(HomeSection, "schedule usage") =/= nomatch),
     ?assert(string:find(ProcessSection, "<0.43.0>") =/= nomatch),
+    ?assert(string:find(MetricsSection, "100% = one logical CPU") =/= nomatch),
+    ?assert(string:find(MetricsSection, "not a per-second rate") =/= nomatch),
     ?assert(string:find(ReferenceSection, "github.com/ferd/recon") =/= nomatch).
 
 render_doc_test() ->

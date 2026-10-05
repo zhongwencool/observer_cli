@@ -20,7 +20,7 @@ home_window_values_test() ->
 home_warming_and_labels_test() ->
     Home = #home{func = proc_window, type = memory},
     {Snapshot, _} = observer_cli:collect_home_snapshot(
-        "printf ''",
+        #{platform => unsupported, identity => {node(), os:getpid()}, timeout_ms => 500},
         Home,
         observer_cli:get_stable_system_info(),
         observer_cli:get_incremental_stats(?DISABLE),
@@ -118,7 +118,7 @@ system_allocated_labels_keep_sources_test() ->
     ?assertEqual({bytes, atom}, proplists:get_value("Atoms", Fields)),
     observer_cli_test_io:assert_stable_fragments(
         observer_cli_system:render_sys_info(
-            observer_cli_system:collect_sys_info("printf 'header\n 1 2 3 4\n'")
+            observer_cli_system:collect_sys_info(metrics_fixture())
         ),
         ["Size (allocated)", "Processes", "Atoms"]
     ).
@@ -140,7 +140,7 @@ home_live_pause_resume_test() ->
         Line
      || Line <- string:split(observer_cli_test_io:plain(Output), "\n", all),
         string:find(Line, "recon:proc_window(reductions,") =/= nomatch,
-        string:find(Line, "warming up") =/= nomatch
+        string:find(Line, " | warming up") =/= nomatch
     ],
     ?assertEqual(2, length(WarmLines)),
     observer_cli_test_io:assert_stable_fragments(
@@ -302,6 +302,13 @@ socket_fixture() ->
             read_pkg_max => 64,
             write_pkg_max => 32
         }
+    }.
+
+metrics_fixture() ->
+    #{
+        cpu => #{status => available, percent => 236.0, interval_us => 1510000},
+        rss_bytes => 182 * 1048576,
+        rss_delta_bytes => 3 * 1048576
     }.
 
 -endif.

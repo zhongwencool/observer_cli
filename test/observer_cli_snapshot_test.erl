@@ -2005,7 +2005,11 @@ memory_command_keeps_beam_data_when_allocator_fails_test() ->
 tui_resource_counts_match_snapshot_window_test() ->
     Tui = maps:get(
         sys_info,
-        observer_cli_system:collect_system_info("printf 'header\\n 0 0 0 0\\n'")
+        observer_cli_system:collect_system_info(#{
+            cpu => #{status => unavailable},
+            rss_bytes => undefined,
+            rss_delta_bytes => undefined
+        })
     ),
     Resources = maps:get(<<"resources">>, maps:get(<<"data">>, snapshot(#{}))),
     assert_count_within(

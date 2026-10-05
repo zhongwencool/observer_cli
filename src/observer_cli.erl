@@ -43,6 +43,9 @@
     get_pid_info/2,
     collect_home_snapshot/6,
     node_stats/2,
+    scheduler_stats/2,
+    render_scheduler_summary/1,
+    run_home_worker/4,
     get_incremental_stats/1,
     check_auto_row/0,
     select_home_process/3,
@@ -77,16 +80,10 @@ start(Node) when is_atom(Node) ->
 start(Opts = #view_opts{home = Home}) ->
     erlang:process_flag(trap_exit, true),
     AutoRow = check_auto_row(),
-    #home{scheduler_usage = SchUsage} = Home,
     StorePid = observer_cli_store:start(),
-    SchWallTimeToken = enable_scheduler_wall_time(SchUsage),
-    try
-        PsCmd = io_lib:format("ps -o pcpu,pmem ~s", [os:getpid()]),
-        RenderPid = spawn_link(fun() -> render_worker(PsCmd, StorePid, Home, AutoRow) end),
-        manager(StorePid, RenderPid, Opts#view_opts{auto_row = AutoRow}, SchWallTimeToken)
-    after
-        release_scheduler_wall_time(SchWallTimeToken)
-    end;
+    MetricsContext = observer_cli_runtime_metrics:init(Home#home.interval),
+    RenderPid = spawn_link(fun() -> run_home_worker(MetricsContext, StorePid, Home, AutoRow) end),
+    manager(StorePid, RenderPid, Opts#view_opts{auto_row = AutoRow});
 start(Interval) when is_integer(Interval), Interval >= ?MIN_INTERVAL ->
     start(#view_opts{
         home = #home{interval = Interval},
@@ -126,9 +123,13 @@ start_plugin() ->
     observer_cli_plugin:start(#view_opts{}).
 
 -spec clean(list()) -> boolean().
-clean([RenderPid, StorePid, SchWallTimeToken, _SchUsage]) ->
+clean([RenderPid, StorePid]) ->
     observer_cli_lib:exit_processes([RenderPid, StorePid]),
-    release_scheduler_wall_time(SchWallTimeToken).
+    false;
+%% Keep the exported cleanup entrypoint compatible with resources from the old manager.
+clean([RenderPid, StorePid, LegacyToken, _SchUsage]) ->
+    observer_cli_lib:exit_processes([RenderPid, StorePid]),
+    release_scheduler_wall_time(LegacyToken).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
@@ -151,38 +152,22 @@ rpc_start(Node, Interval) ->
             {badrpc, nodedown}
     end.
 
-manager(
-    StorePid,
-    RenderPid,
-    Opts = #view_opts{home = #home{scheduler_usage = SchUsage}},
-    SchWallTimeToken
-) ->
-    Resource = [RenderPid, StorePid, SchWallTimeToken, SchUsage],
+manager(StorePid, RenderPid, Opts) ->
+    Resource = [RenderPid, StorePid],
     Action = observer_cli_lib:parse_cmd(Opts, ?MODULE, Resource),
-    handle_home_action(Action, StorePid, RenderPid, Opts, SchWallTimeToken, Resource).
+    handle_home_action(Action, StorePid, RenderPid, Opts, Resource).
 
-handle_home_action(
-    quit,
-    StorePid,
-    RenderPid,
-    _Opts,
-    SchWallTimeToken,
-    _Resource
-) ->
-    erlang:unlink(RenderPid),
-    erlang:send(RenderPid, quit),
-    release_scheduler_wall_time(SchWallTimeToken),
-    observer_cli_lib:exit_processes([StorePid]),
+handle_home_action(quit, StorePid, RenderPid, _Opts, _Resource) ->
+    observer_cli_lib:exit_processes([RenderPid, StorePid]),
     quit;
-handle_home_action(pause_or_resume, StorePid, RenderPid, Opts, SchWallTimeToken, _Resource) ->
+handle_home_action(pause_or_resume, StorePid, RenderPid, Opts, _Resource) ->
     erlang:send(RenderPid, pause_or_resume),
-    manager(StorePid, RenderPid, Opts, SchWallTimeToken);
+    manager(StorePid, RenderPid, Opts);
 handle_home_action(
     {new_interval, NewInterval},
     _StorePid,
     _RenderPid,
     Opts = #view_opts{home = Home},
-    _SchWallTimeToken,
     Resource
 ) ->
     restart_home(Opts#view_opts{home = Home#home{interval = NewInterval}}, Resource);
@@ -191,7 +176,6 @@ handle_home_action(
     _StorePid,
     _RenderPid,
     Opts = #view_opts{home = Home},
-    _SchWallTimeToken,
     Resource
 ) ->
     #home{scheduler_usage = SchUsage} = Home,
@@ -208,31 +192,29 @@ handle_home_action(
                 pages = Pages
             }
     },
-    SchWallTimeToken,
     Resource
 ) ->
     NewPages = observer_cli_lib:update_page_pos(CurPage, NewPos, Pages),
     NewOpts = Opts#view_opts{home = Home#home{pages = NewPages}},
-    start_process_view(StorePid, RenderPid, NewOpts, SchWallTimeToken, Resource, false);
-handle_home_action(jump, StorePid, RenderPid, Opts, SchWallTimeToken, Resource) ->
-    start_process_view(StorePid, RenderPid, Opts, SchWallTimeToken, Resource, true);
+    start_process_view(StorePid, RenderPid, NewOpts, Resource, false);
+handle_home_action(jump, StorePid, RenderPid, Opts, Resource) ->
+    start_process_view(StorePid, RenderPid, Opts, Resource, true);
 handle_home_action(
     {func, Func, Type},
     _StorePid,
     _RenderPid,
     Opts = #view_opts{home = Home},
-    _SchWallTimeToken,
     Resource
 ) ->
     restart_home(Opts#view_opts{home = Home#home{func = Func, type = Type}}, Resource);
-handle_home_action(page_down_top_n, StorePid, _RenderPid, Opts, _SchWallTimeToken, Resource) ->
+handle_home_action(page_down_top_n, StorePid, _RenderPid, Opts, Resource) ->
     restart_home_page(1, StorePid, Opts, Resource);
-handle_home_action(page_up_top_n, StorePid, _RenderPid, Opts, _SchWallTimeToken, Resource) ->
+handle_home_action(page_up_top_n, StorePid, _RenderPid, Opts, Resource) ->
     restart_home_page(-1, StorePid, Opts, Resource);
-handle_home_action({go_to_pid, Pid}, _StorePid, _RenderPid, Opts, _SchWallTimeToken, Resource) ->
+handle_home_action({go_to_pid, Pid}, _StorePid, _RenderPid, Opts, Resource) ->
     open_process_view(Pid, Opts, Resource);
-handle_home_action(_Action, StorePid, RenderPid, Opts, SchWallTimeToken, _Resource) ->
-    manager(StorePid, RenderPid, Opts, SchWallTimeToken).
+handle_home_action(_Action, StorePid, RenderPid, Opts, _Resource) ->
+    manager(StorePid, RenderPid, Opts).
 
 toggle_scheduler_usage(SchUsage) ->
     case SchUsage of
@@ -252,12 +234,21 @@ restart_home(Opts, Resource) ->
     clean(Resource),
     start(Opts).
 
-render_worker(PsCmd, Manager, Home = #home{scheduler_usage = SchUsage}, AutoRow) ->
+run_home_worker(MetricsContext, StorePid, Home = #home{scheduler_usage = SchUsage}, AutoRow) ->
+    %% The existing sampling worker owns the one registration. OTP also releases it on death.
+    Token = enable_scheduler_wall_time(SchUsage),
+    try
+        render_worker(MetricsContext, StorePid, Home, AutoRow)
+    after
+        release_scheduler_wall_time(Token)
+    end.
+
+render_worker(MetricsContext, Manager, Home, AutoRow) ->
     ?output(?CLEAR),
     StableInfo = get_stable_system_info(),
-    LastStats = get_incremental_stats(SchUsage),
+    LastStats = #{node => undefined, os => undefined},
     redraw_running(
-        PsCmd,
+        MetricsContext,
         Manager,
         Home,
         StableInfo,
@@ -268,7 +259,7 @@ render_worker(PsCmd, Manager, Home = #home{scheduler_usage = SchUsage}, AutoRow)
     ).
 
 %% pause status waiting to be resume
-redraw_pause(PsCmd, StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRow) ->
+redraw_pause(MetricsContext, StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRow) ->
     notify_pause_status(),
     erlang:cancel_timer(LastTimeRef),
     #home{func = Func, type = Type} = Home,
@@ -277,15 +268,19 @@ redraw_pause(PsCmd, StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRow)
             quit;
         {Func, Type} ->
             %% A timer already in the mailbox must not resume a paused view.
-            redraw_pause(PsCmd, StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRow);
+            redraw_pause(
+                MetricsContext, StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRow
+            );
         pause_or_resume ->
             ?output(?CLEAR),
-            redraw_running(PsCmd, StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRow, true)
+            redraw_running(
+                MetricsContext, StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRow, true
+            )
     end.
 
 %% running status
 redraw_running(
-    PsCmd,
+    MetricsContext,
     StorePid,
     Home,
     StableInfo,
@@ -303,7 +298,9 @@ redraw_running(
     erlang:cancel_timer(LastTimeRef),
     TerminalRow = observer_cli_lib:get_terminal_rows(AutoRow),
     {Snapshot, NewStats} =
-        collect_home_snapshot(PsCmd, Home, StableInfo, LastStats, TerminalRow, IsFirstTime),
+        collect_home_snapshot(
+            MetricsContext, Home, StableInfo, LastStats, TerminalRow, IsFirstTime
+        ),
     {TopNList, Lines} = render_home_snapshot(Home, Snapshot),
     ?output([?CURSOR_TOP, Lines, "\e[J"]),
 
@@ -313,46 +310,81 @@ redraw_running(
         quit ->
             quit;
         pause_or_resume ->
-            redraw_pause(PsCmd, StorePid, Home, StableInfo, NewStats, TimeRef, AutoRow);
+            redraw_pause(MetricsContext, StorePid, Home, StableInfo, NewStats, TimeRef, AutoRow);
         {Func, Type} ->
-            redraw_running(PsCmd, StorePid, Home, StableInfo, NewStats, TimeRef, AutoRow, false)
+            redraw_running(
+                MetricsContext, StorePid, Home, StableInfo, NewStats, TimeRef, AutoRow, false
+            )
     end.
 
-collect_home_snapshot(PsCmd, Home, StableInfo, LastStats, TerminalRows, IsFirstTime) ->
+collect_home_snapshot(MetricsContext, Home, StableInfo, LastStats, TerminalRows, IsFirstTime) ->
     #home{
         interval = Interval,
         scheduler_usage = SchUsage
     } =
         Home,
-    Baseline =
+    {Diffs, SchedulerUsage, SchedulerSummary, NewStats} =
         case IsFirstTime of
-            true -> get_incremental_stats(SchUsage);
-            false -> LastStats
-        end,
-    {Diffs0, SchedulerUsage, NewStats} = node_stats(Baseline, SchUsage),
-    Diffs =
-        case IsFirstTime of
-            true -> {"warming up", "warming up", "warming up", "warming up"};
-            false -> Diffs0
+            true ->
+                Summary =
+                    case SchUsage of
+                        ?DISABLE -> undefined;
+                        ?ENABLE -> #{status => warming_up}
+                    end,
+                {
+                    {"warming up", "warming up", "warming up", "warming up"},
+                    undefined,
+                    Summary,
+                    get_incremental_stats(SchUsage)
+                };
+            false ->
+                node_stats(maps:get(node, LastStats), SchUsage)
         end,
     ProcessRows = max(
         TerminalRows - 14 - scheduler_usage_rows(SchedulerUsage), 0
     ),
     ProcessRanking = collect_home_processes(Home, ProcessRows, IsFirstTime),
-    Runtime = sample_home_runtime(PsCmd, StableInfo, Diffs, SchedulerUsage, Interval),
-    {ExtraRows, Menu} = observer_cli_lib:render_sampling_menu(
+    PreviousOs =
+        case IsFirstTime of
+            true -> undefined;
+            false -> maps:get(os, LastStats)
+        end,
+    {Metrics, NextOs} = observer_cli_runtime_metrics:window(
+        PreviousOs, observer_cli_runtime_metrics:sample(MetricsContext)
+    ),
+    Runtime = sample_home_runtime(
+        Metrics#{scheduler_summary => SchedulerSummary},
+        StableInfo,
+        Diffs,
+        SchedulerUsage,
+        Interval
+    ),
+    RefreshPrompt = [
+        maps:get(refresh_prompt, ProcessRanking),
+        " | ",
+        observer_cli_runtime_metrics:format_window(Metrics)
+    ],
+    {OriginalExtra, OriginalMenu} = observer_cli_lib:render_sampling_menu(
         home, maps:get(refresh_prompt, ProcessRanking)
     ),
+    {NewExtra, NewMenu} = observer_cli_lib:render_sampling_menu(home, RefreshPrompt),
+    %% Do not trade a process row for metadata. The summary header always carries CPU window.
+    {ExtraRows, Menu} =
+        case NewExtra =< OriginalExtra of
+            true -> {NewExtra, NewMenu};
+            false -> {OriginalExtra, OriginalMenu}
+        end,
     {
         maps:merge(
-            Runtime#{process_rows => max(ProcessRows - ExtraRows, 0), menu => Menu}, ProcessRanking
+            Runtime#{process_rows => max(ProcessRows - ExtraRows, 0), menu => Menu},
+            ProcessRanking#{refresh_prompt := RefreshPrompt}
         ),
-        NewStats
+        #{node => NewStats, os => NextOs}
     }.
 
-sample_home_runtime(PsCmd, StableInfo, Diffs, SchedulerUsage, Interval) ->
+sample_home_runtime(Metrics, StableInfo, Diffs, SchedulerUsage, Interval) ->
     #{
-        system_summary => system_summary(PsCmd, StableInfo, get_atom_status()),
+        system_summary => system_summary(Metrics, StableInfo, get_atom_status()),
         memory_summary => memory_process_summary(Diffs, Interval),
         scheduler_usage => SchedulerUsage
     }.
@@ -407,15 +439,15 @@ render_footer() ->
 
 -ifdef(TEST).
 
-render_system_line(PsCmd, StableInfo) ->
-    render_system_line(PsCmd, StableInfo, get_atom_status()).
+render_system_line(Metrics, StableInfo) ->
+    render_system_line(Metrics, StableInfo, get_atom_status()).
 
-render_system_line(PsCmd, StableInfo, AtomStatus) ->
-    render_home_summary(system_summary(PsCmd, StableInfo, AtomStatus)).
+render_system_line(Metrics, StableInfo, AtomStatus) ->
+    render_home_summary(system_summary(Metrics, StableInfo, AtomStatus)).
 
 -endif.
 
-system_summary(PsCmd, StableInfo, AtomStatus) ->
+system_summary(Metrics, StableInfo, AtomStatus) ->
     {LeftLabelExtra, LeftValueExtra, MiddleLabelExtra, MiddleValueExtra, RightLabelExtra,
         RightValueExtra} = home_summary_extras(),
     [Version, SysVersion, ProcLimit, PortLimit, EtsLimit] = StableInfo,
@@ -424,24 +456,16 @@ system_summary(PsCmd, StableInfo, AtomStatus) ->
     Reductions = erlang:statistics(reductions),
     {PortWarning, ProcWarning, PortCount, ProcCount} =
         get_port_proc_info(PortLimit, ProcLimit),
-    CmdValue =
-        case
-            string:split(
-                os:cmd(PsCmd), "\n", all
-            )
-        of
-            [_, CmdValueTmp | _] ->
-                CmdValueTmp;
-            _ ->
-                ""
-        end,
-
-    [CpuPsV, MemPsV] =
-        case lists:filter(fun(Y) -> Y =/= [] end, string:split(CmdValue, " ", all)) of
-            [V1, V2] ->
-                [V1, V2];
-            _ ->
-                ["--", "--"]
+    %% The legacy normal rows overran the 139-column layout by one count-cell character.
+    NarrowTrim = max(140 - observer_cli_lib:layout_width(), 0),
+    CountValueWidth = 22 + LeftValueExtra - NarrowTrim,
+    HeaderValueWidth = 25 + RightValueExtra - NarrowTrim,
+    CpuText = observer_cli_runtime_metrics:format_cpu(Metrics),
+    RssText = observer_cli_runtime_metrics:format_rss(Metrics),
+    {VersionLabel, VersionValue} =
+        case maps:get(scheduler_summary, Metrics, undefined) of
+            undefined -> {" Version", Version};
+            Summary -> {" Sched busy", render_scheduler_summary(Summary)}
         end,
     {Reds, _SinceLastCall} = Reductions,
     ReductionsText = integer_to_list(Reds),
@@ -452,25 +476,25 @@ system_summary(PsCmd, StableInfo, AtomStatus) ->
                 {"System", 10 + LeftLabelExtra},
                 {"Count/Limit", 21 + LeftValueExtra},
                 {"System", 25 + MiddleLabelExtra},
-                {"Status", 21 + MiddleValueExtra},
+                {observer_cli_runtime_metrics:format_window(Metrics), 21 + MiddleValueExtra},
                 {"Stat Info", 20 + RightLabelExtra},
-                {"Size", 25 + RightValueExtra}
+                {"Size", HeaderValueWidth}
             ]}
         ],
         [
             {normal, [
                 {"Proc Count", 10 + LeftLabelExtra},
-                {ProcWarning, ProcCount, 22 + LeftValueExtra},
-                {" Version", 26 + MiddleLabelExtra},
-                {Version, 21 + MiddleValueExtra},
+                {ProcWarning, ProcCount, CountValueWidth},
+                {VersionLabel, 26 + MiddleLabelExtra},
+                {VersionValue, 21 + MiddleValueExtra},
                 {"Active Task", 20 + RightLabelExtra},
                 {ActiveTask, 25 + RightValueExtra}
             ]},
             {normal, [
                 {"Port Count", 10 + LeftLabelExtra},
-                {PortWarning, PortCount, 22 + LeftValueExtra},
-                {" ps -o pcpu", 26 + MiddleLabelExtra},
-                {[CpuPsV, "%"], 21 + MiddleValueExtra},
+                {PortWarning, PortCount, CountValueWidth},
+                {" BEAM CPU", 26 + MiddleLabelExtra},
+                {CpuText, 21 + MiddleValueExtra},
                 {"Context Switch", 20 + RightLabelExtra},
                 {ContextSwitch, 24 + RightValueExtra}
             ]}
@@ -479,7 +503,7 @@ system_summary(PsCmd, StableInfo, AtomStatus) ->
             system_atom_summary_row(
                 AtomStatus,
                 EtsLimit,
-                MemPsV,
+                RssText,
                 ReductionsText,
                 {LeftLabelExtra, LeftValueExtra, MiddleLabelExtra, MiddleValueExtra,
                     RightLabelExtra, RightValueExtra}
@@ -490,7 +514,7 @@ system_summary(PsCmd, StableInfo, AtomStatus) ->
 system_atom_summary_row(
     {ok, AtomLimit, AtomCount},
     _EtsLimit,
-    MemPsV,
+    RssText,
     ReductionsText,
     {LeftLabelExtra, LeftValueExtra, MiddleLabelExtra, MiddleValueExtra, RightLabelExtra,
         RightValueExtra}
@@ -499,15 +523,15 @@ system_atom_summary_row(
     {?UNDERLINE, [
         {"Atom Count", 10 + LeftLabelExtra},
         {AtomWarning, Atom, 22 + LeftValueExtra},
-        {" ps -o pmem", 26 + MiddleLabelExtra},
-        {[MemPsV, "%"], 21 + MiddleValueExtra},
+        {" BEAM RSS", 26 + MiddleLabelExtra},
+        {RssText, 21 + MiddleValueExtra},
         {"Reds total", 20 + RightLabelExtra},
         {ReductionsText, 24 + RightValueExtra}
     ]};
 system_atom_summary_row(
     {error, unsupported},
     EtsLimit,
-    MemPsV,
+    RssText,
     ReductionsText,
     {LeftLabelExtra, LeftValueExtra, MiddleLabelExtra, MiddleValueExtra, RightLabelExtra,
         RightValueExtra}
@@ -515,8 +539,8 @@ system_atom_summary_row(
     {?UNDERLINE, [
         {"Ets Limit", 10 + LeftLabelExtra},
         {EtsLimit, 21 + LeftValueExtra},
-        {" ps -o pmem", 25 + MiddleLabelExtra},
-        {[MemPsV, "%"], 21 + MiddleValueExtra},
+        {" BEAM RSS", 25 + MiddleLabelExtra},
+        {RssText, 21 + MiddleValueExtra},
         {"Reductions", 20 + RightLabelExtra},
         {ReductionsText, 24 + RightValueExtra}
     ]}.
@@ -1307,19 +1331,12 @@ process_window(Type, First, Last, Elapsed) ->
 connect_error(Prompt, Node) ->
     ?output(observer_cli_lib:ansi_red(Prompt), [Node]).
 
-start_process_view(
-    StorePid,
-    RenderPid,
-    Opts,
-    SchWallTimeToken,
-    Resource,
-    AutoJump
-) ->
+start_process_view(StorePid, RenderPid, Opts, Resource, AutoJump) ->
     case select_home_process(StorePid, Opts, AutoJump) of
         {ok, ChoosePid} ->
             open_process_view(ChoosePid, Opts, Resource);
         error ->
-            manager(StorePid, RenderPid, Opts, SchWallTimeToken)
+            manager(StorePid, RenderPid, Opts)
     end.
 
 select_home_process(StorePid, #view_opts{home = Home}, AutoJump) ->
@@ -1367,10 +1384,12 @@ check_auto_row() ->
 
 node_stats(LastStats, SchUsage) ->
     New = get_incremental_stats(SchUsage),
+    {Usage, Summary, NextSchedule} = scheduler_stats(LastStats, New),
     {
         io_gc_stats_diff(LastStats, New),
-        scheduler_usage_diff(LastStats, New),
-        New
+        Usage,
+        Summary,
+        setelement(5, New, NextSchedule)
     }.
 
 io_gc_stats_diff({LastIn, LastOut, LastGCs, LastWords, _}, {In, Out, GCs, Words, _}) ->
@@ -1385,8 +1404,43 @@ io_gc_stats_diff({LastIn, LastOut, LastGCs, LastWords, _}, {In, Out, GCs, Words,
         [integer_to_list(Words), "/", integer_to_list(GCWordsDiff)]
     }.
 
-scheduler_usage_diff({_, _, _, _, LastScheduleWall}, {_, _, _, _, ScheduleWall}) ->
-    recon_lib:scheduler_usage_diff(LastScheduleWall, ScheduleWall).
+scheduler_stats(_Last, {_, _, _, _, undefined}) ->
+    {undefined, undefined, undefined};
+scheduler_stats(_Last, {_, _, _, _, #{wall_time := undefined} = Current}) ->
+    {undefined, #{status => unavailable}, Current};
+scheduler_stats({_, _, _, _, undefined}, {_, _, _, _, Current}) ->
+    {undefined, #{status => warming_up}, Current};
+scheduler_stats({_, _, _, _, #{wall_time := undefined}}, {_, _, _, _, Current}) ->
+    {undefined, #{status => warming_up}, Current};
+scheduler_stats({_, _, _, _, Previous}, {_, _, _, _, Current}) ->
+    case observer_cli_snapshot:scheduler_busy_window(Previous, Current) of
+        #{status := valid} = Summary ->
+            try
+                recon_lib:scheduler_usage_diff(
+                    maps:get(wall_time, Previous), maps:get(wall_time, Current)
+                )
+            of
+                Usage -> {Usage, Summary, Current}
+            catch
+                error:_ ->
+                    {undefined, #{status => unavailable}, Current#{wall_time := undefined}}
+            end;
+        #{status := invalid} ->
+            {undefined, #{status => unavailable}, Current#{wall_time := undefined}}
+    end.
+
+render_scheduler_summary(#{status := warming_up}) ->
+    "warming up";
+render_scheduler_summary(#{status := unavailable}) ->
+    "unavailable";
+render_scheduler_summary(#{status := valid, normal := Normal, dirty_cpu := Dirty}) ->
+    ["N ", scheduler_pool_percent(Normal), " / D ", scheduler_pool_percent(Dirty)].
+
+scheduler_pool_percent(#{status := available, utilization_ratio := Ratio}) ->
+    %% Compact enough for the existing 21-character value cell, including two 100% pools.
+    io_lib:format("~B%", [round(Ratio * 100)]);
+scheduler_pool_percent(#{status := unavailable}) ->
+    "n/a".
 
 get_incremental_stats(SchUsage) ->
     {{input, In}, {output, Out}} = erlang:statistics(io),
@@ -1394,7 +1448,16 @@ get_incremental_stats(SchUsage) ->
     ScheduleWall =
         case SchUsage of
             ?ENABLE ->
-                erlang:statistics(scheduler_wall_time);
+                #{
+                    topology => #{
+                        schedulers_configured => erlang:system_info(schedulers),
+                        schedulers_online => erlang:system_info(schedulers_online),
+                        dirty_cpu_schedulers_online => erlang:system_info(
+                            dirty_cpu_schedulers_online
+                        )
+                    },
+                    wall_time => erlang:statistics(scheduler_wall_time)
+                };
             ?DISABLE ->
                 undefined
         end,

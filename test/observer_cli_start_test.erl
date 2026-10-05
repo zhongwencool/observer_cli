@@ -163,6 +163,67 @@ start_pause_timer_redraw_test() ->
         })
     ).
 
+cleanup_resource_shapes_preserve_other_registration_test_() ->
+    {spawn, fun() ->
+        _ = erlang:system_flag(scheduler_wall_time, true),
+        try
+            lists:foreach(
+                fun(Legacy) ->
+                    Render = spawn(fun() ->
+                        receive
+                            stop -> ok
+                        end
+                    end),
+                    Store = spawn(fun() ->
+                        receive
+                            stop -> ok
+                        end
+                    end),
+                    Resource =
+                        case Legacy of
+                            true -> [Render, Store, false, ?ENABLE];
+                            false -> [Render, Store]
+                        end,
+                    ?assertEqual(false, observer_cli:clean(Resource)),
+                    %% exit_processes/1 drains cleanup messages, including monitor DOWNs.
+                    ?assertNot(is_process_alive(Render)),
+                    ?assertNot(is_process_alive(Store)),
+                    ?assert(is_list(erlang:statistics(scheduler_wall_time)))
+                end,
+                [false, true]
+            )
+        after
+            erlang:system_flag(scheduler_wall_time, false)
+        end
+    end}.
+
+legacy_cleanup_releases_its_token_test_() ->
+    {spawn, fun() ->
+        Token = atomics:new(1, []),
+        _ = erlang:system_flag(scheduler_wall_time, true),
+        Render = spawn(fun() ->
+            receive
+                stop -> ok
+            end
+        end),
+        Store = spawn(fun() ->
+            receive
+                stop -> ok
+            end
+        end),
+        try
+            ?assertEqual(true, observer_cli:clean([Render, Store, Token, ?ENABLE])),
+            ?assertEqual(undefined, erlang:statistics(scheduler_wall_time))
+        after
+            exit(Render, kill),
+            exit(Store, kill),
+            case atomics:get(Token, 1) of
+                0 -> erlang:system_flag(scheduler_wall_time, false);
+                1 -> ok
+            end
+        end
+    end}.
+
 with_trap_exit(Fun) ->
     PrevTrap = process_flag(trap_exit, true),
     try
