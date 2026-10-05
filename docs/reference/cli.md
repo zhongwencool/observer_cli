@@ -1,6 +1,6 @@
 # CLI reference
 
-Version 3.0.0 is an unreleased breaking surface. The controller and target must
+Version 2.1.0 is an unreleased breaking surface. The controller and target must
 contain the same bundle and target protocol 2. The public response is
 `observer_cli.cli/v2`. Existing v2 binaries remain usable independently.
 
@@ -29,7 +29,7 @@ use `OBSERVER_CLI_NODE` and exactly one of `OBSERVER_CLI_COOKIE` or
 `OBSERVER_CLI_COOKIE_FILE`; optional `OBSERVER_CLI_NAME_MODE` overrides inference.
 Explicit selectors never borrow missing components from that environment.
 
-v3 does not read, write or delete `context.etf`. There is no persistent
+2.1 does not read, write or delete `context.etf`. There is no persistent
 connection. Each remote call uses a temporary hidden controller, a matching
 capability handshake, a bounded target worker and confirmed cleanup.
 
@@ -195,5 +195,5 @@ TUI uses protected atomic target selection. Remote code loading requires
 plugins, refresh semantics and explicit sensitive process subviews are unchanged.
 
 Description is offline and incremental: index, one path, or explicit full
-catalog. It never resolves credentials. See [migration](../guides/migrate-v3.md)
+catalog. It never resolves credentials. See [migration](../guides/migrate-2-1.md)
 for removed command names and machine-contract changes.

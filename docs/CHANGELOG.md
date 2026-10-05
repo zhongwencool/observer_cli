@@ -1,6 +1,9 @@
 # Changelog
 
-## 3.0.0 (unreleased)
+## 2.1.0 (unreleased)
+
+CLI migration is required despite the minor package version. The task-first
+interface changes command paths, identifier defaults and exit behavior.
 
 - Replace the public command inventory with task-first `check`, `inspect`,
   `trace`, `tui`, and incremental offline `describe` entrypoints.
@@ -12,7 +15,7 @@
   finding exit 1 with `--fail-on`.
 - Require explicit state-read and TUI code-loading consent while preserving
   existing trace, scan, worker, log, and cleanup boundaries.
-- Require matching bundle 3.0.0 and target protocol 2. See the v3 migration guide.
+- Require matching bundle 2.1.0 and target protocol 2. See the 2.1 migration guide.
 - This source change does not publish a release or certify first-time-user UX.
 
 

@@ -150,7 +150,7 @@ descriptor(Id) ->
             json_minimum_controller_otp => 27,
             verbose_format => <<"text">>,
             schema_ref =>
-                <<"https://raw.githubusercontent.com/zhongwencool/observer_cli/v3.0.0/priv/schema/observer_cli.capture.v1.schema.json">>,
+                <<"https://raw.githubusercontent.com/zhongwencool/observer_cli/v2.1.0/priv/schema/observer_cli.capture.v1.schema.json">>,
             response_command => atom_to_binary(Id, utf8)
         },
         examples => examples(Id)

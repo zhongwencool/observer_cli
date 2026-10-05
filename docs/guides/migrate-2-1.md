@@ -1,11 +1,13 @@
-# Migrate from v2 to v3
+# Migrate from 2.0 to 2.1
 
-3.0.0 is unreleased. Keep a versioned v2 binary until runbooks migrate. v3 returns
+2.1.0 is unreleased. Keep a versioned 2.0 binary until runbooks migrate. 2.1 returns
 replacement hints for old commands; it has no public compatibility executor.
+Despite the minor package version, this release changes CLI commands, identifier
+defaults and exit behavior. Existing runbooks need the migration below.
 
 ## Replace paths and remove pretend sessions
 
-| v2 | v3 |
+| 2.0 | 2.1 |
 | --- | --- |
 | `connect`, `status`, `disconnect` | Explicit target options or shell environment; start with `check`. |
 | `diagnose [--observe 10s]` | `check [--window 10s]`; bare check defaults to 15s. |
@@ -51,6 +53,6 @@ are valid; decreasing cumulative counters are resets.
   see [exit codes](../reference/cli.md#output-and-exits).
 - Identifiers are included by default. Remove `--include-identifiers`; add
   `--redact` when sharing and review destinations. Logs are not reliably redacted.
-- Both controller and target need bundle `3.0.0`, protocol `2`; protocol alone
+- Both controller and target need bundle `2.1.0`, protocol `2`; protocol alone
   is insufficient. Commands never upload code. TUI loading is explicit and
   same-OTP only; no automatic consent or incident action is introduced.

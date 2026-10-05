@@ -4,12 +4,12 @@
 inspect the evidence, and choose the next smallest observation. Text is concise;
 JSON preserves measurements and coverage.
 
-> This checkout implements unreleased **3.0.0**, a breaking redesign. Keep a
-> versioned v2 binary until you [migrate](docs/guides/migrate-v3.md).
+> This checkout implements unreleased **2.1.0**, a breaking redesign. Keep a
+> versioned 2.0 binary until you [migrate](docs/guides/migrate-2-1.md).
 
 ## Start here
 
-Prepare a distributed target with the matching **3.0.0 bundle, protocol 2**.
+Prepare a distributed target with the matching **2.1.0 bundle, protocol 2**.
 Have its cookie injected by a protected secret source; never paste the value
 into command arguments.
 

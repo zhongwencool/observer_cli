@@ -106,7 +106,7 @@ recovery_issue(conflicting_cookie_sources, Issue) ->
 recovery_issue(capability_unavailable, Issue) ->
     Issue#{
         <<"message">> :=
-            <<"The target needs the matching observer_cli 3.0.0 bundle and protocol 2. ",
+            <<"The target needs the matching observer_cli 2.1.0 bundle and protocol 2. ",
                 "Install it in the target release; command calls never load code remotely.">>
     };
 recovery_issue(_Reason, Issue) ->

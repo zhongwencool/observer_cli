@@ -320,9 +320,9 @@ code_change(_,S,_) -> {ok,S}.
         del missing[COOKIE_ENV]
         error = self.run("missing-cookie", ["inspect", "vm", *self.target, "--json"], expected=(3,), json_output=True, env=missing)
         require(COOKIE_ENV in json.dumps(error), "credential error omitted safe source-name context")
-        require(legacy.read_bytes() == sentinel, "v3 touched a legacy selector")
-        require(before == list(Path(self.env["XDG_CONFIG_HOME"]).rglob("*")), "v3 wrote user-global state")
-        print("ok - complete isolated v3 workflow, focused evidence, typed follow-up, fixed metrics, redaction and stateless targets")
+        require(legacy.read_bytes() == sentinel, "CLI touched a legacy selector")
+        require(before == list(Path(self.env["XDG_CONFIG_HOME"]).rglob("*")), "CLI wrote user-global state")
+        print("ok - complete isolated task-first workflow, focused evidence, typed follow-up, fixed metrics, redaction and stateless targets")
 
 
 def main():

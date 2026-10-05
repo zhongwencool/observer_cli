@@ -112,7 +112,7 @@ main(Arguments) ->
     observer_cli_entry:main(Arguments).
 
 %% Only collection primitives are available through this production adapter.
-%% Context administration is not a v3 command or a compatibility executor.
+%% Context administration is not a task-first command or a compatibility executor.
 -spec write_stdout(iodata()) -> ok.
 -ifdef(TEST).
 write_stdout(Output) -> io:put_chars(Output).

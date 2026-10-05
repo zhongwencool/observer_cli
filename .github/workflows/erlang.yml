@@ -74,12 +74,12 @@ jobs:
           #!/bin/sh
           printf 29
           SH
-          cat > /tmp/release/observer_cli-3.0.0-otp29 <<'SH'
+          cat > /tmp/release/observer_cli-2.1.0-otp29 <<'SH'
           #!/bin/sh
-          printf '%s\n' 'observer_cli 3.0.0' 'controller OTP 29'
+          printf '%s\n' 'observer_cli 2.1.0' 'controller OTP 29'
           SH
-          chmod +x /tmp/bin/curl /tmp/bin/erl /tmp/release/observer_cli-3.0.0-otp29
-          (cd /tmp/release && sha256sum observer_cli-3.0.0-otp29 > SHA256SUMS)
+          chmod +x /tmp/bin/curl /tmp/bin/erl /tmp/release/observer_cli-2.1.0-otp29
+          (cd /tmp/release && sha256sum observer_cli-2.1.0-otp29 > SHA256SUMS)
           HOME=/tmp/home PATH=/tmp/bin:/usr/bin:/bin sh /src/install.sh
           test -x /tmp/home/.local/bin/observer_cli
           SMOKE

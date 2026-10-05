@@ -35,7 +35,7 @@ scheduler_capture_preserves_other_registration_test() ->
 
 capabilities_test() ->
     Capabilities = observer_cli_snapshot:capabilities(),
-    ?assertEqual(#{bundle_version => <<"3.0.0">>, protocol_version => 2}, Capabilities),
+    ?assertEqual(#{bundle_version => <<"2.1.0">>, protocol_version => 2}, Capabilities),
     _ = application:load(observer_cli),
     {ok, Version} = application:get_key(observer_cli, vsn),
     ?assertEqual(list_to_binary(Version), maps:get(bundle_version, Capabilities)).

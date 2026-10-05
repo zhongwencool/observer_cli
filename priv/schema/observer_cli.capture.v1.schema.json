@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/zhongwencool/observer_cli/v3.0.0/priv/schema/observer_cli.capture.v1.schema.json",
+  "$id": "https://raw.githubusercontent.com/zhongwencool/observer_cli/v2.1.0/priv/schema/observer_cli.capture.v1.schema.json",
   "title": "observer_cli CLI response",
   "description": "Normative CLI v1 envelope and command payload shapes. Cross-field arithmetic, evidence pointer resolution, identifier policy, target binding, and cleanup relations also remain enforced by the controller; JSON Schema is not a substitute for those semantic checks.",
   "type": "object",

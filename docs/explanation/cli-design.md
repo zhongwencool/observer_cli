@@ -1,10 +1,10 @@
-# CLI v3 design contract
+# task-first CLI design contract
 
 The redesign starts from baseline `9682931`: users should choose an investigation,
 not learn the collector's internal modes. This document explains implementation
 choices; [CLI reference](../reference/cli.md) owns invocation rules and bounds,
 [core concepts](core-concepts.md) owns interpretation and trust, and the
-[migration guide](../guides/migrate-v3.md) owns v2 replacements.
+[migration guide](../guides/migrate-2-1.md) owns v2 replacements.
 
 ## One workflow for people and agents
 
@@ -32,7 +32,7 @@ selector or its process environment. Legacy `context.etf` is untouched.
   before its post-enumeration cap is checked.
 
 The public response is `observer_cli.cli/v2`; the reused private record is
-`observer_cli.capture/v1`, not a public v1 compatibility executor. Bundle `3.0.0`
+`observer_cli.capture/v1`, not a public v1 compatibility executor. Bundle `2.1.0`
 and protocol `2` must match between controller and target. Generated public
 schema remains standalone so consumers need no private-file resolver.
 

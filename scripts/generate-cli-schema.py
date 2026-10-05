@@ -69,7 +69,7 @@ def build(private, commands):
     schema = copy.deepcopy(private)
     d = schema['$defs']
     paths = [command['name'] for command in commands]
-    schema['$id'] = 'https://raw.githubusercontent.com/zhongwencool/observer_cli/v3.0.0/priv/schema/observer_cli.cli.v2.schema.json'
+    schema['$id'] = 'https://raw.githubusercontent.com/zhongwencool/observer_cli/v2.1.0/priv/schema/observer_cli.cli.v2.schema.json'
     schema['title'] = 'Observer CLI v2 task-first response'
     schema['description'] = 'Standalone public response contract. The controller also enforces target binding, evidence pointers, cleanup, redaction and cross-field relationships.'
     schema['required'] = ['schema', 'command', 'outcome', 'summary', 'assessment', 'data', 'meta', 'issues', 'next_actions']

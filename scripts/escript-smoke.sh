@@ -147,7 +147,7 @@ check "short help" 0 "Usage:" empty -h
 check "state help" 0 "--allow-state-read" empty inspect state --help
 check "logs help" 0 "inspect logs" empty inspect logs --help
 check "trace call help" 0 "trace call" empty trace call --help
-check "version" 0 "observer_cli 3.0.0" empty --version
+check "version" 0 "observer_cli 2.1.0" empty --version
 check "unknown option" 2 empty "Unknown option" --bogus
 check "removed session" 2 empty "connect was removed" connect
 check "removed resource shorthand" 2 empty "inspect process" processes

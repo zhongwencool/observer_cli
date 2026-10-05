@@ -1539,7 +1539,7 @@ command_help_test() ->
         observer_cli_escriptize:main(["--version"])
     end),
     observer_cli_test_io:assert_stable_fragments(Version, [
-        "observer_cli 3.0.0", "observer_cli.cli/v2", "protocol 2", "controller OTP"
+        "observer_cli 2.1.0", "observer_cli.cli/v2", "protocol 2", "controller OTP"
     ]).
 
 escript_command_exits() ->
@@ -3630,7 +3630,7 @@ dynamic_controller_handshake() ->
     RandomCookie = binary_to_atom(binary:encode_hex(RandomBytes)),
     try
         ?assertEqual(
-            {ok, #{bundle_version => <<"3.0.0">>, protocol_version => 2}},
+            {ok, #{bundle_version => <<"2.1.0">>, protocol_version => 2}},
             observer_cli_escriptize:connect_target(
                 Target,
                 shortnames,
@@ -3687,7 +3687,7 @@ invalid_remote_dispatch_contract() ->
         <<
             "-module(observer_cli_snapshot).\n"
             "-export([capabilities/0, dispatch/4]).\n"
-            "capabilities() -> #{bundle_version => <<\"3.0.0\">>, protocol_version => 2}.\n"
+            "capabilities() -> #{bundle_version => <<\"2.1.0\">>, protocol_version => 2}.\n"
             "dispatch(_, _, _, _) -> #{invalid => true}.\n"
         >>
     ),
@@ -3969,7 +3969,7 @@ diagnose_escript_with_dispatch(Escript, Script, CookieEnv, ExitCode, DispatchRes
     Contents = io_lib:format(
         "-module(observer_cli_snapshot).~n"
         "-export([capabilities/0,dispatch/4]).~n"
-        "capabilities() -> #{bundle_version => <<\"3.0.0\">>, protocol_version => 2}.~n"
+        "capabilities() -> #{bundle_version => <<\"2.1.0\">>, protocol_version => 2}.~n"
         "dispatch(_,diagnose,_,_) -> ~s.~n",
         [DispatchResult]
     ),
@@ -4272,12 +4272,12 @@ response_validation_boundaries_test() ->
         observer_cli_escriptize:capabilities(node(), 0)
     ),
     ?assertEqual(
-        {ok, #{bundle_version => <<"3.0.0">>, protocol_version => 2}},
+        {ok, #{bundle_version => <<"2.1.0">>, protocol_version => 2}},
         observer_cli_escriptize:capabilities(node(), 1000)
     ),
     ?assert(
         observer_cli_escriptize:compatible_capabilities(#{
-            bundle_version => <<"3.0.0">>, protocol_version => 2, extra => supported
+            bundle_version => <<"2.1.0">>, protocol_version => 2, extra => supported
         })
     ),
     ?assertNot(observer_cli_escriptize:compatible_capabilities(#{protocol_version => 2})),
@@ -4988,7 +4988,7 @@ assert_partial_snapshot_exit(Escript, Script, CookieEnv) ->
         io_lib:format(
             "-module(observer_cli_snapshot).~n"
             "-export([capabilities/0,dispatch/4]).~n"
-            "capabilities() -> #{bundle_version => <<\"3.0.0\">>, protocol_version => 2}.~n"
+            "capabilities() -> #{bundle_version => <<\"2.1.0\">>, protocol_version => 2}.~n"
             "dispatch(_,snapshot,_,_) -> ~tp.~n",
             [
                 #{

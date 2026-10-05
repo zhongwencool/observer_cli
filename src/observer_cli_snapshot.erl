@@ -163,7 +163,7 @@
 -endif.
 
 -define(PROTOCOL_VERSION, 2).
--define(BUNDLE_VERSION, <<"3.0.0">>).
+-define(BUNDLE_VERSION, <<"2.1.0">>).
 -define(TARGET_MARGIN_MS, 1000).
 -define(WORKER_DOWN_TIMEOUT_MS, 100).
 -define(DEEP_FINISH_MARGIN_MS, 250).

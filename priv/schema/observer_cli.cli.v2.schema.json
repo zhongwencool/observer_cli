@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/zhongwencool/observer_cli/v3.0.0/priv/schema/observer_cli.cli.v2.schema.json",
+  "$id": "https://raw.githubusercontent.com/zhongwencool/observer_cli/v2.1.0/priv/schema/observer_cli.cli.v2.schema.json",
   "title": "Observer CLI v2 task-first response",
   "description": "Standalone public response contract. The controller also enforces target binding, evidence pointers, cleanup, redaction and cross-field relationships.",
   "type": "object",

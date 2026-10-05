@@ -107,7 +107,7 @@ descriptor(Id) ->
                 end,
             <<"json_minimum_controller_otp">> => 27,
             <<"schema_ref">> =>
-                <<"https://raw.githubusercontent.com/zhongwencool/observer_cli/v3.0.0/priv/schema/observer_cli.cli.v2.schema.json">>,
+                <<"https://raw.githubusercontent.com/zhongwencool/observer_cli/v2.1.0/priv/schema/observer_cli.cli.v2.schema.json">>,
             <<"response_command">> => unicode:characters_to_binary(string:join(Path, " ")),
             <<"data_schemas">> => data_schemas(Id, Capture)
         },
@@ -614,7 +614,7 @@ prerequisites(describe) ->
 prerequisites(_) ->
     [
         <<"Explicit atomic target or current process environment; never a saved context">>,
-        <<"Matching observer_cli 3.0.0 bundle and protocol 2; TUI code loading requires --load-code">>
+        <<"Matching observer_cli 2.1.0 bundle and protocol 2; TUI code loading requires --load-code">>
     ].
 
 identifiers(inspect_logs) ->
@@ -685,7 +685,7 @@ help([]) ->
         "        Or OBSERVER_CLI_COOKIE_FILE; choose only one cookie source\n",
         "Output: --json | --format term | --verbose (text)\n",
         "Share:  --redact; identifiers are included by default\n",
-        "\nRequires a matching 3.0.0 target; cookies grant trusted-peer authority.\n",
+        "\nRequires a matching 2.1.0 target; cookies grant trusted-peer authority.\n",
         "No persistent connection or saved target is used.\n",
         "Help: COMMAND --help; describe COMMAND --json; --version\n"
     ]);
@@ -766,7 +766,7 @@ legacy_hint("connect") ->
 legacy_hint("status") ->
     <<"status was removed. Run check with an explicit target or current shell environment.">>;
 legacy_hint("disconnect") ->
-    <<"disconnect was removed. v3 has no persistent connection; legacy context files are left untouched.">>;
+    <<"disconnect was removed. 2.1 has no persistent connection; legacy context files are left untouched.">>;
 legacy_hint("diagnose") ->
     <<"Use check [cpu|memory|mailbox|connections] [--window DURATION]. The default window is 15s.">>;
 legacy_hint("snapshot") ->
