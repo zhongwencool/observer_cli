@@ -573,7 +573,7 @@ render_sys_info(System, CPU, Memory, Statistics) ->
                 ?W(observer_cli_lib:to_byte(MemValInt), MemoryValueW),
                 ?W(Percent, MemoryPercentW),
                 ?W(StatisticsKey, StatisticsW),
-                ?W(to_list(StatisticsVal), StatisticsStateW)
+                ?W(format_statistics_value(StatisticsVal, StatisticsStateW), StatisticsStateW)
             ])
         end
      || Pos <- lists:seq(1, 6)
@@ -768,8 +768,14 @@ fill_info([{Str, Attrib, SubStructure} | Rest], Data) ->
 fill_info([], _) ->
     [].
 
+format_statistics_value({rss, Metrics}, Width) ->
+    observer_cli_runtime_metrics:format_rss(Metrics, Width);
+format_statistics_value(Value, _Width) ->
+    to_list(Value).
+
 to_list(Val) when is_integer(Val) -> integer_to_list(Val);
 to_list(Val) when is_atom(Val) -> atom_to_list(Val);
+to_list({rss, Metrics}) -> observer_cli_runtime_metrics:format_rss(Metrics);
 to_list({bytes, Val}) -> observer_cli_lib:to_byte(Val);
 to_list(Val) -> Val.
 

@@ -140,7 +140,7 @@ home_live_pause_resume_test() ->
         Line
      || Line <- string:split(observer_cli_test_io:plain(Output), "\n", all),
         string:find(Line, "recon:proc_window(reductions,") =/= nomatch,
-        string:find(Line, "warming up") =/= nomatch
+        string:find(Line, " | warming up") =/= nomatch
     ],
     ?assertEqual(2, length(WarmLines)),
     observer_cli_test_io:assert_stable_fragments(

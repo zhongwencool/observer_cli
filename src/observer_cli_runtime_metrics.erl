@@ -1,7 +1,15 @@
 %% OS process counters for the TUI. No scheduler measurement is enabled here.
 -module(observer_cli_runtime_metrics).
 
--export([init/1, sample/1, window/2, format_cpu/1, format_rss/1, format_window/1, system_info/1]).
+-export([
+    init/1,
+    sample/1,
+    window/2,
+    format_cpu/1,
+    format_rss/1, format_rss/2,
+    format_window/1,
+    system_info/1
+]).
 
 -ifdef(TEST).
 -export([parse_linux/3, parse_macos/1, command/3, parse_cpu_time/1]).
@@ -162,7 +170,16 @@ same_identity(undefined, _Current) ->
     true;
 same_identity(Previous, Current) ->
     maps:get(identity, Previous) =:= maps:get(identity, Current) andalso
-        maps:get(start_time, Previous, undefined) =:= maps:get(start_time, Current, undefined).
+        same_start_time(
+            maps:get(start_time, Previous, undefined),
+            maps:get(start_time, Current, undefined)
+        ).
+
+%% A failed proc read has no observed start time, not evidence of a new process.
+%% Missing CPU counters still force warm-up before any subsequent delta is usable.
+same_start_time(undefined, _) -> true;
+same_start_time(_, undefined) -> true;
+same_start_time(First, Second) -> First =:= Second.
 
 cpu_window(_Previous, #{cpu_time_us := undefined}, _Same) ->
     {#{status => unavailable}, undefined};
@@ -218,10 +235,39 @@ format_rss(#{rss_bytes := Bytes, rss_delta_bytes := Delta}) ->
         end,
     [bytes(Bytes), " (", Sign, bytes(abs(Delta)), ")"].
 
+-spec format_rss(map(), pos_integer()) -> iolist().
+format_rss(#{rss_bytes := undefined}, Width) when Width < 11 -> "n/a";
+format_rss(Metrics, Width) ->
+    Full = format_rss(Metrics),
+    case iolist_size(Full) =< Width of
+        true -> Full;
+        false -> compact_rss(Metrics)
+    end.
+
+compact_rss(#{rss_bytes := Bytes, rss_delta_bytes := undefined}) ->
+    compact_bytes(Bytes);
+compact_rss(#{rss_bytes := Bytes, rss_delta_bytes := Delta}) ->
+    Sign =
+        case Delta >= 0 of
+            true -> "+";
+            false -> "-"
+        end,
+    [compact_bytes(Bytes), " ", Sign, compact_bytes(abs(Delta))].
+
+compact_bytes(Bytes) ->
+    lists:foldl(
+        fun({From, To}, Acc) ->
+            lists:flatten(string:replace(Acc, From, To, all))
+        end,
+        lists:flatten(bytes(Bytes)),
+        [{" KiB", "K"}, {" MiB", "M"}, {" GiB", "G"}, {" TiB", "T"}, {" B", "B"}]
+    ).
+
 bytes(Bytes) when Bytes < 1024 -> [integer_to_list(Bytes), " B"];
 bytes(Bytes) when Bytes < 1048576 -> scaled_bytes(Bytes / 1024, "KiB");
 bytes(Bytes) when Bytes < 1073741824 -> scaled_bytes(Bytes / 1048576, "MiB");
-bytes(Bytes) -> scaled_bytes(Bytes / 1073741824, "GiB").
+bytes(Bytes) when Bytes < 1099511627776 -> scaled_bytes(Bytes / 1073741824, "GiB");
+bytes(Bytes) -> scaled_bytes(Bytes / 1099511627776, "TiB").
 
 scaled_bytes(Value, Unit) when Value < 10 -> io_lib:format("~.1f ~s", [Value, Unit]);
 scaled_bytes(Value, Unit) -> io_lib:format("~B ~s", [round(Value), Unit]).
@@ -243,7 +289,7 @@ system_info(Metrics) ->
         end,
     [
         {beam_cpu, format_cpu(Metrics)},
-        {beam_rss, format_rss(Metrics)},
+        {beam_rss, {rss, Metrics}},
         {cpu_window, window_value(Metrics)},
         {beam_vsz, Vsz}
     ].

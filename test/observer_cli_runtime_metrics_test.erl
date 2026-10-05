@@ -126,7 +126,7 @@ warming_zero_and_rss_delta_test() ->
     ).
 
 reset_invalid_time_and_identity_test() ->
-    First = sample(1000000, 1000, 1000),
+    First = (sample(1000000, 1000, 1000))#{start_time => 1},
     lists:foreach(
         fun(Last) ->
             {Invalid, Baseline} = observer_cli_runtime_metrics:window(First, Last),
@@ -146,6 +146,25 @@ reset_invalid_time_and_identity_test() ->
             (sample(2000000, 2000, 1000))#{start_time => 2}
         ]
     ).
+
+failed_proc_read_reestablishes_baseline_test() ->
+    First = (sample(0, 100, 1000))#{start_time => 123},
+    {Unavailable, Failed} = observer_cli_runtime_metrics:window(
+        First,
+        sample(1000000, undefined, undefined)
+    ),
+    ?assertEqual(unavailable, maps:get(status, maps:get(cpu, Unavailable))),
+    {Warm, Baseline} = observer_cli_runtime_metrics:window(
+        Failed,
+        (sample(2000000, 200, 1200))#{start_time => 123}
+    ),
+    ?assertEqual(warming_up, maps:get(status, maps:get(cpu, Warm))),
+    ?assertEqual(undefined, maps:get(rss_delta_bytes, Warm)),
+    {Valid, _} = observer_cli_runtime_metrics:window(
+        Baseline,
+        (sample(3000000, 300, 1300))#{start_time => 123}
+    ),
+    ?assertEqual(available, maps:get(status, maps:get(cpu, Valid))).
 
 missing_fields_do_not_poison_other_metric_test() ->
     First = sample(0, 100, 1000),
@@ -217,6 +236,30 @@ command_owner_exit_kills_os_child_test() ->
     end.
 
 compact_rss_format_test() ->
+    ?assertEqual(
+        "182M +3.0M",
+        lists:flatten(
+            observer_cli_runtime_metrics:format_rss(
+                #{rss_bytes => 182 * 1048576, rss_delta_bytes => 3 * 1048576}, 11
+            )
+        )
+    ),
+    ?assertEqual(
+        "182M -3.0M",
+        lists:flatten(
+            observer_cli_runtime_metrics:format_rss(
+                #{rss_bytes => 182 * 1048576, rss_delta_bytes => -3 * 1048576}, 11
+            )
+        )
+    ),
+    ?assertEqual(
+        "1.0 TiB",
+        lists:flatten(
+            observer_cli_runtime_metrics:format_rss(
+                #{rss_bytes => 1099511627776, rss_delta_bytes => undefined}
+            )
+        )
+    ),
     M = #{rss_bytes => 999 * 1048576, rss_delta_bytes => 999 * 1048576},
     ?assert(length(lists:flatten(observer_cli_runtime_metrics:format_rss(M))) =< 21).
 

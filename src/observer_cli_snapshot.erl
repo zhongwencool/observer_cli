@@ -17,6 +17,7 @@
     diagnostic_scheduler_flag/1,
     diagnostic_scheduler_sample/0,
     diagnostic_scheduler_window/2,
+    scheduler_busy_window/2,
     diagnostic_socket_trend/1,
     diagnostic_sample/2,
     dispatch/4,
@@ -4955,6 +4956,35 @@ scheduler_window(#{topology := _}, #{topology := _}) ->
     invalid_scheduler_window(topology_changed);
 scheduler_window(_First, _Second) ->
     invalid_scheduler_window(invalid_sample).
+
+%% Pure TUI aggregation: reuse the diagnostic pool checks without sampling queues or enabling flags.
+-spec scheduler_busy_window(map(), map()) -> map().
+scheduler_busy_window(#{topology := Topology} = First, #{topology := Topology} = Second) ->
+    NormalIds = lists:seq(1, maps:get(schedulers_online, Topology)),
+    Configured = maps:get(schedulers_configured, Topology),
+    DirtyOnline = maps:get(dirty_cpu_schedulers_online, Topology),
+    DirtyIds = lists:seq(Configured + 1, Configured + DirtyOnline),
+    case
+        with_wall_maps(First, Second, fun(FirstWall, SecondWall) ->
+            case
+                {
+                    pool_delta(NormalIds, FirstWall, SecondWall),
+                    pool_delta(DirtyIds, FirstWall, SecondWall)
+                }
+            of
+                {{ok, Normal}, {ok, Dirty}} -> {ok, Normal, Dirty};
+                {{error, Reason}, _} -> {error, Reason};
+                {_, {error, Reason}} -> {error, Reason}
+            end
+        end)
+    of
+        {ok, Normal, Dirty} -> #{status => valid, normal => Normal, dirty_cpu => Dirty};
+        {error, Reason} -> #{status => invalid, reason_code => Reason}
+    end;
+scheduler_busy_window(#{topology := _}, #{topology := _}) ->
+    #{status => invalid, reason_code => topology_changed};
+scheduler_busy_window(_First, _Second) ->
+    #{status => invalid, reason_code => invalid_sample}.
 
 scheduler_window_data(Topology, First, Second) ->
     Schedulers = maps:get(schedulers_configured, Topology),

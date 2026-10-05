@@ -155,15 +155,29 @@ render_sys_info_runtime_limits_test() ->
         end
     ).
 
+system_rss_change_remains_visible_in_narrow_value_cell_test() ->
+    observer_cli_test_io:with_geometry(24, 139, [], fun() ->
+        Output = observer_cli_system:render_sys_info(
+            observer_cli_system:collect_sys_info(metrics_fixture())
+        ),
+        observer_cli_test_io:assert_stable_fragments(Output, ["BEAM RSS", "182M +3.0M"])
+    end).
+
 collect_sys_info_test() ->
     Cmd = metrics_fixture(),
     OsProcessInfo = observer_cli_system:collect_os_process_info(Cmd),
     ?assertEqual("236.0%", lists:flatten(proplists:get_value(beam_cpu, OsProcessInfo))),
-    ?assertEqual("182 MiB (+3.0 MiB)", lists:flatten(proplists:get_value(beam_rss, OsProcessInfo))),
+    ?assertEqual(
+        "182 MiB (+3.0 MiB)",
+        lists:flatten(observer_cli_system:to_list(proplists:get_value(beam_rss, OsProcessInfo)))
+    ),
     ?assertEqual("1.51s", lists:flatten(proplists:get_value(cpu_window, OsProcessInfo))),
     Info = observer_cli_system:collect_sys_info(Cmd),
     ?assertEqual("236.0%", lists:flatten(proplists:get_value(beam_cpu, Info))),
-    ?assertEqual("182 MiB (+3.0 MiB)", lists:flatten(proplists:get_value(beam_rss, Info))),
+    ?assertEqual(
+        "182 MiB (+3.0 MiB)",
+        lists:flatten(observer_cli_system:to_list(proplists:get_value(beam_rss, Info)))
+    ),
     ?assertEqual("1.51s", lists:flatten(proplists:get_value(cpu_window, Info))),
     ?assertEqual("unavailable", proplists:get_value(beam_vsz, Info)).
 

@@ -494,7 +494,7 @@ display_unique_flag_label_value_test() ->
 
 node_stats_test() ->
     Stats = observer_cli:get_incremental_stats(?DISABLE),
-    {Diffs, _Sched, _New} = observer_cli:node_stats(Stats, ?DISABLE),
+    {Diffs, _Sched, _Summary, _New} = observer_cli:node_stats(Stats, ?DISABLE),
     {InDiff, OutDiff, _GcDiff, _WordsDiff} = Diffs,
     ?assert(string:find(lists:flatten(InDiff), "/") =/= nomatch),
     ?assert(string:find(lists:flatten(OutDiff), "/") =/= nomatch).

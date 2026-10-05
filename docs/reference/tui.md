@@ -149,13 +149,18 @@ redraws use `proc_window`.
 | `t` / `tt` | Total heap size, count/window |
 | `mq` / `mmq` | Message queue length, count/window |
 | `p` | Pause or resume Home redraw |
-| `` ` `` | Enable or disable scheduler wall-time utilization rows |
+| `` ` `` | Enable or disable scheduler wall-time utilization rows and their Normal/Dirty CPU summary together |
 | Row number | Open that ranked process |
 | Enter | Open the remembered ranked process |
 | Full PID, for example `<0.43.0>` | Open a local process even if it is not ranked |
 | `<431` or `>431` | Open `<0.431.0>` |
 
-Enabling scheduler utilization changes the node-wide `scheduler_wall_time` system flag while the view is active. observer_cli restores the preceding setting when it cleans up the Home view.
+Scheduler usage remains disabled by default (unless the existing configuration
+explicitly enables it). The existing Home rendering worker holds one
+`scheduler_wall_time` measurement registration while enabled. Closing the view,
+disabling usage, or terminating that worker releases its registration; other
+tools' registrations remain unchanged. No independent summary registration,
+worker, or background sampler is created.
 
 ### VM and OS fields
 
@@ -190,6 +195,10 @@ in one controlled `ps` invocation. External commands have a 4 KiB output cap and
 a `min(500ms, refresh interval)` collection deadline; failed or timed-out
 commands are discarded and terminated (with bounded cleanup). No OS sampler
 runs while Home is paused, and no background polling service is created.
+
+In narrow System value cells, RSS uses a compact representation such as
+`182M +3.0M`; `K`, `M`, `G`, and `T` mean KiB, MiB, GiB, and TiB respectively.
+The current resident size and its signed change remain visible together.
 
 RSS is the OS view of resident physical memory. It is not the same as
 `erlang:memory()`'s VM-accounted allocations, and their difference alone does
@@ -232,6 +241,25 @@ Each scheduler row shows its scheduler ID and active-time percentage between two
 `statistics(scheduler_wall_time)` samples. The rows cover the normal and dirty
 CPU scheduler IDs returned by OTP, not dirty IO schedulers. observer_cli uses
 `recon_lib:scheduler_usage_diff/2`; values at or above 80% are red.
+
+Only while this same feature is enabled, `Sched busy` replaces Home's redundant
+`Version` row with `N ... / D ...`. It uses the **same two wall-time samples** as
+the utilization rows: each pool's sum of active-time differences divided by its
+sum of total-time differences, for online normal and online dirty-CPU schedulers
+respectively. The two percentages are not added together. An absent online pool
+shows `n/a`. The initial and resumed sample shows `warming up`; topology changes
+or invalid counters discard the window, then re-establish a baseline. No
+additional wall-time or run-queue sampling is performed to produce the summary.
+
+The `CPU window` label applies only to `BEAM CPU`. Scheduler samples and OS
+samples are taken at different points in the existing collection cycle and
+must not be treated as synchronized windows.
+
+Scheduler busy time is not OS CPU time: it can include lock waits or time while
+the OS has scheduled a scheduler thread out. Use it alongside `BEAM CPU`, not as
+a substitute. Switching usage off removes the summary and restores `Version`;
+CPU and RSS continue independently. Pausing does not poll either sampler and
+retains the existing enabled/disabled setting; resuming starts fresh windows.
 
 ### Top-N process fields
 

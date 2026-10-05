@@ -43,6 +43,9 @@
     get_pid_info/2,
     collect_home_snapshot/6,
     node_stats/2,
+    scheduler_stats/2,
+    render_scheduler_summary/1,
+    run_home_worker/4,
     get_incremental_stats/1,
     check_auto_row/0,
     select_home_process/3,
@@ -76,16 +79,10 @@ start(Node) when is_atom(Node) ->
 start(Opts = #view_opts{home = Home}) ->
     erlang:process_flag(trap_exit, true),
     AutoRow = check_auto_row(),
-    #home{scheduler_usage = SchUsage} = Home,
     StorePid = observer_cli_store:start(),
-    SchWallTimeToken = enable_scheduler_wall_time(SchUsage),
-    try
-        MetricsContext = observer_cli_runtime_metrics:init(Home#home.interval),
-        RenderPid = spawn_link(fun() -> render_worker(MetricsContext, StorePid, Home, AutoRow) end),
-        manager(StorePid, RenderPid, Opts#view_opts{auto_row = AutoRow}, SchWallTimeToken)
-    after
-        release_scheduler_wall_time(SchWallTimeToken)
-    end;
+    MetricsContext = observer_cli_runtime_metrics:init(Home#home.interval),
+    RenderPid = spawn_link(fun() -> run_home_worker(MetricsContext, StorePid, Home, AutoRow) end),
+    manager(StorePid, RenderPid, Opts#view_opts{auto_row = AutoRow}, false);
 start(Interval) when is_integer(Interval), Interval >= ?MIN_INTERVAL ->
     start(#view_opts{
         home = #home{interval = Interval},
@@ -170,10 +167,8 @@ handle_home_action(
     SchWallTimeToken,
     _Resource
 ) ->
-    erlang:unlink(RenderPid),
-    erlang:send(RenderPid, quit),
+    observer_cli_lib:exit_processes([RenderPid, StorePid]),
     release_scheduler_wall_time(SchWallTimeToken),
-    observer_cli_lib:exit_processes([StorePid]),
     quit;
 handle_home_action(pause_or_resume, StorePid, RenderPid, Opts, SchWallTimeToken, _Resource) ->
     erlang:send(RenderPid, pause_or_resume),
@@ -253,10 +248,19 @@ restart_home(Opts, Resource) ->
     clean(Resource),
     start(Opts).
 
-render_worker(MetricsContext, Manager, Home = #home{scheduler_usage = SchUsage}, AutoRow) ->
+run_home_worker(MetricsContext, StorePid, Home = #home{scheduler_usage = SchUsage}, AutoRow) ->
+    %% The existing sampling worker owns the one registration. OTP also releases it on death.
+    Token = enable_scheduler_wall_time(SchUsage),
+    try
+        render_worker(MetricsContext, StorePid, Home, AutoRow)
+    after
+        release_scheduler_wall_time(Token)
+    end.
+
+render_worker(MetricsContext, Manager, Home, AutoRow) ->
     ?output(?CLEAR),
     StableInfo = get_stable_system_info(),
-    LastStats = #{node => get_incremental_stats(SchUsage), os => undefined},
+    LastStats = #{node => undefined, os => undefined},
     redraw_running(
         MetricsContext,
         Manager,
@@ -333,16 +337,22 @@ collect_home_snapshot(MetricsContext, Home, StableInfo, LastStats, TerminalRows,
         scheduler_usage = SchUsage
     } =
         Home,
-    Baseline =
+    {Diffs, SchedulerUsage, SchedulerSummary, NewStats} =
         case IsFirstTime of
-            true -> get_incremental_stats(SchUsage);
-            false -> maps:get(node, LastStats)
-        end,
-    {Diffs0, SchedulerUsage, NewStats} = node_stats(Baseline, SchUsage),
-    Diffs =
-        case IsFirstTime of
-            true -> {"warming up", "warming up", "warming up", "warming up"};
-            false -> Diffs0
+            true ->
+                Summary =
+                    case SchUsage of
+                        ?DISABLE -> undefined;
+                        ?ENABLE -> #{status => warming_up}
+                    end,
+                {
+                    {"warming up", "warming up", "warming up", "warming up"},
+                    undefined,
+                    Summary,
+                    get_incremental_stats(SchUsage)
+                };
+            false ->
+                node_stats(maps:get(node, LastStats), SchUsage)
         end,
     ProcessRows = max(
         TerminalRows - 14 - scheduler_usage_rows(SchedulerUsage), 0
@@ -356,7 +366,13 @@ collect_home_snapshot(MetricsContext, Home, StableInfo, LastStats, TerminalRows,
     {Metrics, NextOs} = observer_cli_runtime_metrics:window(
         PreviousOs, observer_cli_runtime_metrics:sample(MetricsContext)
     ),
-    Runtime = sample_home_runtime(Metrics, StableInfo, Diffs, SchedulerUsage, Interval),
+    Runtime = sample_home_runtime(
+        Metrics#{scheduler_summary => SchedulerSummary},
+        StableInfo,
+        Diffs,
+        SchedulerUsage,
+        Interval
+    ),
     RefreshPrompt = [
         maps:get(refresh_prompt, ProcessRanking),
         " | ",
@@ -454,8 +470,17 @@ system_summary(Metrics, StableInfo, AtomStatus) ->
     Reductions = erlang:statistics(reductions),
     {PortWarning, ProcWarning, PortCount, ProcCount} =
         get_port_proc_info(PortLimit, ProcLimit),
+    %% The legacy normal rows overran the 139-column layout by one count-cell character.
+    NarrowTrim = max(140 - observer_cli_lib:layout_width(), 0),
+    CountValueWidth = 22 + LeftValueExtra - NarrowTrim,
+    HeaderValueWidth = 25 + RightValueExtra - NarrowTrim,
     CpuText = observer_cli_runtime_metrics:format_cpu(Metrics),
     RssText = observer_cli_runtime_metrics:format_rss(Metrics),
+    {VersionLabel, VersionValue} =
+        case maps:get(scheduler_summary, Metrics, undefined) of
+            undefined -> {" Version", Version};
+            Summary -> {" Sched busy", render_scheduler_summary(Summary)}
+        end,
     {Reds, _SinceLastCall} = Reductions,
     ReductionsText = integer_to_list(Reds),
     [
@@ -467,21 +492,21 @@ system_summary(Metrics, StableInfo, AtomStatus) ->
                 {"System", 25 + MiddleLabelExtra},
                 {observer_cli_runtime_metrics:format_window(Metrics), 21 + MiddleValueExtra},
                 {"Stat Info", 20 + RightLabelExtra},
-                {"Size", 25 + RightValueExtra}
+                {"Size", HeaderValueWidth}
             ]}
         ],
         [
             {normal, [
                 {"Proc Count", 10 + LeftLabelExtra},
-                {ProcWarning, ProcCount, 22 + LeftValueExtra},
-                {" Version", 26 + MiddleLabelExtra},
-                {Version, 21 + MiddleValueExtra},
+                {ProcWarning, ProcCount, CountValueWidth},
+                {VersionLabel, 26 + MiddleLabelExtra},
+                {VersionValue, 21 + MiddleValueExtra},
                 {"Active Task", 20 + RightLabelExtra},
                 {ActiveTask, 25 + RightValueExtra}
             ]},
             {normal, [
                 {"Port Count", 10 + LeftLabelExtra},
-                {PortWarning, PortCount, 22 + LeftValueExtra},
+                {PortWarning, PortCount, CountValueWidth},
                 {" BEAM CPU", 26 + MiddleLabelExtra},
                 {CpuText, 21 + MiddleValueExtra},
                 {"Context Switch", 20 + RightLabelExtra},
@@ -1380,10 +1405,12 @@ check_auto_row() ->
 
 node_stats(LastStats, SchUsage) ->
     New = get_incremental_stats(SchUsage),
+    {Usage, Summary, NextSchedule} = scheduler_stats(LastStats, New),
     {
         io_gc_stats_diff(LastStats, New),
-        scheduler_usage_diff(LastStats, New),
-        New
+        Usage,
+        Summary,
+        setelement(5, New, NextSchedule)
     }.
 
 io_gc_stats_diff({LastIn, LastOut, LastGCs, LastWords, _}, {In, Out, GCs, Words, _}) ->
@@ -1398,8 +1425,43 @@ io_gc_stats_diff({LastIn, LastOut, LastGCs, LastWords, _}, {In, Out, GCs, Words,
         [integer_to_list(Words), "/", integer_to_list(GCWordsDiff)]
     }.
 
-scheduler_usage_diff({_, _, _, _, LastScheduleWall}, {_, _, _, _, ScheduleWall}) ->
-    recon_lib:scheduler_usage_diff(LastScheduleWall, ScheduleWall).
+scheduler_stats(_Last, {_, _, _, _, undefined}) ->
+    {undefined, undefined, undefined};
+scheduler_stats(_Last, {_, _, _, _, #{wall_time := undefined} = Current}) ->
+    {undefined, #{status => unavailable}, Current};
+scheduler_stats({_, _, _, _, undefined}, {_, _, _, _, Current}) ->
+    {undefined, #{status => warming_up}, Current};
+scheduler_stats({_, _, _, _, #{wall_time := undefined}}, {_, _, _, _, Current}) ->
+    {undefined, #{status => warming_up}, Current};
+scheduler_stats({_, _, _, _, Previous}, {_, _, _, _, Current}) ->
+    case observer_cli_snapshot:scheduler_busy_window(Previous, Current) of
+        #{status := valid} = Summary ->
+            try
+                recon_lib:scheduler_usage_diff(
+                    maps:get(wall_time, Previous), maps:get(wall_time, Current)
+                )
+            of
+                Usage -> {Usage, Summary, Current}
+            catch
+                error:_ ->
+                    {undefined, #{status => unavailable}, Current#{wall_time := undefined}}
+            end;
+        #{status := invalid} ->
+            {undefined, #{status => unavailable}, Current#{wall_time := undefined}}
+    end.
+
+render_scheduler_summary(#{status := warming_up}) ->
+    "warming up";
+render_scheduler_summary(#{status := unavailable}) ->
+    "unavailable";
+render_scheduler_summary(#{status := valid, normal := Normal, dirty_cpu := Dirty}) ->
+    ["N ", scheduler_pool_percent(Normal), " / D ", scheduler_pool_percent(Dirty)].
+
+scheduler_pool_percent(#{status := available, utilization_ratio := Ratio}) ->
+    %% Compact enough for the existing 21-character value cell, including two 100% pools.
+    io_lib:format("~B%", [round(Ratio * 100)]);
+scheduler_pool_percent(#{status := unavailable}) ->
+    "n/a".
 
 get_incremental_stats(SchUsage) ->
     {{input, In}, {output, Out}} = erlang:statistics(io),
@@ -1407,7 +1469,16 @@ get_incremental_stats(SchUsage) ->
     ScheduleWall =
         case SchUsage of
             ?ENABLE ->
-                erlang:statistics(scheduler_wall_time);
+                #{
+                    topology => #{
+                        schedulers_configured => erlang:system_info(schedulers),
+                        schedulers_online => erlang:system_info(schedulers_online),
+                        dirty_cpu_schedulers_online => erlang:system_info(
+                            dirty_cpu_schedulers_online
+                        )
+                    },
+                    wall_time => erlang:statistics(scheduler_wall_time)
+                };
             ?DISABLE ->
                 undefined
         end,
