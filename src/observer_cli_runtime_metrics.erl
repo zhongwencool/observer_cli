@@ -255,13 +255,8 @@ compact_rss(#{rss_bytes := Bytes, rss_delta_bytes := Delta}) ->
     [compact_bytes(Bytes), " ", Sign, compact_bytes(abs(Delta))].
 
 compact_bytes(Bytes) ->
-    lists:foldl(
-        fun({From, To}, Acc) ->
-            lists:flatten(string:replace(Acc, From, To, all))
-        end,
-        lists:flatten(bytes(Bytes)),
-        [{" KiB", "K"}, {" MiB", "M"}, {" GiB", "G"}, {" TiB", "T"}, {" B", "B"}]
-    ).
+    [Number, Unit] = string:lexemes(lists:flatten(bytes(Bytes)), " "),
+    [Number, hd(Unit)].
 
 bytes(Bytes) when Bytes < 1024 -> [integer_to_list(Bytes), " B"];
 bytes(Bytes) when Bytes < 1048576 -> scaled_bytes(Bytes / 1024, "KiB");
@@ -273,12 +268,10 @@ scaled_bytes(Value, Unit) when Value < 10 -> io_lib:format("~.1f ~s", [Value, Un
 scaled_bytes(Value, Unit) -> io_lib:format("~B ~s", [round(Value), Unit]).
 
 -spec format_window(map()) -> iolist().
-format_window(#{cpu := #{status := available, interval_us := Us}}) ->
-    io_lib:format("CPU window:~.2fs", [Us / 1000000]);
 format_window(#{cpu := #{status := unavailable}}) ->
     "CPU window:n/a";
 format_window(Metrics) ->
-    ["CPU window:", format_cpu(Metrics)].
+    ["CPU window:", window_value(Metrics)].
 
 -spec system_info(map()) -> list().
 system_info(Metrics) ->
@@ -362,7 +355,7 @@ command_output(Port, Monitor, Deadline, Output, WasTrapping) ->
             {error, command_failed};
         {'EXIT', Port, _} ->
             command_output(Port, Monitor, Deadline, Output, WasTrapping);
-        {'EXIT', _From, Reason} when WasTrapping =:= false -> exit(Reason)
+        {'EXIT', _From, Reason} when not WasTrapping -> exit(Reason)
     after Remaining -> {error, timeout}
     end.
 

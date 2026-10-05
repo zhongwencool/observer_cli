@@ -66,11 +66,12 @@
     "forward/back)"
 ).
 
--spec start() -> no_return() | {badrpc, term()} | {error, connection, connection_failed}.
+-spec start() -> quit.
 start() ->
     start(#view_opts{}).
 
--spec start(Node) -> no_return() | {badrpc, term()} | {error, connection, connection_failed} when
+%% Remote starts pass through RPC replies; the caller must validate their outcome.
+-spec start(Node) -> term() when
     Node :: atom() | non_neg_integer() | view_opts().
 start(Node) when Node =:= node() ->
     start(#view_opts{});
@@ -82,7 +83,7 @@ start(Opts = #view_opts{home = Home}) ->
     StorePid = observer_cli_store:start(),
     MetricsContext = observer_cli_runtime_metrics:init(Home#home.interval),
     RenderPid = spawn_link(fun() -> run_home_worker(MetricsContext, StorePid, Home, AutoRow) end),
-    manager(StorePid, RenderPid, Opts#view_opts{auto_row = AutoRow}, false);
+    manager(StorePid, RenderPid, Opts#view_opts{auto_row = AutoRow});
 start(Interval) when is_integer(Interval), Interval >= ?MIN_INTERVAL ->
     start(#view_opts{
         home = #home{interval = Interval},
@@ -97,9 +98,7 @@ start(Interval) when is_integer(Interval), Interval >= ?MIN_INTERVAL ->
         port = Interval
     }).
 
--spec start(Node, Cookies | Options) ->
-    no_return() | {badrpc, term()} | {error, connection, connection_failed}
-when
+-spec start(Node, Cookies | Options) -> term() when
     Node :: atom(),
     Cookies :: atom(),
     Options :: proplists:proplist().
@@ -124,9 +123,13 @@ start_plugin() ->
     observer_cli_plugin:start(#view_opts{}).
 
 -spec clean(list()) -> boolean().
-clean([RenderPid, StorePid, SchWallTimeToken, _SchUsage]) ->
+clean([RenderPid, StorePid]) ->
     observer_cli_lib:exit_processes([RenderPid, StorePid]),
-    release_scheduler_wall_time(SchWallTimeToken).
+    false;
+%% Keep the exported cleanup entrypoint compatible with resources from the old manager.
+clean([RenderPid, StorePid, LegacyToken, _SchUsage]) ->
+    observer_cli_lib:exit_processes([RenderPid, StorePid]),
+    release_scheduler_wall_time(LegacyToken).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Private
@@ -149,36 +152,22 @@ rpc_start(Node, Interval) ->
             {badrpc, nodedown}
     end.
 
-manager(
-    StorePid,
-    RenderPid,
-    Opts = #view_opts{home = #home{scheduler_usage = SchUsage}},
-    SchWallTimeToken
-) ->
-    Resource = [RenderPid, StorePid, SchWallTimeToken, SchUsage],
+manager(StorePid, RenderPid, Opts) ->
+    Resource = [RenderPid, StorePid],
     Action = observer_cli_lib:parse_cmd(Opts, ?MODULE, Resource),
-    handle_home_action(Action, StorePid, RenderPid, Opts, SchWallTimeToken, Resource).
+    handle_home_action(Action, StorePid, RenderPid, Opts, Resource).
 
-handle_home_action(
-    quit,
-    StorePid,
-    RenderPid,
-    _Opts,
-    SchWallTimeToken,
-    _Resource
-) ->
+handle_home_action(quit, StorePid, RenderPid, _Opts, _Resource) ->
     observer_cli_lib:exit_processes([RenderPid, StorePid]),
-    release_scheduler_wall_time(SchWallTimeToken),
     quit;
-handle_home_action(pause_or_resume, StorePid, RenderPid, Opts, SchWallTimeToken, _Resource) ->
+handle_home_action(pause_or_resume, StorePid, RenderPid, Opts, _Resource) ->
     erlang:send(RenderPid, pause_or_resume),
-    manager(StorePid, RenderPid, Opts, SchWallTimeToken);
+    manager(StorePid, RenderPid, Opts);
 handle_home_action(
     {new_interval, NewInterval},
     _StorePid,
     _RenderPid,
     Opts = #view_opts{home = Home},
-    _SchWallTimeToken,
     Resource
 ) ->
     restart_home(Opts#view_opts{home = Home#home{interval = NewInterval}}, Resource);
@@ -187,7 +176,6 @@ handle_home_action(
     _StorePid,
     _RenderPid,
     Opts = #view_opts{home = Home},
-    _SchWallTimeToken,
     Resource
 ) ->
     #home{scheduler_usage = SchUsage} = Home,
@@ -204,31 +192,29 @@ handle_home_action(
                 pages = Pages
             }
     },
-    SchWallTimeToken,
     Resource
 ) ->
     NewPages = observer_cli_lib:update_page_pos(CurPage, NewPos, Pages),
     NewOpts = Opts#view_opts{home = Home#home{pages = NewPages}},
-    start_process_view(StorePid, RenderPid, NewOpts, SchWallTimeToken, Resource, false);
-handle_home_action(jump, StorePid, RenderPid, Opts, SchWallTimeToken, Resource) ->
-    start_process_view(StorePid, RenderPid, Opts, SchWallTimeToken, Resource, true);
+    start_process_view(StorePid, RenderPid, NewOpts, Resource, false);
+handle_home_action(jump, StorePid, RenderPid, Opts, Resource) ->
+    start_process_view(StorePid, RenderPid, Opts, Resource, true);
 handle_home_action(
     {func, Func, Type},
     _StorePid,
     _RenderPid,
     Opts = #view_opts{home = Home},
-    _SchWallTimeToken,
     Resource
 ) ->
     restart_home(Opts#view_opts{home = Home#home{func = Func, type = Type}}, Resource);
-handle_home_action(page_down_top_n, StorePid, _RenderPid, Opts, _SchWallTimeToken, Resource) ->
+handle_home_action(page_down_top_n, StorePid, _RenderPid, Opts, Resource) ->
     restart_home_page(1, StorePid, Opts, Resource);
-handle_home_action(page_up_top_n, StorePid, _RenderPid, Opts, _SchWallTimeToken, Resource) ->
+handle_home_action(page_up_top_n, StorePid, _RenderPid, Opts, Resource) ->
     restart_home_page(-1, StorePid, Opts, Resource);
-handle_home_action({go_to_pid, Pid}, _StorePid, _RenderPid, Opts, _SchWallTimeToken, Resource) ->
+handle_home_action({go_to_pid, Pid}, _StorePid, _RenderPid, Opts, Resource) ->
     open_process_view(Pid, Opts, Resource);
-handle_home_action(_Action, StorePid, RenderPid, Opts, SchWallTimeToken, _Resource) ->
-    manager(StorePid, RenderPid, Opts, SchWallTimeToken).
+handle_home_action(_Action, StorePid, RenderPid, Opts, _Resource) ->
+    manager(StorePid, RenderPid, Opts).
 
 toggle_scheduler_usage(SchUsage) ->
     case SchUsage of
@@ -1345,19 +1331,12 @@ process_window(Type, First, Last, Elapsed) ->
 connect_error(Prompt, Node) ->
     ?output(observer_cli_lib:ansi_red(Prompt), [Node]).
 
-start_process_view(
-    StorePid,
-    RenderPid,
-    Opts,
-    SchWallTimeToken,
-    Resource,
-    AutoJump
-) ->
+start_process_view(StorePid, RenderPid, Opts, Resource, AutoJump) ->
     case select_home_process(StorePid, Opts, AutoJump) of
         {ok, ChoosePid} ->
             open_process_view(ChoosePid, Opts, Resource);
         error ->
-            manager(StorePid, RenderPid, Opts, SchWallTimeToken)
+            manager(StorePid, RenderPid, Opts)
     end.
 
 select_home_process(StorePid, #view_opts{home = Home}, AutoJump) ->
@@ -1485,7 +1464,7 @@ get_incremental_stats(SchUsage) ->
     {In, Out, GCs, Words, ScheduleWall}.
 
 update_net_ticktime_from(Node) ->
-    case rpc:call(Node, net_kernel, get_net_ticktime, []) of
+    case rpc:call(Node, net_kernel, get_net_ticktime, [], 5000) of
         NetTickTime when is_integer(NetTickTime), NetTickTime > 0 ->
             accept_net_ticktime_result(net_kernel:set_net_ticktime(NetTickTime), NetTickTime);
         _Invalid ->

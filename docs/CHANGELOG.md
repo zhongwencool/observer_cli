@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.1.0 (unreleased)
+
+CLI migration is required despite the minor package version. The task-first
+interface changes command paths, identifier defaults and exit behavior.
+
+- Replace the public command inventory with task-first `check`, `inspect`,
+  `trace`, `tui`, and incremental offline `describe` entrypoints.
+- Use a 15-second default bounded observation and stateless atomic target
+  selectors; leave legacy context files untouched.
+- Keep current, signed-change, and measured-rate meanings fixed. Provide typed
+  PID/port selectors and explicit redaction for sharing.
+- Publish `observer_cli.cli/v2`, separate execution from findings, and opt into
+  finding exit 1 with `--fail-on`.
+- Require explicit state-read and TUI code-loading consent while preserving
+  existing trace, scan, worker, log, and cleanup boundaries.
+- Require matching bundle 2.1.0 and target protocol 2. See the 2.1 migration guide.
+- This source change does not publish a release or certify first-time-user UX.
+
+
 Release and maintenance changes, newest first.
 
 ## Unreleased

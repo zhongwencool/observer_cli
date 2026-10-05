@@ -59,7 +59,7 @@ class Harness:
         self.fixtures = fixtures
         self.cookie = secrets.token_hex(24)
         self.env = os.environ.copy()
-        for key in ("ERL_FLAGS", "ERL_AFLAGS", "ERL_ZFLAGS", "ERL_LIBS", MISSING_ENV):
+        for key in ("ERL_FLAGS", "ERL_AFLAGS", "ERL_ZFLAGS", "ERL_LIBS", "OBSERVER_CLI_NODE", "OBSERVER_CLI_COOKIE", "OBSERVER_CLI_COOKIE_FILE", "OBSERVER_CLI_NAME_MODE", MISSING_ENV):
             self.env.pop(key, None)
         self.env.update(
             HOME=str(directory / "home"),
@@ -130,10 +130,10 @@ class Harness:
             raise Failure(f"{label}: invalid JSON response") from exc
         require(isinstance(envelope, dict), f"{label}: expected JSON object")
         require(
-            set(envelope) == {"schema", "command", "outcome", "meta", "data", "issues"},
+            set(envelope) == {"schema", "command", "outcome", "summary", "assessment", "meta", "data", "issues", "next_actions"},
             f"{label}: unexpected envelope fields",
         )
-        require(envelope["schema"] == "observer_cli.cli/v1", f"{label}: unexpected schema")
+        require(envelope["schema"] == "observer_cli.cli/v2", f"{label}: unexpected schema")
         if self.fixtures:
             self.fixture_index += 1
             path = self.fixtures / f"{self.fixture_index:02d}-{label}.json"
@@ -167,8 +167,22 @@ class Harness:
         recon = ROOT / "_build/default/lib/recon/ebin"
         require((ebin / "observer_cli_snapshot.beam").is_file(), "build target modules before running this script")
         require(recon.is_dir(), "recon build directory is missing")
+        fixture = self.directory / "observer_cli_smoke_state.erl"
+        fixture.write_text("""-module(observer_cli_smoke_state).
+-behaviour(gen_server).
+-export([init/1,handle_call/3,handle_cast/2,handle_info/2,terminate/2,code_change/3]).
+init(_) -> {ok,#{payload => <<"smoke-state-values-must-not-appear">>}}.
+handle_call(_,_,S) -> {reply,ok,S}.
+handle_cast(_,S) -> {noreply,S}.
+handle_info(_,S) -> {noreply,S}.
+terminate(_,_) -> ok.
+code_change(_,S,_) -> {ok,S}.
+""", encoding="ascii")
+        subprocess.run(["erlc", "-o", str(self.directory), str(fixture)], env=self.env, check=True,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
         evaluation = (
             'erlang:set_cookie(node(), list_to_atom(os:getenv("' + COOKIE_ENV + '"))), '
+            'gen_server:start_link({local,observer_cli_smoke_state_server},observer_cli_smoke_state,[],[]), '
             'Parent=self(), Worker=spawn(fun() -> '
             'register(observer_cli_agent_smoke_worker,self()), '
             'put(smoke_payload,lists:seq(1,200000)), Parent!{ready,self()}, '
@@ -180,7 +194,7 @@ class Harness:
             'receive after infinity -> ok end.'
         )
         process, stdout, stderr = self.start(
-            ["erl", "+S", "2:2", "-pa", str(ebin), str(recon), "-name", self.node, "-noshell", "-eval", evaluation],
+            ["erl", "+S", "2:2", "-pa", str(ebin), str(recon), str(self.directory), "-name", self.node, "-noshell", "-eval", evaluation],
             "target",
         )
         deadline = time.monotonic() + 15
@@ -196,7 +210,7 @@ class Harness:
 
     def compatibility(self):
         before = list(Path(self.env["XDG_CONFIG_HOME"]).rglob("*"))
-        for command in (["snapshot"], ["schedulers", "--duration", "2s"],
+        for command in (["inspect", "vm"], ["inspect", "scheduler", "--window", "2s"],
                         ["trace", "call", "erlang:node/0", "--pid", "<0.1.0>", "--replace-existing-trace"]):
             stdout, stderr = self.run(
                 "otp26-" + command[0],
@@ -207,60 +221,108 @@ class Harness:
                     "OTP 26: output preflight did not take precedence over missing credentials")
         self.run("otp26-describe-term", ["describe", "--format", "term"])
         require(before == list(Path(self.env["XDG_CONFIG_HOME"]).rglob("*")), "OTP 26 checks modified context")
-        print("ok - OTP 26 compatibility only; full JSON workflow NOT RUN (requires OTP 27+)")
+        self.start_target()
+        text, stderr = self.run("otp26-vm-text", ["inspect", "vm", *self.target])
+        require(not stderr and "not host RSS" in text, "OTP 26 remote text inspection failed")
+        self.run("otp26-memory-term", ["inspect", "memory", *self.target, "--format", "term"])
+        print("ok - OTP 26 remote text/term and local JSON preflight; JSON workflow NOT RUN (requires OTP 27+)")
 
     def workflow(self):
+        # A deliberately invalid legacy selector must remain byte-for-byte intact.
+        legacy = Path(self.env["HOME"]) / "Library/Application Support/observer_cli/context.etf"
+        legacy.parent.mkdir(parents=True)
+        sentinel = b"legacy-selector-must-not-be-read-or-written"
+        legacy.write_bytes(sentinel)
         before = list(Path(self.env["XDG_CONFIG_HOME"]).rglob("*"))
-        self.run("describe-offline", ["describe", "--json"], json_output=True)
+        index = self.run("describe-offline", ["describe", "--json"], json_output=True)
+        require(len(index["data"]["entries"]) == 5, "discovery did not return the incremental index")
         self.run("describe-trace", ["describe", "trace", "call", "--json"], json_output=True)
+        self.run("describe-full", ["describe", "--full", "--json"], json_output=True)
         stdout, stderr = self.run("describe-schema", ["describe", "--schema", "--json"])
         require(not stderr, "schema export emitted stderr")
-        source = json.loads((ROOT / "priv/schema/observer_cli.cli.v1.schema.json").read_text())
+        source = json.loads((ROOT / "priv/schema/observer_cli.cli.v2.schema.json").read_text())
         require(json.loads(stdout) == source, "bundled schema differs from source schema")
-        require(before == list(Path(self.env["XDG_CONFIG_HOME"]).rglob("*")), "offline discovery modified context")
-        for arguments in (["trace"], ["trace", "bogus"]):
-            envelope = self.run("invalid-" + "-".join(arguments), [*arguments, "--json"], expected=(2,), json_output=True)
-            require(envelope["command"] is None, "invalid trace action must have command:null")
-        self.run("verbose-json-conflict", ["memory", "--verbose", "--json"], expected=(2,), json_output=True)
-        self.run("orphan-cookie-option", ["memory", "--cookie-env", MISSING_ENV, "--json"], expected=(2,), json_output=True)
+        for old in ["connect", "status", "disconnect", "diagnose", "snapshot", "processes", "memory"]:
+            self.run("removed-" + old, [old, "--json"], expected=(2,), json_output=True)
+        for name, args in [
+            ("invalid-trace", ["trace", "bogus"]),
+            ("missing-mfa", ["trace", "call", "--pid", "<0.1.0>", "--replace-existing-trace"]),
+            ("missing-consent", ["trace", "call", "erlang:node/0", "--pid", "<0.1.0>"]),
+            ("redacted-selector", ["inspect", "process", "--pid", "pid-1"]),
+            ("rate-without-window", ["inspect", "process", "--sort", "reductions-rate"]),
+            ("state-without-consent", ["inspect", "state", "--name", "init", "--behavior", "gen_server"]),
+            ("verbose-json-conflict", ["inspect", "memory", "--verbose"]),
+            ("orphan-cookie", ["inspect", "memory", "--cookie-env", MISSING_ENV]),
+            ("logs-redaction", ["inspect", "logs", "--redact"]),
+        ]:
+            self.run(name, [*args, "--json"], expected=(2,), json_output=True)
         self.start_target()
-        included = self.run("snapshot-included", ["snapshot", *self.target, "--include-identifiers", "--json"], json_output=True)
+        included = self.run("vm-included", ["inspect", "vm", *self.target, "--json"], json_output=True)
         require(included["meta"]["target"]["node"] == self.node, "explicit target was not used")
-        redacted = self.run("snapshot-redacted", ["snapshot", *self.target, "--json"], json_output=True)
-        require(self.node not in json.dumps(redacted), "default snapshot exposed target identifier")
-        self.run("diagnose", ["diagnose", *self.target, "--json"], expected=(0, 1, 3), json_output=True)
-        processes = self.run("processes-included", ["processes", "--sort", "memory", "--limit", "200", *self.target,
-                                                  "--include-identifiers", "--json"], json_output=True)
-        require(any(row.get("pid") == self.pid for row in processes["data"]["items"]), "stable owned worker missing from inventory")
-        detail = self.run("process-detail", ["process", self.pid, *self.target, "--include-identifiers", "--json"], json_output=True)
-        require(self.pid in json.dumps(detail), "follow-up process did not resolve the selected worker")
-        redacted = self.run("processes-redacted", ["processes", "--limit", "200", *self.target, "--redact", "--json"], json_output=True)
+        redacted = self.run("vm-redacted", ["inspect", "vm", *self.target, "--redact", "--json"], json_output=True)
+        require(self.node not in json.dumps(redacted), "redacted VM capture exposed target identity")
+        started = time.monotonic()
+        check = self.run("check-default", ["check", *self.target, "--json"], expected=(0, 3), json_output=True)
+        require(check["meta"]["capture"]["requested_window_ms"] == 15000, "default check was not 15 seconds")
+        require(time.monotonic() - started >= 15, "default observation did not span its promised window")
+        for focus in ["cpu", "memory", "mailbox", "connections"]:
+            focused = self.run("check-" + focus, ["check", focus, "--window", "5s", *self.target, "--json"], expected=(0, 3), json_output=True)
+            require(focused["data"]["context"], "focused check omitted evidence")
+        processes = self.run("process-list", ["inspect", "process", "--sort", "memory", "--limit", "200", *self.target, "--json"], json_output=True)
+        item = next((row for row in processes["data"]["items"] if row.get("pid") == self.pid), None)
+        require(item is not None, "owned worker missing from inventory")
+        selector = item["selector"]
+        require(selector == {"kind": "pid", "value": self.pid}, "inventory did not provide the typed selector")
+        detail = self.run("process-detail", ["inspect", "process", "--pid", selector["value"], *self.target, "--json"], json_output=True)
+        require(detail["data"]["pid"] == self.pid, "follow-up did not preserve the selected identity")
+        self.run("process-name", ["inspect", "process", "--name", "observer_cli_agent_smoke_worker", *self.target, "--json"], json_output=True)
+        for metric in ["memory", "memory-change", "reductions-rate"]:
+            ranked = self.run("process-window-" + metric, ["inspect", "process", "--sort", metric, "--window", "250ms", *self.target, "--json"], json_output=True)
+            require(ranked["data"]["sort"] == metric, "metric meaning changed with the window")
+        for resource, metric in [("network", "oct"), ("network", "oct-change"), ("socket", "io-rate")]:
+            self.run(resource + "-window-" + metric, ["inspect", resource, "--sort", metric, "--window", "250ms", *self.target, "--json"], json_output=True)
+        redacted = self.run("process-redacted", ["inspect", "process", "--limit", "200", *self.target, "--redact", "--json"], json_output=True)
         require(self.pid not in json.dumps(redacted), "redacted inventory exposed a raw PID")
-        compact, stderr = self.run("memory-compact", ["memory", *self.target])
-        verbose, verbose_stderr = self.run("memory-verbose", ["memory", *self.target, "--verbose"])
-        require(not stderr and not verbose_stderr, "successful text command wrote stderr")
-        require("not host RSS" in compact and "outcome=complete" in compact, "compact memory omitted semantics")
+        require(all(row["selector"] is None for row in redacted["data"]["items"]), "redacted rows expose executable selectors")
+        compact, stderr = self.run("memory-compact", ["inspect", "memory", *self.target])
+        verbose, verbose_stderr = self.run("memory-verbose", ["inspect", "memory", *self.target, "--verbose"])
+        require(not stderr and not verbose_stderr and "not host RSS" in compact, "compact memory omitted semantics")
         require(len(compact.splitlines()) < len(verbose.splitlines()), "verbose did not expose more evidence")
-        logs = self.run("logs-partial", ["logs", "--handler", "agent_smoke", "--tail", "200", *self.target, "--json"],
-                        expected=(3,), json_output=True)
-        require(logs["outcome"] == "partial", "byte-capped capture did not report partial")
-        require("byte_cap" in json.dumps(logs), "byte cap reason missing from JSON")
-        text, stderr = self.run("logs-partial-text", ["logs", "--handler", "agent_smoke", "--tail", "200", *self.target], expected=(3,))
-        require(not stderr and "outcome=partial" in text and "byte_cap" in text, "partial logs text hides outcome/cap")
-        require(text.index("byte_cap") < text.index("UNTRUSTED LOG CONTENT"), "log warning appears after untrusted content")
-        require(before == list(Path(self.env["XDG_CONFIG_HOME"]).rglob("*")), "explicit stateless commands changed saved context")
+        logs = self.run("logs-partial", ["inspect", "logs", "--handler", "agent_smoke", "--tail", "200", *self.target, "--json"], expected=(3,), json_output=True)
+        require(logs["outcome"] == "partial" and "byte_cap" in json.dumps(logs), "byte-capped logs hide partial coverage")
+        require(not logs["next_actions"], "log content generated executable recommendations")
+        text, stderr = self.run("logs-partial-text", ["inspect", "logs", "--handler", "agent_smoke", "--tail", "200", *self.target], expected=(3,))
+        require(not stderr and text.index("byte_cap") < text.index("UNTRUSTED LOG CONTENT"), "log warning appears after untrusted content")
+        state = self.run("state-with-consent", ["inspect", "state", "--name", "observer_cli_smoke_state_server",
+                         "--behavior", "gen_server", "--allow-state-read", *self.target, "--json"], json_output=True)
+        require("smoke-state-values-must-not-appear" not in json.dumps(state), "state shape leaked a business value")
+        self.run("supervision", ["inspect", "supervision", "--app", "kernel", *self.target, "--json"], json_output=True)
+        ports = self.run("port-list", ["inspect", "port", *self.target, "--json"], json_output=True)
+        if ports["data"]["items"]:
+            port = ports["data"]["items"][0]["selector"]
+            require(port["kind"] == "port", "port selector kind missing")
+            self.run("port-detail", ["inspect", "port", "--id", port["value"], *self.target, "--json"], json_output=True)
+        self.run("trace-owned", ["trace", "call", "erlang:node/0", "--pid", self.pid, "--duration", "100ms",
+                                  "--limit", "1", "--replace-existing-trace", *self.target, "--json"], json_output=True)
         cookie_file = self.directory / "中文.cookie"
         cookie_file.write_text(self.cookie + "\n", encoding="ascii")
         cookie_file.chmod(0o600)
-        self.run("unicode-cookie-connect", ["connect", "--node", self.node, "--cookie-file", str(cookie_file), "--json"], json_output=True)
-        self.run("unicode-cookie-status", ["status", "--json"], json_output=True)
-        self.run("env-cookie-connect", ["connect", *self.target, "--json"], json_output=True)
-        missing_env = self.env.copy()
-        del missing_env[COOKIE_ENV]
-        status = self.run("missing-cookie-status", ["status", "--json"], expected=(3,), json_output=True, env=missing_env)
-        require(COOKIE_ENV in json.dumps(status), "missing credential status did not identify safe cookie source")
-        self.run("disconnect", ["disconnect", "--json"], json_output=True)
-        print("ok - complete isolated agent workflow, text safety, redaction and saved-context checks")
+        self.run("unicode-cookie-file", ["inspect", "vm", "--node", self.node, "--cookie-file", str(cookie_file), "--json"], json_output=True)
+        shell_env = self.env.copy()
+        shell_env.update(OBSERVER_CLI_NODE=self.node, OBSERVER_CLI_COOKIE=self.cookie)
+        self.run("shell-environment", ["inspect", "vm", "--json"], json_output=True, env=shell_env)
+        wrong = shell_env.copy()
+        wrong["OBSERVER_CLI_NODE"] = "wrong@host"
+        explicit = self.run("explicit-wins", ["inspect", "vm", *self.target, "--json"], json_output=True, env=wrong)
+        require(explicit["meta"]["target"]["node"] == self.node, "explicit target inherited environment state")
+        self.run("no-implicit-cookie", ["inspect", "vm", "--node", self.node, "--json"], expected=(2,), json_output=True, env=shell_env)
+        missing = self.env.copy()
+        del missing[COOKIE_ENV]
+        error = self.run("missing-cookie", ["inspect", "vm", *self.target, "--json"], expected=(3,), json_output=True, env=missing)
+        require(COOKIE_ENV in json.dumps(error), "credential error omitted safe source-name context")
+        require(legacy.read_bytes() == sentinel, "CLI touched a legacy selector")
+        require(before == list(Path(self.env["XDG_CONFIG_HOME"]).rglob("*")), "CLI wrote user-global state")
+        print("ok - complete isolated task-first workflow, focused evidence, typed follow-up, fixed metrics, redaction and stateless targets")
 
 
 def main():
@@ -280,7 +342,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="observer-cli-agent-smoke-") as directory:
         harness = Harness(Path(directory), binary, fixtures)
         try:
-            stdout, stderr = harness.run("json-capability", ["snapshot", "--node", "never_started@127.0.0.1",
+            stdout, stderr = harness.run("json-capability", ["inspect", "vm", "--node", "never_started@127.0.0.1",
                                                            "--cookie-env", MISSING_ENV, "--json"], expected=(2, 3))
             if not stdout and "JSON output requires OTP 27" in stderr:
                 require(not arguments.require_json, "JSON workflow requires OTP 27+; OTP 26 detected")

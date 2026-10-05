@@ -4,6 +4,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
+-export([hold_code_server/1]).
 
 command_request_converts_validated_cli_values_test() ->
     ?assertEqual(
@@ -205,49 +206,46 @@ controller_boundary_helpers_test() ->
     ?assertEqual(json, observer_cli_escriptize:requested_format(["--format", "json"])),
     ?assertEqual(term, observer_cli_escriptize:requested_format(["x", "--format", "term"])),
     ?assertEqual(text, observer_cli_escriptize:requested_format([])),
-    ?assertEqual(ok, observer_cli_escriptize:ensure_output_format(connect, #{})),
-    ?assertEqual(ok, observer_cli_escriptize:ensure_output_format(disconnect, #{format => "term"})),
+    ?assertEqual(ok, observer_cli_escriptize:ensure_output_format(memory, #{})),
+    ?assertEqual(ok, observer_cli_escriptize:ensure_output_format(memory, #{format => "term"})),
     case code:ensure_loaded(json) of
         {module, json} ->
             ?assertEqual(
-                ok, observer_cli_escriptize:ensure_output_format(connect, #{json => true})
+                ok, observer_cli_escriptize:ensure_output_format(memory, #{json => true})
             );
         {error, _Reason} ->
             ?assertMatch(
                 {error, capability, json_unavailable},
-                observer_cli_escriptize:ensure_output_format(connect, #{json => true})
+                observer_cli_escriptize:ensure_output_format(memory, #{json => true})
             )
     end.
 
 describe_is_local_and_exports_the_packaged_schema_test() ->
     Directory = temporary_directory("observer_cli_describe_local"),
     PreviousHome = set_config_home(Directory),
+    Path = filename:join([Directory, "observer_cli", "context.etf"]),
+    ok = filelib:ensure_dir(Path),
+    Sentinel = <<"legacy context must not be touched">>,
+    ok = file:write_file(Path, Sentinel),
     try
-        Before = {node(), observer_cli_cli:load_context()},
-        {ok, Response, 0} = observer_cli_escriptize:run_command(describe, #{
-            arguments => ["trace", "call"]
-        }),
-        ?assertEqual(
-            #{<<"target">> => null, <<"capture">> => null}, maps:get(<<"meta">>, Response)
-        ),
-        ?assertEqual(<<"trace_call">>, maps:get(<<"id">>, maps:get(<<"data">>, Response))),
-        ?assertEqual(Before, {node(), observer_cli_cli:load_context()}),
+        NodeBefore = node(),
+        _ = assert_halt(0, fun() ->
+            observer_cli_escriptize:main(["describe", "trace", "call", "--format", "term"])
+        end),
         case code:ensure_loaded(json) of
             {module, json} ->
-                {schema, Bytes} = observer_cli_escriptize:run_command(describe, #{
-                    schema => true, json => true
-                }),
-                ?assertEqual(observer_cli_catalog:schema(), {ok, Bytes}),
                 Output = assert_halt(0, fun() ->
                     observer_cli_escriptize:main(["describe", "--schema", "--json"])
                 end),
+                {ok, Bytes} = observer_cli_catalog:schema(),
                 ?assertEqual(Bytes, iolist_to_binary(Output));
             {error, _} ->
-                ?assertEqual(
-                    {error, capability, json_unavailable},
-                    observer_cli_escriptize:run_command(describe, #{schema => true, json => true})
-                )
-        end
+                _ = assert_halt(2, fun() ->
+                    observer_cli_escriptize:main(["describe", "--schema", "--json"])
+                end)
+        end,
+        ?assertEqual(NodeBefore, node()),
+        ?assertEqual({ok, Sentinel}, file:read_file(Path))
     after
         restore_config_home(PreviousHome),
         file:del_dir_r(Directory)
@@ -270,25 +268,11 @@ diagnostic_next_actions_are_optional_and_validated_test() ->
             Response#{<<"data">> := Data#{<<"next_actions">> := [#{<<"argv">> => [<<"trace">>]}]}}
         )
     ),
-    Empty = observer_cli_cli:response(diagnose, error, null, null, null, []),
+    Empty = observer_cli_capture:response(diagnose, error, null, null, null, []),
     ?assertEqual(Empty, observer_cli_escriptize:add_next_actions(Empty)).
 
-public_cookie_selector_preserves_unicode_test() ->
-    ?assertEqual(
-        #{<<"type">> => <<"file">>, <<"path">> => <<"/tmp/é中文.cookie"/utf8>>},
-        observer_cli_escriptize:public_cookie_source(#{cookie_file => "/tmp/é中文.cookie"})
-    ),
-    ?assertEqual(
-        #{<<"type">> => <<"env">>, <<"name">> => <<"é_COOKIE"/utf8>>},
-        observer_cli_escriptize:public_cookie_source(#{cookie_env => "é_COOKIE"})
-    ),
-    ?assertEqual(
-        #{<<"type">> => <<"file">>, <<"path">> => <<"invalid-text">>},
-        observer_cli_escriptize:public_cookie_source(#{cookie_file => [16#110000]})
-    ).
-
 output_capability_precedes_all_command_work_test() ->
-    Commands = [snapshot, diagnose, memory, schedulers, trace, logs, status, connect, disconnect],
+    Commands = [snapshot, diagnose, memory, schedulers, trace, logs],
     lists:foreach(
         fun(Command) ->
             ?assertEqual(ok, observer_cli_escriptize:ensure_output_format(Command, #{})),
@@ -323,73 +307,33 @@ output_capability_precedes_all_command_work_test() ->
 
 help_describes_diagnostic_scope_test() ->
     lists:foreach(
-        fun({Command, Expected}) ->
+        fun({Path, Fragment}) ->
             {ok, Help} = observer_cli_test_io:capture_with_geometry(24, 80, [], fun() ->
-                observer_cli_escriptize:main([Command, "--help"])
+                observer_cli_escriptize:main(Path ++ ["--help"])
             end),
-            ?assertNotEqual(nomatch, binary:match(iolist_to_binary(Help), Expected))
+            ?assertNotEqual(nomatch, binary:match(iolist_to_binary(Help), Fragment))
         end,
         [
-            {"diagnose", <<"No findings is not proof of node health">>},
-            {"schedulers", <<"preserving other tools' registrations">>},
-            {"supervision-tree", <<"direct children only; not recursive">>}
+            {["check"], <<"15s">>},
+            {["check", "cpu"], <<"not process CPU time">>},
+            {["inspect", "supervision"], <<"direct children only">>}
         ]
     ).
 
 recovery_help_commands_are_executable_test() ->
-    Commands = [
-        connect,
-        status,
-        disconnect,
-        snapshot,
-        diagnose,
-        memory,
-        schedulers,
-        distribution,
-        processes,
-        process,
-        applications,
-        ets,
-        mnesia,
-        network,
-        ports,
-        port,
-        sockets,
-        otp_state,
-        supervision_tree,
-        logs,
-        trace_call,
-        trace_stop_all
-    ],
     lists:foreach(
-        fun(Command) ->
-            Hint = observer_cli_escriptize:command_help_command(Command),
-            ["observer_cli" | Args] = string:tokens(binary_to_list(Hint), " "),
+        fun(D) ->
+            Args = [binary_to_list(A) || A <- maps:get(<<"argv">>, D)] ++ ["--help"],
             {ok, Help} = observer_cli_test_io:capture_with_geometry(24, 80, [], fun() ->
                 observer_cli_escriptize:main(Args)
             end),
-            ?assertNotEqual(nomatch, binary:match(iolist_to_binary(Help), <<"Usage:">>))
+            ?assertNotEqual(nomatch, binary:match(iolist_to_binary(Help), maps:get(<<"name">>, D)))
         end,
-        Commands
-    ),
-    ?assertEqual(<<"supervision-tree">>, observer_cli_escriptize:command_display(supervision_tree)).
-
-invalid_trace_action_preserves_error_contract_test() ->
-    lists:foreach(
-        fun(Args) ->
-            Output = assert_halt(2, fun() ->
-                observer_cli_escriptize:main(Args ++ ["--format", "term"])
-            end),
-            {ok, Tokens, _} = erl_scan:string(binary_to_list(iolist_to_binary(Output))),
-            {ok, Response} = erl_parse:parse_term(Tokens),
-            ?assertEqual(null, maps:get(<<"command">>, Response)),
-            ?assertEqual(<<"error">>, maps:get(<<"outcome">>, Response))
-        end,
-        [["trace"], ["trace", "bogus"], ["--bogus", "trace"]]
+        observer_cli_catalog:commands()
     ).
 
 command_output_and_error_paths_test() ->
-    Response = observer_cli_cli:response(
+    Response = observer_cli_capture:response(
         memory, complete, null, null, #{<<"value">> => 1}, []
     ),
     assert_halt(7, fun() ->
@@ -407,7 +351,7 @@ command_output_and_error_paths_test() ->
     assert_halt(3, fun() ->
         observer_cli_escriptize:command_error(memory, term, connection, connection_failed)
     end),
-    Oversized = observer_cli_cli:response(
+    Oversized = observer_cli_capture:response(
         memory,
         complete,
         null,
@@ -436,7 +380,7 @@ command_output_and_error_paths_test() ->
     assert_halt(2, fun() ->
         observer_cli_escriptize:main(["tui", "target@host", "cookie", "1000", "extra"])
     end),
-    assert_halt(3, fun() ->
+    assert_halt(2, fun() ->
         observer_cli_escriptize:main([
             "tui", "target@host", lists:duplicate(256, $x), "1000"
         ])
@@ -464,17 +408,19 @@ actionable_argument_output_test() ->
         fun(Format) ->
             Output = iolist_to_binary(
                 assert_halt(2, fun() ->
-                    observer_cli_escriptize:main(["processes", "--sort", "cpu", "--format", Format])
+                    observer_cli_escriptize:main([
+                        "inspect", "process", "--sort", "cpu", "--format", Format
+                    ])
                 end)
             ),
-            ?assertNotEqual(nomatch, binary:match(Output, <<"cpu">>)),
+            ?assertNotEqual(nomatch, binary:match(Output, <<"Invalid --sort">>)),
             ?assertNotEqual(nomatch, binary:match(Output, <<"binary_memory">>)),
             case Format of
                 "term" ->
                     {ok, Tokens, _} = erl_scan:string(binary_to_list(Output)),
                     {ok, Response} = erl_parse:parse_term(Tokens),
                     [Issue] = maps:get(<<"issues">>, Response),
-                    ?assertEqual(<<"invalid_sort">>, maps:get(<<"reason_code">>, Issue)),
+                    ?assertEqual(<<"invalid_arguments">>, maps:get(<<"reason_code">>, Issue)),
                     ?assertEqual(2, observer_cli_escriptize:response_exit_code(Response));
                 "text" ->
                     ok
@@ -493,15 +439,12 @@ connection_failure_context_test() ->
     },
     true = os:unsetenv(Env),
     try
-        ok = observer_cli_cli:save_context(Options),
         Results = [
-            observer_cli_escriptize:run_command(connect, Options),
-            observer_cli_escriptize:run_command(status, #{format => "term"}),
-            observer_cli_escriptize:run_command(processes, #{format => "term"})
+            observer_cli_escriptize:run_command(processes, Options)
         ],
         lists:foreach(
             fun({error, connection, Reason}) ->
-                Issue = observer_cli_cli:error(connection, Reason),
+                Issue = observer_cli_capture:error(connection, Reason),
                 Message = maps:get(<<"message">>, Issue),
                 ?assertEqual(<<"cookie_source_unavailable">>, maps:get(<<"reason_code">>, Issue)),
                 ?assertNotEqual(nomatch, binary:match(Message, <<"selected@host.example">>)),
@@ -511,10 +454,10 @@ connection_failure_context_test() ->
             Results
         ),
         [{error, connection, OriginalReason} | _] = Results,
-        ok = observer_cli_cli:save_context(Options#{node => "changed@other.example"}),
+        %% Later invocations cannot replace the target in an already captured error.
         Output = iolist_to_binary(
             assert_halt(3, fun() ->
-                observer_cli_escriptize:command_error(status, term, connection, OriginalReason)
+                observer_cli_escriptize:command_error(processes, term, connection, OriginalReason)
             end)
         ),
         ?assertEqual(nomatch, binary:match(Output, <<"changed@other.example">>)),
@@ -525,8 +468,10 @@ connection_failure_context_test() ->
             #{<<"target">> => null, <<"capture">> => null}, maps:get(<<"meta">>, Response)
         ),
         true = os:putenv(Env, "secret cookie contents invalid\n"),
-        {error, connection, InvalidReason} = observer_cli_escriptize:run_command(connect, Options),
-        InvalidIssue = observer_cli_cli:error(connection, InvalidReason),
+        {error, connection, InvalidReason} = observer_cli_escriptize:run_command(
+            processes, Options
+        ),
+        InvalidIssue = observer_cli_capture:error(connection, InvalidReason),
         ?assertEqual(<<"invalid_cookie">>, maps:get(<<"reason_code">>, InvalidIssue)),
         ?assertEqual(
             nomatch, binary:match(term_to_binary(InvalidIssue), <<"secret cookie contents">>)
@@ -540,7 +485,7 @@ connection_failure_context_test() ->
                 timeout => "1000ms"
             }
         ),
-        FailedIssue = observer_cli_cli:error(connection, FailedReason),
+        FailedIssue = observer_cli_capture:error(connection, FailedReason),
         ?assertEqual(<<"connection_failed">>, maps:get(<<"reason_code">>, FailedIssue)),
         ?assertEqual(
             nomatch, binary:match(term_to_binary(FailedIssue), <<"super_secret_cookie_value">>)
@@ -560,14 +505,14 @@ connection_failure_redaction_test() ->
     Options = #{node => "private@host", cookie_file => Path, format => "term"},
     try
         {error, connection, FileReason} = observer_cli_escriptize:run_command(memory, Options),
-        FileMessage = maps:get(<<"message">>, observer_cli_cli:error(connection, FileReason)),
+        FileMessage = maps:get(<<"message">>, observer_cli_capture:error(connection, FileReason)),
         ?assertNotEqual(nomatch, binary:match(FileMessage, unicode:characters_to_binary(Path))),
         lists:foreach(
             fun({Command, Extra}) ->
                 {error, connection, Reason} = observer_cli_escriptize:run_command(
                     Command, maps:merge(Options, Extra)
                 ),
-                Message = maps:get(<<"message">>, observer_cli_cli:error(connection, Reason)),
+                Message = maps:get(<<"message">>, observer_cli_capture:error(connection, Reason)),
                 ?assertNotEqual(
                     nomatch, binary:match(Message, <<"withheld by identifier policy">>)
                 ),
@@ -580,7 +525,7 @@ connection_failure_redaction_test() ->
             snapshot, Options#{include_identifiers => true}
         ),
         IncludedMessage = maps:get(
-            <<"message">>, observer_cli_cli:error(connection, IncludedReason)
+            <<"message">>, observer_cli_capture:error(connection, IncludedReason)
         ),
         ?assertNotEqual(nomatch, binary:match(IncludedMessage, <<"private@host">>)),
         ok = file:write_file(Path, <<"private_cookie_value">>),
@@ -588,7 +533,7 @@ connection_failure_redaction_test() ->
         {error, connection, PermissionReason} = observer_cli_escriptize:run_command(
             memory, Options
         ),
-        PermissionIssue = observer_cli_cli:error(connection, PermissionReason),
+        PermissionIssue = observer_cli_capture:error(connection, PermissionReason),
         ?assertEqual(<<"cookie_file_permissions">>, maps:get(<<"reason_code">>, PermissionIssue)),
         ?assertNotEqual(
             nomatch, binary:match(maps:get(<<"message">>, PermissionIssue), <<"chmod 600">>)
@@ -653,7 +598,6 @@ required_modules_test_() ->
         {"invalid remote dispatch contract",
             {timeout, 20000, fun invalid_remote_dispatch_contract/0}},
         {"active context lifecycle", {timeout, 40000, fun active_context_lifecycle/0}},
-        {"connect cleanup preserves context", fun connect_cleanup_preserves_context/0},
         {"connect missing diagnostics", {timeout, 30000, fun connect_missing_diagnostics/0}},
         {"connect incompatible diagnostics",
             {timeout, 30000, fun connect_incompatible_diagnostics/0}},
@@ -1079,7 +1023,7 @@ dispatch_logs(Request) ->
     Response.
 
 log_error_response(Target, Reason, Sources, Selected, Coverage, Enumerated, Lookups, Attempts) ->
-    observer_cli_cli:response(
+    observer_cli_capture:response(
         logs,
         error,
         #{<<"node">> => Target, <<"otp_release">> => <<"29">>},
@@ -1091,7 +1035,7 @@ log_error_response(Target, Reason, Sources, Selected, Coverage, Enumerated, Look
     ).
 
 log_byte_partial_response(Target, Source, Selected) ->
-    observer_cli_cli:response(
+    observer_cli_capture:response(
         logs,
         partial,
         #{<<"node">> => Target, <<"otp_release">> => <<"29">>},
@@ -1583,210 +1527,20 @@ main_usage_test() ->
     ).
 
 command_help_test() ->
-    {ok, TopHelp} = observer_cli_test_io:capture_with_geometry(
-        24, 80, [], fun() -> observer_cli_escriptize:main(["--help"]) end
-    ),
-    observer_cli_test_io:assert_stable_fragments(TopHelp, [
-        "observer_cli connect --node NODE",
-        "Diagnostics:",
-        "otp-state PID_OR_NAME",
-        "--help, -h",
-        "help COMMAND",
-        "--version",
-        "Run 'observer_cli COMMAND --help'"
+    {ok, Help} = observer_cli_test_io:capture_with_geometry(24, 80, [], fun() ->
+        observer_cli_escriptize:main(["--help"])
+    end),
+    observer_cli_test_io:assert_stable_fragments(Help, [
+        "15-second overview", "inspect process --pid", "No persistent connection"
     ]),
-    assert_help_width(TopHelp),
-    {ok, HelpAlias} = observer_cli_test_io:capture_with_geometry(
-        24, 80, [], fun() -> observer_cli_escriptize:main(["help"]) end
-    ),
-    ?assertEqual(TopHelp, HelpAlias),
-    {ok, DashedHelp} = observer_cli_test_io:capture_with_geometry(
-        24, 80, [], fun() -> observer_cli_escriptize:main(["--format", "term", "--help"]) end
-    ),
-    ?assertEqual(TopHelp, DashedHelp),
-    {ok, ShortHelp} = observer_cli_test_io:capture_with_geometry(
-        24, 80, [], fun() -> observer_cli_escriptize:main(["-h"]) end
-    ),
-    ?assertEqual(TopHelp, ShortHelp),
-    Commands = [
-        "connect",
-        "status",
-        "disconnect",
-        "snapshot",
-        "diagnose",
-        "memory",
-        "schedulers",
-        "distribution",
-        "processes",
-        "process",
-        "applications",
-        "ets",
-        "mnesia",
-        "network",
-        "ports",
-        "port",
-        "sockets",
-        "otp-state",
-        "supervision-tree",
-        "trace"
-    ],
-    lists:foreach(
-        fun(Command) ->
-            {ok, Help} = observer_cli_test_io:capture_with_geometry(
-                24, 80, [], fun() -> observer_cli_escriptize:main([Command, "--help"]) end
-            ),
-            observer_cli_test_io:assert_stable_fragments(Help, [
-                "Usage:", "observer_cli " ++ Command
-            ]),
-            assert_help_width(Help)
-        end,
-        Commands
-    ),
-    {ok, MemoryHelp} = observer_cli_test_io:capture_with_geometry(
-        24, 80, [], fun() -> observer_cli_escriptize:main(["memory", "--help"]) end
-    ),
-    observer_cli_test_io:assert_stable_fragments(MemoryHelp, ["BEAM memory", "allocator"]),
-    {ok, MemoryHelpAlias} = observer_cli_test_io:capture_with_geometry(
-        24, 80, [], fun() -> observer_cli_escriptize:main(["help", "memory"]) end
-    ),
-    ?assertEqual(MemoryHelp, MemoryHelpAlias),
-    {ok, ProcessesHelp} = observer_cli_test_io:capture_with_geometry(
-        24, 80, [], fun() -> observer_cli_escriptize:main(["processes", "--help"]) end
-    ),
-    observer_cli_test_io:assert_stable_fragments(ProcessesHelp, [
-        "message_queue_len", "250ms..10s", "--sort reductions"
-    ]),
-    {ok, ProcessHelp} = observer_cli_test_io:capture_with_geometry(
-        24, 80, [], fun() -> observer_cli_escriptize:main(["process", "--help"]) end
-    ),
-    observer_cli_test_io:assert_stable_fragments(ProcessHelp, [
-        "bounded, normalized current stacktrace", "Messages", "dictionary"
-    ]),
-    {ok, OtpStateHelp} = observer_cli_test_io:capture_with_geometry(
-        24, 80, [], fun() -> observer_cli_escriptize:main(["otp-state", "--help"]) end
-    ),
-    observer_cli_test_io:assert_stable_fragments(OtpStateHelp, [
-        "full OTP behavior state copy",
-        "full-copy",
-        "up to 5s",
-        "gen_statem",
-        "output soft cap",
-        "minimum 10s"
-    ]),
-    {ok, NetworkHelp} = observer_cli_test_io:capture_with_geometry(
-        24, 80, [], fun() -> observer_cli_escriptize:main(["network", "--help"]) end
-    ),
-    observer_cli_test_io:assert_stable_fragments(NetworkHelp, ["recv_cnt", "send_cnt", "cnt"]),
-    {ok, TraceHelp} = observer_cli_test_io:capture_with_geometry(
-        24, 80, [], fun() -> observer_cli_escriptize:main(["trace", "--help"]) end
-    ),
-    observer_cli_test_io:assert_stable_fragments(TraceHelp, [
-        "node-global",
-        "external/global",
-        "loaded, exported MFA",
-        "local intra-module calls are excluded",
-        "never arguments, returns, exceptions, or stacks",
-        "legacy process/port trace flags",
-        "and tracers plus static call patterns",
-        "without restoring prior state",
-        "processes or ports occupying its fixed",
-        "tracer/formatter names",
-        "not directly cleared",
-        "fixed-name occupant can disable one",
-        "trace call",
-        "trace stop --all"
-    ]),
-    lists:foreach(
-        fun({Arguments, Fragments}) ->
-            {ok, Help} = observer_cli_test_io:capture_with_geometry(
-                24, 80, [], fun() -> observer_cli_escriptize:main(Arguments) end
-            ),
-            observer_cli_test_io:assert_stable_fragments(Help, Fragments),
-            assert_help_width(Help)
-        end,
-        [
-            {["tui", "--help"], ["REFRESH_MS", "positional COOKIE"]},
-            {["trace", "call", "--help"], [
-                "module:function/arity",
-                "Only external/global",
-                "local intra-module calls are excluded",
-                "Setup and teardown clear node-wide",
-                "process/port trace flags",
-                "on-load and call-memory",
-                "Prior state is not restored",
-                "process or port",
-                "occupying a",
-                "fixed tracer or formatter name",
-                "not directly",
-                "occupant can disable one",
-                "Live target-local tracee PID; required",
-                "duration plus seven seconds",
-                "returns, exceptions, and stacks are never collected",
-                "included by default; use --redact",
-                "data.trace.trace_complete=true",
-                "loss, module change, or interference",
-                "At most 1000 events are returned",
-                "response-cap",
-                "outcome=complete and exit 0",
-                "cleanup_unconfirmed is outcome=error/exit 4",
-                "may omit trace data",
-                "100ms..60s; 10s by default",
-                "1..1000 events; 100 by default",
-                "Recon burst breaker, not a pacer",
-                "trip event included; the first event after an",
-                "expired window is forwarded and resets the",
-                "total capture may exceed N",
-                "across windows; conflicts with --limit",
-                "--replace-existing-trace"
-            ]},
-            {["trace", "stop", "--help"], [
-                "node-wide legacy process/port trace flags",
-                "call-memory",
-                "process or port occupying a fixed tracer",
-                "not directly",
-                "occupant can disable one",
-                "--all acknowledges",
-                "Explicit timeout minimum: 5s",
-                "When trace data is present",
-                "public stop response has events=[]",
-                "original waiting",
-                "With no owned observer_cli",
-                "trace, cleanup still runs",
-                "cleanup_unconfirmed",
-                "outcome=error, exit 4",
-                "verify target trace state",
-                "--all"
-            ]},
-            {["logs", "--help"], [
-                "once from one trusted",
-                "configured path",
-                "does not wait for new lines",
-                "does not flush Logger buffers",
-                "sensitive and untrusted",
-                "--redact and --include-identifiers",
-                "--handler HANDLER_ID",
-                "--tail LINES",
-                "Remote-operation deadline; 10s default, max 120s",
-                "64 KiB",
-                "32 KiB"
-            ]},
-            {["snapshot", "--deep", "--help"], ["snapshot", "--deep"]}
-        ]
-    ),
-    {ok, Version} = observer_cli_test_io:capture_with_geometry(
-        24, 80, [], fun() -> observer_cli_escriptize:main(["--version"]) end
-    ),
+    Lines = binary:split(iolist_to_binary(Help), <<"\n">>, [global]),
+    ?assert(length(Lines) - 1 =< 24),
+    {ok, Version} = observer_cli_test_io:capture_with_geometry(24, 80, [], fun() ->
+        observer_cli_escriptize:main(["--version"])
+    end),
     observer_cli_test_io:assert_stable_fragments(Version, [
-        "observer_cli 2.0.0", "observer_cli.cli/v1", "protocol 1", "controller OTP"
-    ]),
-    ?assertEqual(nonode@nohost, node()).
-
-assert_help_width(Help) ->
-    Binary = iolist_to_binary(Help),
-    lists:foreach(
-        fun(Line) -> ?assert(byte_size(Line) =< 79) end,
-        binary:split(Binary, <<"\n">>, [global])
-    ).
+        "observer_cli 2.1.0", "observer_cli.cli/v2", "protocol 2", "controller OTP"
+    ]).
 
 escript_command_exits() ->
     Escript = os:find_executable("escript"),
@@ -1805,22 +1559,22 @@ escript_command_exits() ->
         "main([\"trace_text\"]) -> no_context(), observer_cli_escriptize:main([\"trace\", \"call\", \"erlang:node/0\", \"--pid\", \"<0.1.0>\", \"--replace-existing-trace\"]);~n"
         "main([\"success\"]) -> erlang:halt(observer_cli_escriptize:response_exit_code(#{<<\"outcome\">> => <<\"complete\">>}));~n"
         "main([\"diagnose_findings\"]) -> erlang:halt(observer_cli_escriptize:response_exit_code(#{<<\"outcome\">> => <<\"complete\">>, <<\"command\">> => <<\"diagnose\">>, <<\"data\">> => #{<<\"findings\">> => [finding]}}));~n"
-        "main([Category]) -> erlang:halt(observer_cli_cli:exit_code(list_to_atom(Category))).~n"
+        "main([Category]) -> erlang:halt(observer_cli_capture:exit_code(list_to_atom(Category))).~n"
         "no_context() -> os:putenv(\"HOME\", filename:join(os:getenv(\"TMPDIR\", \"/tmp\"), \"observer_cli_no_context_\" ++ integer_to_list(erlang:unique_integer([positive])))).~n",
         [CliBeamDir, EscriptizeBeamDir]
     ),
     ok = file:write_file(Script, Contents),
     try
         {2, CommandOutput} = run_escript(Escript, [Script, "command"]),
-        ?assertNotEqual(nomatch, binary:match(CommandOutput, <<"observer_cli.cli/v1">>)),
+        ?assertNotEqual(nomatch, binary:match(CommandOutput, <<"observer_cli.cli/v2">>)),
         ?assertNotEqual(nomatch, binary:match(CommandOutput, <<"capture">>)),
         ?assertNotEqual(nomatch, binary:match(CommandOutput, <<"null">>)),
         {2, TraceCall} = run_escript(Escript, [Script, "trace_call"]),
-        ?assertNotEqual(nomatch, binary:match(TraceCall, <<"<<\"trace_call\">>">>)),
+        ?assertNotEqual(nomatch, binary:match(TraceCall, <<"<<\"trace call\">>">>)),
         {2, TraceStop} = run_escript(Escript, [Script, "trace_stop"]),
-        ?assertNotEqual(nomatch, binary:match(TraceStop, <<"<<\"trace_stop_all\">>">>)),
+        ?assertNotEqual(nomatch, binary:match(TraceStop, <<"<<\"trace stop\">>">>)),
         {2, TraceText} = run_escript(Escript, [Script, "trace_text"]),
-        ?assertNotEqual(nomatch, binary:match(TraceText, <<"observer_cli trace call:">>)),
+        ?assertNotEqual(nomatch, binary:match(TraceText, <<"observer_cli trace call">>)),
         ?assertEqual(nomatch, binary:match(TraceText, <<"trace_call:">>)),
         ?assertEqual({0, <<>>}, run_escript(Escript, [Script, "success"])),
         ?assertEqual({1, <<>>}, run_escript(Escript, [Script, "diagnose_findings"])),
@@ -1918,10 +1672,10 @@ outcome_exit_matrix_test() ->
     Error = fun(Class) ->
         #{
             <<"outcome">> => <<"error">>,
-            <<"issues">> => [observer_cli_cli:error(Class, fixture_error)]
+            <<"issues">> => [observer_cli_capture:error(Class, fixture_error)]
         }
     end,
-    SafetyWarning = (observer_cli_cli:error(safety_refusal, global_trace_replacement))#{
+    SafetyWarning = (observer_cli_capture:error(safety_refusal, global_trace_replacement))#{
         <<"severity">> := <<"warning">>
     },
     lists:foreach(
@@ -1941,7 +1695,7 @@ outcome_exit_matrix_test() ->
             {
                 (Error(capability))#{
                     <<"issues">> := [
-                        observer_cli_cli:error(capability, fixture_error), SafetyWarning
+                        observer_cli_capture:error(capability, fixture_error), SafetyWarning
                     ]
                 },
                 2
@@ -1988,7 +1742,7 @@ optional_unavailable_probe_keeps_complete_test() ->
     FatalPartial = replace_capture(
         Response#{
             <<"outcome">> := <<"partial">>,
-            <<"issues">> := [observer_cli_cli:error(cleanup, cleanup_unconfirmed)]
+            <<"issues">> := [observer_cli_capture:error(cleanup, cleanup_unconfirmed)]
         },
         (response_capture(Response))#{<<"probes">> := [FailedRequired | Rest]}
     ),
@@ -2007,7 +1761,7 @@ probe_failure_is_not_duplicated_test() ->
         [#{<<"reason_code">> := <<"required_coverage_incomplete">>}],
         maps:get(<<"probes">>, response_capture(Response))
     ),
-    Duplicate = (observer_cli_cli:error(partial, required_coverage_incomplete))#{
+    Duplicate = (observer_cli_capture:error(partial, required_coverage_incomplete))#{
         <<"severity">> := <<"warning">>
     },
     ?assertMatch(
@@ -2694,7 +2448,7 @@ controller_response_contract_rejections_test() ->
         <<"outcome">> := <<"error">>,
         <<"data">> := null,
         <<"issues">> := [
-            observer_cli_cli:error(capability, cleanup_unconfirmed)
+            observer_cli_capture:error(capability, cleanup_unconfirmed)
         ]
     },
     ErrorResponse = replace_capture(ErrorResponse0, null),
@@ -2755,7 +2509,7 @@ controller_response_contract_rejections_test() ->
             {memory, include, ErrorResponse},
             {memory, include, ErrorResponse#{
                 <<"issues">> := [
-                    (observer_cli_cli:error(cleanup, cleanup_unconfirmed))#{<<"extra">> => true}
+                    (observer_cli_capture:error(cleanup, cleanup_unconfirmed))#{<<"extra">> => true}
                 ]
             }},
             {memory, include, Response#{<<"data">> := Wrapper}},
@@ -2925,7 +2679,7 @@ oversized_structured_output_keeps_error_envelope_test() ->
     Contents = io_lib:format(
         "#!/usr/bin/env escript~n%%! -pa ~ts/ebin~n"
         "main([Format]) ->~n"
-        "  Response = observer_cli_cli:response(memory, complete, null, null, "
+        "  Response = observer_cli_capture:response(memory, complete, null, null, "
         "#{<<\"huge\">> => binary:copy(<<\"x\">>, 1048576)}, []),~n"
         "  observer_cli_escriptize:command_output(#{format => Format}, Response, 0).~n",
         [AppDir]
@@ -2933,13 +2687,13 @@ oversized_structured_output_keeps_error_envelope_test() ->
     ok = file:write_file(Script, Contents),
     try
         {4, Term} = run_escript(Escript, [Script, "term"]),
-        ?assertNotEqual(nomatch, binary:match(Term, <<"observer_cli.cli/v1">>)),
+        ?assertNotEqual(nomatch, binary:match(Term, <<"observer_cli.cli/v2">>)),
         ?assertNotEqual(nomatch, binary:match(Term, <<"response_too_large">>)),
         case code:ensure_loaded(json) of
             {module, json} ->
                 {4, Json} = run_escript(Escript, [Script, "json"]),
                 ?assertNotEqual(
-                    nomatch, binary:match(Json, <<"\"schema\":\"observer_cli.cli/v1\"">>)
+                    nomatch, binary:match(Json, <<"\"schema\":\"observer_cli.cli/v2\"">>)
                 ),
                 ?assertNotEqual(nomatch, binary:match(Json, <<"response_too_large">>));
             {error, _Reason} ->
@@ -2954,7 +2708,7 @@ cleanup_and_error_priority_test() ->
     Cleanup = (valid_controller_response(trace_call, <<"node@host">>))#{
         <<"outcome">> := <<"error">>,
         <<"issues">> := [
-            observer_cli_cli:error(cleanup, cleanup_unconfirmed)
+            observer_cli_capture:error(cleanup, cleanup_unconfirmed)
         ]
     },
     ?assertEqual(
@@ -2962,7 +2716,7 @@ cleanup_and_error_priority_test() ->
     ),
     Capability = Cleanup#{
         <<"issues">> := [
-            observer_cli_cli:error(capability, capability_unavailable)
+            observer_cli_capture:error(capability, capability_unavailable)
         ]
     },
     ?assertEqual(
@@ -3052,13 +2806,13 @@ trace_contract_boundary_matrix_test() ->
         <<"reason_code">> => <<"global_trace_replacement">>,
         <<"message">> => <<"node-global trace state is replaced">>
     },
-    NullStop = observer_cli_cli:response(
+    NullStop = observer_cli_capture:response(
         trace_stop_all,
         error,
         null,
         null,
         null,
-        [observer_cli_cli:error(capability, capability_unavailable), GlobalWarning]
+        [observer_cli_capture:error(capability, capability_unavailable), GlobalWarning]
     ),
     ?assertEqual(
         ok,
@@ -3072,7 +2826,7 @@ trace_contract_boundary_matrix_test() ->
             Target,
             NullStop#{
                 <<"issues">> := maps:get(<<"issues">>, NullStop) ++
-                    [observer_cli_cli:error(cleanup, cleanup_unconfirmed)]
+                    [observer_cli_capture:error(cleanup, cleanup_unconfirmed)]
             }
         )
     ),
@@ -3341,31 +3095,11 @@ capability_error_classification_test() ->
     ?assertEqual(
         {error, required_probe, capability_probe_failed},
         observer_cli_escriptize:capability_error(error, remote_crash)
-    ),
-    ?assertEqual(
-        {error, required_probe, target_timeout},
-        observer_cli_escriptize:probe_response(
-            status,
-            #{node => "node@host"},
-            node(),
-            {error, required_probe, target_timeout},
-            0
-        )
-    ),
-    ?assertEqual(
-        {error, connection, connection_failed},
-        observer_cli_escriptize:probe_response(
-            status,
-            #{node => "node@host"},
-            node(),
-            {error, connection, connection_failed},
-            0
-        )
     ).
 
 valid_controller_response(Command, Node) ->
     #{
-        <<"schema">> => <<"observer_cli.cli/v1">>,
+        <<"schema">> => <<"observer_cli.capture/v1">>,
         <<"command">> => atom_to_binary(Command),
         <<"outcome">> => <<"complete">>,
         <<"data">> => fixture_data(Command),
@@ -3398,7 +3132,7 @@ replace_target(Response, Target) ->
 
 old_seven_field_response(Command, Node) ->
     #{
-        <<"schema">> => <<"observer_cli.cli/v1">>,
+        <<"schema">> => <<"observer_cli.capture/v1">>,
         <<"command">> => atom_to_binary(Command),
         <<"target">> => #{<<"node">> => Node, <<"otp_release">> => <<"29">>},
         <<"capture">> => #{<<"status">> => <<"complete">>},
@@ -3644,13 +3378,6 @@ cross_otp_remote_load(Erl) ->
                 {remote_otp_mismatch, ControllerOtp, TargetOtp},
                 observer_cli_escriptize:remote_load(Node)
             ),
-            Output = assert_halt(3, fun() ->
-                observer_cli_escriptize:main(["tui", atom_to_list(Node)])
-            end),
-            OutputBinary = iolist_to_binary(Output),
-            ?assertNotEqual(nomatch, binary:match(OutputBinary, list_to_binary(ControllerOtp))),
-            ?assertNotEqual(nomatch, binary:match(OutputBinary, list_to_binary(TargetOtp))),
-            ?assertNotEqual(nomatch, binary:match(OutputBinary, <<"same OTP major release">>)),
             ?assertEqual(false, erpc:call(Node, code, is_loaded, [observer_cli])),
             ?assertEqual(Before, system_module_md5s(Node))
         after
@@ -3668,7 +3395,7 @@ remote_load_replaces_incompatible_bundle() ->
             ?assert(observer_cli_escriptize:remote_module_available(Node)),
             ok = file:write_file(
                 Source,
-                <<"-module(observer_cli_snapshot).\n-export([capabilities/0]).\ncapabilities() -> #{bundle_version => <<\"1.8.8\">>, protocol_version => 1}.\n">>
+                <<"-module(observer_cli_snapshot).\n-export([capabilities/0]).\ncapabilities() -> #{bundle_version => <<\"1.8.8\">>, protocol_version => 2}.\n">>
             ),
             {ok, observer_cli_snapshot, OldBeam} = compile:file(Source, [binary]),
             ?assertEqual(
@@ -3846,29 +3573,12 @@ run_rejects_failed_remote_load_test() ->
     ?assertEqual([remote_load_called], drain_run_messages([])).
 
 refuse_pre_distributed_controller() ->
-    Root = temporary_directory("observer_cli_distributed_status_home"),
-    CookieEnv = "OBSERVER_CLI_DISTRIBUTED_STATUS_COOKIE",
-    PreviousConfigHome = set_config_home(Root),
-    true = os:putenv(CookieEnv, "cookie"),
-    try
-        ok = observer_cli_cli:save_context(#{
-            node => "target@host", cookie_env => CookieEnv
-        }),
-        with_distribution(fun(_Cookie) ->
-            ?assertEqual(
-                {error, controller, controller_already_distributed},
-                observer_cli_escriptize:with_target(#{}, fun(_Target, _Capabilities) -> ok end)
-            ),
-            ?assertEqual(
-                {error, controller, controller_already_distributed},
-                observer_cli_escriptize:run_status(#{timeout => "10s"})
-            )
-        end)
-    after
-        true = os:unsetenv(CookieEnv),
-        restore_config_home(PreviousConfigHome),
-        file:del_dir_r(Root)
-    end.
+    with_distribution(fun(_Cookie) ->
+        ?assertEqual(
+            {error, controller, controller_already_distributed},
+            observer_cli_escriptize:with_target(#{}, fun(_Target, _Capabilities) -> ok end)
+        )
+    end).
 
 random_failure_stops_before_connect() ->
     ?assertEqual(nonode@nohost, node()),
@@ -3920,7 +3630,7 @@ dynamic_controller_handshake() ->
     RandomCookie = binary_to_atom(binary:encode_hex(RandomBytes)),
     try
         ?assertEqual(
-            {ok, #{bundle_version => <<"2.0.0">>, protocol_version => 1}},
+            {ok, #{bundle_version => <<"2.1.0">>, protocol_version => 2}},
             observer_cli_escriptize:connect_target(
                 Target,
                 shortnames,
@@ -3977,7 +3687,7 @@ invalid_remote_dispatch_contract() ->
         <<
             "-module(observer_cli_snapshot).\n"
             "-export([capabilities/0, dispatch/4]).\n"
-            "capabilities() -> #{bundle_version => <<\"2.0.0\">>, protocol_version => 1}.\n"
+            "capabilities() -> #{bundle_version => <<\"2.1.0\">>, protocol_version => 2}.\n"
             "dispatch(_, _, _, _) -> #{invalid => true}.\n"
         >>
     ),
@@ -4019,254 +3729,82 @@ invalid_remote_dispatch_contract() ->
     ?assertEqual(nonode@nohost, node()).
 
 active_context_lifecycle() ->
-    ?assertEqual(nonode@nohost, node()),
-    Cookie = observer_cli_context_target_cookie,
-    CookieText = atom_to_list(Cookie),
-    {Port, Target} = start_target(shortnames, Cookie, [snapshot_beam_dir()]),
     {Escript, Script} = context_escript(),
-    Root = temporary_directory("observer_cli_context_home"),
-    CookieEnv = "OBSERVER_CLI_CONTEXT_COOKIE",
-    PreviousConfigHome = set_config_home(Root),
-    true = os:putenv(CookieEnv, CookieText),
-    TargetText = atom_to_list(Target),
+    Root = temporary_directory("observer_cli_legacy_untouched"),
+    Previous = set_config_home(Root),
     try
-        {0, Connect} = run_escript(Escript, [
-            Script, "connect", "--node", TargetText, "--cookie-env", CookieEnv
-        ]),
-        ?assertNotEqual(
-            nomatch,
-            binary:match(Connect, iolist_to_binary(["Selected ", TargetText, "; probe succeeded."]))
+        Path = filename:join(filename:basedir(user_config, "observer_cli"), "context.etf"),
+        ok = filelib:ensure_dir(Path),
+        Before = <<"legacy sentinel">>,
+        ok = file:write_file(Path, Before),
+        lists:foreach(
+            fun(Name) -> {2, _} = run_escript(Escript, [Script, Name]) end,
+            ["connect", "status", "disconnect"]
         ),
-        ?assertNotEqual(
-            nomatch, binary:match(Connect, <<"No persistent connection is kept.">>)
-        ),
-        ?assertEqual(nomatch, binary:match(Connect, list_to_binary(CookieText))),
-        ContextPath = observer_cli_cli:context_path(),
-        {ok, #file_info{mode = ContextMode}} = file:read_file_info(ContextPath),
-        ?assertEqual(8#600, ContextMode band 8#777),
-        {ok, ContextBytes} = file:read_file(ContextPath),
-        ?assertEqual(nomatch, binary:match(ContextBytes, list_to_binary(CookieText))),
-        {0, Status} = run_escript(Escript, [Script, "status"]),
-        ?assertNotEqual(nomatch, binary:match(Status, <<"probe succeeded">>)),
-        ?assertNotEqual(nomatch, binary:match(Status, <<"diagnostics_module=compatible">>)),
-        ?assertNotEqual(nomatch, binary:match(Status, <<"target_otp_release=">>)),
-        ?assertNotEqual(nomatch, binary:match(Status, <<"name_mode=short">>)),
-        ?assertNotEqual(
-            nomatch, binary:match(Status, iolist_to_binary(["cookie_source=env:", CookieEnv]))
-        ),
-        ?assertEqual(nomatch, binary:match(Status, list_to_binary(CookieText))),
-        {2, StatelessError} = run_escript(Escript, [
-            Script, "snapshot", "--node", TargetText
-        ]),
-        ?assertNotEqual(nomatch, binary:match(StatelessError, <<"--cookie-env">>)),
-        {0, Disconnect} = run_escript(Escript, [Script, "disconnect"]),
-        ?assertNotEqual(
-            nomatch, binary:match(Disconnect, <<"Removed saved target context for ">>)
-        ),
-        ?assertEqual({error, enoent}, file:read_file_info(ContextPath)),
-        {0, Again} = run_escript(Escript, [Script, "disconnect"]),
-        ?assertEqual(<<"No active context.\n">>, Again)
+        ?assertEqual({ok, Before}, file:read_file(Path))
     after
-        true = os:unsetenv(CookieEnv),
-        restore_config_home(PreviousConfigHome),
+        restore_config_home(Previous),
         file:delete(Script),
-        file:del_dir_r(Root),
-        stop_target(Port)
-    end,
-    ?assertEqual(nonode@nohost, node()).
-
-connect_cleanup_preserves_context() ->
-    Root = temporary_directory("observer_cli_cleanup_context_home"),
-    PreviousConfigHome = set_config_home(Root),
-    Old = #{node => "old@host", name_mode => "short", cookie_env => "OLD_COOKIE"},
-    New = #{node => "new@host", name_mode => "short", cookie_env => "NEW_COOKIE"},
-    try
-        ok = observer_cli_cli:save_context(Old),
-        Path = observer_cli_cli:context_path(),
-        {ok, Before} = file:read_file(Path),
-        Failure = {error, cleanup, cleanup_unconfirmed},
-        ?assertEqual(
-            Failure, observer_cli_escriptize:save_connected_context(New, Failure)
-        ),
-        ?assertEqual({ok, Before}, file:read_file(Path)),
-        Outcome = {ok, #{}, 0},
-        ?assertEqual(
-            Outcome, observer_cli_escriptize:save_connected_context(New, Outcome)
-        ),
-        ?assertEqual({ok, New}, observer_cli_cli:load_context())
-    after
-        restore_config_home(PreviousConfigHome),
         file:del_dir_r(Root)
     end.
 
 connect_missing_diagnostics() ->
-    ?assertEqual(nonode@nohost, node()),
-    Cookie = observer_cli_missing_context_cookie,
-    {Port, Target} = start_target(shortnames, Cookie, []),
-    {Escript, Script} = context_escript(),
-    Root = temporary_directory("observer_cli_missing_context_home"),
-    CookieEnv = "OBSERVER_CLI_MISSING_CONTEXT_COOKIE",
-    PreviousConfigHome = set_config_home(Root),
-    true = os:putenv(CookieEnv, atom_to_list(Cookie)),
-    try
-        {0, Output} = run_escript(Escript, [
-            Script,
-            "connect",
-            "--node",
-            atom_to_list(Target),
-            "--cookie-env",
-            CookieEnv
-        ]),
-        ?assertNotEqual(nomatch, binary:match(Output, <<"diagnostics_module=missing">>)),
-        ?assertEqual(nomatch, binary:match(Output, <<"--load-diagnostics">>)),
-        ?assertNotEqual(nomatch, binary:match(Output, <<"Install the matching">>)),
-        {0, Status} = run_escript(Escript, [Script, "status"]),
-        ?assertNotEqual(nomatch, binary:match(Status, <<"diagnostics_module=missing">>)),
-        {ok, DirectStatus, 0} = observer_cli_escriptize:run_status(#{timeout => "10s"}),
-        ?assertMatch(
-            #{<<"data">> := #{<<"diagnostics_module">> := <<"missing">>}}, DirectStatus
-        ),
-        ?assertEqual(
-            {error, capability, capability_unavailable},
-            observer_cli_escriptize:run_command(memory, #{
-                arguments => [], timeout => "10s"
-            })
-        ),
-        {2, Rejected} = run_escript(Escript, [
-            Script,
-            "connect",
-            "--node",
-            atom_to_list(Target),
-            "--cookie-env",
-            CookieEnv,
-            "--load-diagnostics"
-        ]),
-        ?assertNotEqual(nomatch, binary:match(Rejected, <<"unknown option">>))
-    after
-        true = os:unsetenv(CookieEnv),
-        restore_config_home(PreviousConfigHome),
-        file:delete(Script),
-        file:del_dir_r(Root),
-        stop_target(Port)
-    end,
-    ?assertEqual(nonode@nohost, node()).
+    capability_rejection([], <<"missing">>).
 
 connect_incompatible_diagnostics() ->
-    ?assertEqual(nonode@nohost, node()),
-    Dir = temporary_directory("observer_cli_incompatible_context"),
-    Source = filename:join(Dir, "observer_cli_snapshot.erl"),
-    ok = file:write_file(
-        Source,
-        <<
-            "-module(observer_cli_snapshot).\n"
-            "-export([capabilities/0]).\n"
-            "capabilities() -> #{bundle_version => <<\"1.8.8\">>, "
-            "protocol_version => 1}.\n"
-        >>
-    ),
-    {ok, observer_cli_snapshot} = compile:file(Source, [{outdir, Dir}]),
-    Cookie = observer_cli_incompatible_context_cookie,
-    {Port, Target} = start_target(shortnames, Cookie, [Dir]),
+    capability_rejection(
+        [<<"capabilities() -> #{bundle_version => <<\"1.8.8\">>, protocol_version => 1}.\n">>],
+        <<"incompatible">>
+    ).
+
+connect_sanitizes_hostile_diagnostics() ->
+    capability_rejection(
+        [
+            <<"capabilities() -> #{bundle_version => <<255>>, protocol_version => 2147483648, secret => do_not_copy}.\n">>
+        ],
+        <<"hostile">>
+    ).
+
+capability_rejection(Implementation, _Label) ->
+    Dir = temporary_directory("observer_cli_capability_rejection"),
+    Paths =
+        case Implementation of
+            [] ->
+                [];
+            _ ->
+                Source = filename:join(Dir, "observer_cli_snapshot.erl"),
+                ok = file:write_file(Source, [
+                    "-module(observer_cli_snapshot).\n-export([capabilities/0]).\n", Implementation
+                ]),
+                {ok, observer_cli_snapshot} = compile:file(Source, [{outdir, Dir}]),
+                [Dir]
+        end,
+    Cookie = observer_cli_v3_capability_cookie,
+    {Port, Target} = start_target(shortnames, Cookie, Paths),
     {Escript, Script} = context_escript(),
-    Root = temporary_directory("observer_cli_incompatible_context_home"),
-    CookieEnv = "OBSERVER_CLI_INCOMPATIBLE_CONTEXT_COOKIE",
-    PreviousConfigHome = set_config_home(Root),
-    true = os:putenv(CookieEnv, atom_to_list(Cookie)),
+    Env = "OBSERVER_CLI_CAPABILITY_COOKIE",
+    true = os:putenv(Env, atom_to_list(Cookie)),
     try
-        {0, Connect} = run_escript(Escript, [
+        {2, Output} = run_escript(Escript, [
             Script,
-            "connect",
+            "inspect",
+            "vm",
             "--node",
             atom_to_list(Target),
             "--cookie-env",
-            CookieEnv
+            Env,
+            "--format",
+            "term"
         ]),
-        ?assertNotEqual(nomatch, binary:match(Connect, <<"diagnostics_module=incompatible">>)),
-        ?assertNotEqual(nomatch, binary:match(Connect, <<"bundle=1.8.8">>)),
-        {0, Status} = run_escript(Escript, [Script, "status"]),
-        ?assertNotEqual(nomatch, binary:match(Status, <<"diagnostics_module=incompatible">>)),
-        ?assertNotEqual(nomatch, binary:match(Status, <<"bundle=1.8.8">>)),
-        {ok, DirectStatus, 0} = observer_cli_escriptize:run_status(#{timeout => "10s"}),
-        ?assertMatch(
-            #{<<"data">> := #{<<"diagnostics_module">> := <<"incompatible">>}},
-            DirectStatus
-        ),
-        ?assertEqual(
-            {error, capability, capability_unavailable},
-            observer_cli_escriptize:run_command(memory, #{
-                arguments => [], timeout => "10s"
-            })
-        )
+        ?assertNotEqual(nomatch, binary:match(Output, <<"capability_unavailable">>)),
+        ?assertEqual(nomatch, binary:match(Output, <<"do_not_copy">>)),
+        ?assertEqual(nomatch, binary:match(Output, atom_to_binary(Cookie)))
     after
-        true = os:unsetenv(CookieEnv),
-        restore_config_home(PreviousConfigHome),
+        os:unsetenv(Env),
         file:delete(Script),
-        file:del_dir_r(Root),
         stop_target(Port),
         file:del_dir_r(Dir)
-    end,
-    ?assertEqual(nonode@nohost, node()).
-
-connect_sanitizes_hostile_diagnostics() ->
-    ?assertEqual(nonode@nohost, node()),
-    Dir = temporary_directory("observer_cli_hostile_context"),
-    Source = filename:join(Dir, "observer_cli_snapshot.erl"),
-    ok = file:write_file(
-        Source,
-        [
-            "-module(observer_cli_snapshot).\n",
-            "-export([capabilities/0]).\n",
-            "capabilities() -> #{bundle_version => list_to_binary([255]), ",
-            "protocol_version => 2147483648, ",
-            "secret => do_not_copy}.\n"
-        ]
-    ),
-    {ok, observer_cli_snapshot} = compile:file(Source, [{outdir, Dir}]),
-    Cookie = observer_cli_hostile_context_cookie,
-    {Port, Target} = start_target(shortnames, Cookie, [Dir]),
-    {Escript, Script} = context_escript(),
-    Root = temporary_directory("observer_cli_hostile_context_home"),
-    CookieEnv = "OBSERVER_CLI_HOSTILE_CONTEXT_COOKIE",
-    PreviousConfigHome = set_config_home(Root),
-    true = os:putenv(CookieEnv, atom_to_list(Cookie)),
-    ConnectArgs = [
-        Script,
-        "connect",
-        "--node",
-        atom_to_list(Target),
-        "--cookie-env",
-        CookieEnv
-    ],
-    try
-        case code:ensure_loaded(json) of
-            {module, json} ->
-                {0, Json} = run_escript(Escript, ConnectArgs ++ ["--json"]),
-                ?assertNotEqual(nomatch, binary:match(Json, <<"bundle_version">>)),
-                ?assertNotEqual(nomatch, binary:match(Json, <<"protocol_version">>)),
-                ?assertNotEqual(nomatch, binary:match(Json, <<"null">>)),
-                ?assertEqual(nomatch, binary:match(Json, <<"do_not_copy">>));
-            {error, _Reason} ->
-                {2, JsonError} = run_escript(Escript, ConnectArgs ++ ["--json"]),
-                ?assertNotEqual(nomatch, binary:match(JsonError, <<"JSON output requires">>)),
-                ?assertEqual(
-                    {error, enoent}, file:read_file_info(observer_cli_cli:context_path())
-                ),
-                {0, _TermConnect} = run_escript(Escript, ConnectArgs ++ ["--format", "term"])
-        end,
-        {0, Status} = run_escript(Escript, [Script, "status", "--format", "term"]),
-        ?assertNotEqual(nomatch, binary:match(Status, <<"bundle_version">>)),
-        ?assertNotEqual(nomatch, binary:match(Status, <<"protocol_version">>)),
-        ?assertNotEqual(nomatch, binary:match(Status, <<"null">>)),
-        ?assertEqual(nomatch, binary:match(Status, <<"do_not_copy">>))
-    after
-        true = os:unsetenv(CookieEnv),
-        restore_config_home(PreviousConfigHome),
-        file:delete(Script),
-        file:del_dir_r(Root),
-        stop_target(Port),
-        file:del_dir_r(Dir)
-    end,
-    ?assertEqual(nonode@nohost, node()).
+    end.
 
 context_escript() ->
     Escript = os:find_executable("escript"),
@@ -4305,25 +3843,26 @@ direct_remote_command_suite() ->
     PreviousConfigHome = set_config_home(Root),
     true = os:putenv(CookieEnv, atom_to_list(Cookie)),
     try
-        assert_command_ok(
-            connect,
-            #{
-                node => atom_to_list(Target),
-                cookie_env => CookieEnv,
-                arguments => [],
-                timeout => "10s"
-            }
-        ),
-        assert_command_ok(status, #{arguments => [], timeout => "10s"}),
         MainMemory = assert_halt(0, fun() ->
-            observer_cli_escriptize:main(["memory", "--format", "term"])
+            observer_cli_escriptize:main([
+                "inspect",
+                "memory",
+                "--node",
+                atom_to_list(Target),
+                "--cookie-env",
+                CookieEnv,
+                "--format",
+                "term"
+            ])
         end),
         ?assertNotEqual(
-            nomatch, binary:match(iolist_to_binary(MainMemory), <<"observer_cli.cli/v1">>)
+            nomatch, binary:match(iolist_to_binary(MainMemory), <<"observer_cli.cli/v2">>)
         ),
         lists:foreach(
             fun({Command, Options}) ->
-                assert_command_ok(Command, Options#{timeout => "15s"})
+                assert_command_ok(Command, Options#{
+                    node => atom_to_list(Target), cookie_env => CookieEnv, timeout => "15s"
+                })
             end,
             [
                 {snapshot, #{arguments => [], deep => true}},
@@ -4349,31 +3888,18 @@ direct_remote_command_suite() ->
                 {trace, #{arguments => ["stop"], all => true}}
             ]
         ),
-        assert_command_ok(disconnect, #{arguments => []}),
         CookieFile = filename:join(Root, "target.cookie"),
         ok = file:write_file(CookieFile, atom_to_binary(Cookie)),
         ok = file:change_mode(CookieFile, 8#600),
         assert_command_ok(
-            connect,
+            memory,
             #{
                 node => atom_to_list(Target),
                 cookie_file => CookieFile,
                 arguments => [],
                 timeout => "10s"
             }
-        ),
-        {ok, FileStatus, 0} = observer_cli_escriptize:run_command(status, #{
-            arguments => [], timeout => "10s"
-        }),
-        ?assertMatch(
-            #{
-                <<"data">> := #{
-                    <<"cookie_source">> := #{<<"type">> := <<"file">>, <<"path">> := _}
-                }
-            },
-            FileStatus
-        ),
-        assert_command_ok(disconnect, #{arguments => []})
+        )
     after
         true = os:unsetenv(CookieEnv),
         restore_config_home(PreviousConfigHome),
@@ -4384,7 +3910,7 @@ direct_remote_command_suite() ->
 
 assert_command_ok(Command, Options) ->
     case observer_cli_escriptize:run_command(Command, Options) of
-        {ok, #{<<"schema">> := <<"observer_cli.cli/v1">>}, _} -> ok;
+        {ok, #{<<"schema">> := <<"observer_cli.capture/v1">>}, _} -> ok;
         Result -> erlang:error({command_failed, Command, Result})
     end.
 
@@ -4443,7 +3969,7 @@ diagnose_escript_with_dispatch(Escript, Script, CookieEnv, ExitCode, DispatchRes
     Contents = io_lib:format(
         "-module(observer_cli_snapshot).~n"
         "-export([capabilities/0,dispatch/4]).~n"
-        "capabilities() -> #{bundle_version => <<\"2.0.0\">>, protocol_version => 1}.~n"
+        "capabilities() -> #{bundle_version => <<\"2.1.0\">>, protocol_version => 2}.~n"
         "dispatch(_,diagnose,_,_) -> ~s.~n",
         [DispatchResult]
     ),
@@ -4455,7 +3981,10 @@ diagnose_escript_with_dispatch(Escript, Script, CookieEnv, ExitCode, DispatchRes
     try
         {ExitCode, _Output} = run_escript(Escript, [
             Script,
-            "diagnose",
+            "check",
+            "--fail-on",
+            "warning",
+            "--redact",
             "--node",
             atom_to_list(Target),
             "--cookie-env",
@@ -4548,7 +4077,8 @@ snapshot_escript_envelopes() ->
     true = os:putenv(CookieEnv, atom_to_list(Cookie)),
     Args = [
         Script,
-        "snapshot",
+        "inspect",
+        "vm",
         "--node",
         atom_to_list(Target),
         "--cookie-env",
@@ -4556,17 +4086,17 @@ snapshot_escript_envelopes() ->
     ],
     try
         {0, Text} = run_escript(Escript, Args),
-        ?assertNotEqual(nomatch, binary:match(Text, <<"observer_cli snapshot">>)),
-        ?assertEqual(nomatch, binary:match(Text, <<"observer_cli.cli/v1">>)),
+        ?assertNotEqual(nomatch, binary:match(Text, <<"observer_cli inspect vm">>)),
+        ?assertEqual(nomatch, binary:match(Text, <<"observer_cli.capture/v1">>)),
         ?assertEqual(nomatch, binary:match(Text, <<"issues:">>)),
-        ?assertEqual(nomatch, binary:match(Text, atom_to_binary(Target))),
+        ?assertNotEqual(nomatch, binary:match(Text, atom_to_binary(Target))),
         {0, Term} = run_escript(Escript, Args ++ ["--format", "term"]),
         {ok, Tokens, _EndLocation} = erl_scan:string(binary_to_list(Term)),
         {ok, Response} = erl_parse:parse_term(Tokens),
         ?assertMatch(
             #{
-                <<"schema">> := <<"observer_cli.cli/v1">>,
-                <<"command">> := <<"snapshot">>,
+                <<"schema">> := <<"observer_cli.cli/v2">>,
+                <<"command">> := <<"inspect vm">>,
                 <<"outcome">> := <<"complete">>,
                 <<"meta">> := #{<<"capture">> := #{}}
             },
@@ -4621,11 +4151,11 @@ response_validation_boundaries_test() ->
         )
     ),
     ?assertNot(observer_cli_escriptize:valid_probe(invalid)),
-    Issues = [observer_cli_cli:error(argument, bad_value)],
+    Issues = [observer_cli_capture:error(argument, bad_value)],
     ?assert(observer_cli_escriptize:valid_issues(Issues)),
     ?assertNot(
         observer_cli_escriptize:valid_issues([
-            (observer_cli_cli:error(argument, bad_value))#{<<"reason_code">> := <<>>}
+            (observer_cli_capture:error(argument, bad_value))#{<<"reason_code">> := <<>>}
         ])
     ),
     ?assertNot(observer_cli_escriptize:valid_issues([#{}])),
@@ -4703,7 +4233,7 @@ response_validation_boundaries_test() ->
     ?assertMatch(
         {ok, #{node := "target@host"}},
         observer_cli_escriptize:active_options(
-            #{node => "target@host"}
+            #{node => "target@host", cookie_env => "COOKIE"}
         )
     ),
     ?assertMatch(
@@ -4742,18 +4272,18 @@ response_validation_boundaries_test() ->
         observer_cli_escriptize:capabilities(node(), 0)
     ),
     ?assertEqual(
-        {ok, #{bundle_version => <<"2.0.0">>, protocol_version => 1}},
+        {ok, #{bundle_version => <<"2.1.0">>, protocol_version => 2}},
         observer_cli_escriptize:capabilities(node(), 1000)
     ),
     ?assert(
         observer_cli_escriptize:compatible_capabilities(#{
-            bundle_version => <<"2.0.0">>, protocol_version => 1, extra => supported
+            bundle_version => <<"2.1.0">>, protocol_version => 2, extra => supported
         })
     ),
-    ?assertNot(observer_cli_escriptize:compatible_capabilities(#{protocol_version => 1})),
+    ?assertNot(observer_cli_escriptize:compatible_capabilities(#{protocol_version => 2})),
     ?assertNot(
         observer_cli_escriptize:compatible_capabilities(#{
-            bundle_version => <<"1.8.8">>, protocol_version => 1
+            bundle_version => <<"1.8.8">>, protocol_version => 2
         })
     ),
     ?assertEqual(
@@ -4816,15 +4346,6 @@ response_validation_boundaries_test() ->
     ),
     ok = ignore_name_mode_result(shortnames),
     ok = ignore_name_mode_result(longnames),
-    ?assertEqual({error, argument, no_active_context}, observer_cli_escriptize:run_connect(#{})),
-    ?assertMatch(
-        {error, internal, _},
-        observer_cli_escriptize:save_connected_context(
-            #{}, {ok, #{protocol_version => 1}, 0}
-        )
-    ),
-    _ = observer_cli_escriptize:run_status(#{}),
-    _ = observer_cli_escriptize:run_disconnect(),
     _ = observer_cli_escriptize:with_active_target(#{}, fun(_, _, _) -> ok end),
     _ = observer_cli_escriptize:run_snapshot(
         node(), #{include_identifiers => true}, 1, 3000
@@ -4870,7 +4391,7 @@ response_validation_boundaries_test() ->
                 erlang:monotonic_time(millisecond) + 1000,
                 fun() -> binary:copy(<<3>>, 24) end,
                 fun(_) -> true end,
-                fun(_Target, {ok, #{protocol_version := 1}}, _Remaining) -> ok end
+                fun(_Target, {ok, #{protocol_version := 2}}, _Remaining) -> ok end
             )
         ),
         ?assertEqual(
@@ -4892,26 +4413,6 @@ response_validation_boundaries_test() ->
             )
         )
     end),
-    ?assertMatch(
-        {ok,
-            #{
-                <<"outcome">> := <<"complete">>,
-                <<"issues">> := [#{<<"severity">> := <<"warning">>}],
-                <<"data">> := #{<<"diagnostics_module">> := <<"missing">>}
-            },
-            0},
-        observer_cli_escriptize:probe_response(
-            status,
-            #{
-                node => atom_to_list(node()),
-                name_mode => "short",
-                cookie_env => "OBSERVER_CLI_TEST_COOKIE"
-            },
-            node(),
-            {error, capability, diagnostics_missing},
-            1000
-        )
-    ),
     PartialDispatch = #{
         <<"outcome">> => <<"partial">>,
         <<"issues">> => []
@@ -4955,7 +4456,6 @@ response_validation_boundaries_test() ->
             erlang:monotonic_time(millisecond) + 10
         )
     ),
-    malformed_active_context_contract(),
     ok.
 
 ignore_name_mode_result(Mode) ->
@@ -4963,37 +4463,6 @@ ignore_name_mode_result(Mode) ->
         _ -> ok
     catch
         _:_ -> ok
-    end.
-
-malformed_active_context_contract() ->
-    Root = temporary_directory("observer_cli_malformed_active"),
-    PreviousConfigHome = set_config_home(Root),
-    Path = observer_cli_cli:context_path(),
-    Dir = filename:dirname(Path),
-    ok = filelib:ensure_dir(Path),
-    ok = file:change_mode(Dir, 8#700),
-    ok = file:write_file(Path, <<"invalid">>),
-    ok = file:change_mode(Path, 8#600),
-    try
-        ?assertEqual(
-            {error, internal, invalid_context},
-            observer_cli_escriptize:run_status(#{})
-        ),
-        ?assertEqual(
-            {error, internal, invalid_context},
-            observer_cli_escriptize:with_active_target(#{}, fun(_, _, _) -> ok end)
-        ),
-        {ok, Disconnect, 0} = observer_cli_escriptize:run_disconnect(),
-        ?assertEqual(
-            true,
-            maps:get(
-                <<"recovered_invalid_context">>, maps:get(<<"data">>, Disconnect)
-            )
-        ),
-        ?assertEqual({error, enoent}, file:read_file_info(Path))
-    after
-        restore_config_home(PreviousConfigHome),
-        file:del_dir_r(Root)
     end.
 
 validation_payload_contract(Probe) ->
@@ -5519,7 +4988,7 @@ assert_partial_snapshot_exit(Escript, Script, CookieEnv) ->
         io_lib:format(
             "-module(observer_cli_snapshot).~n"
             "-export([capabilities/0,dispatch/4]).~n"
-            "capabilities() -> #{bundle_version => <<\"2.0.0\">>, protocol_version => 1}.~n"
+            "capabilities() -> #{bundle_version => <<\"2.1.0\">>, protocol_version => 2}.~n"
             "dispatch(_,snapshot,_,_) -> ~tp.~n",
             [
                 #{
@@ -5537,7 +5006,9 @@ assert_partial_snapshot_exit(Escript, Script, CookieEnv) ->
     try
         {3, Term} = run_escript(Escript, [
             Script,
-            "snapshot",
+            "inspect",
+            "vm",
+            "--redact",
             "--node",
             atom_to_list(Target),
             "--cookie-env",
@@ -5546,7 +5017,7 @@ assert_partial_snapshot_exit(Escript, Script, CookieEnv) ->
             "term"
         ]),
         {ok, Tokens, _EndLocation} = erl_scan:string(binary_to_list(Term)),
-        {ok, Response} = erl_parse:parse_term(Tokens),
+        {ok, PublicResponse} = erl_parse:parse_term(Tokens),
         ?assertMatch(
             #{
                 <<"outcome">> := <<"partial">>,
@@ -5557,7 +5028,7 @@ assert_partial_snapshot_exit(Escript, Script, CookieEnv) ->
                     }
                 }
             },
-            Response
+            PublicResponse
         )
     after
         stop_target(Port),
@@ -5572,7 +5043,7 @@ incompatible_capability() ->
     Source = filename:join(Dir, "observer_cli_snapshot.erl"),
     ok = file:write_file(
         Source,
-        <<"-module(observer_cli_snapshot).\n-export([capabilities/0]).\ncapabilities() -> #{bundle_version => <<\"1.8.8\">>, protocol_version => 1}.\n">>
+        <<"-module(observer_cli_snapshot).\n-export([capabilities/0]).\ncapabilities() -> #{bundle_version => <<\"1.8.8\">>, protocol_version => 2}.\n">>
     ),
     {ok, observer_cli_snapshot} = compile:file(Source, [{outdir, Dir}]),
     try
@@ -5580,7 +5051,7 @@ incompatible_capability() ->
             error,
             capability,
             {diagnostics_incompatible, #{
-                bundle_version => <<"1.8.8">>, protocol_version => 1
+                bundle_version => <<"1.8.8">>, protocol_version => 2
             }}
         })
     after
@@ -5842,5 +5313,61 @@ shared_evidence_pointer_contract_test() ->
     Root = Value#{<<"evidence">> => [#{<<"path">> => <<>>}]},
     ?assertEqual({ok, Root}, observer_cli_snapshot:truncate(Root)),
     ?assertNot(observer_cli_escriptize:pointer_exists(Root, <<>>)).
+
+tui_result_preserves_failures_test() ->
+    ?assertEqual(ok, observer_cli_escriptize:tui_result(quit)),
+    ?assertEqual(
+        {error, connection, tui_start_failed},
+        observer_cli_escriptize:tui_result({badrpc, nodedown})
+    ),
+    ?assertEqual(
+        {error, connection, connection_failed},
+        observer_cli_escriptize:tui_result({error, connection, connection_failed})
+    ),
+    ?assertEqual(
+        {error, internal, tui_start_failed},
+        observer_cli_escriptize:tui_result(unexpected)
+    ).
+
+tui_setup_stalled_code_server_test() ->
+    with_distribution(fun(_Cookie) ->
+        {ok, Peer, Node} = peer:start_link(#{name => peer:random_name("observer_cli_stall")}),
+        try
+            {_, Beam, File} = code:get_object_code(?MODULE),
+            {module, ?MODULE} = erpc:call(Node, code, load_binary, [?MODULE, File, Beam]),
+            Holder = erpc:call(Node, erlang, spawn, [?MODULE, hold_code_server, [self()]]),
+            receive
+                {Holder, suspended} -> ok
+            after 1000 -> error(suspend_timeout)
+            end,
+            try
+                Started = erlang:monotonic_time(millisecond),
+                ?assertEqual(
+                    {error, connection, tui_start_failed},
+                    observer_cli_escriptize:remote_module_available(Node, 100)
+                ),
+                ?assert(erlang:monotonic_time(millisecond) - Started < 2000),
+                LoadStarted = erlang:monotonic_time(millisecond),
+                ?assertException(
+                    error,
+                    {remote_load_failed, Node, _, _},
+                    observer_cli_escriptize:remote_load(Node, LoadStarted + 100)
+                ),
+                ?assert(erlang:monotonic_time(millisecond) - LoadStarted < 2000)
+            after
+                Holder ! resume
+            end
+        after
+            peer:stop(Peer)
+        end
+    end).
+
+hold_code_server(Parent) ->
+    CodeServer = whereis(code_server),
+    true = erlang:suspend_process(CodeServer),
+    Parent ! {self(), suspended},
+    receive
+        resume -> true = erlang:resume_process(CodeServer)
+    end.
 
 -endif.

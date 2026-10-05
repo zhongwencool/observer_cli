@@ -24,7 +24,7 @@
 3. Commit the release, then create and push its `vX.Y.Z` tag:
 
    ```sh
-   VERSION=2.0.0
+   VERSION=2.1.0
    git tag "v$VERSION"
    git push origin main "v$VERSION"
    ```
@@ -35,7 +35,7 @@
 
    ```sh
    set -eu
-   VERSION=2.0.0
+   VERSION=2.1.0
    TMP=$(mktemp -d)
    gh release download "v$VERSION" --dir "$TMP"
    test "$(find "$TMP" -type f | wc -l)" -eq 5

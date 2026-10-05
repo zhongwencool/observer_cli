@@ -122,7 +122,7 @@ schema_contract() ->
     ?assertEqual(schema_commands(Definitions), cli_response_commands()).
 
 schema_path() ->
-    filename:join([code:priv_dir(observer_cli), "schema", "observer_cli.cli.v1.schema.json"]).
+    filename:join([code:priv_dir(observer_cli), "schema", "observer_cli.capture.v1.schema.json"]).
 
 schema_commands(Definitions) ->
     lists:sort(
@@ -173,7 +173,7 @@ cli_response_commands() ->
     ],
     lists:sort(
         [
-            atom_to_binary(observer_cli_cli:command(Command))
+            atom_to_binary(observer_cli_capture:command(Command))
          || Command <- Commands
         ] ++ [<<"trace_call">>, <<"trace_stop_all">>]
     ).

@@ -163,8 +163,8 @@
 ]).
 -endif.
 
--define(PROTOCOL_VERSION, 1).
--define(BUNDLE_VERSION, <<"2.0.0">>).
+-define(PROTOCOL_VERSION, 2).
+-define(BUNDLE_VERSION, <<"2.1.0">>).
 -define(TARGET_MARGIN_MS, 1000).
 -define(WORKER_DOWN_TIMEOUT_MS, 100).
 -define(DEEP_FINISH_MARGIN_MS, 250).
@@ -586,7 +586,7 @@ trace_response(Command, Fun, #{controller := Controller}) ->
                     ]
                 }
         end,
-    observer_cli_cli:response(
+    observer_cli_capture:response(
         Command,
         case Status of
             ok -> complete;
@@ -600,7 +600,7 @@ trace_response(Command, Fun, #{controller := Controller}) ->
         end,
         case Status of
             ok -> Warnings;
-            _ when Capture =:= null -> [observer_cli_cli:error(Category, Reason) | Warnings];
+            _ when Capture =:= null -> [observer_cli_capture:error(Category, Reason) | Warnings];
             _ -> Warnings
         end
     ).
@@ -647,7 +647,7 @@ capture_snapshot(Request, #{deadline := Deadline, controller := Controller} = Co
     FinishedAt = erlang:system_time(millisecond),
     ProbeReports = [Report || {Report, _Data} <- Probes],
     Status = capture_status(ProbeReports),
-    observer_cli_cli:response(
+    observer_cli_capture:response(
         snapshot,
         Status,
         target_from_runtime(Runtime),
@@ -670,16 +670,22 @@ diagnostic_sample(Request, Context) when is_map(Request), is_map(Context) ->
     {ok, Resources, _} = resources_probe(),
     ResourceFinished = erlang:monotonic_time(millisecond),
     Inventory =
-        try diagnostic_process_inventory(Request, Context) of
+        try
+            focused_probe(processes, Request, fun() ->
+                diagnostic_process_inventory(Request, Context)
+            end)
+        of
             Result -> Result
         catch
+            error:{scan_budget_exceeded, Details} ->
+                Details;
             _Class:_Reason:_Stacktrace ->
                 #{status => error, reason_code => process_inventory_failed}
         end,
     Memory = diagnostic_memory(Request),
-    Ets = diagnostic_ets(Request),
-    Ports = diagnostic_ports(Request, Context),
-    Sockets = diagnostic_sockets(Request),
+    Ets = focused_probe(ets, Request, fun() -> diagnostic_ets(Request) end),
+    Ports = focused_probe(ports, Request, fun() -> diagnostic_ports(Request, Context) end),
+    Sockets = focused_probe(sockets, Request, fun() -> diagnostic_sockets(Request) end),
     Application = diagnostic_application(Request),
     Finished = erlang:monotonic_time(millisecond),
     #{
@@ -697,10 +703,34 @@ diagnostic_sample(Request, Context) when is_map(Request), is_map(Context) ->
         application => Application
     }.
 
+focused_probe(Domain, Request, Fun) ->
+    Focus = maps:get(focus, Request, overview),
+    Domains =
+        case Focus of
+            overview -> [processes, ets, ports, sockets];
+            cpu -> [processes];
+            memory -> [processes, ets];
+            mailbox -> [processes];
+            connections -> [ports, sockets]
+        end,
+    case lists:member(Domain, Domains) of
+        true -> Fun();
+        false -> #{status => unavailable, reason_code => not_requested}
+    end.
+
 diagnostic_memory(#{observe := _}) ->
-    case memory_probe() of
-        {ok, Memory, _} -> #{status => ok, values => maps:get(beam, Memory)};
-        _ -> #{status => error, reason_code => memory_probe_failed}
+    Started = erlang:monotonic_time(millisecond),
+    Result = memory_probe(),
+    Finished = erlang:monotonic_time(millisecond),
+    case Result of
+        {ok, Memory, _} ->
+            #{
+                status => ok,
+                values => maps:get(beam, Memory),
+                audit => diagnostic_scan_audit(Started, Finished)
+            };
+        _ ->
+            #{status => error, reason_code => memory_probe_failed}
     end;
 diagnostic_memory(_Request) ->
     #{status => unavailable, reason_code => observation_not_requested}.
@@ -813,7 +843,12 @@ diagnostic_socket_scan(Source, Samples) ->
                 ?MAX_WORKING_SET_BYTES
     of
         true ->
-            case socket_sample(Source) of
+            Cap = min(
+                ?SOCKET_SCAN_BUDGET,
+                ?MAX_WORKING_SET_BYTES div
+                    (tracked_counter_fields(sockets) * Samples * ?WORKING_SET_BYTES_PER_FIELD)
+            ),
+            try socket_sample(Source#{scan_budget_count => Cap}) of
                 {ok, Values, Audit, Coverage} ->
                     #{
                         status => ok,
@@ -823,6 +858,8 @@ diagnostic_socket_scan(Source, Samples) ->
                     };
                 {error, Reason} ->
                     #{status => error, reason_code => Reason}
+            catch
+                error:{scan_budget_exceeded, Details} -> Details
             end;
         false ->
             #{status => unavailable, reason_code => scan_budget_exceeded}
@@ -878,7 +915,7 @@ diagnostic_binary_holders(Request, Context) ->
     case admit_process_scan(Source, binary_memory, 1, 1, {top, 20}) of
         {ok, Admission} ->
             Acc = fold_processes(
-                Source,
+                admitted_process_source(Source, Admission, top),
                 fun(Pid, State) ->
                     case scan_process(Pid, [binary], Source, State) of
                         {ok, Item, Next} ->
@@ -932,7 +969,7 @@ diagnostic_process_inventory(Request, Context) ->
             Started = erlang:monotonic_time(millisecond),
             Initial = inventory_acc(Context, 1),
             Acc = fold_processes(
-                Source,
+                admitted_process_source(Source, Admission, all),
                 fun(Pid, State) ->
                     case
                         scan_process(Pid, [message_queue_len, memory, reductions], Source, State)
@@ -1143,7 +1180,7 @@ capture_memory(Request, #{deadline := Deadline, controller := Controller}) when 
     ProbeReports = [Report || {Report, _Data} <- Probes],
     MemoryData = memory_command_data(Probes, Runtime),
     Status = capture_status(ProbeReports),
-    observer_cli_cli:response(
+    observer_cli_capture:response(
         memory,
         Status,
         target_from_runtime(Runtime),
@@ -1266,9 +1303,11 @@ capture_processes(Request, Context) when is_map(Request) ->
     Sort = maps:get(sort, Request, memory),
     Limit = maps:get(limit, Request, 20),
     Duration = maps:get(duration_ms, Request, undefined),
-    case valid_process_request(Sort, Limit, Duration) of
+    case valid_process_request(Sort, Limit, Duration) andalso valid_rank_semantics(Request) of
         true ->
-            Source = process_source(Request),
+            Source = (process_source(Request))#{
+                rank_semantics => maps:get(rank_semantics, Request, undefined)
+            },
             Samples =
                 case Duration of
                     undefined -> 1;
@@ -1292,7 +1331,10 @@ capture_processes(Request, Context) when is_map(Request) ->
                         Samples,
                         Context,
                         fun() ->
-                            collect_processes(Source, Sort, Limit, Duration, Context, Admission)
+                            BoundedSource = admitted_process_source(Source, Admission, Retained),
+                            collect_processes(
+                                BoundedSource, Sort, Limit, Duration, Context, Admission
+                            )
                         end
                     );
                 {unavailable, Details} ->
@@ -1701,10 +1743,23 @@ risk_issues(Warnings) ->
             <<"severity">> => <<"warning">>,
             <<"class">> => <<"safety_refusal">>,
             <<"reason_code">> => atom_to_binary(Reason),
-            <<"message">> => null
+            <<"message">> => risk_message(Reason)
         }
      || #{reason_code := Reason} <- Warnings
     ].
+
+risk_message(count_children_preflight_is_o_children) ->
+    <<"Supervisor preflight can traverse all child specifications.">>;
+risk_message(supervisor_snapshot_is_non_atomic) ->
+    <<"Supervisor child observations are not atomic.">>;
+risk_message(deadline_does_not_retract_infinity_calls) ->
+    <<"A deadline cannot retract a delivered supervisor request.">>;
+risk_message(direct_child_limit_is_output_soft_cap) ->
+    <<"The direct-child limit bounds output, not acquisition work.">>;
+risk_message(sys_get_state_copies_full_state) ->
+    <<"State inspection copies full state before returning bounded value-free shapes.">>;
+risk_message(timeout_does_not_retract_delivered_request) ->
+    <<"A timeout cannot retract a delivered state request.">>.
 
 collect_otp_state(Target, Behavior, Limit, Source) ->
     Base = otp_state_base(Behavior, Limit),
@@ -2227,7 +2282,9 @@ capture_counter_resources(Command, ProbeId, Request, Context, Source) ->
     Sort = maps:get(sort, Request, default_counter_sort(Command)),
     Limit = maps:get(limit, Request, 20),
     Duration = maps:get(duration_ms, Request, undefined),
-    case valid_counter_request(Command, Sort, Limit, Duration) of
+    case
+        valid_counter_request(Command, Sort, Limit, Duration) andalso valid_rank_semantics(Request)
+    of
         true ->
             Samples =
                 case Duration of
@@ -2235,7 +2292,10 @@ capture_counter_resources(Command, ProbeId, Request, Context, Source) ->
                     _ -> 2
                 end,
             capture_scan_inspection(Command, ProbeId, Samples, Context, fun() ->
-                collect_counter_resources(Command, Source, Sort, Limit, Duration, Context)
+                RankedSource = Source#{
+                    rank_semantics => maps:get(rank_semantics, Request, undefined)
+                },
+                collect_counter_resources(Command, RankedSource, Sort, Limit, Duration, Context)
             end);
         false ->
             {probe_error, invalid_request}
@@ -2245,7 +2305,13 @@ capture_scan_inspection(Command, ProbeId, Samples, #{controller := Controller}, 
     StartedAt = erlang:system_time(millisecond),
     StartedMonotonic = erlang:monotonic_time(millisecond),
     ModuleLoaded = module_loaded(),
-    Outcome = OutcomeFun(),
+    Outcome =
+        try
+            OutcomeFun()
+        catch
+            error:{scan_budget_exceeded, Details0} ->
+                {unavailable, scan_budget_exceeded, Details0}
+        end,
     {Status, Reason, Data, Coverage, ExtraEffects} =
         case Outcome of
             {ok, Value, Covered} ->
@@ -2264,7 +2330,7 @@ capture_scan_inspection(Command, ProbeId, Samples, #{controller := Controller}, 
     FinishedMonotonic = erlang:monotonic_time(millisecond),
     FinishedAt = erlang:system_time(millisecond),
     {ok, Runtime, _} = runtime_probe(),
-    observer_cli_cli:response(
+    observer_cli_capture:response(
         Command,
         case Status of
             ok -> complete;
@@ -2323,6 +2389,9 @@ valid_port_request(Sort, Limit) ->
 
 valid_list_limit(Limit) ->
     is_integer(Limit) andalso Limit >= 1 andalso Limit =< 200.
+
+valid_rank_semantics(Request) ->
+    lists:member(maps:get(rank_semantics, Request, undefined), [undefined, current, delta, rate]).
 
 valid_sample_duration(undefined) ->
     true;
@@ -2440,28 +2509,41 @@ collect_processes(Source, Sort, Limit, Duration, Context, Admission) ->
     Second = collect_process_sample(Sort, Source, Context),
     Finished = erlang:monotonic_time(millisecond),
     Interval = max(1, maps:get(monotonic_ms, Second) - maps:get(monotonic_ms, First)),
-    Window = stable_process_window(
-        maps:get(values, First), maps:get(values, Second), Interval
-    ),
+    Window = stable_process_window(maps:get(values, First), maps:get(values, Second), Sort),
     Born = maps:get(born, Window),
     Dead = maps:get(dead, Window),
     Reset = maps:get(reset, Window),
     {BornPids, BornPidsTruncated} = pid_sample(Born, Limit),
     {DeadPids, DeadPidsTruncated} = pid_sample(Dead, Limit),
     {ResetPids, ResetPidsTruncated} = pid_sample(Reset, Limit),
-    Ranked = rank_window(maps:get(stable, Window), Limit),
+    Semantics = requested_rank_semantics(Source),
+    Stable = maps:get(stable, Window),
+    EndValues = maps:get(values, Second),
+    RankValues =
+        case Semantics of
+            current -> EndValues;
+            delta -> Stable;
+            rate -> maps:map(fun(_Pid, Delta) -> Delta * 1000 / Interval end, Stable)
+        end,
+    Ranked = rank_window(RankValues, Limit),
     Items = [
-        public_process_item(window_process_item(Pid, Sort, Delta, Interval, Source))
-     || {Pid, Delta} <- Ranked
+        public_process_item(
+            add_current_process_metric(
+                window_process_item(Pid, Sort, maps:get(Pid, Stable, null), Interval, Source),
+                Sort,
+                maps:get(Pid, EndValues)
+            )
+        )
+     || {Pid, _RankingValue} <- Ranked
     ],
     FirstAudit = maps:get(audit, First),
     SecondAudit = maps:get(audit, Second),
     Data = (audit_inventory(SecondAudit, length(Items), Started, Finished))#{
         items => Items,
-        dropped_count => maps:size(maps:get(stable, Window)) - length(Items),
+        dropped_count => maps:size(RankValues) - length(Items),
         truncated => false,
         sort => Sort,
-        sort_semantics => delta,
+        sort_semantics => Semantics,
         interval_ms => Interval,
         baseline_count => maps:size(maps:get(values, First)),
         born_count => length(Born),
@@ -2801,7 +2883,7 @@ process_sample_keys(Sort) -> [Sort].
 process_sample_key(binary_memory) -> binary_memory;
 process_sample_key(Sort) -> Sort.
 
-stable_process_window(First, Second, _Interval) ->
+stable_process_window(First, Second, Metric) ->
     FirstPids = maps:keys(First),
     SecondPids = maps:keys(Second),
     StablePids = ordsets:intersection(lists:sort(FirstPids), lists:sort(SecondPids)),
@@ -2809,7 +2891,10 @@ stable_process_window(First, Second, _Interval) ->
         fun(Pid, {Values, Resets}) ->
             Before = maps:get(Pid, First),
             After = maps:get(Pid, Second),
-            case After >= Before of
+            IsGauge = lists:member(Metric, [
+                memory, message_queue_len, binary_memory, total_heap_size
+            ]),
+            case IsGauge orelse After >= Before of
                 true -> {Values#{Pid => After - Before}, Resets};
                 false -> {Values, [Pid | Resets]}
             end
@@ -2832,6 +2917,11 @@ rank_window(Values, Limit) ->
         )
     ].
 
+window_process_item(Pid, Sort, null, _Interval, Source) ->
+    (add_process_label(process_context(Pid, Source), Source))#{
+        process_window_field_key(Sort, delta) => null,
+        process_window_field_key(Sort, per_second) => null
+    };
 window_process_item(Pid, Sort, Delta, Interval, Source) ->
     Context = process_context(Pid, Source),
     (add_process_label(Context, Source))#{
@@ -2839,6 +2929,19 @@ window_process_item(Pid, Sort, Delta, Interval, Source) ->
         process_window_field_key(Sort, delta) => Delta,
         process_window_field_key(Sort, per_second) => Delta * 1000 / Interval
     }.
+
+requested_rank_semantics(Source) ->
+    case maps:get(rank_semantics, Source, undefined) of
+        undefined -> delta;
+        Semantics -> Semantics
+    end.
+
+add_current_process_metric(Item, memory, Value) ->
+    Item#{memory => Value, memory_bytes => Value};
+add_current_process_metric(Item, total_heap_size, Value) ->
+    Item#{total_heap_size => Value, total_heap_size_bytes => Value};
+add_current_process_metric(Item, Sort, Value) ->
+    Item#{Sort => Value}.
 
 process_context(Pid, Source) ->
     Empty = #{
@@ -2929,10 +3032,12 @@ collect_process(Target, Source) ->
     end.
 
 resolve_process_target(Target, Source) ->
-    case target_binary(Target) of
-        {ok, <<"<", _/binary>> = Text} -> resolve_pid_text(Text, Source);
-        {ok, Name} -> resolve_registered_name(Name, Source);
-        error -> not_found
+    case {target_binary(Target), maps:get(selector_kind, Source, auto)} of
+        {{ok, Name}, name} -> resolve_registered_name(Name, Source);
+        {{ok, Text}, pid} -> resolve_pid_text(Text, Source);
+        {{ok, <<"<", _/binary>> = Text}, auto} -> resolve_pid_text(Text, Source);
+        {{ok, Name}, auto} -> resolve_registered_name(Name, Source);
+        _ -> not_found
     end.
 
 target_binary(Target) when is_list(Target), length(Target) =< 255 ->
@@ -3020,7 +3125,7 @@ collect_admitted_applications(
             Acc0 = (inventory_acc(Context, 1))#{items => []},
             ProcessStarted = erlang:monotonic_time(millisecond),
             Acc = fold_processes(
-                ProcessSource,
+                admitted_process_source(ProcessSource, ProcessAdmission, all),
                 fun(Pid, State) ->
                     case scan_process(Pid, application_process_keys(), ProcessSource, State) of
                         {ok, Item, Next} -> Next#{items := [Item | maps:get(items, Next)]};
@@ -3462,18 +3567,58 @@ excluded_processes(Context) ->
 maybe_exclude_pid(Pid, Reason, Acc) when is_pid(Pid), node(Pid) =:= node() -> Acc#{Pid => Reason};
 maybe_exclude_pid(_Pid, _Reason, Acc) -> Acc.
 
+admitted_process_source(Source, Admission, Retained) ->
+    Budget = maps:get(scan_budget_count, Admission),
+    Cap =
+        case Retained of
+            all ->
+                min(
+                    Budget,
+                    ?MAX_WORKING_SET_BYTES div
+                        (maps:get(tracked_field_count, Admission) *
+                            maps:get(retained_sample_count, Admission) *
+                            ?WORKING_SET_BYTES_PER_FIELD)
+                );
+            _ ->
+                Budget
+        end,
+    Source#{scan_budget_count => Cap}.
+
 fold_processes(Source, Fun, Acc) ->
+    Budget = maps:get(scan_budget_count, Source, ?PROCESS_SCAN_BUDGET),
+    check_scan_count((maps:get(count_fun, Source))(), Budget, pre_enumeration),
     {Path, FoldFun} = maps:get(fold, Source),
-    (FoldFun)(Fun, Acc#{path => Path}).
+    BoundedFun = fun(Pid, State) ->
+        check_scan_count(maps:get(scanned, State) + 1, Budget, post_enumeration),
+        Fun(Pid, State)
+    end,
+    (FoldFun)(BoundedFun, Acc#{path => Path}).
+
+check_scan_count(Count, Budget, Stage) when Count > Budget ->
+    erlang:error(
+        {scan_budget_exceeded, #{
+            status => unavailable,
+            reason_code => scan_budget_exceeded,
+            admission_stage => Stage,
+            observed_count_including_observer => Count,
+            scan_budget_count => Budget
+        }}
+    );
+check_scan_count(_Count, _Budget, _Stage) ->
+    ok.
 
 process_source(Request) ->
-    process_source_test(Request, default_process_source()).
+    tag_process_selector(Request, process_source_test(Request, default_process_source())).
+
+tag_process_selector(#{selector_kind := Kind}, Source) -> Source#{selector_kind => Kind};
+tag_process_selector(_, Source) -> Source.
 
 state_source(Request) ->
-    state_source_test(Request, #{
+    Source = state_source_test(Request, #{
         process_source => default_process_source(),
         get_state_fun => fun sys:get_state/2
-    }).
+    }),
+    Source#{process_source := tag_process_selector(Request, maps:get(process_source, Source))}.
 
 -ifdef(TEST).
 process_source_test(#{test_process_source := Source}, _Default) -> Source;
@@ -3710,8 +3855,18 @@ collect_counter_resources(Command, Source, Sort, Limit, Duration, Context) ->
                 working_set_budget_bytes => ?MAX_WORKING_SET_BYTES
             }};
         true ->
+            Samples =
+                case Duration of
+                    undefined -> 1;
+                    _ -> 2
+                end,
+            Cap = min(
+                Budget,
+                ?MAX_WORKING_SET_BYTES div
+                    (Fields * Samples * ?WORKING_SET_BYTES_PER_FIELD)
+            ),
             collect_admitted_counter_resources(
-                Command, Source, Sort, Limit, Duration, Context, Estimate
+                Command, Source#{scan_budget_count => Cap}, Sort, Limit, Duration, Context, Estimate
             )
     end.
 
@@ -3753,10 +3908,22 @@ collect_admitted_counter_resources(Command, Source, Sort, Limit, Duration, Conte
             case resource_sample(Command, Source, Context) of
                 {ok, Second, SecondAudit, SecondCoverage} ->
                     Interval =
-                        (maps:get(monotonic_fun, Source))() -
+                        maps:get(sample_monotonic_ms, SecondAudit) -
                             maps:get(sample_monotonic_ms, FirstAudit),
                     Window = counter_window(Command, First, Second),
-                    Items = rank_resource_items(maps:get(items, Window), Sort, Limit),
+                    Semantics = requested_rank_semantics(Source),
+                    WindowItems = maps:get(items, Window),
+                    Items0 =
+                        case maps:get(rank_semantics, Source, undefined) of
+                            undefined -> WindowItems;
+                            _ -> [fixed_counter_item(Command, I, Interval) || I <- WindowItems]
+                        end,
+                    RankKey =
+                        case maps:get(rank_semantics, Source, undefined) of
+                            undefined -> Sort;
+                            _ -> counter_rank_key(Sort, Semantics)
+                        end,
+                    Items = rank_resource_items(Items0, RankKey, Limit),
                     {ok,
                         (delta_resource_audit(Command, FirstAudit, SecondAudit))#{
                             status => resource_status(length(maps:get(items, Window))),
@@ -3765,7 +3932,7 @@ collect_admitted_counter_resources(Command, Source, Sort, Limit, Duration, Conte
                             dropped_count => length(maps:get(items, Window)) - length(Items),
                             truncated => false,
                             sort => Sort,
-                            sort_semantics => delta,
+                            sort_semantics => Semantics,
                             requested_duration_ms => Duration,
                             interval_ms => Interval,
                             lifecycle => public_lifecycle(Window),
@@ -3782,12 +3949,50 @@ collect_admitted_counter_resources(Command, Source, Sort, Limit, Duration, Conte
             enumeration_error(Command, Reason)
     end.
 
-resource_sample(network, Source, Context) -> network_sample(Source, Context);
-resource_sample(sockets, Source, _Context) -> socket_sample(Source).
+fixed_counter_item(Command, WindowItem, Interval) ->
+    Current = total_resource_item(Command, WindowItem),
+    Keys =
+        case Command of
+            network -> [recv_oct, send_oct, oct, recv_cnt, send_cnt, cnt];
+            sockets -> [io, read_bytes, write_bytes, packets, waits, fails, accepts]
+        end,
+    lists:foldl(
+        fun(Key, Acc) ->
+            Change = maps:get(Key, WindowItem, null),
+            Rate =
+                case is_number(Change) andalso Interval > 0 of
+                    true -> Change * 1000 / Interval;
+                    false -> null
+                end,
+            Acc#{counter_rank_key(Key, delta) => Change, counter_rank_key(Key, rate) => Rate}
+        end,
+        Current#{
+            window_state => maps:get(state, WindowItem, available),
+            sample_metric_states => maps:get(metric_states, WindowItem, #{})
+        },
+        Keys
+    ).
+
+counter_rank_key(Key, current) -> Key;
+counter_rank_key(Key, delta) -> list_to_atom(atom_to_list(Key) ++ "_delta");
+counter_rank_key(Key, rate) -> list_to_atom(atom_to_list(Key) ++ "_per_second").
+
+resource_sample(Command, Source, Context) ->
+    Budget = maps:get(scan_budget_count, Source, ?PORT_SCAN_BUDGET),
+    check_scan_count(safe_resource_count(Source), Budget, pre_enumeration),
+    case Command of
+        network -> network_sample(Source, Context);
+        sockets -> socket_sample(Source)
+    end.
 
 network_sample(Source, Context) ->
     case (maps:get(all_fun, Source))() of
         {ok, Ports} when is_list(Ports) ->
+            check_scan_count(
+                length(Ports),
+                maps:get(scan_budget_count, Source, ?PORT_SCAN_BUDGET),
+                post_enumeration
+            ),
             Started = (maps:get(monotonic_fun, Source))(),
             Excluded = observer_port_exclusions(Context),
             {Items, Disappeared, Exclusions} = lists:foldl(
@@ -3905,6 +4110,11 @@ inet_protocol(_) -> undefined.
 socket_sample(Source) ->
     case (maps:get(all_fun, Source))() of
         {ok, Sockets} when is_list(Sockets) ->
+            check_scan_count(
+                length(Sockets),
+                maps:get(scan_budget_count, Source, ?SOCKET_SCAN_BUDGET),
+                post_enumeration
+            ),
             Started = (maps:get(monotonic_fun, Source))(),
             {Items, Disappeared, Coverage} = lists:foldl(
                 fun(Socket, {Acc, Gone, Covered}) ->
@@ -4659,7 +4869,7 @@ rank_resource_items(Items, Sort, Limit) ->
 resource_precedes(A, B, Sort) ->
     AValue = maps:get(Sort, A, null),
     BValue = maps:get(Sort, B, null),
-    case {is_integer(AValue), is_integer(BValue)} of
+    case {is_number(AValue), is_number(BValue)} of
         {true, true} ->
             AValue > BValue orelse
                 (AValue =:= BValue andalso maps:get(raw_id, A) < maps:get(raw_id, B));
@@ -4754,7 +4964,7 @@ capture_inspection(Command, ProbeId, Samples, #{controller := Controller}, Fun) 
     {Runtime, Data, Coverage, ExtraEffects} = Fun(),
     FinishedMonotonic = erlang:monotonic_time(millisecond),
     FinishedAt = erlang:system_time(millisecond),
-    observer_cli_cli:response(
+    observer_cli_capture:response(
         Command,
         complete,
         target_from_runtime(Runtime),

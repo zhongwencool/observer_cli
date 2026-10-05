@@ -32,17 +32,17 @@ main([Dir]) ->
         {schedulers, #{duration_ms => 250}},
         {distribution, #{}},
         {processes, #{}},
-        {processes, #{duration_ms => 250}},
+        {processes, #{duration_ms => 250, rank_semantics => delta}},
         {processes, #{test_process_source => #{count_fun => fun() -> 1000001 end}}},
         {applications, #{}},
         {ets, #{}},
         {ets, #{test_ets_source => #{count_fun => fun() -> 1000001 end}}},
         {mnesia, #{}},
         {network, #{}},
-        {network, #{duration_ms => 250}},
+        {network, #{duration_ms => 250, rank_semantics => delta}},
         {ports, #{}},
         {sockets, #{}},
-        {sockets, #{duration_ms => 250}},
+        {sockets, #{duration_ms => 250, rank_semantics => delta}},
         {process, #{target => <<"init">>}},
         {process, #{target => <<"absent_schema_fixture">>}},
         {port, #{target => list_to_binary(port_to_list(Tcp))}},
@@ -140,31 +140,50 @@ main([Dir]) ->
         gen_event:stop(Event)
     end.
 write(Dir, Name, Response) ->
+    Public = public_fixture(Response),
     ok = filelib:ensure_dir(filename:join(Dir, Name ++ ".json")),
-    ok = file:write_file(filename:join(Dir, Name ++ ".json"), json:encode(Response)),
-    case maps:get(<<"command">>, Response) of
-        <<"diagnose">> ->
-            WithActions = observer_cli_escriptize:add_next_actions(Response),
-            ok = file:write_file(
-                filename:join(Dir, Name ++ "-actions.json"), json:encode(WithActions)
-            );
-        _ ->
-            ok
-    end.
+    ok = file:write_file(filename:join(Dir, Name ++ ".json"), json:encode(Public)).
+
+public_fixture(#{<<"command">> := <<"describe">>, <<"data">> := Data}) ->
+    observer_cli_result:local(<<"describe">>, Data);
+public_fixture(#{<<"command">> := Command} = Response) ->
+    Mapping = #{<<"snapshot">> => inspect_vm, <<"diagnose">> => check,
+        <<"memory">> => inspect_memory, <<"schedulers">> => inspect_scheduler,
+        <<"distribution">> => inspect_distribution, <<"processes">> => inspect_process,
+        <<"process">> => inspect_process, <<"applications">> => inspect_application,
+        <<"ets">> => inspect_ets, <<"mnesia">> => inspect_mnesia,
+        <<"network">> => inspect_network, <<"ports">> => inspect_port,
+        <<"port">> => inspect_port, <<"sockets">> => inspect_socket,
+        <<"otp_state">> => inspect_state, <<"supervision_tree">> => inspect_supervision,
+        <<"logs">> => inspect_logs, <<"trace_call">> => trace_call, <<"trace_stop_all">> => trace_stop_all},
+    Id = maps:get(Command, Mapping),
+    D = observer_cli_catalog:descriptor(Id),
+    Data = maps:get(<<"data">>, Response),
+    Options = fixture_options(Command, Data),
+    Capture = case Command of <<"trace_call">> -> trace; <<"trace_stop_all">> -> trace; _ -> binary_to_existing_atom(Command) end,
+    observer_cli_result:from_capture(#{id => Id, command => maps:get(<<"name">>, D),
+        capture => Capture, options => Options}, Response).
+
+fixture_options(Command, #{<<"sort">> := Sort, <<"sort_semantics">> := Semantics}) when
+    Command =:= <<"processes">>; Command =:= <<"network">>; Command =:= <<"sockets">> ->
+    Text = case {Command, Sort, Semantics} of
+        {<<"processes">>, <<"message_queue_len">>, <<"delta">>} -> <<"mailbox-change">>;
+        {<<"processes">>, <<"binary_memory">>, <<"delta">>} -> <<"binary-memory-change">>;
+        {<<"processes">>, <<"total_heap_size">>, <<"delta">>} -> <<"heap-change">>;
+        {_, _, <<"delta">>} -> <<Sort/binary, "-change">>;
+        _ -> Sort
+    end,
+    #{sort => binary_to_list(Text)};
+fixture_options(_, _) -> #{}.
+
 pure_fixtures(Dir) ->
-    lists:foreach(
-        fun({Name, Arguments}) ->
-            {ok, Description, 0} = observer_cli_escriptize:run_command(describe, #{
-                arguments => Arguments
-            }),
-            write(Dir, Name, Description)
-        end,
-        [
-            {"describe-all", []},
-            {"describe-trace", ["trace", "call"]},
-            {"describe-memory", ["memory"]}
-        ]
-    ),
+    lists:foreach(fun({Name, Path}) ->
+        {ok, Data} = observer_cli_catalog:describe(Path, false),
+        Public = observer_cli_result:local(<<"describe">>, Data),
+        ok = filelib:ensure_dir(filename:join(Dir, Name ++ ".json")),
+        ok = file:write_file(filename:join(Dir, Name ++ ".json"), json:encode(Public))
+    end, [{"describe-index", []}, {"describe-trace", ["trace", "call"]},
+          {"describe-memory", ["inspect", "memory"]}]),
     Resources = #{
         process => #{observed_count_including_observer => 96, limit => 100},
         port => #{observed_count_including_observer => 1, limit => 100},

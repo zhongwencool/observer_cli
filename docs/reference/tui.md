@@ -6,11 +6,11 @@ shortcut and press Enter; an empty line means Enter by itself.
 ## Quick start
 
 Build the escript, then use the explicit `tui` command. This example uses the
-cookie already available to the controller:
+cookie supplied through a protected environment source:
 
 ```sh
 rebar3 escriptize
-./_build/default/bin/observer_cli tui app@host
+./_build/default/bin/observer_cli tui --node app@host --cookie-env OBSERVER_CLI_COOKIE
 ```
 
 Press `D` for the built-in shortcut page and `q` to quit. The old bare
@@ -24,14 +24,18 @@ processes ranked by memory](https://raw.githubusercontent.com/zhongwencool/obser
 From the generated escript:
 
 ```text
-observer_cli tui NODE [COOKIE REFRESH_MS]
+observer_cli tui [TARGET OPTIONS] [--interval DURATION] [--load-code]
 ```
 
-`REFRESH_MS` defaults to `1500` and must be at least `1000`. Supplying a cookie
-also requires the refresh value. The escript starts a hidden controller, loads
-a compatible TUI bundle into the target when needed, and starts the UI there.
-Auto-load requires the controller and target to use the same OTP major release;
-a compatible bundle already installed on the target is used without auto-load.
+`--interval` defaults to `1500ms` and accepts `1000ms..120s`. Use the same
+atomic target options or shell environment as the command CLI. Positional cookie
+values are not supported. A hidden controller is stopped after the UI exits.
+
+A matching installed TUI bundle is used without code injection. When code
+loading is needed, explicitly pass `--load-code`; it requires the same
+controller/target OTP major. Without consent, a missing or incompatible bundle
+is reported instead of being loaded. This changes the escript entrypoint, not
+TUI pages, plugins, or their explicit sensitive process subviews.
 
 From an Erlang shell:
 

@@ -3,6 +3,7 @@
     {"README.md", title: "Home"},
     {"./docs/reference/cli.md", title: "CLI"},
     {"./docs/guides/agent-workflows.md", title: "Agent workflows"},
+    {"./docs/guides/migrate-2-1.md", title: "Migrate to task-first CLI"},
     {"./docs/reference/tui.md", title: "Reference"},
     {"./docs/reference/tui-plugins.md", title: "TUI plugins"},
     {"./docs/explanation/core-concepts.md", title: "Core concepts"},
@@ -53,7 +54,7 @@
   api_reference: false,
   warnings_as_errors: true,
   groups_for_extras: [
-    {"CLI", ~r"/(?:reference/cli|guides/agent-workflows)\.md$"},
+    {"CLI", ~r"/(?:reference/cli|guides/(?:agent-workflows|migrate-2-1))\.md$"},
     {"TUI", ~r"/reference/tui(?:-plugins)?\.md$"},
     {"Core concepts", ~r"/explanation/core-concepts\.md$"},
     {"Project", ~r"(?:/CHANGELOG\.md|^LICENSE)$"}

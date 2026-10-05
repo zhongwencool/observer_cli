@@ -235,6 +235,42 @@ command_owner_exit_kills_os_child_test() ->
         file:delete(Path)
     end.
 
+compact_byte_units_and_window_states_test() ->
+    lists:foreach(
+        fun({Bytes, Expected}) ->
+            Metrics = #{rss_bytes => Bytes, rss_delta_bytes => undefined},
+            ?assertEqual(
+                Expected, lists:flatten(observer_cli_runtime_metrics:format_rss(Metrics, 1))
+            )
+        end,
+        [
+            {0, "0B"},
+            {1023, "1023B"},
+            {1024, "1.0K"},
+            {1536, "1.5K"},
+            {1048576, "1.0M"},
+            {182 * 1048576, "182M"},
+            {1073741824, "1.0G"},
+            {1099511627776, "1.0T"}
+        ]
+    ),
+    ?assertEqual(
+        "CPU window:warming up",
+        lists:flatten(
+            observer_cli_runtime_metrics:format_window(
+                #{cpu => #{status => warming_up}}
+            )
+        )
+    ),
+    ?assertEqual(
+        "CPU window:n/a",
+        lists:flatten(
+            observer_cli_runtime_metrics:format_window(
+                #{cpu => #{status => unavailable}}
+            )
+        )
+    ).
+
 compact_rss_format_test() ->
     ?assertEqual(
         "182M +3.0M",
