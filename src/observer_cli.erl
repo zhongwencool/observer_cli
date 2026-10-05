@@ -80,8 +80,8 @@ start(Opts = #view_opts{home = Home}) ->
     StorePid = observer_cli_store:start(),
     SchWallTimeToken = enable_scheduler_wall_time(SchUsage),
     try
-        PsCmd = io_lib:format("ps -o pcpu,pmem ~s", [os:getpid()]),
-        RenderPid = spawn_link(fun() -> render_worker(PsCmd, StorePid, Home, AutoRow) end),
+        MetricsContext = observer_cli_runtime_metrics:init(Home#home.interval),
+        RenderPid = spawn_link(fun() -> render_worker(MetricsContext, StorePid, Home, AutoRow) end),
         manager(StorePid, RenderPid, Opts#view_opts{auto_row = AutoRow}, SchWallTimeToken)
     after
         release_scheduler_wall_time(SchWallTimeToken)
@@ -253,12 +253,12 @@ restart_home(Opts, Resource) ->
     clean(Resource),
     start(Opts).
 
-render_worker(PsCmd, Manager, Home = #home{scheduler_usage = SchUsage}, AutoRow) ->
+render_worker(MetricsContext, Manager, Home = #home{scheduler_usage = SchUsage}, AutoRow) ->
     ?output(?CLEAR),
     StableInfo = get_stable_system_info(),
-    LastStats = get_incremental_stats(SchUsage),
+    LastStats = #{node => get_incremental_stats(SchUsage), os => undefined},
     redraw_running(
-        PsCmd,
+        MetricsContext,
         Manager,
         Home,
         StableInfo,
@@ -269,7 +269,7 @@ render_worker(PsCmd, Manager, Home = #home{scheduler_usage = SchUsage}, AutoRow)
     ).
 
 %% pause status waiting to be resume
-redraw_pause(PsCmd, StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRow) ->
+redraw_pause(MetricsContext, StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRow) ->
     notify_pause_status(),
     erlang:cancel_timer(LastTimeRef),
     #home{func = Func, type = Type} = Home,
@@ -278,15 +278,19 @@ redraw_pause(PsCmd, StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRow)
             quit;
         {Func, Type} ->
             %% A timer already in the mailbox must not resume a paused view.
-            redraw_pause(PsCmd, StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRow);
+            redraw_pause(
+                MetricsContext, StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRow
+            );
         pause_or_resume ->
             ?output(?CLEAR),
-            redraw_running(PsCmd, StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRow, true)
+            redraw_running(
+                MetricsContext, StorePid, Home, StableInfo, LastStats, LastTimeRef, AutoRow, true
+            )
     end.
 
 %% running status
 redraw_running(
-    PsCmd,
+    MetricsContext,
     StorePid,
     Home,
     StableInfo,
@@ -304,7 +308,9 @@ redraw_running(
     erlang:cancel_timer(LastTimeRef),
     TerminalRow = observer_cli_lib:get_terminal_rows(AutoRow),
     {Snapshot, NewStats} =
-        collect_home_snapshot(PsCmd, Home, StableInfo, LastStats, TerminalRow, IsFirstTime),
+        collect_home_snapshot(
+            MetricsContext, Home, StableInfo, LastStats, TerminalRow, IsFirstTime
+        ),
     {TopNList, Lines} = render_home_snapshot(Home, Snapshot),
     ?output([?CURSOR_TOP, Lines, "\e[J"]),
 
@@ -314,12 +320,14 @@ redraw_running(
         quit ->
             quit;
         pause_or_resume ->
-            redraw_pause(PsCmd, StorePid, Home, StableInfo, NewStats, TimeRef, AutoRow);
+            redraw_pause(MetricsContext, StorePid, Home, StableInfo, NewStats, TimeRef, AutoRow);
         {Func, Type} ->
-            redraw_running(PsCmd, StorePid, Home, StableInfo, NewStats, TimeRef, AutoRow, false)
+            redraw_running(
+                MetricsContext, StorePid, Home, StableInfo, NewStats, TimeRef, AutoRow, false
+            )
     end.
 
-collect_home_snapshot(PsCmd, Home, StableInfo, LastStats, TerminalRows, IsFirstTime) ->
+collect_home_snapshot(MetricsContext, Home, StableInfo, LastStats, TerminalRows, IsFirstTime) ->
     #home{
         interval = Interval,
         scheduler_usage = SchUsage
@@ -328,7 +336,7 @@ collect_home_snapshot(PsCmd, Home, StableInfo, LastStats, TerminalRows, IsFirstT
     Baseline =
         case IsFirstTime of
             true -> get_incremental_stats(SchUsage);
-            false -> LastStats
+            false -> maps:get(node, LastStats)
         end,
     {Diffs0, SchedulerUsage, NewStats} = node_stats(Baseline, SchUsage),
     Diffs =
@@ -340,20 +348,41 @@ collect_home_snapshot(PsCmd, Home, StableInfo, LastStats, TerminalRows, IsFirstT
         TerminalRows - 14 - scheduler_usage_rows(SchedulerUsage), 0
     ),
     ProcessRanking = collect_home_processes(Home, ProcessRows, IsFirstTime),
-    Runtime = sample_home_runtime(PsCmd, StableInfo, Diffs, SchedulerUsage, Interval),
-    {ExtraRows, Menu} = observer_cli_lib:render_sampling_menu(
+    PreviousOs =
+        case IsFirstTime of
+            true -> undefined;
+            false -> maps:get(os, LastStats)
+        end,
+    {Metrics, NextOs} = observer_cli_runtime_metrics:window(
+        PreviousOs, observer_cli_runtime_metrics:sample(MetricsContext)
+    ),
+    Runtime = sample_home_runtime(Metrics, StableInfo, Diffs, SchedulerUsage, Interval),
+    RefreshPrompt = [
+        maps:get(refresh_prompt, ProcessRanking),
+        " | ",
+        observer_cli_runtime_metrics:format_window(Metrics)
+    ],
+    {OriginalExtra, OriginalMenu} = observer_cli_lib:render_sampling_menu(
         home, maps:get(refresh_prompt, ProcessRanking)
     ),
+    {NewExtra, NewMenu} = observer_cli_lib:render_sampling_menu(home, RefreshPrompt),
+    %% Do not trade a process row for metadata. The summary header always carries CPU window.
+    {ExtraRows, Menu} =
+        case NewExtra =< OriginalExtra of
+            true -> {NewExtra, NewMenu};
+            false -> {OriginalExtra, OriginalMenu}
+        end,
     {
         maps:merge(
-            Runtime#{process_rows => max(ProcessRows - ExtraRows, 0), menu => Menu}, ProcessRanking
+            Runtime#{process_rows => max(ProcessRows - ExtraRows, 0), menu => Menu},
+            ProcessRanking#{refresh_prompt := RefreshPrompt}
         ),
-        NewStats
+        #{node => NewStats, os => NextOs}
     }.
 
-sample_home_runtime(PsCmd, StableInfo, Diffs, SchedulerUsage, Interval) ->
+sample_home_runtime(Metrics, StableInfo, Diffs, SchedulerUsage, Interval) ->
     #{
-        system_summary => system_summary(PsCmd, StableInfo, get_atom_status()),
+        system_summary => system_summary(Metrics, StableInfo, get_atom_status()),
         memory_summary => memory_process_summary(Diffs, Interval),
         scheduler_usage => SchedulerUsage
     }.
@@ -408,15 +437,15 @@ render_footer() ->
 
 -ifdef(TEST).
 
-render_system_line(PsCmd, StableInfo) ->
-    render_system_line(PsCmd, StableInfo, get_atom_status()).
+render_system_line(Metrics, StableInfo) ->
+    render_system_line(Metrics, StableInfo, get_atom_status()).
 
-render_system_line(PsCmd, StableInfo, AtomStatus) ->
-    render_home_summary(system_summary(PsCmd, StableInfo, AtomStatus)).
+render_system_line(Metrics, StableInfo, AtomStatus) ->
+    render_home_summary(system_summary(Metrics, StableInfo, AtomStatus)).
 
 -endif.
 
-system_summary(PsCmd, StableInfo, AtomStatus) ->
+system_summary(Metrics, StableInfo, AtomStatus) ->
     {LeftLabelExtra, LeftValueExtra, MiddleLabelExtra, MiddleValueExtra, RightLabelExtra,
         RightValueExtra} = home_summary_extras(),
     [Version, SysVersion, ProcLimit, PortLimit, EtsLimit] = StableInfo,
@@ -425,25 +454,8 @@ system_summary(PsCmd, StableInfo, AtomStatus) ->
     Reductions = erlang:statistics(reductions),
     {PortWarning, ProcWarning, PortCount, ProcCount} =
         get_port_proc_info(PortLimit, ProcLimit),
-    CmdValue =
-        case
-            string:split(
-                os:cmd(PsCmd), "\n", all
-            )
-        of
-            [_, CmdValueTmp | _] ->
-                CmdValueTmp;
-            _ ->
-                ""
-        end,
-
-    [CpuPsV, MemPsV] =
-        case lists:filter(fun(Y) -> Y =/= [] end, string:split(CmdValue, " ", all)) of
-            [V1, V2] ->
-                [V1, V2];
-            _ ->
-                ["--", "--"]
-        end,
+    CpuText = observer_cli_runtime_metrics:format_cpu(Metrics),
+    RssText = observer_cli_runtime_metrics:format_rss(Metrics),
     {Reds, _SinceLastCall} = Reductions,
     ReductionsText = integer_to_list(Reds),
     [
@@ -453,7 +465,7 @@ system_summary(PsCmd, StableInfo, AtomStatus) ->
                 {"System", 10 + LeftLabelExtra},
                 {"Count/Limit", 21 + LeftValueExtra},
                 {"System", 25 + MiddleLabelExtra},
-                {"Status", 21 + MiddleValueExtra},
+                {observer_cli_runtime_metrics:format_window(Metrics), 21 + MiddleValueExtra},
                 {"Stat Info", 20 + RightLabelExtra},
                 {"Size", 25 + RightValueExtra}
             ]}
@@ -470,8 +482,8 @@ system_summary(PsCmd, StableInfo, AtomStatus) ->
             {normal, [
                 {"Port Count", 10 + LeftLabelExtra},
                 {PortWarning, PortCount, 22 + LeftValueExtra},
-                {" ps -o pcpu", 26 + MiddleLabelExtra},
-                {[CpuPsV, "%"], 21 + MiddleValueExtra},
+                {" BEAM CPU", 26 + MiddleLabelExtra},
+                {CpuText, 21 + MiddleValueExtra},
                 {"Context Switch", 20 + RightLabelExtra},
                 {ContextSwitch, 24 + RightValueExtra}
             ]}
@@ -480,7 +492,7 @@ system_summary(PsCmd, StableInfo, AtomStatus) ->
             system_atom_summary_row(
                 AtomStatus,
                 EtsLimit,
-                MemPsV,
+                RssText,
                 ReductionsText,
                 {LeftLabelExtra, LeftValueExtra, MiddleLabelExtra, MiddleValueExtra,
                     RightLabelExtra, RightValueExtra}
@@ -491,7 +503,7 @@ system_summary(PsCmd, StableInfo, AtomStatus) ->
 system_atom_summary_row(
     {ok, AtomLimit, AtomCount},
     _EtsLimit,
-    MemPsV,
+    RssText,
     ReductionsText,
     {LeftLabelExtra, LeftValueExtra, MiddleLabelExtra, MiddleValueExtra, RightLabelExtra,
         RightValueExtra}
@@ -500,15 +512,15 @@ system_atom_summary_row(
     {?UNDERLINE, [
         {"Atom Count", 10 + LeftLabelExtra},
         {AtomWarning, Atom, 22 + LeftValueExtra},
-        {" ps -o pmem", 26 + MiddleLabelExtra},
-        {[MemPsV, "%"], 21 + MiddleValueExtra},
+        {" BEAM RSS", 26 + MiddleLabelExtra},
+        {RssText, 21 + MiddleValueExtra},
         {"Reds total", 20 + RightLabelExtra},
         {ReductionsText, 24 + RightValueExtra}
     ]};
 system_atom_summary_row(
     {error, unsupported},
     EtsLimit,
-    MemPsV,
+    RssText,
     ReductionsText,
     {LeftLabelExtra, LeftValueExtra, MiddleLabelExtra, MiddleValueExtra, RightLabelExtra,
         RightValueExtra}
@@ -516,8 +528,8 @@ system_atom_summary_row(
     {?UNDERLINE, [
         {"Ets Limit", 10 + LeftLabelExtra},
         {EtsLimit, 21 + LeftValueExtra},
-        {" ps -o pmem", 25 + MiddleLabelExtra},
-        {[MemPsV, "%"], 21 + MiddleValueExtra},
+        {" BEAM RSS", 25 + MiddleLabelExtra},
+        {RssText, 21 + MiddleValueExtra},
         {"Reductions", 20 + RightLabelExtra},
         {ReductionsText, 24 + RightValueExtra}
     ]}.

@@ -55,8 +55,8 @@
 start(#view_opts{sys = #system{interval = Interval}} = ViewOpts) ->
     Pid = spawn_link(fun() ->
         ?output(?CLEAR),
-        Cmd = io_lib:format("ps -o pcpu,pmem,rss,vsz ~s", [os:getpid()]),
-        render_worker(Cmd, Interval, ?INIT_TIME_REF)
+        Context = observer_cli_runtime_metrics:init(Interval),
+        render_worker(Context, Interval, ?INIT_TIME_REF)
     end),
     manager(Pid, ViewOpts).
 
@@ -75,26 +75,43 @@ manager(Pid, #view_opts{sys = AllocatorOpts} = ViewOpts) ->
             manager(Pid, ViewOpts)
     end.
 
-render_worker(Cmd, Interval, LastTimeRef) ->
-    render_worker(Cmd, Interval, LastTimeRef, #{}).
+render_worker(Context, Interval, LastTimeRef) ->
+    render_worker(Context, Interval, LastTimeRef, #{}, undefined).
 
-render_worker(Cmd, Interval, LastTimeRef, Previous) ->
-    Collected = collect_system_info(Cmd),
+render_worker(Context, Interval, LastTimeRef, Previous, PreviousOs) ->
+    {Metrics, NextOs} = observer_cli_runtime_metrics:window(
+        PreviousOs, observer_cli_runtime_metrics:sample(Context)
+    ),
+    Collected = collect_system_info(Metrics),
     {DistInfo, NextSamples} = sample_distribution(maps:get(dist_nodes_info, Collected), Previous),
     SystemInfo = Collected#{dist_nodes_info := DistInfo},
-    Text = "Interval: " ++ integer_to_list(Interval) ++ "ms",
-    Menu = observer_cli_lib:render_top_menu(allocator, Text),
+    Text = [
+        "Interval: ",
+        integer_to_list(Interval),
+        "ms | ",
+        observer_cli_runtime_metrics:format_window(Metrics)
+    ],
+    Menu = observer_cli_lib:render_top_menu(allocator, lists:flatten(Text)),
     LastLine = observer_cli_lib:render_footer("q(quit)"),
     ?output([?CURSOR_TOP, Menu] ++ render_system_sections(SystemInfo) ++ [LastLine]),
     NextTimeRef = observer_cli_lib:next_redraw(LastTimeRef, Interval),
     receive
-        quit -> quit;
-        {new_interval, NewInterval} -> render_worker(Cmd, NewInterval, NextTimeRef, NextSamples);
-        redraw -> render_worker(Cmd, Interval, NextTimeRef, NextSamples)
+        quit ->
+            quit;
+        {new_interval, NewInterval} ->
+            render_worker(
+                Context#{timeout_ms := min(500, NewInterval)},
+                NewInterval,
+                NextTimeRef,
+                NextSamples,
+                undefined
+            );
+        redraw ->
+            render_worker(Context, Interval, NextTimeRef, NextSamples, NextOs)
     end.
 
-collect_system_info(Cmd) ->
-    {OsProcessInfo, SysInfo} = split_os_process_info(collect_sys_info(Cmd)),
+collect_system_info(Metrics) ->
+    {OsProcessInfo, SysInfo} = split_os_process_info(collect_sys_info(Metrics)),
     #{
         os_process_info => OsProcessInfo,
         sys_info => SysInfo,
@@ -104,7 +121,7 @@ collect_system_info(Cmd) ->
 
 split_os_process_info(SysInfo) ->
     lists:partition(
-        fun({Key, _}) -> lists:member(Key, [ps_cpu, ps_mem, ps_rss, ps_vsz]) end,
+        fun({Key, _}) -> lists:member(Key, [beam_cpu, beam_rss, cpu_window, beam_vsz]) end,
         SysInfo
     ).
 
@@ -490,8 +507,8 @@ render_sys_info(SysInfo) ->
     {_, _, Statistics} = lists:keyfind("Statistics", 1, MemAndStatistics),
     render_sys_info(System, CPU, Memory, Statistics) ++ render_runtime_limit_info(SysInfo).
 
-collect_sys_info(Cmd) ->
-    collect_os_process_info(Cmd) ++ collect_runtime_info().
+collect_sys_info(Metrics) ->
+    collect_os_process_info(Metrics) ++ collect_runtime_info().
 
 render_sys_info(System, CPU, Memory, Statistics) ->
     [
@@ -649,20 +666,8 @@ format_count_limit(Count, Limit) when is_integer(Count), is_integer(Limit), Limi
 format_count_limit(Count, Limit) ->
     [to_list(Count), " / ", to_list(Limit)].
 
-collect_os_process_info(Cmd) ->
-    [_, CmdValue | _] = string:split(os:cmd(Cmd), "\n", all),
-    [CpuPsV, MemPsV, RssPsV, VszPsV] =
-        case lists:filter(fun(Y) -> Y =/= [] end, string:split(CmdValue, " ", all)) of
-            [] -> ["--", "--", "--", "--"];
-            [V1, V2, V3, V4] -> [V1, V2, list_to_integer(V3) * 1024, list_to_integer(V4) * 1024]
-        end,
-
-    [
-        {ps_cpu, CpuPsV ++ "%"},
-        {ps_mem, MemPsV ++ "%"},
-        {ps_rss, RssPsV},
-        {ps_vsz, VszPsV}
-    ].
+collect_os_process_info(Metrics) ->
+    observer_cli_runtime_metrics:system_info(Metrics).
 
 collect_runtime_info() ->
     MemInfo =
@@ -799,10 +804,10 @@ info_fields() ->
             {"Ets", {bytes, ets}}
         ]},
         {"Statistics", right, [
-            {"ps -o pcpu", ps_cpu},
-            {"ps -o pmem", ps_mem},
-            {"ps -o rss", {bytes, ps_rss}},
-            {"ps -o vsz", {bytes, ps_vsz}},
+            {"BEAM CPU", beam_cpu},
+            {"BEAM RSS", beam_rss},
+            {"CPU window", cpu_window},
+            {"BEAM VSZ", beam_vsz},
             {"Total IOIn", {bytes, io_input}},
             {"Total IOOut", {bytes, io_output}}
         ]}

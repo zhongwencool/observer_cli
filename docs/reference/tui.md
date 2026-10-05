@@ -167,13 +167,46 @@ Enabling scheduler utilization changes the node-wide `scheduler_wall_time` syste
 | `Atom Count` | Existing atoms / atom limit; red above 85% | Current | `system_info(atom_count)`, `system_info(atom_limit)` |
 | `Ets Limit` | ETS table limit, shown instead of `Atom Count` when `atom_limit` is unsupported | Stable | `system_info(ets_limit)` |
 | `Version` | OTP release | Stable | `system_info(otp_release)` |
-| `ps -o pcpu` | CPU percentage reported by the host `ps` command for the BEAM OS process | Current | `ps -o pcpu PID` |
-| `ps -o pmem` | Memory percentage reported by the host `ps` command for the BEAM OS process | Current | `ps -o pmem PID` |
+| `BEAM CPU` | OS-process user + system CPU time consumed over the actual window; 100% means one logical CPU, and values can exceed 100% | Window | Linux `/proc/self/stat`; macOS `ps time` |
+| `BEAM RSS` | Current resident memory, plus its signed change since the preceding valid sample (not bytes/second) | Current / window change | Linux `/proc/self/stat`; macOS `ps rss` |
 | `Active Task` | Active processes and Ports ready or running on normal and dirty-CPU schedulers; dirty IO is excluded | Current | `statistics(total_active_tasks)` |
 | `Context Switch` | VM context-switch count | Total | `statistics(context_switches)` |
 | `Reds(Total/SinceLastCall)` | Total reductions / reductions since this API was last called | Total / API-call increment | `statistics(reductions)` |
 
-`ps` fields display `--` when observer_cli cannot parse the command output.
+`CPU window` reports the actual monotonic-time interval for OS CPU sampling,
+independent of the process ranking's `Sample` interval. Home shows it in the
+sampling header when it fits without losing process rows; otherwise its existing
+summary table header carries the window. System also shows the interval in its
+statistics. First samples show `warming up`; unavailable counters show
+`unavailable` (`n/a` in the compact window header), never a fabricated zero.
+Pausing and resuming, changing interval, or opening another view starts a new
+baseline. Failed reads, counter resets, or identity changes invalidate the
+corresponding baseline; CPU and RSS availability are independent.
+
+Counters are read on the target BEAM node, not the controller. Linux caches the
+actual clock-tick rate and page size at view initialization; its inexpensive RSS
+counter is approximate. macOS reads cumulative user + system time, RSS and VSZ
+in one controlled `ps` invocation. External commands have a 4 KiB output cap and
+a `min(500ms, refresh interval)` collection deadline; failed or timed-out
+commands are discarded and terminated (with bounded cleanup). No OS sampler
+runs while Home is paused, and no background polling service is created.
+
+RSS is the OS view of resident physical memory. It is not the same as
+`erlang:memory()`'s VM-accounted allocations, and their difference alone does
+not establish a leak. Released VM memory need not immediately reduce RSS.
+Host physical-memory percentages are no longer shown as node memory usage;
+they would not describe a container's memory budget.
+
+To reproduce CPU transitions, resident-memory allocation and two-node identity
+checks after compiling, run:
+
+```bash
+scripts/runtime-metrics-smoke.escript _build/default/lib/observer_cli/ebin
+```
+
+The smoke launches only its own temporary worker processes and peer node. It
+uses four normal schedulers, does not enable scheduler wall-time measurement,
+and does not require RSS to fall immediately after releasing an allocation.
 
 ### Memory, IO, and GC fields
 
@@ -427,8 +460,8 @@ which use successive samples and their actual elapsed monotonic time.
 | CPU | `Schedulers`, `Online schedulers` | Configured and online normal scheduler counts | `system_info(schedulers)`, `system_info(schedulers_online)` |
 | CPU | `Available schedulers` | Online schedulers when multi-scheduling is enabled; otherwise `1` | `system_info(multi_scheduling)`, `system_info(schedulers_online)` |
 | Memory | `Total`, `Processes`, `Atoms`, `Binaries`, `Code`, `Ets` | Bytes and percent of total | Corresponding `memory()` keys |
-| Statistics | `ps -o pcpu`, `ps -o pmem` | Host `ps` CPU and memory percentages for the BEAM OS process | `ps` |
-| Statistics | `ps -o rss`, `ps -o vsz` | Resident and virtual memory reported by `ps`, converted for byte display | `ps` |
+| Statistics | `BEAM CPU`, `CPU window` | Same OS user + system CPU window semantics as Home; each view has its own baseline | Target OS counters and monotonic time |
+| Statistics | `BEAM RSS`, `BEAM VSZ` | Current resident memory with signed window change; virtual address-space size is separate, not physical memory | Linux proc counters; macOS `ps` |
 | Statistics | `Total IOIn`, `Total IOOut` | Cumulative bytes through VM Ports | `statistics(io)` |
 
 System `Processes` and `Atoms` use the allocated-memory keys `processes` and

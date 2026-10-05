@@ -53,6 +53,33 @@ collect_top_n_test() ->
     ?assertEqual([], WindowFirst),
     ?assert(is_list(WindowNext)).
 
+cpu_metadata_preserves_process_rows_test() ->
+    lists:foreach(
+        fun(Columns) ->
+            observer_cli_test_io:with_geometry(24, Columns, [], fun() ->
+                Home = #home{scheduler_usage = ?DISABLE},
+                {Snapshot, _} = observer_cli:collect_home_snapshot(
+                    unsupported_context(),
+                    Home,
+                    observer_cli:get_stable_system_info(),
+                    observer_cli:get_incremental_stats(?DISABLE),
+                    24,
+                    true
+                ),
+                Prompt = observer_cli:get_refresh_prompt(proc_count, memory, 1500, 10),
+                {OriginalExtra, _} = observer_cli_lib:render_sampling_menu(home, Prompt),
+                ?assertEqual(10 - OriginalExtra, maps:get(process_rows, Snapshot)),
+                ?assert(
+                    lists:all(
+                        fun(W) -> W =< observer_cli_lib:layout_width() end,
+                        observer_cli_test_io:line_widths(maps:get(menu, Snapshot))
+                    )
+                )
+            end)
+        end,
+        [139, 160, 180, 201, 240]
+    ).
+
 collect_home_snapshot_test() ->
     Home = #home{
         interval = 1500,
@@ -65,7 +92,7 @@ collect_home_snapshot_test() ->
     LastStats = observer_cli:get_incremental_stats(?DISABLE),
     {Snapshot, NewStats} =
         observer_cli:collect_home_snapshot(
-            "printf 'header\\n 1 2\\n'", Home, StableInfo, LastStats, 16, true
+            unsupported_context(), Home, StableInfo, LastStats, 16, true
         ),
     ?assertEqual(
         lists:sort([
@@ -90,7 +117,7 @@ collect_home_snapshot_test() ->
             lists:flatten(maps:get(refresh_prompt, Snapshot))
         )
     ),
-    ?assertMatch({_, _, _, _, _}, NewStats).
+    ?assertMatch(#{node := {_, _, _, _, _}, os := #{}}, NewStats).
 
 get_current_initial_call_test() ->
     Call = [
@@ -102,22 +129,24 @@ get_current_initial_call_test() ->
     ?assertEqual({erlang, apply, 3}, InitialCall).
 
 render_system_line_test() ->
-    PsCmd = "printf 'header\\n 1 2\\n'",
+    Metrics = metrics_fixture(),
     StableInfo = observer_cli:get_stable_system_info(),
-    Line = observer_cli:render_system_line(PsCmd, StableInfo),
+    Line = observer_cli:render_system_line(Metrics, StableInfo),
     ?assert(string:find(lists:flatten(Line), "System") =/= nomatch).
 
 render_system_line_unsupported_atom_status_test() ->
-    PsCmd = "printf 'header\\n 1 2\\n'",
+    Metrics = metrics_fixture(),
     StableInfo = observer_cli:get_stable_system_info(),
-    Line = observer_cli:render_system_line(PsCmd, StableInfo, {error, unsupported}),
+    Line = observer_cli:render_system_line(Metrics, StableInfo, {error, unsupported}),
     ?assert(string:find(lists:flatten(Line), "Ets Limit") =/= nomatch).
 
 render_system_line_missing_output_test() ->
-    PsCmd = "printf ''",
+    Metrics = #{
+        cpu => #{status => unavailable}, rss_bytes => undefined, rss_delta_bytes => undefined
+    },
     StableInfo = observer_cli:get_stable_system_info(),
-    Line = observer_cli:render_system_line(PsCmd, StableInfo),
-    ?assert(string:find(lists:flatten(Line), "ps -o pcpu") =/= nomatch).
+    Line = observer_cli:render_system_line(Metrics, StableInfo),
+    ?assert(string:find(lists:flatten(Line), "BEAM CPU") =/= nomatch).
 
 accept_net_ticktime_result_test() ->
     ?assertEqual(ok, observer_cli:accept_net_ticktime_result(change_initiated, 60)),
@@ -178,7 +207,7 @@ render_home_summary_wide_layout_test() ->
         fun() ->
             StableInfo = observer_cli:get_stable_system_info(),
             SystemLines = observer_cli:render_system_line(
-                "printf 'header\n 1 2\n'", StableInfo
+                metrics_fixture(), StableInfo
             ),
             MemLines = observer_cli:render_memory_process_line({1, 2, 3, 4}, 1500),
             [SystemTitle | _] = SystemLines,
@@ -526,5 +555,15 @@ wait_forever() ->
     after infinity ->
         ok
     end.
+
+metrics_fixture() ->
+    #{
+        cpu => #{status => available, percent => 236.0, interval_us => 1510000},
+        rss_bytes => 182 * 1048576,
+        rss_delta_bytes => 3 * 1048576
+    }.
+
+unsupported_context() ->
+    #{platform => unsupported, identity => {node(), os:getpid()}, timeout_ms => 500}.
 
 -endif.
