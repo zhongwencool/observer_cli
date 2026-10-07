@@ -165,8 +165,17 @@ assert "Use only one cookie source." in help_text
 assert "Hide identifiers for sharing" in help_text
 PY
 printf 'ok - root help layout\n'
-check "JSON command discovery" 0 '"entries"' empty describe --json
-python3 - "$stdout" <<'PY'
+check "version" 0 "observer_cli 2.1.0" empty --version
+controller_otp=$(sed -n 's/^controller OTP //p' "$stdout")
+case "$controller_otp" in
+    ''|*[!0-9]*) fail "version output has no valid controller OTP major" ;;
+esac
+check "text command discovery" 0 "check" empty describe
+check "term command discovery" 0 '<<"entries">>' empty describe --format term
+
+if [ "$controller_otp" -ge 27 ]; then
+    check "JSON command discovery" 0 '"entries"' empty describe --json
+    python3 - "$stdout" <<'PY'
 import json
 import sys
 
@@ -176,12 +185,18 @@ assert [entry["name"] for entry in response["data"]["entries"]] == [
     "check", "inspect", "trace", "tui", "describe"
 ]
 PY
-printf 'ok - JSON discovery preserves all five entries\n'
-python3 "$ROOT/scripts/check-command-help.py" "$BIN"
+    printf 'ok - JSON discovery preserves all five entries\n'
+    python3 "$ROOT/scripts/check-command-help.py" "$BIN"
+else
+    check "JSON discovery requires OTP 27+" 2 empty \
+        "JSON output requires OTP 27 or newer" describe --json
+    check "JSON format requires OTP 27+" 2 empty \
+        "JSON output requires OTP 27 or newer" describe --format json
+    printf 'ok - JSON-backed help and example audit # SKIP controller OTP %s has no JSON output\n' "$controller_otp"
+fi
 check "state help" 0 "--allow-state-read" empty inspect state --help
 check "logs help" 0 "inspect logs" empty inspect logs --help
 check "trace call help" 0 "trace call" empty trace call --help
-check "version" 0 "observer_cli 2.1.0" empty --version
 check "unknown option" 2 empty "Unknown option" --bogus
 check "removed session" 2 empty "connect was removed" connect
 check "removed resource shorthand" 2 empty "inspect process" processes

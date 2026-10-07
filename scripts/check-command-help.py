@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check every help page and shell example without connecting to a target."""
+"""Check every help page and shell example using an OTP 27+ JSON controller."""
 
 import json
 from pathlib import Path
