@@ -48,8 +48,13 @@ schema remains standalone so consumers need no private-file resolver.
   never log-derived instructions, `eval` or automatic consent.
 - Default checks do not collect business contents, logs, state or trace events.
   State/trace consent and opt-in same-OTP TUI loading remain explicit.
-- At 80 columns, root help and the default report fit within 24 lines. Requested
-  inventory rows are not dropped to meet this budget.
+- At 80 columns, root help fits within 40 lines and the default report within
+  24 lines. Requested inventory rows are not dropped to meet this budget.
+- Subcommand help stays within 80 columns, with required and command-specific
+  options before target and output options. It shows positional arguments,
+  applicable defaults and constraints, and shell-quoted examples. Its length
+  is not limited to the root help budget; safety requirements are never hidden
+  to fit a screen. JSON examples remain argument arrays, not shell strings.
 
 ## Acceptance and deferred scope
 

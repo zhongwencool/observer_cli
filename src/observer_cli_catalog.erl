@@ -18,13 +18,13 @@
 -spec entries() -> [map()].
 entries() ->
     [
-        #{name => <<"check">>, summary => <<"Find evidence and the next bounded observation">>},
-        #{name => <<"inspect">>, summary => <<"Inspect runtime facts or one selected resource">>},
-        #{name => <<"trace">>, summary => <<"Explicitly authorize node-global tracing">>},
-        #{name => <<"tui">>, summary => <<"Explore interactively; code loading is opt-in">>},
+        #{name => <<"check">>, summary => <<"Check runtime pressure and find where to look next">>},
+        #{name => <<"inspect">>, summary => <<"Inspect runtime metrics and resources">>},
+        #{name => <<"trace">>, summary => <<"Trace function calls with explicit authorization">>},
+        #{name => <<"tui">>, summary => <<"Open the interactive terminal UI">>},
         #{
             name => <<"describe">>,
-            summary => <<"Discover commands offline; add a path for details">>
+            summary => <<"Explore commands without connecting">>
         }
     ].
 
@@ -158,49 +158,50 @@ capture_descriptor(Capture) ->
 definitions() ->
     [
         {check, ["check"], diagnose,
-            <<"Observe limits, scheduler pressure, memory and queues for 15s">>},
+            <<"Check runtime limits, scheduler pressure, memory and queues">>},
         {check_cpu, ["check", "cpu"], diagnose,
-            <<"Measure scheduler pressure and process activity; not process CPU time">>},
+            <<"Check scheduler pressure and process activity, not process CPU time">>},
         {check_memory, ["check", "memory"], diagnose,
-            <<"Measure BEAM memory and resource changes; not proof of a leak">>},
+            <<"Check BEAM memory and resource changes; changes alone do not prove a leak">>},
         {check_mailbox, ["check", "mailbox"], diagnose,
-            <<"Inspect mailbox lengths and changes; not a root-cause rule">>},
+            <<"Check mailbox sizes and growth over an observation window">>},
         {check_connections, ["check", "connections"], diagnose,
-            <<"Inspect Erlang peers and VM network context; not host network health">>},
+            <<"Check Erlang connections and VM network activity">>},
         {inspect_vm, ["inspect", "vm"], snapshot,
-            <<"Collect current bounded VM facts; inventories require --deep">>},
+            <<"Show a snapshot of VM limits, memory and scheduler context">>},
         {inspect_memory, ["inspect", "memory"], memory,
-            <<"Inspect BEAM memory and allocators, not host RSS">>},
+            <<"Show BEAM memory usage and allocator statistics, not host RSS">>},
         {inspect_scheduler, ["inspect", "scheduler"], schedulers,
-            <<"Measure scheduler utilization and observed run queues">>},
+            <<"Measure scheduler utilization and run queues over a sampling window">>},
         {inspect_distribution, ["inspect", "distribution"], distribution,
-            <<"Inspect Erlang peers and distribution context">>},
+            <<"List connected Erlang nodes and distribution details">>},
         {inspect_network, ["inspect", "network"], network,
-            <<"Inspect legacy inet counters, not all host traffic">>},
+            <<"Show Erlang inet socket counters, not all host network traffic">>},
         {inspect_process, ["inspect", "process"], processes,
-            <<"List processes; --pid or --name selects one safe metadata detail">>},
+            <<"List processes or inspect one process by PID or registered name">>},
         {inspect_application, ["inspect", "application"], applications,
-            <<"Attribute process counts and resources to applications">>},
-        {inspect_ets, ["inspect", "ets"], ets, <<"Inspect ETS metadata, never table contents">>},
+            <<"Compare process counts and resource usage by application">>},
+        {inspect_ets, ["inspect", "ets"], ets,
+            <<"List ETS table sizes and memory usage without reading table contents">>},
         {inspect_mnesia, ["inspect", "mnesia"], mnesia,
-            <<"Inspect local Mnesia metadata, never table contents">>},
+            <<"List local Mnesia table metadata without reading table contents">>},
         {inspect_port, ["inspect", "port"], ports,
-            <<"List Erlang ports; --id selects one detail, not a TCP port number">>},
+            <<"List Erlang ports or inspect one port by its Erlang port ID">>},
         {inspect_socket, ["inspect", "socket"], sockets,
-            <<"Inspect the OTP socket registry and its counters">>},
+            <<"Show registered OTP sockets and their I/O counters">>},
         {inspect_state, ["inspect", "state"], otp_state,
-            <<"Explicitly acquire full OTP state and return value-free shapes">>},
+            <<"Read an OTP process state and show its structure without values">>},
         {inspect_supervision, ["inspect", "supervision"], supervision_tree,
-            <<"Inspect one application root and direct children only">>},
+            <<"Show an application supervisor and direct children only (non-recursive)">>},
         {inspect_logs, ["inspect", "logs"], logs,
-            <<"Read bounded retained sensitive text from one configured handler">>},
+            <<"Read recent log lines from a configured file handler; text may contain secrets">>},
         {trace_call, ["trace", "call"], trace_call,
-            <<"Capture an exact MFA for one PID with node-global replacement consent">>},
+            <<"Trace calls to one exact function in one process">>},
         {trace_stop_all, ["trace", "stop"], trace_stop_all,
-            <<"Explicitly clear node-global legacy tracing; prior state is not restored">>},
-        {tui, ["tui"], tui, <<"Open the terminal UI with protected target options">>},
+            <<"Stop node-global legacy tracing without restoring previous trace state">>},
+        {tui, ["tui"], tui, <<"Open the interactive terminal UI">>},
         {describe, ["describe"], describe,
-            <<"Discover paths, constraints and risk without contacting a target">>}
+            <<"Explore commands, options and constraints without connecting to a node">>}
     ].
 
 -spec option(string()) -> {flag | value, atom()} | unknown | positional.
@@ -222,38 +223,44 @@ option(_) ->
 options(describe) ->
     output_options() ++
         [
-            flag(full, <<"Return every full command descriptor">>),
+            flag(full, <<"Show detailed metadata for every command">>),
             flag(schema, <<"Export the v2 JSON Schema; requires --json and no path">>)
         ];
 options(tui) ->
     target_options() ++
         [
-            flag(load_code, <<"Authorize remote code loading on the same OTP major">>),
-            duration_option(interval, 1000, 120000, 1500, <<"Requested TUI refresh interval">>)
+            flag(
+                load_code,
+                <<"Allow code loading on the target; requires the same OTP major version">>
+            ),
+            duration_option(interval, 1000, 120000, 1500, <<"Terminal refresh interval">>)
         ];
 options(Id) ->
     target_options() ++ output_options() ++ privacy_options(Id) ++ specific_options(Id).
 
 target_options() ->
     [
-        value(node, <<"Explicit node; requires exactly one explicit cookie source">>),
+        value(node, <<"Erlang node name; pair with --cookie-env or --cookie-file">>),
         value(
             cookie_env,
-            <<"Cookie environment variable NAME, never a cookie value; requires --node">>
+            <<"Read the cookie from this environment variable; requires --node">>
         ),
-        value(cookie_file, <<"Owner-only cookie file PATH; requires --node">>),
-        (value(name_mode, <<"Requires --node; otherwise inferred from its host">>))#{
+        value(cookie_file, <<"Read the cookie from an owner-only file; requires --node">>),
+        (value(
+            name_mode,
+            <<"Node naming mode; inferred from the node host unless set; requires --node">>
+        ))#{
             enum => [<<"short">>, <<"long">>]
         }
     ].
 
 output_options() ->
     [
-        (value(format, <<"Output representation">>))#{
+        (value(format, <<"Output format">>))#{
             enum => [<<"text">>, <<"term">>, <<"json">>], default => <<"text">>
         },
         flag(json, <<"Alias for --format json; controller OTP 27+">>),
-        flag(verbose, <<"Expand text evidence; incompatible with JSON or term">>)
+        flag(verbose, <<"Show detailed text evidence; cannot be used with JSON or term output">>)
     ].
 
 privacy_options(inspect_logs) ->
@@ -270,10 +277,10 @@ deadline_option() ->
         1,
         120000,
         10000,
-        <<"Overall deadline including cleanup; must cover the observation window">>
+        <<"Overall deadline, including cleanup">>
     ))#{
         default_rule =>
-            <<"check window + 5s; sampled inspect max(10s, window + 5s); trace duration + 7s">>
+            <<"check window + 5s; sampled inspect max(10s, window + 5s); trace max(10s, duration + 7s)">>
     }.
 
 specific_options(Id) when
@@ -284,20 +291,25 @@ specific_options(Id) when
     Id =:= check_connections
 ->
     [
-        duration_option(window, 5000, 60000, 15000, <<"Shared observation window; default 15s">>),
+        duration_option(window, 5000, 60000, 15000, <<"Observation window shared by all checks">>),
         (value(fail_on, <<"Exit 1 only for a complete check meeting this finding severity">>))#{
             enum => [<<"warning">>, <<"critical">>]
         },
-        value(app, <<"Add existing application-scoped observation; not application CPU time">>)
+        value(app, <<"Include observations for one application; not application CPU time">>)
     ] ++
         case Id of
             check_memory ->
-                [flag(deep, <<"Add admitted deep evidence; seven samples; conflicts with --app">>)];
+                [
+                    flag(
+                        deep,
+                        <<"Collect deeper memory evidence using seven samples; cannot use --app">>
+                    )
+                ];
             _ ->
                 []
         end;
 specific_options(inspect_vm) ->
-    [flag(deep, <<"Add admitted inventories; never reads state, logs or payloads">>)];
+    [flag(deep, <<"Include resource inventories; does not read state, logs or payloads">>)];
 specific_options(inspect_scheduler) ->
     [duration_option(window, 250, 10000, 1500, <<"Scheduler measurement window">>)];
 specific_options(inspect_distribution) ->
@@ -305,11 +317,15 @@ specific_options(inspect_distribution) ->
 specific_options(inspect_process) ->
     list_options(processes, true) ++
         [
-            value(pid, <<"Canonical target-local <0.N.N> PID; selects detail">>),
-            value(name, <<"Registered name; selects detail, never an alias lookup">>)
+            value(pid, <<"Inspect one PID; excludes --name, --sort, --limit and --window">>),
+            value(
+                name,
+                <<"Inspect one registered name; excludes --pid, --sort, --limit and --window">>
+            )
         ];
 specific_options(inspect_port) ->
-    list_options(ports, false) ++ [value(id, <<"Canonical #Port<0.N> ID; selects detail">>)];
+    list_options(ports, false) ++
+        [value(id, <<"Erlang port ID, not a TCP port; excludes --sort and --limit">>)];
 specific_options(inspect_network) ->
     list_options(network, true);
 specific_options(inspect_socket) ->
@@ -322,50 +338,78 @@ specific_options(inspect_mnesia) ->
     list_options(mnesia, false);
 specific_options(inspect_state) ->
     [
-        value(pid, <<"Canonical target-local PID">>),
-        value(name, <<"Registered name">>),
-        (value(behavior, <<"Required operator assertion of behavior">>))#{
+        value(pid, <<"Target-local PID; choose exactly one of --pid or --name">>),
+        value(name, <<"Registered name; choose exactly one of --pid or --name">>),
+        (value(behavior, <<"Declare the process behavior; it is not detected automatically">>))#{
             required => true, enum => [<<"gen_server">>, <<"gen_statem">>, <<"gen_event">>]
         },
         (flag(
-            allow_state_read, <<"Authorize full state acquisition before bounded shape reduction">>
+            allow_state_read,
+            <<"Allow reading the full state before reducing it to a value-free structure">>
         ))#{
             required => true
         },
-        limit_option(200, 20)
+        (limit_option(200, 20))#{
+            summary :=
+                <<"Maximum gen_event rows; only valid for gen_event; does not limit state reads">>
+        }
     ];
 specific_options(inspect_supervision) ->
-    [(value(app, <<"Running application; root and direct children only">>))#{required => true}];
+    [
+        (value(app, <<"Running application whose supervisor and direct children to inspect">>))#{
+            required => true
+        }
+    ];
 specific_options(inspect_logs) ->
     [
-        value(handler, <<"Handler ID; required when several sources qualify">>),
-        (value(tail, <<"Physical lines; capped at 64 KiB retained bytes">>))#{
+        value(
+            handler, <<"File handler ID; required when multiple supported handlers are available">>
+        ),
+        (value(
+            tail, <<"Number of recent lines; at most 64 KiB retained; --redact is unsupported">>
+        ))#{
             minimum => 1, maximum => 2000, default => 200
         }
     ];
 specific_options(trace_call) ->
     [
-        (value(pid, <<"One live canonical target-local PID">>))#{required => true},
+        (value(pid, <<"One live target-local PID, such as <0.123.0>">>))#{required => true},
         (flag(
-            replace_existing_trace, <<"Authorize node-global trace replacement; no restoration">>
+            replace_existing_trace,
+            <<"Allow replacing node-global legacy tracing; previous state is not restored">>
         ))#{
             required => true
         },
-        duration_option(duration, 100, 60000, 10000, <<"Bounded call capture duration">>),
-        limit_option(1000, 100),
-        (value(rate, <<"Recon burst breaker, not a pacer; the trip event is retained">>))#{
+        duration_option(duration, 100, 60000, 10000, <<"How long to capture function calls">>),
+        (limit_option(1000, 100))#{
+            summary := <<"Maximum trace events to capture; cannot use --rate">>
+        },
+        (value(
+            rate,
+            <<"Stop on a burst above N calls/s; not pacing; trip event retained; cannot use --limit">>
+        ))#{
             syntax => <<"N/s">>, minimum => 1, maximum => 200
         }
     ];
 specific_options(trace_stop_all) ->
-    [(flag(all, <<"Authorize clearing node-global legacy tracing">>))#{required => true}];
+    [
+        (flag(all, <<"Allow clearing node-global legacy tracing; previous state is not restored">>))#{
+            required => true
+        }
+    ];
 specific_options(_) ->
     [].
 
 list_options(Capture, Window) ->
     Values = sort_values(Capture),
     [
-        (value(sort, <<"Metric meaning is fixed; change/rate sorts require --window">>))#{
+        (value(
+            sort,
+            case Window of
+                true -> <<"Sort by this metric; change/rate metrics require --window">>;
+                false -> <<"Sort by this metric">>
+            end
+        ))#{
             enum => Values, default => hd(Values)
         },
         limit_option(200, 20)
@@ -378,7 +422,7 @@ list_options(Capture, Window) ->
                         250,
                         10000,
                         undefined,
-                        <<"Add sampling; does not change the selected metric">>
+                        <<"Sample over this window; required for change/rate sorting">>
                     )
                 ];
             false ->
@@ -416,7 +460,7 @@ flag(Key, Summary) ->
     }.
 option_name(Key) -> binary:replace(atom_to_binary(Key), <<"_">>, <<"-">>, [global]).
 limit_option(Max, Default) ->
-    (value(limit, <<"Returned rows, not a scan-admission bypass">>))#{
+    (value(limit, <<"Maximum rows to return; does not increase scan limits">>))#{
         minimum => 1, maximum => Max, default => Default
     }.
 duration_option(Key, Min, Max, Default, Summary) ->
@@ -665,8 +709,59 @@ examples(inspect_state, Path) ->
     ];
 examples(inspect_supervision, Path) ->
     [[list_to_binary(P) || P <- Path ++ ["--app", "kernel"]]];
-examples(_Id, Path) ->
-    [[list_to_binary(P) || P <- Path]].
+examples(Id, Path) ->
+    Suffixes =
+        case Id of
+            check ->
+                [[], ["--window", "5s"], ["--fail-on", "critical", "--json"]];
+            check_memory ->
+                [[], ["--deep", "--window", "15s"]];
+            check_cpu ->
+                [[], ["--window", "5s"]];
+            check_mailbox ->
+                [[], ["--window", "30s"]];
+            check_connections ->
+                [[], ["--window", "5s", "--json"]];
+            inspect_vm ->
+                [[], ["--deep"]];
+            inspect_memory ->
+                [[], ["--json"]];
+            inspect_scheduler ->
+                [[], ["--window", "5s"]];
+            inspect_distribution ->
+                [[], ["--limit", "10"]];
+            inspect_process ->
+                [
+                    ["--sort", "memory", "--limit", "10"],
+                    ["--sort", "reductions-rate", "--window", "5s"],
+                    ["--pid", "<0.123.0>"],
+                    ["--name", "my_server"]
+                ];
+            inspect_port ->
+                [[], ["--id", "#Port<0.123>"]];
+            inspect_network ->
+                [[], ["--sort", "oct-rate", "--window", "5s"]];
+            inspect_socket ->
+                [[], ["--sort", "io-rate", "--window", "5s"]];
+            inspect_application ->
+                [[], ["--sort", "memory", "--limit", "10"]];
+            inspect_ets ->
+                [[], ["--sort", "size", "--limit", "10"]];
+            inspect_mnesia ->
+                [[], ["--sort", "size", "--limit", "10"]];
+            inspect_logs ->
+                [["--tail", "50"], ["--handler", "default", "--tail", "100"]];
+            tui ->
+                [[], ["--interval", "2s"]];
+            describe ->
+                [
+                    [],
+                    ["inspect", "process", "--json"],
+                    ["--full", "--json"],
+                    ["--schema", "--json"]
+                ]
+        end,
+    [[list_to_binary(P) || P <- Path ++ Suffix] || Suffix <- Suffixes].
 
 binary_keys(Map) ->
     maps:from_list([{atom_to_binary(K), V} || {K, V} <- maps:to_list(maps:remove(key, Map))]).
@@ -674,74 +769,47 @@ binary_keys(Map) ->
 -spec help([string()]) -> binary().
 help([]) ->
     iolist_to_binary([
-        "observer_cli - bounded BEAM investigations\n",
-        "Usage: observer_cli [TARGET OPTIONS] COMMAND [OPTIONS]\n\n",
-        [["  ", maps:get(name, E), "  ", maps:get(summary, E), "\n"] || E <- entries()],
-        "\nStart: observer_cli check                  (15-second overview)\n",
-        "Focus: check cpu | memory | mailbox | connections\n",
-        "Next:  inspect process --pid '<0.123.0>'\n",
-        "\nTarget: --node NODE --cookie-env NAME (or --cookie-file PATH)\n",
-        "Shell:  OBSERVER_CLI_NODE + OBSERVER_CLI_COOKIE\n",
-        "        Or OBSERVER_CLI_COOKIE_FILE; choose only one cookie source\n",
-        "Output: --json | --format term | --verbose (text)\n",
-        "Share:  --redact; identifiers are included by default\n",
-        "\nRequires a matching 2.1.0 target; cookies grant trusted-peer authority.\n",
-        "No persistent connection or saved target is used.\n",
-        "Help: COMMAND --help; describe COMMAND --json; --version\n"
+        "observer_cli - Inspect and troubleshoot Erlang/Elixir nodes\n\n",
+        "Usage:\n",
+        "  observer_cli [TARGET OPTIONS] COMMAND [OPTIONS]\n\n",
+        "Commands:\n",
+        [
+            io_lib:format("  ~-12ts~ts~n", [maps:get(name, E), maps:get(summary, E)])
+         || E <- entries(), maps:get(name, E) =/= <<"describe">>
+        ],
+        "\nGetting started:\n",
+        "  observer_cli check                       Overview (15s observation)\n",
+        "  observer_cli check cpu                   Focus on scheduler pressure\n",
+        "  observer_cli inspect process --pid '<0.123.0>'\n",
+        "                                           Inspect a specific process\n",
+        "\n  Check topics: cpu, memory, mailbox, connections\n",
+        "\nTarget:\n",
+        "  --node NODE                              Erlang node name\n",
+        "  --cookie-env NAME                        Read the cookie from an env var\n",
+        "  --cookie-file PATH                       Read the cookie from a file\n",
+        "\n  Shell defaults:\n",
+        "    OBSERVER_CLI_NODE\n",
+        "    OBSERVER_CLI_COOKIE or OBSERVER_CLI_COOKIE_FILE\n",
+        "  Use only one cookie source.\n",
+        "\nOutput:\n",
+        "  --json                                   JSON output\n",
+        "  --format term                            Erlang term output\n",
+        "  --verbose                                Detailed text output\n",
+        "  --redact                                 Hide identifiers for sharing\n",
+        "\nHelp and discovery:\n",
+        "  COMMAND --help                           Usage, options and examples\n",
+        "  describe [COMMAND]                       Explore commands without connecting\n",
+        "  describe COMMAND --json                  Machine-readable command details\n",
+        "  --version                                Show version\n"
     ]);
 help([Family]) when Family =:= "inspect"; Family =:= "trace" ->
     {ok, #{<<"commands">> := Commands}} = describe([Family], false),
-    iolist_to_binary([
-        "Choose a path:\n",
-        [["  ", maps:get(<<"name">>, D), " - ", maps:get(<<"summary">>, D), "\n"] || D <- Commands],
-        "Run observer_cli PATH --help for options and examples.\n"
-    ]);
+    observer_cli_command_help:family(Family, Commands);
 help(Path) ->
     case describe(Path, false) of
-        {ok, #{<<"name">> := Name, <<"summary">> := Summary, <<"options">> := Options} = D} ->
-            iolist_to_binary([
-                "Usage: observer_cli ",
-                Name,
-                " [OPTIONS]\n",
-                Summary,
-                "\n\n",
-                [
-                    [
-                        "  --",
-                        maps:get(<<"name">>, O),
-                        option_hint(O),
-                        "\n    ",
-                        maps:get(<<"summary">>, O),
-                        "\n"
-                    ]
-                 || O <- Options
-                ],
-                "\nExamples:\n",
-                [
-                    ["  observer_cli ", lists:join(" ", Args), "\n"]
-                 || Args <- maps:get(<<"examples">>, D)
-                ],
-                "Detailed constraints and risk: describe ",
-                Name,
-                " --json\n"
-            ]);
-        {error, Hint} ->
-            <<Hint/binary, "\n">>
+        {ok, #{<<"name">> := _} = D} -> observer_cli_command_help:render(D);
+        {error, Hint} -> <<Hint/binary, "\n">>
     end.
-
-option_hint(#{<<"minimum_ms">> := Min, <<"maximum_ms">> := Max} = D) ->
-    Default =
-        case maps:find(<<"default">>, D) of
-            {ok, V} -> io_lib:format("; default ~Bms", [V]);
-            error -> []
-        end,
-    io_lib:format(" VALUE (~Bms..~Bms~ts)", [Min, Max, Default]);
-option_hint(#{<<"enum">> := Values}) ->
-    [" ", lists:join("|", Values)];
-option_hint(#{<<"kind">> := <<"value">>}) ->
-    " VALUE";
-option_hint(_) ->
-    "".
 
 -spec schema() -> {ok, binary()} | {error, schema_unavailable}.
 schema() ->
