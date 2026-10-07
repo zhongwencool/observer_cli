@@ -1531,10 +1531,19 @@ command_help_test() ->
         observer_cli_escriptize:main(["--help"])
     end),
     observer_cli_test_io:assert_stable_fragments(Help, [
-        "15-second overview", "inspect process --pid", "No persistent connection"
+        "15s observation", "inspect process --pid", "Help and discovery:"
     ]),
+    lists:foreach(
+        fun(Args) ->
+            {ok, AliasHelp} = observer_cli_test_io:capture_with_geometry(24, 80, [], fun() ->
+                observer_cli_escriptize:main(Args)
+            end),
+            ?assertEqual(Help, AliasHelp)
+        end,
+        [[], ["help"], ["-h"]]
+    ),
     Lines = binary:split(iolist_to_binary(Help), <<"\n">>, [global]),
-    ?assert(length(Lines) - 1 =< 24),
+    ?assert(length(Lines) - 1 =< 40),
     {ok, Version} = observer_cli_test_io:capture_with_geometry(24, 80, [], fun() ->
         observer_cli_escriptize:main(["--version"])
     end),

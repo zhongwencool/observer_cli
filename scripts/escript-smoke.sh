@@ -142,12 +142,61 @@ check_tui_eof() {
 }
 
 check "top-level help" 0 "Usage:" empty --help
-check "no-argument help" 0 "15-second overview" empty
+cp "$stdout" "$TMP/root-help"
+check "no-argument help" 0 "15s observation" empty
+cmp "$TMP/root-help" "$stdout" || fail "no-argument help differs from --help"
+check "help command" 0 "Help and discovery:" empty help
+cmp "$TMP/root-help" "$stdout" || fail "help command differs from --help"
 check "short help" 0 "Usage:" empty -h
+cmp "$TMP/root-help" "$stdout" || fail "short help differs from --help"
+python3 - "$TMP/root-help" <<'PY'
+import pathlib
+import sys
+
+help_text = pathlib.Path(sys.argv[1]).read_text()
+lines = help_text.splitlines()
+assert len(lines) <= 40
+assert all(len(line) <= 80 for line in lines)
+sections = ["Usage:", "Commands:", "Getting started:", "Target:", "Output:", "Help and discovery:"]
+positions = [lines.index(section) for section in sections]
+assert positions == sorted(positions)
+assert "Notes:" not in help_text
+assert "Use only one cookie source." in help_text
+assert "Hide identifiers for sharing" in help_text
+PY
+printf 'ok - root help layout\n'
+check "version" 0 "observer_cli 2.1.0" empty --version
+controller_otp=$(sed -n 's/^controller OTP //p' "$stdout")
+case "$controller_otp" in
+    ''|*[!0-9]*) fail "version output has no valid controller OTP major" ;;
+esac
+check "text command discovery" 0 "check" empty describe
+check "term command discovery" 0 '<<"entries">>' empty describe --format term
+
+if [ "$controller_otp" -ge 27 ]; then
+    check "JSON command discovery" 0 '"entries"' empty describe --json
+    python3 - "$stdout" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1]) as source:
+    response = json.load(source)
+assert [entry["name"] for entry in response["data"]["entries"]] == [
+    "check", "inspect", "trace", "tui", "describe"
+]
+PY
+    printf 'ok - JSON discovery preserves all five entries\n'
+    python3 "$ROOT/scripts/check-command-help.py" "$BIN"
+else
+    check "JSON discovery requires OTP 27+" 2 empty \
+        "JSON output requires OTP 27 or newer" describe --json
+    check "JSON format requires OTP 27+" 2 empty \
+        "JSON output requires OTP 27 or newer" describe --format json
+    printf 'ok - JSON-backed help and example audit # SKIP controller OTP %s has no JSON output\n' "$controller_otp"
+fi
 check "state help" 0 "--allow-state-read" empty inspect state --help
 check "logs help" 0 "inspect logs" empty inspect logs --help
 check "trace call help" 0 "trace call" empty trace call --help
-check "version" 0 "observer_cli 2.1.0" empty --version
 check "unknown option" 2 empty "Unknown option" --bogus
 check "removed session" 2 empty "connect was removed" connect
 check "removed resource shorthand" 2 empty "inspect process" processes

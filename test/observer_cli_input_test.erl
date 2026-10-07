@@ -20,7 +20,10 @@ registry_roundtrip_test() ->
         Commands
     ),
     {ok, Index} = observer_cli_catalog:describe([], false),
-    ?assertEqual(5, length(maps:get(<<"entries">>, Index))),
+    ?assertEqual(
+        [<<"check">>, <<"inspect">>, <<"trace">>, <<"tui">>, <<"describe">>],
+        [maps:get(<<"name">>, E) || E <- maps:get(<<"entries">>, Index)]
+    ),
     ?assertNot(maps:is_key(<<"commands">>, Index)),
     {ok, Full} = observer_cli_catalog:describe([], true),
     ?assertEqual(Commands, maps:get(<<"commands">>, Full)).
@@ -224,6 +227,52 @@ offline_output_preflight_test() ->
 root_help_budget_test() ->
     Help = observer_cli_catalog:help([]),
     Lines = binary:split(Help, <<"\n">>, [global]),
-    ?assert(length(Lines) - 1 =< 24),
+    ?assert(length(Lines) - 1 =< 40),
     ?assert(lists:all(fun(L) -> length(unicode:characters_to_list(L)) =< 80 end, Lines)),
-    ?assertNotEqual(nomatch, binary:match(Help, <<"15-second">>)).
+    ?assertNotEqual(nomatch, binary:match(Help, <<"15s observation">>)).
+
+root_help_sections_test() ->
+    Help = observer_cli_catalog:help([]),
+    Sections = [
+        <<"Usage:\n">>,
+        <<"Commands:\n">>,
+        <<"Getting started:\n">>,
+        <<"Target:\n">>,
+        <<"Output:\n">>,
+        <<"Help and discovery:\n">>
+    ],
+    Positions = [
+        begin
+            {Position, _} = binary:match(Help, Section),
+            Position
+        end
+     || Section <- Sections
+    ],
+    ?assertEqual(Positions, lists:sort(Positions)),
+    [_, AfterCommands] = binary:split(Help, <<"Commands:\n">>),
+    [Commands, _] = binary:split(AfterCommands, <<"\nGetting started:">>),
+    lists:foreach(
+        fun(#{name := Name, summary := Summary}) ->
+            case Name of
+                <<"describe">> ->
+                    ?assertEqual(nomatch, binary:match(Commands, Name));
+                _ ->
+                    ?assertNotEqual(nomatch, binary:match(Commands, Name)),
+                    ?assertNotEqual(nomatch, binary:match(Commands, Summary))
+            end
+        end,
+        observer_cli_catalog:entries()
+    ),
+    ?assertNotEqual(nomatch, binary:match(Help, <<"describe [COMMAND]">>)),
+    ?assertNotEqual(nomatch, binary:match(Help, <<"Use only one cookie source.">>)),
+    ?assertNotEqual(nomatch, binary:match(Help, <<"Hide identifiers for sharing">>)),
+    lists:foreach(
+        fun(Text) -> ?assertEqual(nomatch, binary:match(Help, Text)) end,
+        [
+            <<"Notes:">>,
+            <<"Requires a matching">>,
+            <<"trusted-peer">>,
+            <<"code loading is opt-in">>,
+            <<"No persistent connection">>
+        ]
+    ).

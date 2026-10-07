@@ -258,8 +258,7 @@ validation_and_admission_do_not_clear_test_() ->
 
 input_validation_contract_test() ->
     Base = request(self()),
-    Dead = spawn(fun() -> ok end),
-    Mon = erlang:monitor(process, Dead),
+    {Dead, Mon} = spawn_monitor(fun() -> ok end),
     receive
         {'DOWN', Mon, process, Dead, normal} -> ok
     end,
@@ -644,8 +643,7 @@ run_wait_trace_case(Kind) ->
     end.
 
 helper_shutdown_contract() ->
-    Dead = spawn(fun() -> ok end),
-    DeadMon = erlang:monitor(process, Dead),
+    {Dead, DeadMon} = spawn_monitor(fun() -> ok end),
     receive
         {'DOWN', DeadMon, process, Dead, normal} -> ok
     end,
@@ -694,8 +692,7 @@ helper_shutdown_contract() ->
             VerificationState, outcome, {error, cleanup_unconfirmed}
         )
     ),
-    DeadCollector = spawn(fun() -> ok end),
-    DeadCollectorMon = erlang:monitor(process, DeadCollector),
+    {DeadCollector, DeadCollectorMon} = spawn_monitor(fun() -> ok end),
     receive
         {'DOWN', DeadCollectorMon, process, DeadCollector, normal} -> ok
     end,
@@ -714,8 +711,7 @@ helper_shutdown_contract() ->
         )
     ),
     LiveCollector = spawn(fun checked_helper/0),
-    DeadSilent = spawn(fun() -> ok end),
-    DeadSilentMon = erlang:monitor(process, DeadSilent),
+    {DeadSilent, DeadSilentMon} = spawn_monitor(fun() -> ok end),
     receive
         {'DOWN', DeadSilentMon, process, DeadSilent, normal} -> ok
     end,
@@ -785,8 +781,7 @@ wait_formatter_contract() ->
         tracee_mon => make_ref()
     },
     NormalCollector = spawn(fun final_collector/0),
-    Normal = spawn(fun() -> ok end),
-    NormalMon = erlang:monitor(process, Normal),
+    {Normal, NormalMon} = spawn_monitor(fun() -> ok end),
     ?assertMatch(
         {natural, limit_reached, _, _, _, _},
         observer_cli_trace:wait_formatter(
@@ -851,8 +846,7 @@ wait_formatter_contract() ->
     ).
 
 drain_failure_contract() ->
-    Dead = spawn(fun() -> ok end),
-    DeadMon = erlang:monitor(process, Dead),
+    {Dead, DeadMon} = spawn_monitor(fun() -> ok end),
     receive
         {'DOWN', DeadMon, process, Dead, normal} = Down -> self() ! Down
     end,
@@ -860,8 +854,7 @@ drain_failure_contract() ->
         {forced, internal, capture_internal_error},
         observer_cli_trace:final_drain(#{collector => Dead, collector_mon => DeadMon, max => 1})
     ),
-    FailedStopCollector = spawn(fun() -> ok end),
-    FailedStopMon = erlang:monitor(process, FailedStopCollector),
+    {FailedStopCollector, FailedStopMon} = spawn_monitor(fun() -> ok end),
     receive
         {'DOWN', FailedStopMon, process, FailedStopCollector, normal} = FailedStopDown ->
             self() ! FailedStopDown
@@ -881,8 +874,7 @@ drain_failure_contract() ->
     ),
     exit(Silent, kill),
     await_down(Silent, SilentMon),
-    DownCollector = spawn(fun() -> ok end),
-    DownMon = erlang:monitor(process, DownCollector),
+    {DownCollector, DownMon} = spawn_monitor(fun() -> ok end),
     receive
         {'DOWN', DownMon, process, DownCollector, normal} = Down2 -> self() ! Down2
     end,
